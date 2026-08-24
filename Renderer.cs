@@ -55,28 +55,42 @@ namespace NotchPeninsula
                 Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
             };
 
-            var textBounds = new SKRect(); //[cite: 1]
-            textPaint.MeasureText(displayTitle, ref textBounds); //[cite: 1]
-            float textY = (HEIGHT - textBounds.Height) / 2 - textBounds.Top; //[cite: 1]
+            var textBounds = new SKRect();
+            textPaint.MeasureText(displayTitle, ref textBounds);
+            // 利用亚像素渲染进行极其细腻的微调
+            float textY = (HEIGHT - textBounds.Height) / 2 - textBounds.Top + 0.3f;
 
             float textX = media.IsActive ? left + 16 : left + (currentWidth - textBounds.Width) / 2f; //[cite: 1]
 
             // 绘制 SMTC 封面（带圆角）
-            if (media.IsActive && media.Thumbnail != null)
+            if (media.IsActive && media.Thumbnail != null) //[cite: 20]
             {
-                float thumbSize = 22f; // 大小适中不喧宾夺主
-                float thumbRadius = 4f; // 4px 小圆角裁切
-                float thumbY = (HEIGHT - thumbSize) / 2f; // 垂直居中
-                var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
+                float thumbSize = 22f; // 大小适中不喧宾夺主 //[cite: 20]
+                float thumbRadius = 4f; // 4px 小圆角裁切 //[cite: 20]
+                float thumbY = (HEIGHT - thumbSize) / 2f; // 垂直居中 //[cite: 20]
+                var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize); //[cite: 20]
 
-                canvas.Save();
-                using var thumbPath = new SKPath();
-                thumbPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
-                canvas.ClipPath(thumbPath, SKClipOperation.Intersect, true); // 裁切封面的圆角
-                canvas.DrawBitmap(media.Thumbnail, thumbRect); // 画封面
-                canvas.Restore();
+                // 在裁切和绘制封面之前，先画一层浅灰色的外阴影轮廓
+                using var shadowPaint = new SKPaint
+                {
+                    IsAntialias = true,
+                    // 使用半透明白色，在黑底上会自然过渡成浅灰色
+                    Color = SKColors.White.WithAlpha(50),
+                    // SKBlurStyle.Outer 确保发光只出现在矩形外部，不会干扰到封面本体的颜色
+                    MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Outer, 1.5f)
+                };
+                // 画出这层带有模糊属性的圆角矩形底底
+                canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, shadowPaint);
 
-                textX += thumbSize + 10; // 让出封面和间距，将文字往右推
+                // 下面是原本的裁切和画封面的逻辑
+                canvas.Save(); //[cite: 20]
+                using var thumbPath = new SKPath(); //[cite: 20]
+                thumbPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius); //[cite: 20]
+                canvas.ClipPath(thumbPath, SKClipOperation.Intersect, true); // 裁切封面的圆角 //[cite: 20]
+                canvas.DrawBitmap(media.Thumbnail, thumbRect); // 画封面 //[cite: 20]
+                canvas.Restore(); //[cite: 20]
+
+                textX += thumbSize + 10; // 让出封面和间距，将文字往右推 //[cite: 20]
             }
 
             // 封面绘制逻辑执行完毕后，textX 已经确定
