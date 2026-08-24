@@ -48,10 +48,11 @@ namespace NotchPeninsula
             string displayTitle = media.IsActive ? $"{media.Artist} - {media.Title}" : "Code By Ryen"; //[cite: 1]
             using var textPaint = new SKPaint
             {
-                Color = SKColors.White, //[cite: 1]
-                TextSize = 13, //[cite: 1]
-                IsAntialias = true, //[cite: 1]
-                Typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright) //[cite: 1]
+                Color = SKColors.White,
+                TextSize = 13,
+                IsAntialias = true,
+                // 将 "Segoe UI" 替换为 "Microsoft YaHei UI"
+                Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
             };
 
             var textBounds = new SKRect(); //[cite: 1]
@@ -75,7 +76,7 @@ namespace NotchPeninsula
                 canvas.DrawBitmap(media.Thumbnail, thumbRect); // 画封面
                 canvas.Restore();
 
-                textX += thumbSize + 8; // 让出封面和间距，将文字往右推
+                textX += thumbSize + 10; // 让出封面和间距，将文字往右推
             }
 
             canvas.DrawText(displayTitle, textX, textY, textPaint); //[cite: 1]
