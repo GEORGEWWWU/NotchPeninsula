@@ -14,6 +14,8 @@ namespace NotchPeninsula
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
         public const int WM_MOUSELEAVE = 0x02A3;
+        public const int WM_SETCURSOR = 0x0020;
+        public const int IDC_HAND = 32649; // Windows 原生手型指针常量
 
         public const byte AC_SRC_OVER = 0x00;
         public const byte AC_SRC_ALPHA = 0x01;
@@ -168,5 +170,8 @@ namespace NotchPeninsula
 
         // 32512 是 Windows 系统底层的标准箭头指针常量
         public const int IDC_ARROW = 32512;
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetCursor(IntPtr hCursor);
     }
 }

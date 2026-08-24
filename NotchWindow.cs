@@ -22,6 +22,9 @@ namespace NotchPeninsula
         private float _startWidth = Renderer.STANDBY_WIDTH;
         private float _targetWidth = Renderer.STANDBY_WIDTH;
         private DateTime _animStartTime;
+        private readonly IntPtr _hCursorArrow;
+        private readonly IntPtr _hCursorHand;
+        private bool _isCursorOverIcon = false;
 
         public NotchWindow()
         {
@@ -35,6 +38,10 @@ namespace NotchPeninsula
                 lpszClassName = "NotchPeninsulaClass",
                 hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW)
             };
+
+            // 在注册窗口类 (Win32.RegisterClass) 之前加载好指针
+            _hCursorArrow = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW);
+            _hCursorHand = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_HAND);
 
             if (Win32.RegisterClass(ref wc) == 0)
                 throw new Exception($"注册窗口类失败！错误码: {Marshal.GetLastWin32Error()}");
@@ -165,6 +172,15 @@ namespace NotchPeninsula
         {
             switch (msg)
             {
+                case Win32.WM_SETCURSOR:
+                    // 如果在图标热区上，设置小手并返回 1 拦截默认消息，彻底防止指针闪烁
+                    if (_isCursorOverIcon)
+                    {
+                        Win32.SetCursor(_hCursorHand);
+                        return (IntPtr)1;
+                    }
+                    break; // 不在图标上则交给默认处理，系统会自动恢复为箭头
+
                 case Win32.WM_MOUSEMOVE:
                     if (!_isTrackingMouse)
                     {
@@ -179,29 +195,50 @@ namespace NotchPeninsula
                         _isTrackingMouse = true;
                         _isHovered = true;
                     }
-                    break;
 
-                case Win32.WM_MOUSELEAVE:
-                    _isTrackingMouse = false;
-                    _isHovered = false;
-                    break;
-
-                case Win32.WM_LBUTTONDOWN:
+                    // ★ 精准热区判定：提取 X 和 Y 坐标，将命中区收缩至 SVG 周围
                     if (_isHovered && _media.IsActive)
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
+                        int y = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
 
-                        // 基于当前宽度的实时动态命中测试
                         float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
                         int btnPrevX = (int)right - 90;
                         int btnPlayX = (int)right - 60;
                         int btnNextX = (int)right - 30;
 
-                        if (x >= btnPrevX && x < btnPlayX)
+                        // 设置一个大约 18x18 的舒适命中区（紧凑包围 SVG 图标）
+                        bool overPrev = x >= btnPrevX + 6 && x <= btnPrevX + 24 && y >= 8 && y <= 26;
+                        bool overPlay = x >= btnPlayX + 6 && x <= btnPlayX + 24 && y >= 8 && y <= 26;
+                        bool overNext = x >= btnNextX + 6 && x <= btnNextX + 24 && y >= 8 && y <= 26;
+
+                        _isCursorOverIcon = overPrev || overPlay || overNext;
+                    }
+                    else
+                    {
+                        _isCursorOverIcon = false;
+                    }
+                    break;
+
+                case Win32.WM_MOUSELEAVE:
+                    _isTrackingMouse = false;
+                    _isHovered = false;
+                    _isCursorOverIcon = false; // 离开窗口时务必重置状态
+                    break;
+
+                case Win32.WM_LBUTTONDOWN:
+                    // ★ 统一修改点击逻辑：只有在指针变为小手的热区内才允许触发点击
+                    if (_isHovered && _media.IsActive && _isCursorOverIcon)
+                    {
+                        int x = (short)(lParam.ToInt32() & 0xFFFF);
+                        float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+
+                        // 使用和上面完全一致的热区坐标计算方式触发事件
+                        if (x >= right - 84 && x <= right - 66)
                             _media.Previous();
-                        else if (x >= btnPlayX && x < btnNextX)
+                        else if (x >= right - 54 && x <= right - 36)
                             _media.TogglePlayPause();
-                        else if (x >= btnNextX && x <= right)
+                        else if (x >= right - 24 && x <= right - 6)
                             _media.Next();
                     }
                     break;
