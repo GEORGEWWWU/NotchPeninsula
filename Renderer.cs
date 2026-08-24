@@ -131,10 +131,16 @@ namespace NotchPeninsula
 
                 using var iconPaint = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill }; //[cite: 1]
 
-                DrawSvgPath(canvas, iconPaint, btnPrevX + 10, 11, CreatePrevPath()); //[cite: 1]
-                if (media.IsPlaying) DrawSvgPath(canvas, iconPaint, btnPlayX + 10, 11, CreatePausePath()); //[cite: 1]
-                else DrawSvgPath(canvas, iconPaint, btnPlayX + 11, 11, CreatePlayPath()); //[cite: 1]
-                DrawSvgPath(canvas, iconPaint, btnNextX + 10, 11, CreateNextPath()); //[cite: 1]
+                // 💡 Prev 和 Next 的 X 偏移量由 +10 改为 +11，Y 由 11 改为 12 
+                DrawSvgPath(canvas, iconPaint, btnPrevX + 11, 12, CreatePrevPath());
+
+                // 播放/暂停图标保持原始大小不变，视觉比例更协调
+                if (media.IsPlaying)
+                    DrawSvgPath(canvas, iconPaint, btnPlayX + 10, 11, CreatePausePath());
+                else
+                    DrawSvgPath(canvas, iconPaint, btnPlayX + 11, 11, CreatePlayPath());
+
+                DrawSvgPath(canvas, iconPaint, btnNextX + 11, 12, CreateNextPath());
 
                 canvas.Restore(); // 画完悬浮控件后恢复画布
             }
@@ -165,14 +171,27 @@ namespace NotchPeninsula
         private static SKPath CreatePrevPath()
         {
             var path = new SKPath();
-            path.AddRect(new SKRect(0, 0, 2, 12)); path.MoveTo(10, 0); path.LineTo(2, 6); path.LineTo(10, 12); path.Close();
+            // 宽度由10缩小至8，高度由12缩小至10
+            // 左侧竖线：宽 2，高 10
+            path.AddRect(new SKRect(0, 0, 2, 10));
+            // 右侧三角形：顶点依次为 (8,0), (2,5), (8,10)
+            path.MoveTo(8, 0);
+            path.LineTo(2, 5);
+            path.LineTo(8, 10);
+            path.Close();
             return path;
         }
 
         private static SKPath CreateNextPath()
         {
             var path = new SKPath();
-            path.MoveTo(0, 0); path.LineTo(8, 6); path.LineTo(0, 12); path.Close(); path.AddRect(new SKRect(8, 0, 10, 12));
+            // 左侧三角形：顶点依次为 (0,0), (6,5), (0,10)
+            path.MoveTo(0, 0);
+            path.LineTo(6, 5);
+            path.LineTo(0, 10);
+            path.Close();
+            // 右侧竖线：起点 X 为 6，宽 2，高 10
+            path.AddRect(new SKRect(6, 0, 8, 10));
             return path;
         }
     }
