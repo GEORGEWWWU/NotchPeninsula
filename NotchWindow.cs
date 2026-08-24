@@ -13,52 +13,49 @@ namespace NotchPeninsula
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
         private readonly Timer _renderTimer;
-
-        // 核心修复3：用一个类级别变量死死拿住委托引用，防止被GC干掉！
         private readonly Win32.WndProc _wndProcDelegate;
+
+        // 动画引擎核心状态
+        private bool _lastActiveState = false;
+        private bool _isAnimating = false;
+        private float _currentWidth = Renderer.STANDBY_WIDTH;
+        private float _startWidth = Renderer.STANDBY_WIDTH;
+        private float _targetWidth = Renderer.STANDBY_WIDTH;
+        private DateTime _animStartTime;
 
         public NotchWindow()
         {
             _media = new MediaController();
-            _wndProcDelegate = WndProc; // 只要窗口在，委托就在
+            _wndProcDelegate = WndProc;
 
             var wc = new Win32.WNDCLASS
             {
                 lpfnWndProc = _wndProcDelegate,
                 hInstance = Process.GetCurrentProcess().Handle,
                 lpszClassName = "NotchPeninsulaClass",
-
-                // 强行指定为标准箭头指针
                 hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW)
             };
 
-            // 加入错误检测
             if (Win32.RegisterClass(ref wc) == 0)
-            {
                 throw new Exception($"注册窗口类失败！错误码: {Marshal.GetLastWin32Error()}");
-            }
 
-            // 修复空引用警告，加上 ? 和默认宽度兜底
             int screenWidth = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-            // 变量名更新为 WINDOW_WIDTH
             int x = (screenWidth - Renderer.WINDOW_WIDTH) / 2;
-            int y = 0; // 紧贴顶部
+            int y = 0;
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_TOPMOST | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
                 "NotchPeninsulaClass", "Notch",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
-                x, y, Renderer.WINDOW_WIDTH, Renderer.HEIGHT, // 变量名更新
+                x, y, Renderer.WINDOW_WIDTH, Renderer.HEIGHT,
                 IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero
             );
 
-            // 加入错误检测
             if (_hwnd == IntPtr.Zero)
-            {
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
-            }
 
-            _renderTimer = new Timer(33);
+            // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
+            _renderTimer = new Timer(16);
             _renderTimer.Elapsed += (s, e) => RenderLoop();
             _renderTimer.Start();
         }
@@ -74,12 +71,45 @@ namespace NotchPeninsula
 
         private unsafe void RenderLoop()
         {
-            // 变量名更新为 WINDOW_WIDTH
+            // 1. 监测状态变更，触发动画
+            bool currentActive = _media.IsActive;
+            if (currentActive != _lastActiveState)
+            {
+                _lastActiveState = currentActive;
+                _startWidth = _currentWidth;
+                _targetWidth = currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH;
+                _animStartTime = DateTime.Now;
+                _isAnimating = true;
+            }
+
+            // 2. 弹簧物理引擎计算每一帧
+            if (_isAnimating)
+            {
+                double elapsed = (DateTime.Now - _animStartTime).TotalSeconds;
+                double duration = 0.400; // 动画总时长 400ms
+
+                if (elapsed >= duration)
+                {
+                    _isAnimating = false;
+                    _currentWidth = _targetWidth;
+                }
+                else
+                {
+                    // 复刻你提供的 Bouncy 物理常数
+                    double freq = 2.4;
+                    double decay = 12.0;
+                    double spring = 1.0 - Math.Cos(freq * elapsed * 2.0 * Math.PI) * Math.Exp(-decay * elapsed);
+                    _currentWidth = (float)(_startWidth + (_targetWidth - _startWidth) * spring);
+                }
+            }
+
+            // 3. 渲染
             var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
 
-            Renderer.Draw(canvas, _media, _isHovered);
+            // 将当前计算的宽度传入渲染器
+            Renderer.Draw(canvas, _media, _isHovered, _currentWidth);
             UpdateWindow(surface.PeekPixels());
         }
 
@@ -93,7 +123,7 @@ namespace NotchPeninsula
                 bmiHeader = new Win32.BITMAPINFOHEADER
                 {
                     biSize = (uint)Marshal.SizeOf(typeof(Win32.BITMAPINFOHEADER)),
-                    biWidth = Renderer.WINDOW_WIDTH, // 变量名更新
+                    biWidth = Renderer.WINDOW_WIDTH,
                     biHeight = -Renderer.HEIGHT,
                     biPlanes = 1,
                     biBitCount = 32,
@@ -104,19 +134,16 @@ namespace NotchPeninsula
             IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
             IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
 
-            // 变量名更新为 WINDOW_WIDTH
             long bytes = Renderer.WINDOW_WIDTH * Renderer.HEIGHT * 4;
             Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
 
             var ptSrc = new Win32.POINT(0, 0);
             var ptDst = new Win32.POINT { x = 0, y = 0 };
 
-            // 这里现在能完美取到窗口位置了
             Win32.GetWindowRect(_hwnd, out var rect);
             ptDst.x = rect.Left;
             ptDst.y = rect.Top;
 
-            // 变量名更新为 WINDOW_WIDTH
             var size = new Win32.SIZE(Renderer.WINDOW_WIDTH, Renderer.HEIGHT);
             var blend = new Win32.BLENDFUNCTION
             {
@@ -151,14 +178,12 @@ namespace NotchPeninsula
                         Win32.TrackMouseEvent(ref tme);
                         _isTrackingMouse = true;
                         _isHovered = true;
-                        RenderLoop();
                     }
                     break;
 
                 case Win32.WM_MOUSELEAVE:
                     _isTrackingMouse = false;
                     _isHovered = false;
-                    RenderLoop();
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
@@ -166,12 +191,17 @@ namespace NotchPeninsula
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
 
-                        if (x >= Renderer.BTN_PREV_X && x < Renderer.BTN_PLAY_X)
+                        // 基于当前宽度的实时动态命中测试
+                        float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                        int btnPrevX = (int)right - 90;
+                        int btnPlayX = (int)right - 60;
+                        int btnNextX = (int)right - 30;
+
+                        if (x >= btnPrevX && x < btnPlayX)
                             _media.Previous();
-                        else if (x >= Renderer.BTN_PLAY_X && x < Renderer.BTN_NEXT_X)
+                        else if (x >= btnPlayX && x < btnNextX)
                             _media.TogglePlayPause();
-                        // 变量名更新为 WINDOW_WIDTH
-                        else if (x >= Renderer.BTN_NEXT_X && x <= Renderer.WINDOW_WIDTH)
+                        else if (x >= btnNextX && x <= right)
                             _media.Next();
                     }
                     break;
