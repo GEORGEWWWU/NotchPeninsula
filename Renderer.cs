@@ -79,25 +79,55 @@ namespace NotchPeninsula
                 textX += thumbSize + 10; // 让出封面和间距，将文字往右推
             }
 
-            canvas.DrawText(displayTitle, textX, textY, textPaint); //[cite: 1]
+            // 封面绘制逻辑执行完毕后，textX 已经确定
+            // ==========================================
+            // 文本防溢出与尾部渐变遮罩逻辑
 
-            if (isHovered && media.IsActive) //[cite: 1]
+            // 1. 动态计算文本允许的最大右侧边界
+            // 悬浮时，将文本右侧允许的边界放宽到 right - 90（刚好是第一个按钮的命中区边缘）
+            float maxTextRight = (isHovered && media.IsActive) ? right - 90f : right - 16f;
+
+            float currentTextRight = textX + textBounds.Width;
+
+            if (currentTextRight > maxTextRight)
             {
-                canvas.Save(); // ★ 必须加上 Save
-                // 直接把绘制区域裁切在整个刘海的轮廓内，从此告别右下角的直角！
-                canvas.ClipPath(path, SKClipOperation.Intersect, true);
+                // 遮罩渐变的长度缩短到 15px，一点点过渡就行
+                float fadeWidth = 15f;
+                float fadeStart = maxTextRight - fadeWidth;
+                float fadeEnd = maxTextRight;
 
-                var gradientStart = new SKPoint(right - 120, 0); //[cite: 1]
-                var gradientEnd = new SKPoint(right - 90, 0); //[cite: 1]
+                textPaint.Shader = SKShader.CreateLinearGradient(
+                    new SKPoint(fadeStart, 0),
+                    new SKPoint(fadeEnd, 0),
+                    new[] { SKColors.White, SKColors.White.WithAlpha(0) },
+                    null,
+                    SKShaderTileMode.Clamp
+                );
+            }
+            else
+            {
+                textPaint.Shader = null;
+            }
 
-                // 确保 RGB 通道一致，只改变 Alpha 透明度
-                var colors = new[] { bgPaint.Color.WithAlpha(0), bgPaint.Color };
+            canvas.DrawText(displayTitle, textX, textY, textPaint); //[cite: 11]
 
-                using var gradientShader = SKShader.CreateLinearGradient(gradientStart, gradientEnd, colors, null, SKShaderTileMode.Clamp); //[cite: 1]
-                using var gradientPaint = new SKPaint { Shader = gradientShader }; //[cite: 1]
+            if (isHovered && media.IsActive) //[cite: 11]
+            {
+                canvas.Save(); //[cite: 11]
+                canvas.ClipPath(path, SKClipOperation.Intersect, true); //[cite: 11]
 
-                canvas.DrawRect(right - 120, 0, 30, HEIGHT, gradientPaint); //[cite: 1]
-                canvas.DrawRect(right - 90, 0, 90, HEIGHT, bgPaint); //[cite: 1]
+                // 起点推迟到 105，终点在 90
+                var gradientStart = new SKPoint(right - 105, 0);
+                var gradientEnd = new SKPoint(right - 90, 0);
+
+                var colors = new[] { bgPaint.Color.WithAlpha(0), bgPaint.Color }; //[cite: 11]
+
+                using var gradientShader = SKShader.CreateLinearGradient(gradientStart, gradientEnd, colors, null, SKShaderTileMode.Clamp); //[cite: 11]
+                using var gradientPaint = new SKPaint { Shader = gradientShader }; //[cite: 11]
+
+                // 由于起点变成了 105 到 90，这个渐变矩形的宽度就是 15px
+                canvas.DrawRect(right - 105, 0, 15, HEIGHT, gradientPaint);
+                canvas.DrawRect(right - 90, 0, 90, HEIGHT, bgPaint); //[cite: 11]
 
                 using var iconPaint = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill }; //[cite: 1]
 
