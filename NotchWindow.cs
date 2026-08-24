@@ -25,6 +25,7 @@ namespace NotchPeninsula
         private readonly IntPtr _hCursorArrow;
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
+        private readonly DateTime _appStartTime = DateTime.Now;
 
         public NotchWindow()
         {
@@ -110,13 +111,25 @@ namespace NotchPeninsula
                 }
             }
 
+            // 计算启动待机文本的进入动画进度 (0到1)
+            double uptime = (DateTime.Now - _appStartTime).TotalSeconds;
+            float startupProgress = 1f; // 默认 1，代表动画结束
+            if (uptime < 0.6) // 动画总时长 0.6 秒
+            {
+                double t = uptime / 0.6;
+                double invT = 1.0 - t;
+                // 使用 Cubic Ease-Out (快进缓停) 公式: 1 - (1-t)^3，全乘法计算性能最好
+                startupProgress = (float)(1.0 - (invT * invT * invT));
+            }
+
             // 3. 渲染
             var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
 
-            // 将当前计算的宽度传入渲染器
-            Renderer.Draw(canvas, _media, _isHovered, _currentWidth);
+            // 将 startupProgress 传递给 Draw 方法
+            Renderer.Draw(canvas, _media, _isHovered, _currentWidth, startupProgress);
+
             UpdateWindow(surface.PeekPixels());
         }
 

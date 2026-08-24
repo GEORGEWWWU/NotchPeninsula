@@ -12,14 +12,14 @@ namespace NotchPeninsula
         public const int HEIGHT = 34;
 
         // 状态目标宽度
-        public const int STANDBY_WIDTH = 120; // 待机时的短短形态
+        public const int STANDBY_WIDTH = 130; // 待机时的短短形态
         public const int MEDIA_WIDTH = 260;   // 媒体活跃时的长形态
 
         public const int OUTER_R = 14;
         public const int INNER_R = 12;
 
         // 接收动态宽度 currentWidth，渲染 Q 弹动画每一帧
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth)
+        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float startupProgress = 1f)
         {
             canvas.Clear(SKColors.Transparent); //[cite: 1]
 
@@ -57,10 +57,18 @@ namespace NotchPeninsula
 
             var textBounds = new SKRect();
             textPaint.MeasureText(displayTitle, ref textBounds);
-            // 利用亚像素渲染进行极其细腻的微调
-            float textY = (HEIGHT - textBounds.Height) / 2 - textBounds.Top + 0.3f;
 
-            float textX = media.IsActive ? left + 16 : left + (currentWidth - textBounds.Width) / 2f; //[cite: 1]
+            // 计算启动动画的 Y 轴偏移和透明度
+            float textOffsetY = 0f;
+            if (!media.IsActive && startupProgress < 1f)
+            {
+                textOffsetY = (1f - startupProgress) * 15f; // 从下方 15 像素处升起
+                textPaint.Color = textPaint.Color.WithAlpha((byte)(255 * startupProgress)); // 透明度从 0 到 255 渐变
+            }
+
+            // 利用亚像素渲染进行极其细腻的微调
+            float textY = (HEIGHT - textBounds.Height) / 2 - textBounds.Top + 0.3f + textOffsetY;
+            float textX = media.IsActive ? left + 16 : left + (currentWidth - textBounds.Width) / 2f;
 
             // 绘制 SMTC 封面（带圆角）
             if (media.IsActive && media.Thumbnail != null) //[cite: 20]
