@@ -25,6 +25,9 @@ namespace NotchPeninsula
         private int _hoveredTab = -1;
         private bool _isAutoStartEnabled;
         private bool _toggleHovered = false;
+        // 交互设置状态
+        private bool _isAutoHideEnabled = false;
+        private bool _autoHideToggleHovered = false;
 
         // 媒体设置状态
         private bool _mediaToggleHovered = false;
@@ -142,9 +145,11 @@ namespace NotchPeninsula
                     int newHoveredTab = -1;
                     if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 0;
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 50 && y <= TITLE_BAR_HEIGHT + 86) newHoveredTab = 1;
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 90 && y <= TITLE_BAR_HEIGHT + 126) newHoveredTab = 2; // 新增：交互设置 Tab
 
                     bool newToggleHovered = false;
                     bool newMediaToggleHovered = false;
+                    bool newAutoHideToggleHovered = false;
                     bool newDropdownHovered = false;
                     int newHoveredDropdownIndex = -1;
 
@@ -168,15 +173,22 @@ namespace NotchPeninsula
                                 newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
                         }
                     }
+                    else if (_selectedTab == 2)
+                    {
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                            newAutoHideToggleHovered = true;
+                    }
 
                     if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
                         newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
-                        newMediaToggleHovered != _mediaToggleHovered || newDropdownHovered != _dropdownHovered ||
+                        newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered || // 新增
+                        newDropdownHovered != _dropdownHovered ||
                         newHoveredDropdownIndex != _hoveredDropdownIndex)
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
-                        _mediaToggleHovered = newMediaToggleHovered; _dropdownHovered = newDropdownHovered;
+                        _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered; // 新增
+                        _dropdownHovered = newDropdownHovered;
                         _hoveredDropdownIndex = newHoveredDropdownIndex;
                         Render();
                     }
@@ -199,6 +211,7 @@ namespace NotchPeninsula
                     }
                     else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; Render(); }
+                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); } // 新增：切换到交互设置页
                     else if (_toggleHovered)
                     {
                         _isAutoStartEnabled = !_isAutoStartEnabled;
@@ -209,6 +222,11 @@ namespace NotchPeninsula
                     {
                         MediaController.IsMediaControlEnabled = !MediaController.IsMediaControlEnabled;
                         _ = MediaController.Instance?.ForceRefresh();
+                        Render();
+                    }
+                    else if (_autoHideToggleHovered)
+                    {
+                        _isAutoHideEnabled = !_isAutoHideEnabled;
                         Render();
                     }
                     else if (_dropdownHovered)
@@ -298,6 +316,7 @@ namespace NotchPeninsula
             }
             DrawTab(0, "通用设置", 10);
             DrawTab(1, "媒体设置", 50);
+            DrawTab(2, "交互设置", 90);
 
             // ================= 右侧卡片内容区 =================
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
@@ -321,11 +340,11 @@ namespace NotchPeninsula
                 else { tCircle.Color = hovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150); canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, tCircle); }
             }
 
-            if (_selectedTab == 0)
+            if (_selectedTab == 0) // 通用设置页面的右侧内容
             {
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
             }
-            else if (_selectedTab == 1)
+            else if (_selectedTab == 1) // 媒体控制设置页面的右侧内容
             {
                 DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
 
@@ -349,6 +368,10 @@ namespace NotchPeninsula
                 using var chevronPaint = new SKPaint { Color = new SKColor(150, 150, 150), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
                 canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, chevronPaint);
                 canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, chevronPaint);
+            }
+            else if (_selectedTab == 2) // 交互设置页面的右侧内容
+            {
+                DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", _isAutoHideEnabled, _autoHideToggleHovered);
             }
 
             canvas.Restore(); // 结束大边界裁切
