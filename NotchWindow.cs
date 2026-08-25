@@ -26,10 +26,13 @@ namespace NotchPeninsula
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
         private readonly DateTime _appStartTime = DateTime.Now;
+        private readonly AudioAnalyzer _audioAnalyzer;
+        private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
 
         public NotchWindow()
         {
             _media = new MediaController();
+            _audioAnalyzer = new AudioAnalyzer();
             _wndProcDelegate = WndProc;
 
             var wc = new Win32.WNDCLASS
@@ -122,13 +125,30 @@ namespace NotchPeninsula
                 startupProgress = (float)(1.0 - (invT * invT * invT));
             }
 
+            // 渲染前，加入平滑插值逻辑
+            var targetBars = _audioAnalyzer.GetBars();
+            for (int i = 0; i < 5; i++)
+            {
+                float target = targetBars[i];
+                if (target > _currentBars[i])
+                {
+                    // 瞬间跃升 (Attack)：响应极速，体现打击感
+                    _currentBars[i] += (target - _currentBars[i]) * 0.75f;
+                }
+                else
+                {
+                    // 缓慢回落 (Release)：带一点点滞留和残影
+                    _currentBars[i] += (target - _currentBars[i]) * 0.12f;
+                }
+            }
+
             // 3. 渲染
             var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
 
-            // 将 startupProgress 传递给 Draw 方法
-            Renderer.Draw(canvas, _media, _isHovered, _currentWidth, startupProgress);
+            // 将平滑后的柱子数据 _currentBars 传给 Draw 方法
+            Renderer.Draw(canvas, _media, _isHovered, _currentWidth, startupProgress, _currentBars);
 
             UpdateWindow(surface.PeekPixels());
         }

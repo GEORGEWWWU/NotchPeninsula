@@ -19,7 +19,7 @@ namespace NotchPeninsula
         public const int INNER_R = 12;
 
         // 接收动态宽度 currentWidth，渲染 Q 弹动画每一帧
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float startupProgress = 1f)
+        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float startupProgress = 1f, float[]? bars = null)
         {
             canvas.Clear(SKColors.Transparent); //[cite: 1]
 
@@ -105,15 +105,24 @@ namespace NotchPeninsula
             // ==========================================
             // 文本防溢出与尾部渐变遮罩逻辑
 
-            // 1. 动态计算文本允许的最大右侧边界
-            // 悬浮时，将文本右侧允许的边界放宽到 right - 90（刚好是第一个按钮的命中区边缘）
-            float maxTextRight = (isHovered && media.IsActive) ? right - 90f : right - 16f;
+            // ★ 核心修复 1：动态释放空间
+            // 悬浮显示控件时需保留 95px；仅显示频谱时，频谱总宽才21.2px，只需保留 45px；暂停且未悬浮只需 16px 边距
+            float rightOccupiedWidth = 16f;
+            if (media.IsActive)
+            {
+                if (isHovered)
+                    rightOccupiedWidth = 95f;  // 留给 Prev, Play, Next 控件的空间
+                else if (media.IsPlaying)
+                    rightOccupiedWidth = 45f;  // 留给 5根律动柱子 的空间，释放近 50px 给长歌名！
+            }
 
+            // 动态计算文本最大右边界
+            float maxTextRight = right - rightOccupiedWidth;
             float currentTextRight = textX + textBounds.Width;
 
             if (currentTextRight > maxTextRight)
             {
-                // 遮罩渐变的长度缩短到 15px，一点点过渡就行
+                // 遮罩渐变的长度 15px
                 float fadeWidth = 15f;
                 float fadeStart = maxTextRight - fadeWidth;
                 float fadeEnd = maxTextRight;
@@ -131,40 +140,67 @@ namespace NotchPeninsula
                 textPaint.Shader = null;
             }
 
-            canvas.DrawText(displayTitle, textX, textY, textPaint); //[cite: 11]
+            canvas.DrawText(displayTitle, textX, textY, textPaint);
 
-            if (isHovered && media.IsActive) //[cite: 11]
+            if (media.IsActive)
             {
-                canvas.Save(); //[cite: 11]
-                canvas.ClipPath(path, SKClipOperation.Intersect, true); //[cite: 11]
+                canvas.Save();
+                canvas.ClipPath(path, SKClipOperation.Intersect, true);
 
-                // 起点推迟到 105，终点在 90
-                var gradientStart = new SKPoint(right - 105, 0);
-                var gradientEnd = new SKPoint(right - 90, 0);
+                // ★ 核心修复 2：黑色背景遮罩层也动态缩放，绝不多遮盖 1 像素的文字
+                float maskEnd = right - rightOccupiedWidth + 5f; // 向右多延展5px，防止文字边缘隐约漏出
+                float maskStart = maskEnd - 15f;
+                var gradientStart = new SKPoint(maskStart, 0);
+                var gradientEnd = new SKPoint(maskEnd, 0);
+                var colors = new[] { bgPaint.Color.WithAlpha(0), bgPaint.Color };
 
-                var colors = new[] { bgPaint.Color.WithAlpha(0), bgPaint.Color }; //[cite: 11]
+                using var gradientShader = SKShader.CreateLinearGradient(gradientStart, gradientEnd, colors, null, SKShaderTileMode.Clamp);
+                using var gradientPaint = new SKPaint { Shader = gradientShader };
 
-                using var gradientShader = SKShader.CreateLinearGradient(gradientStart, gradientEnd, colors, null, SKShaderTileMode.Clamp); //[cite: 11]
-                using var gradientPaint = new SKPaint { Shader = gradientShader }; //[cite: 11]
+                // 画 15px 渐变区 + 纯黑底色区
+                canvas.DrawRect(maskStart, 0, maskEnd - maskStart, HEIGHT, gradientPaint);
+                canvas.DrawRect(maskEnd, 0, right - maskEnd, HEIGHT, bgPaint);
 
-                // 由于起点变成了 105 到 90，这个渐变矩形的宽度就是 15px
-                canvas.DrawRect(right - 105, 0, 15, HEIGHT, gradientPaint);
-                canvas.DrawRect(right - 90, 0, 90, HEIGHT, bgPaint); //[cite: 11]
+                if (isHovered)
+                {
+                    // 1. 鼠标悬浮时：渲染完整的媒体控制按钮
+                    using var iconPaint = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
+                    DrawSvgPath(canvas, iconPaint, btnPrevX + 11, 12, CreatePrevPath());
 
-                using var iconPaint = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill }; //[cite: 1]
+                    if (media.IsPlaying)
+                        DrawSvgPath(canvas, iconPaint, btnPlayX + 10, 11, CreatePausePath());
+                    else
+                        DrawSvgPath(canvas, iconPaint, btnPlayX + 11, 11, CreatePlayPath());
 
-                // 💡 Prev 和 Next 的 X 偏移量由 +10 改为 +11，Y 由 11 改为 12 
-                DrawSvgPath(canvas, iconPaint, btnPrevX + 11, 12, CreatePrevPath());
+                    DrawSvgPath(canvas, iconPaint, btnNextX + 11, 12, CreateNextPath());
+                }
+                else if (media.IsPlaying && bars != null)
+                {
+                    // 2. 正常播放且未悬浮时：渲染 5 根极简律动柱子
+                    using var barPaint = new SKPaint { Color = SKColors.White, IsAntialias = true };
 
-                // 播放/暂停图标保持原始大小不变，视觉比例更协调
-                if (media.IsPlaying)
-                    DrawSvgPath(canvas, iconPaint, btnPlayX + 10, 11, CreatePausePath());
-                else
-                    DrawSvgPath(canvas, iconPaint, btnPlayX + 11, 11, CreatePlayPath());
+                    float barWidth = 2f;
+                    float spacing = 2.8f;
+                    float maxH = 16f;
 
-                DrawSvgPath(canvas, iconPaint, btnNextX + 11, 12, CreateNextPath());
+                    // ★ 核心修复 3：绝对靠右对齐
+                    // 5根柱子总宽 = (5个柱子 * 2px) + (4个间距 * 2.8px) = 21.2px
+                    // 固定将其锚定在距离右边界 16px 的位置
+                    float totalBarWidth = 21.2f;
+                    float startX = right - 16f - totalBarWidth;
 
-                canvas.Restore(); // 画完悬浮控件后恢复画布
+                    for (int i = 0; i < 5; i++)
+                    {
+                        // 底部保留 2.5px，作为安静底噪形态
+                        float h = Math.Max(2.5f, bars[i] * maxH);
+                        float y = (HEIGHT - h) / 2f;
+
+                        var rect = new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h);
+                        canvas.DrawRoundRect(rect, 1.5f, 1.5f, barPaint);
+                    }
+                }
+
+                canvas.Restore();
             }
         }
 
