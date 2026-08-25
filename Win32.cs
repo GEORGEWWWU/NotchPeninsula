@@ -21,6 +21,12 @@ namespace NotchPeninsula
         public const byte AC_SRC_ALPHA = 0x01;
         public const int ULW_ALPHA = 0x00000002;
         public const int DIB_RGB_COLORS = 0;
+        public const int WM_RBUTTONDOWN = 0x0204;
+        public const int WM_NCLBUTTONDOWN = 0x00A1;
+        public const int HTCAPTION = 2;
+        public const int SW_MINIMIZE = 6;
+        public const int SW_RESTORE = 9;
+        public const int WM_DESTROY = 0x0002;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT
@@ -173,5 +179,20 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern IntPtr SetCursor(IntPtr hCursor);
+
+        [DllImport("user32.dll")]
+        public static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        public static extern bool DestroyWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
     }
 }

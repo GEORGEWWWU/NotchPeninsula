@@ -80,6 +80,11 @@ namespace NotchPeninsula
 
             var contextMenu = new System.Windows.Forms.ContextMenuStrip();
 
+            // 打开设置选项
+            var settingsItem = new System.Windows.Forms.ToolStripMenuItem("打开设置");
+            settingsItem.Click += (s, e) => ConsoleWindow.Toggle();
+            contextMenu.Items.Add(settingsItem);
+
             // 开机自启选项
             var autoStartItem = new System.Windows.Forms.ToolStripMenuItem("开机自启");
             autoStartItem.CheckOnClick = true;
@@ -405,6 +410,13 @@ namespace NotchPeninsula
                             _media.TogglePlayPause();
                         else if (x >= right - 24 && x <= right - 6)
                             _media.Next();
+                    }
+                    break;
+
+                case Win32.WM_RBUTTONDOWN:
+                    if (_isHovered)
+                    {
+                        ConsoleWindow.Toggle();
                     }
                     break;
             }
