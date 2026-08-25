@@ -82,8 +82,9 @@ namespace NotchPeninsula
                         Thumbnail = SKBitmap.Decode(dotNetStream);
                         oldThumb?.Dispose(); // 避免 Skia 内存泄漏
                     }
-                    catch
+                    catch(Exception ex)
                     {
+                        Logger.Error("封面解析失败，可能是格式不支持或流读取错误", ex);
                         Thumbnail = null;
                     }
                 }

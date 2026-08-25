@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using SkiaSharp;
 using Microsoft.Win32;
 using Timer = System.Timers.Timer;
+using static NotchPeninsula.Logger;
 
 namespace NotchPeninsula
 {
@@ -67,7 +68,7 @@ namespace NotchPeninsula
 
             if (_hwnd == IntPtr.Zero)
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
-
+            else Info($"窗口创建成功，句柄: {_hwnd}");
             // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
             _renderTimer = new Timer(16);
             _renderTimer.Elapsed += (s, e) => RenderLoop();
@@ -94,6 +95,7 @@ namespace NotchPeninsula
                     _notifyIcon.Visible = false;
                     _notifyIcon.Dispose();
                 }
+                Info("程序退出");
                 Environment.Exit(0);
             };
 
@@ -116,26 +118,59 @@ namespace NotchPeninsula
             }
         }
 
+        private static string GetCurrentExePath()
+        {
+            return Process.GetCurrentProcess().MainModule?.FileName
+                ?? Environment.ProcessPath
+                ?? string.Empty;
+        }
+
+        private static string NormalizeRunValue(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            value = value.Trim();
+
+            // 兼容 "C:\...\App.exe" 这种带引号的写法
+            if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
+            {
+                value = value.Substring(1, value.Length - 2);
+            }
+
+            return value.Trim();
+        }
+
         // 🛠️ 开机自启注册表逻辑 (CurrentUser 级别，无需管理员权限)
         private void ToggleAutoStart(bool enable)
         {
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
+
                 if (enable)
                 {
-                    // 动态获取当前进程完整路径，哪怕用户移动了 exe 文件位置，重新勾选也能自愈
-                    string path = Process.GetCurrentProcess().MainModule!.FileName;
-                    key?.SetValue(AppName, $"\"{path}\"");
+                    string exePath = GetCurrentExePath();
+                    if (string.IsNullOrEmpty(exePath))
+                    {
+                        Warn("当前 exe 路径为空，无法设置开机自启");
+                        return;
+                    }
+
+                    // 必须和程序当前运行位置一致
+                    string registryValue = $"\"{exePath}\"";
+                    key?.SetValue(AppName, registryValue);
+                    Info($"已设置开机自启，路径: {exePath}");
                 }
                 else
                 {
                     key?.DeleteValue(AppName, false);
+                    Info("已取消开机自启");
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // 极致性能：忽略注册表权限异常，绝不弹窗阻塞主渲染线程
+                Error("修改开机自启失败", ex);
             }
         }
 
@@ -144,10 +179,39 @@ namespace NotchPeninsula
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
-                return key?.GetValue(AppName) != null;
+
+                string? rawValue = key?.GetValue(AppName) as string;
+                string exePath = GetCurrentExePath();
+
+                bool matchesCurrentExe =
+                    !string.IsNullOrEmpty(exePath) &&
+                    string.Equals(
+                        NormalizeRunValue(rawValue),
+                        exePath,
+                        StringComparison.OrdinalIgnoreCase);
+
+                Info($"开机自启状态: {matchesCurrentExe} | 当前路径: {exePath} | 注册表值: {rawValue}");
+                try
+                {
+                    key?.DeleteValue(AppName, false);
+                    Info("已清理注册表中开机自启的残留值");
+                    key?.SetValue(AppName, $"\"{exePath}\"");
+                    Info("已重新写入注册表开机自启值");
+                    if (!string.IsNullOrEmpty(exePath) &&
+                    string.Equals(
+                        NormalizeRunValue(rawValue),
+                        exePath,
+                        StringComparison.OrdinalIgnoreCase)) return true;
+                    else return false;
+                } catch (Exception ex)
+                {
+                    Error("清理注册表残留值失败", ex);
+                }
+                return matchesCurrentExe;
             }
             catch
             {
+                Warn("检查开机自启状态失败，默认返回 false");
                 return false;
             }
         }
@@ -218,7 +282,6 @@ namespace NotchPeninsula
             var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
-
             // 将平滑后的柱子数据 _currentBars 传给 Draw 方法
             Renderer.Draw(canvas, _media, _isHovered, _currentWidth, startupProgress, _currentBars);
 
@@ -266,7 +329,6 @@ namespace NotchPeninsula
             };
 
             Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
-
             Win32.SelectObject(memDc, hOldBitmap);
             Win32.DeleteObject(hBitmap);
             Win32.DeleteDC(memDc);
@@ -278,13 +340,12 @@ namespace NotchPeninsula
             switch (msg)
             {
                 case Win32.WM_SETCURSOR:
-                    // 如果在图标热区上，设置小手并返回 1 拦截默认消息，彻底防止指针闪烁
                     if (_isCursorOverIcon)
                     {
                         Win32.SetCursor(_hCursorHand);
                         return (IntPtr)1;
                     }
-                    break; // 不在图标上则交给默认处理，系统会自动恢复为箭头
+                    break;
 
                 case Win32.WM_MOUSEMOVE:
                     if (!_isTrackingMouse)
@@ -301,7 +362,6 @@ namespace NotchPeninsula
                         _isHovered = true;
                     }
 
-                    // 精准热区判定：提取 X 和 Y 坐标，将命中区收缩至 SVG 周围
                     if (_isHovered && _media.IsActive)
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
@@ -312,7 +372,6 @@ namespace NotchPeninsula
                         int btnPlayX = (int)right - 60;
                         int btnNextX = (int)right - 30;
 
-                        // 设置一个大约 18x18 的舒适命中区（紧凑包围 SVG 图标）
                         bool overPrev = x >= btnPrevX + 6 && x <= btnPrevX + 24 && y >= 8 && y <= 26;
                         bool overPlay = x >= btnPlayX + 6 && x <= btnPlayX + 24 && y >= 8 && y <= 26;
                         bool overNext = x >= btnNextX + 6 && x <= btnNextX + 24 && y >= 8 && y <= 26;
@@ -328,17 +387,15 @@ namespace NotchPeninsula
                 case Win32.WM_MOUSELEAVE:
                     _isTrackingMouse = false;
                     _isHovered = false;
-                    _isCursorOverIcon = false; // 离开窗口时务必重置状态
+                    _isCursorOverIcon = false;
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    // 统一修改点击逻辑：只有在指针变为小手的热区内才允许触发点击
                     if (_isHovered && _media.IsActive && _isCursorOverIcon)
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
                         float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
 
-                        // 使用和上面完全一致的热区坐标计算方式触发事件
                         if (x >= right - 84 && x <= right - 66)
                             _media.Previous();
                         else if (x >= right - 54 && x <= right - 36)
@@ -348,6 +405,7 @@ namespace NotchPeninsula
                     }
                     break;
             }
+
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
         }
     }
