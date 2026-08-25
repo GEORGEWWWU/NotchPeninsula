@@ -220,12 +220,18 @@ namespace NotchPeninsula
                     else if (_mediaToggleHovered)
                     {
                         MediaController.IsMediaControlEnabled = !MediaController.IsMediaControlEnabled;
+                        // 保存媒体控制开关 (转换为0/1)
+                        Program.SaveSetting("MediaControl", MediaController.IsMediaControlEnabled ? 1 : 0);
+
                         _ = MediaController.Instance?.ForceRefresh();
                         Render();
                     }
                     else if (_autoHideToggleHovered)
                     {
                         NotchWindow.IsAutoHideEnabled = !NotchWindow.IsAutoHideEnabled;
+                        // 保存自动隐藏开关 (转换为0/1)
+                        Program.SaveSetting("AutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0);
+
                         Render();
                     }
                     else if (_dropdownHovered)
@@ -236,6 +242,10 @@ namespace NotchPeninsula
                     {
                         _selectedPlatformIndex = _hoveredDropdownIndex;
                         MediaController.TargetPlatform = _platforms[_selectedPlatformIndex].Id;
+
+                        // 保存目标媒体平台字符串
+                        Program.SaveSetting("TargetPlatform", MediaController.TargetPlatform);
+
                         _ = MediaController.Instance?.ForceRefresh();
                         _dropdownOpen = false;
                         Render();
