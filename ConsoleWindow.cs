@@ -8,10 +8,7 @@ namespace NotchPeninsula
     {
         private static ConsoleWindow? _instance;
         private readonly IntPtr _hwnd;
-
-        // 将委托变为静态只读，使其成为 GC Root，永远不会被回收
         private static readonly Win32.WndProc _staticWndProc = StaticWndProc;
-        // 标记窗口类是否已注册
         private static bool _classRegistered = false;
 
         private const int WIDTH = 600;
@@ -21,12 +18,31 @@ namespace NotchPeninsula
         private bool _minHovered = false;
         private bool _closeHovered = false;
         private static SKBitmap? _appIconBitmap;
-        // 缓存带版本号的标题，避免渲染时产生字符串分配开销
         private static string _appTitleWithVersion = "NotchPeninsula";
-        private int _selectedTab = 0; // 0代表当前选中“通用设置”
-        private int _hoveredTab = -1; // -1代表鼠标没悬浮在任何 Tab 上
-        private bool _isAutoStartEnabled; // 当前自启状态
-        private bool _toggleHovered = false; // 鼠标是否悬浮在开关上
+
+        // 侧边栏与通用设置状态
+        private int _selectedTab = 0;
+        private int _hoveredTab = -1;
+        private bool _isAutoStartEnabled;
+        private bool _toggleHovered = false;
+
+        // 媒体设置状态
+        private bool _mediaToggleHovered = false;
+        private bool _dropdownOpen = false;
+        private bool _dropdownHovered = false;
+        private int _hoveredDropdownIndex = -1;
+        private int _selectedPlatformIndex = 0;
+
+        // 预设媒体平台数组
+        private static readonly (string Id, string Name)[] _platforms = new[] {
+            ("other", "通用媒体"),
+            ("netease", "网易云音乐"),
+            ("qqmusic", "QQ音乐"),
+            ("kugou", "酷狗音乐"),
+            ("spotify", "Spotify"),
+            ("applemusic", "Apple Music"),
+            ("echomusic", "Echomusic")
+        };
 
         public static void Toggle()
         {
@@ -34,7 +50,6 @@ namespace NotchPeninsula
                 _instance = new ConsoleWindow();
             else
             {
-                // 每次重新呼出时，同步一下最新的自启状态
                 _instance._isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
                 _instance.Render();
                 Win32.ShowWindow(_instance._hwnd, Win32.SW_RESTORE);
@@ -46,14 +61,20 @@ namespace NotchPeninsula
         {
             _isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
 
-            // 确保整个进程生命周期内只注册一次窗口类
+            // 匹配目前加载的媒体平台索引
+            for (int i = 0; i < _platforms.Length; i++)
+            {
+                if (_platforms[i].Id == MediaController.TargetPlatform)
+                {
+                    _selectedPlatformIndex = i; break;
+                }
+            }
+
             if (!_classRegistered)
             {
-                // 读取程序集版本号并拼接缓存
                 var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
                 if (version != null)
                 {
-                    // 格式化为 v1.0.0 形式
                     _appTitleWithVersion = $"NotchPeninsula {version.Major}.{version.Minor}.{version.Build}";
                 }
 
@@ -64,8 +85,6 @@ namespace NotchPeninsula
                     if (icon != null)
                     {
                         appIconHandle = icon.Handle;
-
-                        // 无损转码为 Skia 格式并缓存（只需执行一次，极低开销）
                         using var bmp = icon.ToBitmap();
                         using var ms = new System.IO.MemoryStream();
                         bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
@@ -73,7 +92,7 @@ namespace NotchPeninsula
                         _appIconBitmap = SKBitmap.Decode(ms);
                     }
                 }
-                catch { /* 忽略无伤大雅的图标提取错误 */ }
+                catch { }
 
                 var wc = new Win32.WNDCLASS
                 {
@@ -81,7 +100,7 @@ namespace NotchPeninsula
                     hInstance = System.Diagnostics.Process.GetCurrentProcess().Handle,
                     lpszClassName = "NotchConsoleClass",
                     hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW),
-                    hIcon = appIconHandle // 绑定系统任务栏图标
+                    hIcon = appIconHandle
                 };
                 Win32.RegisterClass(ref wc);
                 _classRegistered = true;
@@ -101,13 +120,10 @@ namespace NotchPeninsula
             Render();
         }
 
-        // 静态消息路由，安全地将底层消息转发给当前活跃的实例
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             if (_instance != null && hwnd == _instance._hwnd)
-            {
                 return _instance.InstanceWndProc(hwnd, msg, wParam, lParam);
-            }
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
         }
 
@@ -122,22 +138,46 @@ namespace NotchPeninsula
                     bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
                     bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
 
-                    // 侧边栏菜单悬浮判定 (范围: X:10~170, Y:42~78)
+                    // Tab Hover 判定
                     int newHoveredTab = -1;
-                    if (x >= 10 && x <= 170 && y >= 42 && y <= 78) newHoveredTab = 0;
+                    if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 0;
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 50 && y <= TITLE_BAR_HEIGHT + 86) newHoveredTab = 1;
 
-                    // 右侧开关悬浮判定 (卡片范围)
                     bool newToggleHovered = false;
-                    if (_selectedTab == 0 && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
-                        newToggleHovered = true;
+                    bool newMediaToggleHovered = false;
+                    bool newDropdownHovered = false;
+                    int newHoveredDropdownIndex = -1;
+
+                    if (_selectedTab == 0)
+                    {
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                            newToggleHovered = true;
+                    }
+                    else if (_selectedTab == 1)
+                    {
+                        if (!_dropdownOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                            newMediaToggleHovered = true;
+
+                        // 修改下拉菜单
+                        if (!_dropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
+                            newDropdownHovered = true;
+
+                        if (_dropdownOpen)
+                        {
+                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 130 && y < TITLE_BAR_HEIGHT + 130 + _platforms.Length * 26)
+                                newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
+                        }
+                    }
 
                     if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
-                        newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered)
+                        newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
+                        newMediaToggleHovered != _mediaToggleHovered || newDropdownHovered != _dropdownHovered ||
+                        newHoveredDropdownIndex != _hoveredDropdownIndex)
                     {
-                        _minHovered = newMinHovered;
-                        _closeHovered = newCloseHovered;
-                        _hoveredTab = newHoveredTab;
-                        _toggleHovered = newToggleHovered;
+                        _minHovered = newMinHovered; _closeHovered = newCloseHovered;
+                        _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
+                        _mediaToggleHovered = newMediaToggleHovered; _dropdownHovered = newDropdownHovered;
+                        _hoveredDropdownIndex = newHoveredDropdownIndex;
                         Render();
                     }
                     break;
@@ -146,29 +186,42 @@ namespace NotchPeninsula
                     int clickX = (short)(lParam.ToInt32() & 0xFFFF);
                     int clickY = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
 
-                    if (_closeHovered)
-                        Win32.DestroyWindow(hwnd);
-                    else if (_minHovered)
-                        Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
+                    if (_closeHovered) Win32.DestroyWindow(hwnd);
+                    else if (_minHovered) Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
                     else if (clickY <= TITLE_BAR_HEIGHT)
                     {
                         Win32.ReleaseCapture();
                         Win32.SendMessage(hwnd, Win32.WM_NCLBUTTONDOWN, Win32.HTCAPTION, 0);
                     }
-                    else if (_hoveredTab == 0) // 点击左侧 Tab
+                    else if (_dropdownOpen && _hoveredDropdownIndex == -1)
                     {
-                        if (_selectedTab != 0)
-                        {
-                            _selectedTab = 0;
-                            Render();
-                        }
+                        _dropdownOpen = false; Render(); // 点击菜单外部收起浮窗
                     }
-                    else if (_toggleHovered) // 点击开机自启开关
+                    else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; Render(); }
+                    else if (_toggleHovered)
                     {
                         _isAutoStartEnabled = !_isAutoStartEnabled;
-                        Render(); // 界面立即响应
-                        // 告诉主逻辑去写注册表，并标明“这来自控制台(false)”，让它顺便去更新托盘
+                        Render();
                         NotchWindow.ToggleAutoStart(_isAutoStartEnabled, false);
+                    }
+                    else if (_mediaToggleHovered)
+                    {
+                        MediaController.IsMediaControlEnabled = !MediaController.IsMediaControlEnabled;
+                        _ = MediaController.Instance?.ForceRefresh();
+                        Render();
+                    }
+                    else if (_dropdownHovered)
+                    {
+                        _dropdownOpen = true; Render();
+                    }
+                    else if (_dropdownOpen && _hoveredDropdownIndex != -1)
+                    {
+                        _selectedPlatformIndex = _hoveredDropdownIndex;
+                        MediaController.TargetPlatform = _platforms[_selectedPlatformIndex].Id;
+                        _ = MediaController.Instance?.ForceRefresh();
+                        _dropdownOpen = false;
+                        Render();
                     }
                     break;
 
@@ -185,156 +238,156 @@ namespace NotchPeninsula
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
 
-            // 1. 核心：彻底清空为透明背景！(依赖 Layered Window 的天生特性)
             canvas.Clear(SKColors.Transparent);
-
-            float cornerRadius = 8f; // 你可以随意调节圆角大小
+            float cornerRadius = 8f;
             var windowRect = new SKRect(0, 0, WIDTH, HEIGHT);
 
-            // 2. 绘制带圆角的主窗口底色
             using var bgPaint = new SKPaint { Color = new SKColor(32, 32, 32), IsAntialias = true };
             canvas.DrawRoundRect(windowRect, cornerRadius, cornerRadius, bgPaint);
 
-            // --- 开启裁剪：防止顶部的标题栏和按钮背景画出圆角的范围 ---
             canvas.Save();
             using var clipPath = new SKPath();
             clipPath.AddRoundRect(windowRect, cornerRadius, cornerRadius);
             canvas.ClipPath(clipPath, SKClipOperation.Intersect, true);
 
-            // 3. 标题栏区域
+            // ================= 标题栏区 =================
             using var titleBarPaint = new SKPaint { Color = new SKColor(40, 40, 40) };
             canvas.DrawRect(0, 0, WIDTH, TITLE_BAR_HEIGHT, titleBarPaint);
 
-            // 绘制软件图标与名称 (WinUI 风格)
             float textX = 14f;
             if (_appIconBitmap != null)
             {
-                // 将图标缩放到 16x16 的精巧尺寸，并在垂直方向居中 (32-16)/2 = 8
                 var iconRect = new SKRect(14, 8, 14 + 16, 8 + 16);
-                // 高质量采样器，保证缩放后的图标依然清晰
                 using var samplingOpts = new SKPaint { FilterQuality = SKFilterQuality.High };
                 canvas.DrawBitmap(_appIconBitmap, iconRect, samplingOpts);
-                textX += 16f + 8f; // 让出图标和间距
+                textX += 24f;
             }
 
-            using var textPaint = new SKPaint
-            {
-                Color = new SKColor(200, 200, 200), // 稍暗的浅灰色，在标题栏上比刺眼的纯白更护眼
-                TextSize = 12.5f,
-                IsAntialias = true,
-                Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI")
-            };
-            // 文本 Y 轴精准对齐，对于 12.5 号字在 32px 的高度里，21px 是光学居中甜点位
-            // 使用预先拼接好的缓存字符串
-            canvas.DrawText(_appTitleWithVersion, textX, 21.2f, textPaint);
+            using var uiTextPaint = new SKPaint { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+            using var subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = uiTextPaint.Typeface };
 
-            // 4. 绘制 WinUI 风格按钮背景 (悬浮态)
-            if (_minHovered)
-            {
-                using var hoverPaint = new SKPaint { Color = new SKColor(255, 255, 255, 20) };
-                canvas.DrawRect(WIDTH - 92, 0, 46, TITLE_BAR_HEIGHT, hoverPaint);
-            }
-            if (_closeHovered)
-            {
-                using var hoverPaint = new SKPaint { Color = new SKColor(232, 17, 35) };
-                canvas.DrawRect(WIDTH - 46, 0, 46, TITLE_BAR_HEIGHT, hoverPaint);
-            }
+            using var titleTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 12.5f, IsAntialias = true, Typeface = uiTextPaint.Typeface };
+            canvas.DrawText(_appTitleWithVersion, textX, 21.2f, titleTextPaint);
 
-            // --- 结束裁剪 ---
-            canvas.Restore();
+            if (_minHovered) { using var hp = new SKPaint { Color = new SKColor(255, 255, 255, 20) }; canvas.DrawRect(WIDTH - 92, 0, 46, TITLE_BAR_HEIGHT, hp); }
+            if (_closeHovered) { using var hp = new SKPaint { Color = new SKColor(232, 17, 35) }; canvas.DrawRect(WIDTH - 46, 0, 46, TITLE_BAR_HEIGHT, hp); }
 
-            // 5. 绘制按钮图标 (保留原来的代码)
             using var iconPaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1f, IsAntialias = true };
             canvas.DrawLine(WIDTH - 92 + 18, 16, WIDTH - 92 + 28, 16, iconPaint);
             float cx = WIDTH - 46 + 23; float cy = 16;
             canvas.DrawLine(cx - 5, cy - 5, cx + 5, cy + 5, iconPaint);
             canvas.DrawLine(cx + 5, cy - 5, cx - 5, cy + 5, iconPaint);
 
-            // ================= 设置页面布局 =================
-
-            // 绘制左侧侧边栏项
-            var tabRect = new SKRect(10, TITLE_BAR_HEIGHT + 10, 170, TITLE_BAR_HEIGHT + 46);
-            if (_selectedTab == 0)
+            // ================= 侧边栏 =================
+            void DrawTab(int index, string label, float yOffset)
             {
-                using var tabBg = new SKPaint { Color = new SKColor(255, 255, 255, 15), IsAntialias = true };
-                canvas.DrawRoundRect(tabRect, 4, 4, tabBg); // 选中的底色
-
-                // 蓝色竖条指示器 (Win11 标志性设计)
-                using var indicator = new SKPaint { Color = new SKColor(0, 120, 212), IsAntialias = true };
-                canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + 18, 13, TITLE_BAR_HEIGHT + 38), 1.5f, 1.5f, indicator);
+                var tabRect = new SKRect(10, TITLE_BAR_HEIGHT + yOffset, 170, TITLE_BAR_HEIGHT + yOffset + 36);
+                if (_selectedTab == index)
+                {
+                    using var tabBg = new SKPaint { Color = new SKColor(255, 255, 255, 15), IsAntialias = true };
+                    canvas.DrawRoundRect(tabRect, 4, 4, tabBg);
+                    using var indicator = new SKPaint { Color = new SKColor(0, 120, 212), IsAntialias = true };
+                    canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + yOffset + 8, 13, TITLE_BAR_HEIGHT + yOffset + 28), 1.5f, 1.5f, indicator);
+                }
+                else if (_hoveredTab == index)
+                {
+                    using var tabBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
+                    canvas.DrawRoundRect(tabRect, 4, 4, tabBg);
+                }
+                canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, uiTextPaint);
             }
-            else if (_hoveredTab == 0)
-            {
-                using var tabBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
-                canvas.DrawRoundRect(tabRect, 4, 4, tabBg); // 悬浮的底色
-            }
+            DrawTab(0, "通用设置", 10);
+            DrawTab(1, "媒体设置", 50);
 
-            using var uiTextPaint = new SKPaint { Color = SKColors.White, TextSize = 14f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
-            canvas.DrawText("通用设置", 30, TITLE_BAR_HEIGHT + 34, uiTextPaint);
-
-            // 绘制右侧详情区内容
-            if (_selectedTab == 0)
+            // ================= 右侧卡片内容区 =================
+            void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
             {
-                // 设置卡片背景容器
-                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 74);
+                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + yOffset, WIDTH - 20, TITLE_BAR_HEIGHT + yOffset + 62);
                 using var cardBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
-                canvas.DrawRoundRect(cardRect, 6, 6, cardBg);
                 using var cardBorder = new SKPaint { Color = new SKColor(255, 255, 255, 15), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
-                canvas.DrawRoundRect(cardRect, 6, 6, cardBorder);
+                canvas.DrawRoundRect(cardRect, 6, 6, cardBg); canvas.DrawRoundRect(cardRect, 6, 6, cardBorder);
 
-                // 左对齐的标题和描述文本
-                canvas.DrawText("开机自启", 216, TITLE_BAR_HEIGHT + 38, uiTextPaint);
-                using var subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = uiTextPaint.Typeface };
-                canvas.DrawText("跟随系统启动自动运行该程序", 216, TITLE_BAR_HEIGHT + 58, subTextPaint);
+                canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + 26, uiTextPaint);
+                canvas.DrawText(sub, 216, TITLE_BAR_HEIGHT + yOffset + 46, subTextPaint);
 
-                // 右对齐绘制 Toggle 拨动开关
-                float toggleW = 42; float toggleH = 20;
-                float toggleX = WIDTH - 20 - 16 - toggleW;
-                float toggleY = TITLE_BAR_HEIGHT + 32;
-                var toggleRect = new SKRect(toggleX, toggleY, toggleX + toggleW, toggleY + toggleH);
+                float tW = 42; float tH = 20; float tX = WIDTH - 20 - 16 - tW; float tY = TITLE_BAR_HEIGHT + yOffset + 20;
+                var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+                using var tBg = new SKPaint { IsAntialias = true };
+                if (state) { tBg.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212); canvas.DrawRoundRect(tRect, tH / 2, tH / 2, tBg); }
+                else { tBg.Style = SKPaintStyle.Stroke; tBg.StrokeWidth = 1.5f; tBg.Color = hovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100); canvas.DrawRoundRect(tRect, tH / 2, tH / 2, tBg); }
 
-                using var toggleBg = new SKPaint { IsAntialias = true };
-                if (_isAutoStartEnabled)
-                {
-                    // 开启状态：品牌蓝填充
-                    toggleBg.Color = _toggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                    canvas.DrawRoundRect(toggleRect, toggleH / 2, toggleH / 2, toggleBg);
-                }
-                else
-                {
-                    // 关闭状态：灰色空心描边
-                    toggleBg.Style = SKPaintStyle.Stroke;
-                    toggleBg.StrokeWidth = 1.5f;
-                    toggleBg.Color = _toggleHovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
-                    canvas.DrawRoundRect(toggleRect, toggleH / 2, toggleH / 2, toggleBg);
-                }
+                using var tCircle = new SKPaint { Color = SKColors.White, IsAntialias = true };
+                if (state) canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, tCircle);
+                else { tCircle.Color = hovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150); canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, tCircle); }
+            }
 
-                // 绘制开关里的白色小圆点
-                using var toggleCircle = new SKPaint { Color = SKColors.White, IsAntialias = true };
-                if (_isAutoStartEnabled)
+            if (_selectedTab == 0)
+            {
+                DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
+            }
+            else if (_selectedTab == 1)
+            {
+                DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
+
+                // 绘制下拉选择卡片
+                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 80, WIDTH - 20, TITLE_BAR_HEIGHT + 142);
+                using var cardBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
+                using var cardBorder = new SKPaint { Color = new SKColor(255, 255, 255, 15), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+                canvas.DrawRoundRect(cardRect, 6, 6, cardBg); canvas.DrawRoundRect(cardRect, 6, 6, cardBorder);
+
+                canvas.DrawText("目标媒体平台", 216, TITLE_BAR_HEIGHT + 106, uiTextPaint);
+                canvas.DrawText("多平台共存时，优先截获并接管的平台", 216, TITLE_BAR_HEIGHT + 126, subTextPaint);
+
+                // Dropdown 伪输入框
+                float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 96; float dH = 32;
+                var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
+                using var dBg = new SKPaint { Color = _dropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8), IsAntialias = true };
+                canvas.DrawRoundRect(dRect, 4, 4, dBg);
+                canvas.DrawText(_platforms[_selectedPlatformIndex].Name, dX + 10, dY + 21, uiTextPaint);
+
+                // 向下的 Chevron 箭头
+                using var chevronPaint = new SKPaint { Color = new SKColor(150, 150, 150), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
+                canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, chevronPaint);
+                canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, chevronPaint);
+            }
+
+            canvas.Restore(); // 结束大边界裁切
+
+            // ================= 浮动在顶层的下拉菜单 =================
+            if (_selectedTab == 1 && _dropdownOpen)
+            {
+                float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 130; float mW = 110; float mH = _platforms.Length * 26;
+                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
+
+                // 绘制不透明底色和阴影感边框，防止背后的UI透过来
+                using var menuBg = new SKPaint { Color = new SKColor(40, 40, 40), IsAntialias = true };
+                canvas.DrawRoundRect(mRect, 4, 4, menuBg);
+                using var menuBorder = new SKPaint { Color = new SKColor(80, 80, 80), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+                canvas.DrawRoundRect(mRect, 4, 4, menuBorder);
+
+                for (int i = 0; i < _platforms.Length; i++)
                 {
-                    // 靠右的实心圆
-                    canvas.DrawCircle(toggleX + toggleW - toggleH / 2, toggleY + toggleH / 2, toggleH / 2 - 4, toggleCircle);
-                }
-                else
-                {
-                    // 靠左的暗色圆
-                    toggleCircle.Color = _toggleHovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
-                    canvas.DrawCircle(toggleX + toggleH / 2, toggleY + toggleH / 2, toggleH / 2 - 4, toggleCircle);
+                    // 每个 item 的 Y 轴步长改为 26
+                    float itemY = mY + i * 26;
+                    if (_hoveredDropdownIndex == i)
+                    {
+                        using var itemHover = new SKPaint { Color = new SKColor(255, 255, 255, 15), IsAntialias = true };
+                        // 底部边界减去 2px 的 padding，也就是 26-2 = 24
+                        canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, itemHover);
+                    }
+                    using var itemTextPaint = new SKPaint { Color = i == _selectedPlatformIndex ? new SKColor(0, 120, 212) : SKColors.White, TextSize = 13f, IsAntialias = true, Typeface = uiTextPaint.Typeface };
+                    // 文字的 Y 轴光学居中点调到 18
+                    canvas.DrawText(_platforms[i].Name, mX + 12, itemY + 18, itemTextPaint);
                 }
             }
-            // ================= 设置页面布局结束 =================
 
-            // 6. 最后盖上一层极细的抗锯齿圆角描边边框
-            using var borderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
-            var borderRect = new SKRect(0.5f, 0.5f, WIDTH - 0.5f, HEIGHT - 0.5f);
-            canvas.DrawRoundRect(borderRect, cornerRadius, cornerRadius, borderPaint);
+            // 最后盖上一层极细的全局边框
+            using var globalBorderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+            canvas.DrawRoundRect(new SKRect(0.5f, 0.5f, WIDTH - 0.5f, HEIGHT - 0.5f), cornerRadius, cornerRadius, globalBorderPaint);
 
-            // 7. 提交给系统
             UpdateWindow(surface.PeekPixels());
         }
 
-        // 复用 NotchWindow 的图像提交逻辑
         private unsafe void UpdateWindow(SKPixmap pixmap)
         {
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
@@ -365,7 +418,6 @@ namespace NotchPeninsula
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
 
-        // 供 NotchWindow 在托盘被点击时调用，实时同步状态并重绘
         public static void UpdateAutoStartState(bool enable)
         {
             if (_instance != null && _instance._isAutoStartEnabled != enable)

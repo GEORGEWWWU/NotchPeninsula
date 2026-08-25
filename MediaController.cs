@@ -1,51 +1,106 @@
 ﻿using System;
-using System.IO; // ★ 新增：用于 AsStreamForRead()
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.Media.Control;
-using SkiaSharp; // ★ 新增：用于 SKBitmap
+using SkiaSharp;
 
 namespace NotchPeninsula
 {
     public class MediaController
     {
-        public string Title { get; private set; } = "Notch Peninsula"; //[cite: 3]
-        public string Artist { get; private set; } = "Waiting for media..."; //[cite: 3]
-        public bool IsPlaying { get; private set; } = false; //[cite: 3]
-        public bool IsActive { get; private set; } = false; //[cite: 3]
+        // 暴露给 UI 的静态配置和单例，方便极速调用
+        public static MediaController? Instance { get; private set; }
+        public static string TargetPlatform = "other"; // 默认通用媒体
+        public static bool IsMediaControlEnabled = true; // 媒体开关
 
-        // ★ 新增：保存当前封面
+        public string Title { get; private set; } = "Notch Peninsula";
+        public string Artist { get; private set; } = "Waiting for media...";
+        public bool IsPlaying { get; private set; } = false;
+        public bool IsActive { get; private set; } = false;
         public SKBitmap? Thumbnail { get; private set; }
 
-        private GlobalSystemMediaTransportControlsSession? _currentSession; //[cite: 3]
+        private GlobalSystemMediaTransportControlsSessionManager? _manager;
+        private GlobalSystemMediaTransportControlsSession? _currentSession;
 
         public MediaController()
         {
-            _ = InitializeAsync(); //[cite: 3]
+            Instance = this;
+            _ = InitializeAsync();
         }
 
         private async Task InitializeAsync()
         {
-            var manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-            if (manager != null)
+            _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+            if (_manager != null)
             {
-                manager.SessionsChanged += async (s, e) => await UpdateSession(manager);
-                await UpdateSession(manager);
+                _manager.SessionsChanged += async (s, e) => await UpdateSession(_manager);
+                await UpdateSession(_manager);
             }
+        }
+
+        // 供 UI 更改配置后主动拉取刷新
+        public async Task ForceRefresh()
+        {
+            if (_manager != null) await UpdateSession(_manager);
         }
 
         private async Task UpdateSession(GlobalSystemMediaTransportControlsSessionManager manager)
         {
-            var sessions = manager.GetSessions();
-            // 修正：使用 GetPlaybackInfo()?.PlaybackStatus
-            _currentSession = sessions.FirstOrDefault(s =>
-                s.GetPlaybackInfo()?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
-                ?? sessions.FirstOrDefault();
+            GlobalSystemMediaTransportControlsSession? newSession = null;
+
+            // 1. 如果总开关打开，执行精确的平台过滤
+            if (IsMediaControlEnabled)
+            {
+                var sessions = manager.GetSessions();
+
+                if (TargetPlatform == "other")
+                {
+                    // 通用模式屏蔽抖音
+                    newSession = sessions.FirstOrDefault(s => s.SourceAppUserModelId.ToLower().Contains("justsolo"))
+                              ?? sessions.FirstOrDefault(s => !s.SourceAppUserModelId.ToLower().Contains("douyin"));
+                }
+                else
+                {
+                    foreach (var s in sessions)
+                    {
+                        var id = s.SourceAppUserModelId.ToLower();
+                        if (id.Contains("douyin")) continue; // 全局拉黑抖音
+
+                        // 网易云音乐 (包名常为 cloudmusic 或 netease)
+                        if (TargetPlatform == "netease" && (id.Contains("cloudmusic") || id.Contains("netease")))
+                        { newSession = s; break; }
+
+                        // QQ音乐 (包名常为 qqmusic 或 tencent)
+                        else if (TargetPlatform == "qqmusic" && (id.Contains("qqmusic") || id.Contains("tencent")))
+                        { newSession = s; break; }
+
+                        // Apple Music (包名通常包含 apple 和 music)
+                        else if (TargetPlatform == "applemusic" && id.Contains("apple") && id.Contains("music"))
+                        { newSession = s; break; }
+
+                        // 酷狗、Spotify、Echomusic 直接匹配 TargetPlatform ID
+                        else if (TargetPlatform != "netease" && TargetPlatform != "qqmusic" && TargetPlatform != "applemusic"
+                                 && id.Contains(TargetPlatform))
+                        { newSession = s; break; }
+                    }
+                }
+            }
+
+            // 2. 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
+            if (_currentSession != null && newSession != null && _currentSession.SourceAppUserModelId == newSession.SourceAppUserModelId)
+            {
+                await RefreshProperties();
+                IsActive = true;
+                return;
+            }
+
+            // 3. 切换到了新的会话（或者置空）
+            _currentSession = newSession;
 
             if (_currentSession != null)
             {
                 _currentSession.MediaPropertiesChanged += async (s, e) => await RefreshProperties();
-                // 修正：事件名叫 PlaybackInfoChanged
                 _currentSession.PlaybackInfoChanged += async (s, e) => await RefreshProperties();
 
                 await RefreshProperties();
@@ -57,20 +112,21 @@ namespace NotchPeninsula
                 Title = "No Media";
                 Artist = "";
                 IsPlaying = false;
+                Thumbnail?.Dispose();
+                Thumbnail = null;
             }
         }
 
         private async Task RefreshProperties()
         {
-            if (_currentSession == null) return; //[cite: 3]
+            if (_currentSession == null) return;
 
-            var props = await _currentSession.TryGetMediaPropertiesAsync(); //[cite: 3]
+            var props = await _currentSession.TryGetMediaPropertiesAsync();
             if (props != null)
             {
-                Title = string.IsNullOrEmpty(props.Title) ? "Unknown" : props.Title; //[cite: 3]
-                Artist = string.IsNullOrEmpty(props.Artist) ? "Unknown" : props.Artist; //[cite: 3]
+                Title = string.IsNullOrEmpty(props.Title) ? "Unknown" : props.Title;
+                Artist = string.IsNullOrEmpty(props.Artist) ? "Unknown" : props.Artist;
 
-                // ★ 新增：获取并解析封面
                 if (props.Thumbnail != null)
                 {
                     try
@@ -78,24 +134,21 @@ namespace NotchPeninsula
                         using var stream = await props.Thumbnail.OpenReadAsync();
                         using var dotNetStream = stream.AsStreamForRead();
 
-                        var oldThumb = Thumbnail; // 保存旧封面以便释放内存
+                        var oldThumb = Thumbnail;
                         Thumbnail = SKBitmap.Decode(dotNetStream);
-                        oldThumb?.Dispose(); // 避免 Skia 内存泄漏
+                        oldThumb?.Dispose();
                     }
-                    catch(Exception ex)
+                    catch (Exception ex)
                     {
-                        Logger.Error("封面解析失败，可能是格式不支持或流读取错误", ex);
+                        Logger.Error("封面解析失败", ex);
                         Thumbnail = null;
                     }
                 }
-                else
-                {
-                    Thumbnail = null;
-                }
+                else Thumbnail = null;
             }
 
-            var playbackInfo = _currentSession.GetPlaybackInfo(); //[cite: 3]
-            IsPlaying = playbackInfo != null && playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; //[cite: 3]
+            var playbackInfo = _currentSession.GetPlaybackInfo();
+            IsPlaying = playbackInfo != null && playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
         }
 
         public async void TogglePlayPause()
