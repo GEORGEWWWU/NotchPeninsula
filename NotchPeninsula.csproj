@@ -8,11 +8,11 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<!-- 添加 WinForms 支持，仅仅为了拿一下屏幕宽度 -->
 		<UseWindowsForms>true</UseWindowsForms>
-		<ApplicationIcon>NPS_NotchPeninsula-Icon-512x.ico</ApplicationIcon>
+		<ApplicationIcon>NPS_NotchPeninsula-Icon-512x-NEW.ico</ApplicationIcon>
 	</PropertyGroup>
 
 	<ItemGroup>
-	  <Content Include="NPS_NotchPeninsula-Icon-512x.ico" />
+	  <Content Include="NPS_NotchPeninsula-Icon-512x-NEW.ico" />
 	</ItemGroup>
 
 	<ItemGroup>
