@@ -104,14 +104,13 @@ namespace NotchPeninsula
             // 文本防溢出与尾部渐变遮罩逻辑
 
             // 动态释放空间
-            // 悬浮显示控件时需保留 95px；仅显示频谱时，频谱总宽才21.2px，只需保留 45px；暂停且未悬浮只需 16px 边距
             float rightOccupiedWidth = 16f;
             if (media.IsActive)
             {
                 if (isHovered)
                     rightOccupiedWidth = 95f;  // 留给 Prev, Play, Next 控件的空间
-                else if (media.IsPlaying)
-                    rightOccupiedWidth = 45f;  // 留给 5根律动柱子 的空间，释放近 50px 给长歌名！
+                else
+                    rightOccupiedWidth = 45f;
             }
 
             // 动态计算文本最大右边界
@@ -172,9 +171,9 @@ namespace NotchPeninsula
 
                     DrawSvgPath(canvas, iconPaint, btnNextX + 11, 12, CreateNextPath());
                 }
-                else if (media.IsPlaying && bars != null)
+                else if (bars != null)
                 {
-                    // 2. 正常播放且未悬浮时：渲染 5 根极简律动柱子
+                    // 正常播放且未悬浮时：渲染 5 根极简律动柱子
                     using var barPaint = new SKPaint { Color = SKColors.White, IsAntialias = true };
 
                     float barWidth = 2f;
@@ -189,8 +188,7 @@ namespace NotchPeninsula
 
                     for (int i = 0; i < 5; i++)
                     {
-                        // 底部保留 2.5px，作为安静底噪形态
-                        float h = Math.Max(2.5f, bars[i] * maxH);
+                        float h = Math.Max(2f, bars[i] * maxH);
                         float y = (HEIGHT - h) / 2f;
 
                         var rect = new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h);
