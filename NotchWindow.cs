@@ -2,6 +2,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using SkiaSharp;
+using Forms= System.Windows.Forms;
+using Microsoft.Win32;
+using Windows.ApplicationModel;
 using Timer = System.Timers.Timer;
 
 namespace NotchPeninsula
@@ -9,6 +12,8 @@ namespace NotchPeninsula
     public class NotchWindow
     {
         private readonly IntPtr _hwnd;
+        private const string RunKey = @"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        private const string AppName = "NotchPeninsula";
         private readonly MediaController _media;
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
@@ -17,6 +22,7 @@ namespace NotchPeninsula
 
         // 动画引擎核心状态
         private bool _lastActiveState = false;
+        private System.Windows.Forms.NotifyIcon _notifyIcon;
         private bool _isAnimating = false;
         private float _currentWidth = Renderer.STANDBY_WIDTH;
         private float _startWidth = Renderer.STANDBY_WIDTH;
@@ -29,6 +35,7 @@ namespace NotchPeninsula
 
         public NotchWindow()
         {
+
             _media = new MediaController();
             _wndProcDelegate = WndProc;
 
@@ -61,7 +68,7 @@ namespace NotchPeninsula
 
             if (_hwnd == IntPtr.Zero)
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
-
+             InitializeNotifyIcon();
             // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
             _renderTimer = new Timer(16);
             _renderTimer.Elapsed += (s, e) => RenderLoop();
@@ -76,7 +83,74 @@ namespace NotchPeninsula
                 Win32.DispatchMessage(ref msg);
             }
         }
+         #region 托盘
+        private void InitializeNotifyIcon()
+        {
+            _notifyIcon = new Forms.NotifyIcon();
+            try { _notifyIcon!.Icon = new System.Drawing.Icon(".\\ico.ico"); }
+            catch { _notifyIcon!.Icon = System.Drawing.SystemIcons.Application; }
+            _notifyIcon.Visible = true;
+            _notifyIcon.Text = "NotchPeninsula";
 
+            var menu = new Forms.ContextMenuStrip();
+            var auto = new Forms.ToolStripMenuItem("开机自启") { Checked = IsAutoStartEnabled() };
+            auto.Click += (_, __) => { ToggleAutoStart(); auto.Checked = IsAutoStartEnabled(); };
+            menu.Items.Add(auto);
+            menu.Items.Add(new Forms.ToolStripSeparator());
+            var exit = new Forms.ToolStripMenuItem("退出");
+            exit.Click += (_, __) => Environment.Exit(917813);
+            menu.Items.Add(exit);
+
+            _notifyIcon.ContextMenuStrip = menu;
+            _notifyIcon.MouseClick += NotifyIcon_MouseClick;
+        }
+
+        private void NotifyIcon_MouseClick(object? sender, Forms.MouseEventArgs e)
+        {
+            
+            return;
+
+        }
+
+
+        #endregion
+        #region 自启
+
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+private static extern int GetCurrentPackageFullName(ref uint packageFullNameLength, System.Text.StringBuilder? packageFullName);
+
+
+private bool IsAutoStartEnabled()
+{
+    try
+    {
+            using var k = Registry.CurrentUser.OpenSubKey(RunKey);
+            return k?.GetValue(AppName) != null;
+    }
+    catch { return false; }
+}
+
+private void ToggleAutoStart()
+{
+    try
+    {
+        {
+            using var k = Registry.CurrentUser.CreateSubKey(RunKey);
+if (k.GetValue(AppName) != null)
+{
+    k.DeleteValue(AppName, false);
+    Debug.WriteLine("新信息:🔘 已关闭开机自启");
+}
+else
+{
+    k.SetValue(AppName, Environment.ProcessPath ?? "");
+    Debug.WriteLine("新信息:🔘 已开启开机自启");
+}
+        }
+    }
+    catch (Exception ex) { Debug.WriteLine($"新信息:❌ 自启失败：{ex.Message}"); }
+}
+#endregion
         private unsafe void RenderLoop()
         {
             // 1. 监测状态变更，触发动画
