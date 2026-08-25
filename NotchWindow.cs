@@ -178,36 +178,39 @@ namespace NotchPeninsula
         {
             try
             {
-                using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
+                using var key = Registry.CurrentUser.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
 
                 string? rawValue = key?.GetValue(AppName) as string;
                 string exePath = GetCurrentExePath();
 
-                bool matchesCurrentExe =
+                bool enabled =
                     !string.IsNullOrEmpty(exePath) &&
                     string.Equals(
                         NormalizeRunValue(rawValue),
                         exePath,
                         StringComparison.OrdinalIgnoreCase);
 
-                Info($"开机自启状态: {matchesCurrentExe} | 当前路径: {exePath} | 注册表值: {rawValue}");
-                try
+                Info($"开机自启状态: {enabled} | 当前路径: {exePath} | 注册表值: {rawValue}");
+
+                // 若存在残留值但不是当前 exe，则清理掉
+                if (!enabled && !string.IsNullOrWhiteSpace(rawValue))
                 {
-                    key?.DeleteValue(AppName, false);
-                    Info("已清理注册表中开机自启的残留值");
-                    key?.SetValue(AppName, $"\"{exePath}\"");
-                    Info("已重新写入注册表开机自启值");
-                    if (!string.IsNullOrEmpty(exePath) &&
-                    string.Equals(
-                        NormalizeRunValue(rawValue),
-                        exePath,
-                        StringComparison.OrdinalIgnoreCase)) return true;
-                    else return false;
-                } catch (Exception ex)
-                {
-                    Error("清理注册表残留值失败", ex);
+                    try
+                    {
+                        using var writeKey = Registry.CurrentUser.OpenSubKey(
+                            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
+
+                        writeKey?.DeleteValue(AppName, false);
+                        Info("已清理残留的开机自启注册表值");
+                    }
+                    catch (Exception ex)
+                    {
+                        Error("清理残留开机自启值失败", ex);
+                    }
                 }
-                return matchesCurrentExe;
+
+                return enabled;
             }
             catch
             {
