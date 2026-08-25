@@ -121,34 +121,54 @@ namespace NotchPeninsula
         {
             if (_currentSession == null) return;
 
-            var props = await _currentSession.TryGetMediaPropertiesAsync();
-            if (props != null)
+            try
             {
-                Title = string.IsNullOrEmpty(props.Title) ? "Unknown" : props.Title;
-                Artist = string.IsNullOrEmpty(props.Artist) ? "Unknown" : props.Artist;
-
-                if (props.Thumbnail != null)
+                var props = await _currentSession.TryGetMediaPropertiesAsync();
+                if (props != null)
                 {
-                    try
-                    {
-                        using var stream = await props.Thumbnail.OpenReadAsync();
-                        using var dotNetStream = stream.AsStreamForRead();
+                    // 尝试安全读取，如果底层 COM 对象炸了，外层 try-catch 会兜底
+                    Title = string.IsNullOrEmpty(props.Title) ? "Unknown" : props.Title;
+                    Artist = string.IsNullOrEmpty(props.Artist) ? "Unknown" : props.Artist;
 
-                        var oldThumb = Thumbnail;
-                        Thumbnail = SKBitmap.Decode(dotNetStream);
-                        oldThumb?.Dispose();
-                    }
-                    catch (Exception ex)
+                    if (props.Thumbnail != null)
                     {
-                        Logger.Error("封面解析失败", ex);
-                        Thumbnail = null;
+                        try
+                        {
+                            using var stream = await props.Thumbnail.OpenReadAsync();
+                            using var dotNetStream = stream.AsStreamForRead();
+
+                            var oldThumb = Thumbnail;
+                            Thumbnail = SKBitmap.Decode(dotNetStream);
+                            oldThumb?.Dispose();
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error("封面解析失败", ex);
+                            Thumbnail = null;
+                        }
                     }
+                    else Thumbnail = null;
                 }
-                else Thumbnail = null;
+            }
+            catch (Exception ex)
+            {
+                // 捕获网页视频等非常规媒体源导致的底层 COM 异常
+                Logger.Error("读取媒体属性失败，可能遇到不规范的媒体源", ex);
+                Title = "Unknown";
+                Artist = "Unknown";
+                Thumbnail = null;
             }
 
-            var playbackInfo = _currentSession.GetPlaybackInfo();
-            IsPlaying = playbackInfo != null && playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            // 播放状态的读取也建议加上保护
+            try
+            {
+                var playbackInfo = _currentSession.GetPlaybackInfo();
+                IsPlaying = playbackInfo != null && playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            }
+            catch
+            {
+                IsPlaying = false;
+            }
         }
 
         public async void TogglePlayPause()
