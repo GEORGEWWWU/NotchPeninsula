@@ -59,8 +59,9 @@ namespace NotchPeninsula
                 };
                 _capture.StartRecording();
             }
-            catch
+            catch(Exception ex)
             {
+                Logger.Error("音频捕获初始化失败，可能是无权限或无音频设备", ex);
                 // 无权限或无音频设备时静默，全 0 柱子输出
             }
         }
