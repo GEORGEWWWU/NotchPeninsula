@@ -32,6 +32,8 @@ namespace NotchPeninsula
         private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
         private readonly System.Windows.Forms.NotifyIcon _notifyIcon; // 托盘与自启常量
         private const string AppName = "NotchPeninsula";
+        private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
+        private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
 
         public NotchWindow()
         {
@@ -86,10 +88,14 @@ namespace NotchPeninsula
             contextMenu.Items.Add(settingsItem);
 
             // 开机自启选项
-            var autoStartItem = new System.Windows.Forms.ToolStripMenuItem("开机自启");
-            autoStartItem.CheckOnClick = true;
-            autoStartItem.Checked = IsAutoStartEnabled();
-            autoStartItem.CheckedChanged += (s, e) => ToggleAutoStart(autoStartItem.Checked);
+            _autoStartItem = new System.Windows.Forms.ToolStripMenuItem("开机自启");
+            _autoStartItem.CheckOnClick = true;
+            _autoStartItem.Checked = IsAutoStartEnabled();
+            // 触发时，告诉核心逻辑“这来自托盘(true)”
+            _autoStartItem.CheckedChanged += (s, e) => ToggleAutoStart(_autoStartItem.Checked, true);
+
+            // 添加到菜单时使用 _autoStartItem
+            contextMenu.Items.Add(_autoStartItem);
 
             // 退出选项
             var exitItem = new System.Windows.Forms.ToolStripMenuItem("退出");
@@ -104,7 +110,6 @@ namespace NotchPeninsula
                 Environment.Exit(0);
             };
 
-            contextMenu.Items.Add(autoStartItem);
             contextMenu.Items.Add(exitItem);
 
             // 2. 最后再给托盘对象的各项属性赋值
@@ -147,8 +152,13 @@ namespace NotchPeninsula
         }
 
         // 🛠️ 开机自启注册表逻辑 (CurrentUser 级别，无需管理员权限)
-        private void ToggleAutoStart(bool enable)
+        // 增加 sourceIsTray 参数，实现双向极速同步
+        public static void ToggleAutoStart(bool enable, bool sourceIsTray = false)
         {
+            // 防重入锁：防止程序修改托盘 Checked 时再次触发自身
+            if (_isSyncingState) return;
+            _isSyncingState = true;
+
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
@@ -156,16 +166,11 @@ namespace NotchPeninsula
                 if (enable)
                 {
                     string exePath = GetCurrentExePath();
-                    if (string.IsNullOrEmpty(exePath))
+                    if (!string.IsNullOrEmpty(exePath))
                     {
-                        Warn("当前 exe 路径为空，无法设置开机自启");
-                        return;
+                        key?.SetValue(AppName, $"\"{exePath}\"");
+                        Info($"已设置开机自启，路径: {exePath}");
                     }
-
-                    // 必须和程序当前运行位置一致
-                    string registryValue = $"\"{exePath}\"";
-                    key?.SetValue(AppName, registryValue);
-                    Info($"已设置开机自启，路径: {exePath}");
                 }
                 else
                 {
@@ -177,9 +182,24 @@ namespace NotchPeninsula
             {
                 Error("修改开机自启失败", ex);
             }
+
+            // 极速双向同步逻辑
+            if (!sourceIsTray && _autoStartItem != null)
+            {
+                // 如果是控制台点的开关，则同步更新托盘状态
+                // (这会触发 CheckedChanged，但会被顶部的 _isSyncingState 拦截)
+                _autoStartItem.Checked = enable;
+            }
+            else if (sourceIsTray)
+            {
+                // 如果是托盘点的菜单，则立刻通知控制台重绘（如果控制台开着的话）
+                ConsoleWindow.UpdateAutoStartState(enable);
+            }
+
+            _isSyncingState = false; // 解锁
         }
 
-        private bool IsAutoStartEnabled()
+        public static bool IsAutoStartEnabled()
         {
             try
             {
