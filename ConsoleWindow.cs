@@ -15,7 +15,7 @@ namespace NotchPeninsula
         private static bool _classRegistered = false;
 
         private const int WIDTH = 600;
-        private const int HEIGHT = 800;
+        private const int HEIGHT = 600;
         private const int TITLE_BAR_HEIGHT = 32;
 
         private bool _minHovered = false;
@@ -37,12 +37,16 @@ namespace NotchPeninsula
             // 确保整个进程生命周期内只注册一次窗口类
             if (!_classRegistered)
             {
+                // 提取当前 exe 程序自身的图标句柄
+                var appIconHandle = System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName)?.Handle ?? IntPtr.Zero;
+
                 var wc = new Win32.WNDCLASS
                 {
-                    lpfnWndProc = _staticWndProc, // 绑定静态委托
+                    lpfnWndProc = _staticWndProc,
                     hInstance = System.Diagnostics.Process.GetCurrentProcess().Handle,
                     lpszClassName = "NotchConsoleClass",
-                    hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW)
+                    hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW),
+                    hIcon = appIconHandle // 绑定图标
                 };
                 Win32.RegisterClass(ref wc);
                 _classRegistered = true;
@@ -53,7 +57,7 @@ namespace NotchPeninsula
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_LAYERED,
-                "NotchConsoleClass", "Console",
+                "NotchConsoleClass", "NotchPeninsula",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
                 (screenWidth - WIDTH) / 2, (screenHeight - HEIGHT) / 2, WIDTH, HEIGHT,
                 IntPtr.Zero, IntPtr.Zero, System.Diagnostics.Process.GetCurrentProcess().Handle, IntPtr.Zero
@@ -119,39 +123,58 @@ namespace NotchPeninsula
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
 
-            // 1. 窗口底色 (深色模式) 和 边框
-            canvas.Clear(new SKColor(32, 32, 32));
-            using var borderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
-            canvas.DrawRect(0, 0, WIDTH, HEIGHT, borderPaint);
+            // 1. 核心：彻底清空为透明背景！(依赖 Layered Window 的天生特性)
+            canvas.Clear(SKColors.Transparent);
 
-            // 2. 标题栏区域
+            float cornerRadius = 8f; // 你可以随意调节圆角大小
+            var windowRect = new SKRect(0, 0, WIDTH, HEIGHT);
+
+            // 2. 绘制带圆角的主窗口底色
+            using var bgPaint = new SKPaint { Color = new SKColor(32, 32, 32), IsAntialias = true };
+            canvas.DrawRoundRect(windowRect, cornerRadius, cornerRadius, bgPaint);
+
+            // --- 开启裁剪：防止顶部的标题栏和按钮背景画出圆角的范围 ---
+            canvas.Save();
+            using var clipPath = new SKPath();
+            clipPath.AddRoundRect(windowRect, cornerRadius, cornerRadius);
+            canvas.ClipPath(clipPath, SKClipOperation.Intersect, true);
+
+            // 3. 标题栏区域
             using var titleBarPaint = new SKPaint { Color = new SKColor(40, 40, 40) };
-            canvas.DrawRect(1, 1, WIDTH - 2, TITLE_BAR_HEIGHT, titleBarPaint);
+            canvas.DrawRect(0, 0, WIDTH, TITLE_BAR_HEIGHT, titleBarPaint);
 
-            // 3. 绘制 WinUI 风格按钮
-            using var iconPaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1f, IsAntialias = true };
-
-            // 最小化按钮 (46x32)
+            // 4. 绘制 WinUI 风格按钮背景 (悬浮态)
             if (_minHovered)
             {
                 using var hoverPaint = new SKPaint { Color = new SKColor(255, 255, 255, 20) };
-                canvas.DrawRect(WIDTH - 92, 1, 46, TITLE_BAR_HEIGHT, hoverPaint);
+                canvas.DrawRect(WIDTH - 92, 0, 46, TITLE_BAR_HEIGHT, hoverPaint);
             }
-            canvas.DrawLine(WIDTH - 92 + 18, 16, WIDTH - 92 + 28, 16, iconPaint);
-
-            // 关闭按钮 (46x32)
             if (_closeHovered)
             {
                 using var hoverPaint = new SKPaint { Color = new SKColor(232, 17, 35) };
-                canvas.DrawRect(WIDTH - 46, 1, 45, TITLE_BAR_HEIGHT, hoverPaint);
+                canvas.DrawRect(WIDTH - 46, 0, 46, TITLE_BAR_HEIGHT, hoverPaint);
             }
-            // 简单的 SVG Path 式 X 号
+
+            // --- 结束裁剪 ---
+            canvas.Restore();
+
+            // 5. 绘制按钮图标
+            using var iconPaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1f, IsAntialias = true };
+            // 最小化按钮图标
+            canvas.DrawLine(WIDTH - 92 + 18, 16, WIDTH - 92 + 28, 16, iconPaint);
+            // 关闭按钮图标 (X)
             float cx = WIDTH - 46 + 23;
             float cy = 16;
             canvas.DrawLine(cx - 5, cy - 5, cx + 5, cy + 5, iconPaint);
             canvas.DrawLine(cx + 5, cy - 5, cx - 5, cy + 5, iconPaint);
 
-            // 4. 提交到 Layered Window
+            // 6. 最后盖上一层极细的抗锯齿圆角描边边框
+            using var borderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+            // 坐标缩进 0.5f，这是 Skia 的渲染特性，能确保 1px 的线条画得最清晰锐利，且不被边界裁掉一半
+            var borderRect = new SKRect(0.5f, 0.5f, WIDTH - 0.5f, HEIGHT - 0.5f);
+            canvas.DrawRoundRect(borderRect, cornerRadius, cornerRadius, borderPaint);
+
+            // 7. 提交给系统
             UpdateWindow(surface.PeekPixels());
         }
 
