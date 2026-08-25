@@ -96,7 +96,7 @@ namespace NotchPeninsula
                         // 计算原始能量
                         float power = s.q1 * s.q1 + s.q2 * s.q2 - s.coeff * s.q1 * s.q2;
 
-                        // ★ 修改：先计算出未裁剪的原始 val，不急着 Clamp
+                        // 先计算出未裁剪的原始 val，不急着 Clamp
                         float val = (MathF.Sqrt(Math.Max(0, power)) / 256f) * 20f * s.weight;
                         _tempBars[j] = val;
 
@@ -108,9 +108,7 @@ namespace NotchPeninsula
                     }
                     _sampleCount = 0;
 
-                    // ==========================================
                     // 🎛️ AGC 自动增益补偿核心逻辑
-                    // ==========================================
                     // 1. 包络追踪 (Envelope Tracking)：快升慢降
                     if (maxValThisFrame > _currentPeak)
                         _currentPeak = maxValThisFrame; // 极速起跳 (Attack)：大音量瞬间压制，防爆音
@@ -129,7 +127,6 @@ namespace NotchPeninsula
                     {
                         _tempBars[j] = Math.Clamp(_tempBars[j] * dynamicGain, 0f, 1f);
                     }
-                    // ==========================================
 
                     // 无锁双缓冲原子交换
                     Array.Copy(_tempBars, _backBars, 5);

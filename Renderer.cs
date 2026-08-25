@@ -4,9 +4,7 @@ namespace NotchPeninsula
 {
     public static class Renderer
     {
-        // ==========================================
         // 🛠️ 1. 布局核心参数 
-        // ==========================================
         // 物理窗口设为最大宽度，足以容纳媒体展开时的尺寸 (260 + 两侧外圆角空间)
         public const int WINDOW_WIDTH = 320;
         public const int HEIGHT = 34;
@@ -105,7 +103,7 @@ namespace NotchPeninsula
             // ==========================================
             // 文本防溢出与尾部渐变遮罩逻辑
 
-            // ★ 核心修复 1：动态释放空间
+            // 动态释放空间
             // 悬浮显示控件时需保留 95px；仅显示频谱时，频谱总宽才21.2px，只需保留 45px；暂停且未悬浮只需 16px 边距
             float rightOccupiedWidth = 16f;
             if (media.IsActive)
@@ -183,7 +181,7 @@ namespace NotchPeninsula
                     float spacing = 2.8f;
                     float maxH = 16f;
 
-                    // ★ 核心修复 3：绝对靠右对齐
+                    // 绝对靠右对齐
                     // 5根柱子总宽 = (5个柱子 * 2px) + (4个间距 * 2.8px) = 21.2px
                     // 固定将其锚定在距离右边界 16px 的位置
                     float totalBarWidth = 21.2f;

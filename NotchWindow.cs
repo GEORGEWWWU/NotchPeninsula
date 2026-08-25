@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using SkiaSharp;
+using Microsoft.Win32;
 using Timer = System.Timers.Timer;
 
 namespace NotchPeninsula
@@ -28,6 +29,8 @@ namespace NotchPeninsula
         private readonly DateTime _appStartTime = DateTime.Now;
         private readonly AudioAnalyzer _audioAnalyzer;
         private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
+        private readonly System.Windows.Forms.NotifyIcon _notifyIcon; // 托盘与自启常量
+        private const string AppName = "NotchPeninsula";
 
         public NotchWindow()
         {
@@ -69,6 +72,39 @@ namespace NotchPeninsula
             _renderTimer = new Timer(16);
             _renderTimer.Elapsed += (s, e) => RenderLoop();
             _renderTimer.Start();
+
+            // 🛠️ 托盘图标与右键菜单
+            // 1. 先实例化托盘对象，防止闭包捕获到未初始化的变量
+            _notifyIcon = new System.Windows.Forms.NotifyIcon();
+
+            var contextMenu = new System.Windows.Forms.ContextMenuStrip();
+
+            // 开机自启选项
+            var autoStartItem = new System.Windows.Forms.ToolStripMenuItem("开机自启");
+            autoStartItem.CheckOnClick = true;
+            autoStartItem.Checked = IsAutoStartEnabled();
+            autoStartItem.CheckedChanged += (s, e) => ToggleAutoStart(autoStartItem.Checked);
+
+            // 退出选项
+            var exitItem = new System.Windows.Forms.ToolStripMenuItem("退出");
+            exitItem.Click += (s, e) => {
+                // 增加判空，彻底消除警告并保证绝对安全
+                if (_notifyIcon != null)
+                {
+                    _notifyIcon.Visible = false;
+                    _notifyIcon.Dispose();
+                }
+                Environment.Exit(0);
+            };
+
+            contextMenu.Items.Add(autoStartItem);
+            contextMenu.Items.Add(exitItem);
+
+            // 2. 最后再给托盘对象的各项属性赋值
+            _notifyIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Process.GetCurrentProcess().MainModule!.FileName);
+            _notifyIcon.Text = "NotchPeninsula";
+            _notifyIcon.ContextMenuStrip = contextMenu;
+            _notifyIcon.Visible = true;
         }
 
         public void Run()
@@ -77,6 +113,42 @@ namespace NotchPeninsula
             {
                 Win32.TranslateMessage(ref msg);
                 Win32.DispatchMessage(ref msg);
+            }
+        }
+
+        // 🛠️ 开机自启注册表逻辑 (CurrentUser 级别，无需管理员权限)
+        private void ToggleAutoStart(bool enable)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
+                if (enable)
+                {
+                    // 动态获取当前进程完整路径，哪怕用户移动了 exe 文件位置，重新勾选也能自愈
+                    string path = Process.GetCurrentProcess().MainModule!.FileName;
+                    key?.SetValue(AppName, $"\"{path}\"");
+                }
+                else
+                {
+                    key?.DeleteValue(AppName, false);
+                }
+            }
+            catch
+            {
+                // 极致性能：忽略注册表权限异常，绝不弹窗阻塞主渲染线程
+            }
+        }
+
+        private bool IsAutoStartEnabled()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
+                return key?.GetValue(AppName) != null;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -229,7 +301,7 @@ namespace NotchPeninsula
                         _isHovered = true;
                     }
 
-                    // ★ 精准热区判定：提取 X 和 Y 坐标，将命中区收缩至 SVG 周围
+                    // 精准热区判定：提取 X 和 Y 坐标，将命中区收缩至 SVG 周围
                     if (_isHovered && _media.IsActive)
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
@@ -260,7 +332,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    // ★ 统一修改点击逻辑：只有在指针变为小手的热区内才允许触发点击
+                    // 统一修改点击逻辑：只有在指针变为小手的热区内才允许触发点击
                     if (_isHovered && _media.IsActive && _isCursorOverIcon)
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
