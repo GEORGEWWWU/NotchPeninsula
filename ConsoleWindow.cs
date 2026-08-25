@@ -26,7 +26,6 @@ namespace NotchPeninsula
         private bool _isAutoStartEnabled;
         private bool _toggleHovered = false;
         // 交互设置状态
-        private bool _isAutoHideEnabled = false;
         private bool _autoHideToggleHovered = false;
 
         // 媒体设置状态
@@ -226,7 +225,7 @@ namespace NotchPeninsula
                     }
                     else if (_autoHideToggleHovered)
                     {
-                        _isAutoHideEnabled = !_isAutoHideEnabled;
+                        NotchWindow.IsAutoHideEnabled = !NotchWindow.IsAutoHideEnabled;
                         Render();
                     }
                     else if (_dropdownHovered)
@@ -371,7 +370,7 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 2) // 交互设置页面的右侧内容
             {
-                DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", _isAutoHideEnabled, _autoHideToggleHovered);
+                DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
             }
 
             canvas.Restore(); // 结束大边界裁切

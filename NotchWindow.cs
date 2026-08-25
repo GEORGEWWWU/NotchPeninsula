@@ -34,6 +34,14 @@ namespace NotchPeninsula
         private const string AppName = "NotchPeninsula";
         private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
+        public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关
+        // Y轴动画引擎状态
+        private float _currentY = 0f;
+        private float _targetY = 0f;
+        private float _startY = 0f;
+        private bool _isYAnimating = false;
+        private DateTime _yAnimStartTime;
+        private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
 
         public NotchWindow()
         {
@@ -246,18 +254,63 @@ namespace NotchPeninsula
 
         private unsafe void RenderLoop()
         {
-            // 1. 监测状态变更，触发动画
+            // ================= 1. 自动隐藏 (Y轴) 动画逻辑 =================
+            // 触发条件：开启了自动隐藏 + 无媒体活动 + 没有被用户手动点击展开
+            bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded;
+
+            // 如果鼠标正在悬停，绝对不能隐藏 (修复鼠标没上去过不收缩的问题)
+            if (_isHovered) shouldHide = false;
+
+            // 隐藏时保留底部的 4px 尾巴 (窗口整体向上移)
+            float expectedTargetY = shouldHide ? -(Renderer.HEIGHT - 4) : 0f;
+
+            if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
+            {
+                _startY = _currentY;
+                _targetY = expectedTargetY;
+                _yAnimStartTime = DateTime.Now;
+                _isYAnimating = true;
+            }
+
+            if (_isYAnimating)
+            {
+                double elapsedY = (DateTime.Now - _yAnimStartTime).TotalSeconds;
+                double durationY = 0.35; // 350ms 缓入缓出
+                if (elapsedY >= durationY)
+                {
+                    _isYAnimating = false;
+                    _currentY = _targetY;
+                }
+                else
+                {
+                    double t = elapsedY / durationY;
+                    double ease;
+                    if (t < 0.5)
+                    {
+                        ease = 4.0 * t * t * t;
+                    }
+                    else
+                    {
+                        double f = -2.0 * t + 2.0;
+                        ease = 1.0 - (f * f * f) * 0.5;
+                    }
+                    _currentY = (float)(_startY + (_targetY - _startY) * ease);
+                }
+            }
+
+            // ================= 2. 宽度 (X轴) 弹簧动画逻辑 =================
+            // 只有当状态发生变化时才触发新的宽度动画！(修复长度变短的Bug)
             bool currentActive = _media.IsActive;
             if (currentActive != _lastActiveState)
             {
                 _lastActiveState = currentActive;
                 _startWidth = _currentWidth;
+                // 确保这里正确指向 MEDIA_WIDTH
                 _targetWidth = currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH;
                 _animStartTime = DateTime.Now;
                 _isAnimating = true;
             }
 
-            // 2. 弹簧物理引擎计算每一帧
             if (_isAnimating)
             {
                 double elapsed = (DateTime.Now - _animStartTime).TotalSeconds;
@@ -270,7 +323,6 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    // 复刻你提供的 Bouncy 物理常数
                     double freq = 2.4;
                     double decay = 12.0;
                     double spring = 1.0 - Math.Cos(freq * elapsed * 2.0 * Math.PI) * Math.Exp(-decay * elapsed);
@@ -278,39 +330,34 @@ namespace NotchPeninsula
                 }
             }
 
-            // 计算启动待机文本的进入动画进度 (0到1)
+            // ================= 3. 其它效果 (淡入/音频柱) =================
             double uptime = (DateTime.Now - _appStartTime).TotalSeconds;
-            float startupProgress = 1f; // 默认 1，代表动画结束
-            if (uptime < 0.6) // 动画总时长 0.6 秒
+            float startupProgress = 1f;
+            if (uptime < 0.6)
             {
                 double t = uptime / 0.6;
                 double invT = 1.0 - t;
-                // 使用 Cubic Ease-Out (快进缓停) 公式: 1 - (1-t)^3，全乘法计算性能最好
                 startupProgress = (float)(1.0 - (invT * invT * invT));
             }
 
-            // 渲染前，加入平滑插值逻辑
             var targetBars = _audioAnalyzer.GetBars();
             for (int i = 0; i < 5; i++)
             {
                 float target = targetBars[i];
                 if (target > _currentBars[i])
                 {
-                    // 瞬间跃升 (Attack)：响应极速，体现打击感
                     _currentBars[i] += (target - _currentBars[i]) * 0.75f;
                 }
                 else
                 {
-                    // 缓慢回落 (Release)：带一点点滞留和残影
                     _currentBars[i] += (target - _currentBars[i]) * 0.12f;
                 }
             }
 
-            // 3. 渲染
+            // ================= 4. 渲染 =================
             var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
-            // 将平滑后的柱子数据 _currentBars 传给 Draw 方法
             Renderer.Draw(canvas, _media, _isHovered, _currentWidth, startupProgress, _currentBars);
 
             UpdateWindow(surface.PeekPixels());
@@ -345,7 +392,8 @@ namespace NotchPeninsula
 
             Win32.GetWindowRect(_hwnd, out var rect);
             ptDst.x = rect.Left;
-            ptDst.y = rect.Top;
+            // 强制锚定屏幕顶部，防漂移性能最高：
+            ptDst.y = (int)_currentY;
 
             var size = new Win32.SIZE(Renderer.WINDOW_WIDTH, Renderer.HEIGHT);
             var blend = new Win32.BLENDFUNCTION
@@ -416,9 +464,17 @@ namespace NotchPeninsula
                     _isTrackingMouse = false;
                     _isHovered = false;
                     _isCursorOverIcon = false;
+                    _isManuallyExpanded = false; // 鼠标离开刘海区域后，重置状态，让其自动缩回
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
+                    // 如果目前处于隐藏状态（或正在隐藏），且点击了漏出的尾巴，则手动展开
+                    if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
+                    {
+                        _isManuallyExpanded = true;
+                        return (IntPtr)0; // 拦截点击，防止穿透
+                    }
+
                     if (_isHovered && _media.IsActive && _isCursorOverIcon)
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
