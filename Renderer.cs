@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using SkiaSharp;
-using Svg.Skia;
+// 🚀 删除了 Svg.Skia 引用
 
 namespace NotchPeninsula
 {
@@ -19,14 +19,9 @@ namespace NotchPeninsula
         public const int OUTER_R = 14;
         public const int INNER_R = 12;
 
-        // ==========================================
-        // 🚀 全局锁：阻止 Timer 线程重入并发导致 C++ 指针爆炸
-        // ==========================================
         private static readonly object _renderLock = new object();
 
-        // ==========================================
         // 🚀 全局复用池 (彻底实现 60FPS 零 GC 分配)
-        // ==========================================
         private static readonly SKPaint _bgPaint = new SKPaint { Color = SKColors.Black, IsAntialias = true };
         private static readonly SKPaint _fallbackIconPaint = new SKPaint { Color = new SKColor(0, 120, 212), IsAntialias = true };
 
@@ -42,7 +37,6 @@ namespace NotchPeninsula
         private static readonly SKPaint _mediaIconPaint = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
         private static readonly SKPaint _barPaint = new SKPaint { Color = SKColors.White, IsAntialias = true };
 
-        // 1px 的物理遮罩缓存，永远不释放，用矩阵拉伸实现渐变截断
         private static readonly SKShader _fadeShader = SKShader.CreateLinearGradient(
             new SKPoint(0, 0), new SKPoint(1, 0),
             new[] { SKColors.Black.WithAlpha(0), SKColors.Black },
@@ -56,14 +50,16 @@ namespace NotchPeninsula
         private static readonly SKPath _prevPath = CreatePrevPath();
         private static readonly SKPath _nextPath = CreateNextPath();
 
-        private static SKBitmap? _defaultIcon;
-        private static SKSvg? _qqSvg;
-        private static SKSvg? _defaultToastSvg;
-        private static bool _svgLoaded = false;
+        // 🚀 PNG 图标缓存替换 SVG
+        private static SKBitmap? _defaultAppIcon;
+        private static SKBitmap? _qqIcon;
+        private static SKBitmap? _defaultToastIcon;
+        private static bool _iconsLoaded = false;
+        private static readonly SKPaint _highQualitySampling = new SKPaint { FilterQuality = SKFilterQuality.High };
 
-        private static SKBitmap? GetDefaultIcon()
+        private static SKBitmap? GetDefaultAppIcon()
         {
-            if (_defaultIcon == null)
+            if (_defaultAppIcon == null)
             {
                 try
                 {
@@ -74,36 +70,58 @@ namespace NotchPeninsula
                         using var ms = new System.IO.MemoryStream();
                         bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
                         ms.Position = 0;
-                        _defaultIcon = SKBitmap.Decode(ms);
+                        _defaultAppIcon = SKBitmap.Decode(ms);
                     }
                 }
                 catch { }
             }
-            return _defaultIcon;
+            return _defaultAppIcon;
         }
 
-        private static void EnsureSvgLoaded()
+        private static void EnsureIconsLoaded()
         {
-            if (_svgLoaded) return;
+            if (_iconsLoaded) return;
             try
             {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string qqPath = Path.Combine(baseDir, "data", "image", "qq-icon.svg");
-                string defaultPath = Path.Combine(baseDir, "data", "image", "wintoast-icon.svg");
+                string qqPath = Path.Combine(baseDir, "data", "image", "qq-icon.png");
+                string defaultPath = Path.Combine(baseDir, "data", "image", "wintoast-icon.png");
 
-                if (File.Exists(qqPath)) { _qqSvg = new SKSvg(); _qqSvg.Load(qqPath); }
-                if (File.Exists(defaultPath)) { _defaultToastSvg = new SKSvg(); _defaultToastSvg.Load(defaultPath); }
+                // 直接极速解码为位图
+                if (File.Exists(qqPath))
+                {
+                    using var stream = File.OpenRead(qqPath);
+                    _qqIcon = SKBitmap.Decode(stream);
+                }
+
+                if (File.Exists(defaultPath))
+                {
+                    using var stream = File.OpenRead(defaultPath);
+                    _defaultToastIcon = SKBitmap.Decode(stream);
+                }
             }
             catch (Exception ex)
             {
-                Logger.Error("加载 SVG 图标失败", ex);
+                Logger.Error("加载 PNG 图标失败", ex);
             }
-            finally { _svgLoaded = true; }
+            finally { _iconsLoaded = true; }
         }
+
+        // 🚀 核心优化：高频字符串与排版宽度缓存
+        private static string _lastMediaTitle = "";
+        private static string _lastMediaArtist = "";
+        private static string _cachedMediaDisplay = "Code By Ryen";
+        private static float _cachedMediaTextTop = 0f;
+        private static float _cachedMediaTextHeight = 0f;
+
+        private static uint _lastToastId = 0;
+        private static string _cachedToastSender = "";
+        private static string _cachedToastBody = "";
+        private static float _cachedToastTitleWidth = 0f;
+        private static float _cachedToastBodyWidth = 0f;
 
         public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null)
         {
-            // 🛑 核心防崩：拒绝多线程重入。如果上一帧还没画完（比如正在从硬盘读图），下一帧直接丢弃
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
             {
@@ -129,53 +147,55 @@ namespace NotchPeninsula
                 canvas.DrawPath(_bgPath, _bgPaint);
 
                 canvas.Save();
-                // 全局最高裁切指令，确保内容绝不漏出背景
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
 
                 // ---------------- [ Toast 消息通知 ] ----------------
                 if (toast != null)
                 {
+                    if (_lastToastId != toast.NotificationId)
+                    {
+                        _lastToastId = toast.NotificationId;
+                        _cachedToastSender = !string.IsNullOrEmpty(toast.Title) ? toast.Title : (!string.IsNullOrEmpty(toast.AppName) ? toast.AppName : "通知");
+                        _cachedToastBody = toast.Body ?? "";
+                        _cachedToastTitleWidth = _titlePaint.MeasureText(_cachedToastSender);
+                        _cachedToastBodyWidth = _bodyPaint.MeasureText(_cachedToastBody);
+                    }
+
                     float iconSize = 28f;
                     float toastIconX = left + 14f;
                     float toastIconY = (currentHeight - iconSize) / 2f;
                     var iconRect = new SKRect(toastIconX, toastIconY, toastIconX + iconSize, toastIconY + iconSize);
 
-                    EnsureSvgLoaded();
-                    SKSvg? targetSvg = null;
+                    EnsureIconsLoaded();
+                    SKBitmap? targetIcon = null;
 
                     if (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
                         toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase))
                     {
-                        targetSvg = _qqSvg;
+                        targetIcon = _qqIcon;
                     }
-                    if (targetSvg == null) targetSvg = _defaultToastSvg;
+                    if (targetIcon == null) targetIcon = _defaultToastIcon;
 
-                    if (targetSvg != null && targetSvg.Picture != null)
+                    // 直接绘制位图，逻辑极其精简
+                    if (targetIcon != null)
                     {
                         canvas.Save();
                         _clipPath.Rewind();
                         _clipPath.AddRoundRect(iconRect, 4, 4);
                         canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-
-                        float scaleX = iconSize / targetSvg.Picture.CullRect.Width;
-                        float scaleY = iconSize / targetSvg.Picture.CullRect.Height;
-
-                        canvas.Translate(toastIconX, toastIconY);
-                        canvas.Scale(scaleX, scaleY);
-                        canvas.DrawPicture(targetSvg.Picture);
+                        canvas.DrawBitmap(targetIcon, iconRect, _highQualitySampling);
                         canvas.Restore();
                     }
                     else
                     {
-                        var defaultIcon = GetDefaultIcon();
-                        if (defaultIcon != null)
+                        var defaultAppIcon = GetDefaultAppIcon();
+                        if (defaultAppIcon != null)
                         {
                             canvas.Save();
                             _clipPath.Rewind();
                             _clipPath.AddRoundRect(iconRect, 4, 4);
                             canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                            using var samplingOpts = new SKPaint { FilterQuality = SKFilterQuality.High };
-                            canvas.DrawBitmap(defaultIcon, iconRect, samplingOpts);
+                            canvas.DrawBitmap(defaultAppIcon, iconRect, _highQualitySampling);
                             canvas.Restore();
                         }
                         else
@@ -187,9 +207,6 @@ namespace NotchPeninsula
                     float toastTextX = toastIconX + iconSize + 10f;
                     float toastMaxTextRight = right - 16f;
 
-                    string senderName = !string.IsNullOrEmpty(toast.Title) ? toast.Title : (!string.IsNullOrEmpty(toast.AppName) ? toast.AppName : "通知");
-                    string bodyText = toast.Body ?? "";
-
                     float textSpacing = 5f;
                     float totalTextHeight = 13.5f + 11.5f + textSpacing;
                     float toastTextY = (currentHeight - totalTextHeight) / 2f;
@@ -197,13 +214,10 @@ namespace NotchPeninsula
                     float line1Y = toastTextY + 11.5f;
                     float line2Y = line1Y + 13.5f + textSpacing;
 
-                    canvas.DrawText(senderName, toastTextX, line1Y, _titlePaint);
-                    canvas.DrawText(bodyText, toastTextX, line2Y, _bodyPaint);
+                    canvas.DrawText(_cachedToastSender, toastTextX, line1Y, _titlePaint);
+                    canvas.DrawText(_cachedToastBody, toastTextX, line2Y, _bodyPaint);
 
-                    float maxTitleWidth = _titlePaint.MeasureText(senderName);
-                    float maxBodyWidth = _bodyPaint.MeasureText(bodyText);
-
-                    if ((toastTextX + maxTitleWidth > toastMaxTextRight) || (toastTextX + maxBodyWidth > toastMaxTextRight))
+                    if ((toastTextX + _cachedToastTitleWidth > toastMaxTextRight) || (toastTextX + _cachedToastBodyWidth > toastMaxTextRight))
                     {
                         float fadeWidth = 15f;
                         float fadeStart = toastMaxTextRight - fadeWidth;
@@ -222,12 +236,31 @@ namespace NotchPeninsula
                 }
 
                 // ---------------- [ 媒体控制状态 ] ----------------
-                string displayTitle = media.IsActive
-                    ? (string.IsNullOrEmpty(media.Artist) ? media.Title : $"{media.Artist} - {media.Title}")
-                    : "Code By Ryen";
+                if (media.IsActive)
+                {
+                    if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist)
+                    {
+                        _lastMediaTitle = media.Title ?? "";
+                        _lastMediaArtist = media.Artist ?? "";
+                        _cachedMediaDisplay = string.IsNullOrEmpty(_lastMediaArtist) ? _lastMediaTitle : $"{_lastMediaArtist} - {_lastMediaTitle}";
 
-                var textBounds = new SKRect();
-                _textPaint.MeasureText(displayTitle, ref textBounds);
+                        var tb = new SKRect();
+                        _textPaint.MeasureText(_cachedMediaDisplay, ref tb);
+                        _cachedMediaTextTop = tb.Top;
+                        _cachedMediaTextHeight = tb.Height;
+                    }
+                }
+                else
+                {
+                    if (_cachedMediaDisplay != "Code By Ryen")
+                    {
+                        _cachedMediaDisplay = "Code By Ryen";
+                        var tb = new SKRect();
+                        _textPaint.MeasureText(_cachedMediaDisplay, ref tb);
+                        _cachedMediaTextTop = tb.Top;
+                        _cachedMediaTextHeight = tb.Height;
+                    }
+                }
 
                 float textOffsetY = 0f;
                 _textPaint.Color = SKColors.White;
@@ -237,8 +270,9 @@ namespace NotchPeninsula
                     _textPaint.Color = SKColors.White.WithAlpha((byte)(255 * startupProgress));
                 }
 
-                float textY = (currentHeight - textBounds.Height) / 2 - textBounds.Top + 0.3f + textOffsetY;
-                float textX = media.IsActive ? left + 16 : left + (currentWidth - textBounds.Width) / 2f;
+                float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
+                float textWidth = _textPaint.MeasureText(_cachedMediaDisplay);
+                float textX = media.IsActive ? left + 16 : left + (currentWidth - textWidth) / 2f;
 
                 if (media.IsActive && media.Thumbnail != null)
                 {
@@ -253,13 +287,13 @@ namespace NotchPeninsula
                     _clipPath.Rewind();
                     _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
                     canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                    canvas.DrawBitmap(media.Thumbnail, thumbRect);
+                    canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
                     canvas.Restore();
 
                     textX += thumbSize + 10;
                 }
 
-                canvas.DrawText(displayTitle, textX, textY, _textPaint);
+                canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
 
                 if (media.IsActive)
                 {
@@ -306,7 +340,6 @@ namespace NotchPeninsula
             }
             finally
             {
-                // 确保释放锁，迎接下一帧
                 System.Threading.Monitor.Exit(_renderLock);
             }
         }
