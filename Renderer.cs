@@ -11,7 +11,7 @@ namespace NotchPeninsula
         public const int WINDOW_WIDTH = 320;
         public const int BASE_HEIGHT = 34;
         public const int TOAST_HEIGHT = 55;
-        public const int MAX_WINDOW_HEIGHT = 51;
+        public const int MAX_WINDOW_HEIGHT = 55;
 
         // 状态目标宽度
         public const int STANDBY_WIDTH = 130;
@@ -111,7 +111,7 @@ namespace NotchPeninsula
             // ==========================================
             if (toast != null)
             {
-                float iconSize = 22f; // 改回适合的尺寸
+                float iconSize = 28f;
                 float toastIconX = left + 14f;
                 float toastIconY = (currentHeight - iconSize) / 2f;
                 var iconRect = new SKRect(toastIconX, toastIconY, toastIconX + iconSize, toastIconY + iconSize);
@@ -187,19 +187,26 @@ namespace NotchPeninsula
                 titlePaint.Shader = textShader;
                 bodyPaint.Shader = textShader;
 
-                float totalTextHeight = 13.5f + 11.5f + 2f;
+                // 在这里定义行间距，想要多宽改这个数字就行
+                float textSpacing = 5f;
+
+                // 动态计算总高度（标题字号 + 内容字号 + 间距）
+                float totalTextHeight = 13.5f + 11.5f + textSpacing;
                 float toastTextY = (currentHeight - totalTextHeight) / 2f;
 
                 string senderName = !string.IsNullOrEmpty(toast.Title) ? toast.Title :
                                    (!string.IsNullOrEmpty(toast.AppName) ? toast.AppName : "通知");
 
-                canvas.DrawText(senderName, toastTextX, toastTextY + 11.5f, titlePaint);
-                canvas.DrawText(toast.Body ?? "", toastTextX, toastTextY + 26f, bodyPaint);
+                // 动态推算两行文字的精确 Y 轴位置
+                float line1Y = toastTextY + 11.5f;
+                float line2Y = line1Y + 13.5f + textSpacing;
+
+                canvas.DrawText(senderName, toastTextX, line1Y, titlePaint);
+                canvas.DrawText(toast.Body ?? "", toastTextX, line2Y, bodyPaint);
 
                 return;
             }
 
-            // ... 下面的媒体绘制逻辑保持不变 ...
             string displayTitle = media.IsActive
                 ? (string.IsNullOrEmpty(media.Artist) ? media.Title : $"{media.Artist} - {media.Title}")
                 : "Code By Ryen";
