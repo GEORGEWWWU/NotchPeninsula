@@ -22,6 +22,8 @@ namespace NotchPeninsula
 
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _currentSession;
+        private bool _isBilibiliSession; // 通用模式下当前会话是否为 bilibili，用于隐藏 Artist
+        private static SKBitmap? _bilibiliLogo; // 缓存 bilibili 站标封面
 
         public MediaController()
         {
@@ -53,6 +55,7 @@ namespace NotchPeninsula
             if (IsMediaControlEnabled)
             {
                 var sessions = manager.GetSessions();
+                Logger.Info("会话列表: " + string.Join(" | ", sessions.Select(s => s.SourceAppUserModelId))); // 临时调试
 
                 if (TargetPlatform == "other")
                 {
@@ -83,9 +86,17 @@ namespace NotchPeninsula
                         else if (TargetPlatform != "netease" && TargetPlatform != "qqmusic" && TargetPlatform != "applemusic"
                                  && id.Contains(TargetPlatform))
                         { newSession = s; break; }
+
+                        // LX Music (包名通常包含 cn.toside.music.desktop 或 lxmusic)
+                        else if (TargetPlatform == "lxmusic" && (id.Contains("cn.toside.music.desktop") || id.Contains("lxmusic")))
+                        { newSession = s; break; }
                     }
                 }
             }
+
+            // 命中 bilibili 会话时打标记，供刷新时隐藏 Artist
+            _isBilibiliSession = newSession != null
+                                 && newSession.SourceAppUserModelId.ToLower().Contains("bilibili");
 
             // 2. 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
             if (_currentSession != null && newSession != null && _currentSession.SourceAppUserModelId == newSession.SourceAppUserModelId)
@@ -128,9 +139,17 @@ namespace NotchPeninsula
                 {
                     // 尝试安全读取，如果底层 COM 对象炸了，外层 try-catch 会兜底
                     Title = string.IsNullOrEmpty(props.Title) ? "Unknown" : props.Title;
-                    Artist = string.IsNullOrEmpty(props.Artist) ? "Unknown" : props.Artist;
+                    // bilibili 视频没有演唱者概念，隐藏 Artist
+                    Artist = _isBilibiliSession ? "" : (string.IsNullOrEmpty(props.Artist) ? "Unknown" : props.Artist);
 
-                    if (props.Thumbnail != null)
+                    if (_isBilibiliSession)
+                    {
+                        // bilibili 播放时始终用站标做封面
+                        var oldThumb = Thumbnail;
+                        Thumbnail = GetBilibiliLogo();
+                        oldThumb?.Dispose();
+                    }
+                    else if (props.Thumbnail != null)
                     {
                         try
                         {
@@ -155,7 +174,7 @@ namespace NotchPeninsula
                 // 捕获网页视频等非常规媒体源导致的底层 COM 异常
                 Logger.Error("读取媒体属性失败，可能遇到不规范的媒体源", ex);
                 Title = "Unknown";
-                Artist = "Unknown";
+                Artist = _isBilibiliSession ? "" : "Unknown";
                 Thumbnail = null;
             }
 
@@ -168,6 +187,26 @@ namespace NotchPeninsula
             catch
             {
                 IsPlaying = false;
+            }
+        }
+
+        // 读取并缓存 bilibili 站标封面，返回副本避免被 Thumbnail 释放时误伤缓存
+        private static SKBitmap? GetBilibiliLogo()
+        {
+            try
+            {
+                if (_bilibiliLogo == null)
+                {
+                    var path = Path.Combine(AppContext.BaseDirectory, "data", "image", "bilibili-logo.png");
+                    using var stream = File.OpenRead(path);
+                    _bilibiliLogo = SKBitmap.Decode(stream);
+                }
+                return _bilibiliLogo?.Copy();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("加载 bilibili 站标失败", ex);
+                return null;
             }
         }
 
