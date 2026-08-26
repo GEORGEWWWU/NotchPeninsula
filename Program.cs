@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Runtime.InteropServices;
-using Microsoft.Win32; // ★ 添加注册表命名空间
+using System.Threading;
+using Microsoft.Win32; // 添加注册表命名空间
 
 namespace NotchPeninsula
 {
@@ -48,18 +49,28 @@ namespace NotchPeninsula
         [STAThread]
         static void Main(string[] args)
         {
-            SetProcessDPIAware();
-            if (args.Length > 0 && args[0] == "-debug")
+            // 使用 using 包裹 Mutex，确保底层系统句柄被严格释放
+            using (Mutex mutex = new Mutex(true, "Local\\NotchPeninsula_SingleInstanceMutex", out bool createdNew))
             {
-                _isDebugMode = true;
-                Logger.Debug("调试模式已启用");
-            }
+                // 如果 createdNew 为 false，说明内核中已经存在同名 Mutex（已有实例在运行）
+                if (!createdNew)
+                {
+                    return; // 极速退出，不分配任何多余内存，不执行任何初始化
+                }
 
-            // 在实例化任何窗口和媒体控制器之前，先将配置注入内存
-            LoadSettings();
+                SetProcessDPIAware();
+                if (args.Length > 0 && args[0] == "-debug")
+                {
+                    _isDebugMode = true;
+                    Logger.Debug("调试模式已启用");
+                }
 
-            var window = new NotchWindow();
-            window.Run();
+                // 在实例化任何窗口和媒体控制器之前，先将配置注入内存
+                LoadSettings();
+
+                var window = new NotchWindow();
+                window.Run();
+            } // 离开作用域时，Mutex 的 Dispose() 被自动调用，绝无句柄泄露
         }
     }
 }
