@@ -35,6 +35,8 @@ namespace NotchPeninsula
         private bool _dropdownHovered = false;
         private int _hoveredDropdownIndex = -1;
         private int _selectedPlatformIndex = 0;
+        // 关于页交互状态
+        private int _hoveredLinkIndex = -1;
 
         // 预设媒体平台数组
         private static readonly (string Id, string Name)[] _platforms = new[] {
@@ -144,9 +146,10 @@ namespace NotchPeninsula
 
                     // Tab Hover 判定
                     int newHoveredTab = -1;
-                    if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 0;
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 50 && y <= TITLE_BAR_HEIGHT + 86) newHoveredTab = 1;
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 90 && y <= TITLE_BAR_HEIGHT + 126) newHoveredTab = 2; // 新增：交互设置 Tab
+                    if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 0; // 通用页
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 50 && y <= TITLE_BAR_HEIGHT + 86) newHoveredTab = 1; // 媒体页
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 90 && y <= TITLE_BAR_HEIGHT + 126) newHoveredTab = 2; // 交互页
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 166) newHoveredTab = 3; // 关于页
 
                     bool newToggleHovered = false;
                     bool newToastToggleHovered = false;
@@ -186,13 +189,21 @@ namespace NotchPeninsula
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
                     }
+                    int newHoveredLinkIndex = -1;
+                    if (_selectedTab == 3)
+                    {
+                        if (x >= 216 && x <= 290 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 155) newHoveredLinkIndex = 0; // 检测更新
+                        else if (x >= 300 && x <= 370 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 155) newHoveredLinkIndex = 1; // 仓库地址
+                        else if (x >= 380 && x <= 430 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 155) newHoveredLinkIndex = 2; // Ryen
+                    }
 
                     if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
                         newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
                         newToastToggleHovered != _toastToggleHovered ||
                         newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
                         newDropdownHovered != _dropdownHovered ||
-                        newHoveredDropdownIndex != _hoveredDropdownIndex)
+                        newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex
+                        )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
@@ -200,6 +211,7 @@ namespace NotchPeninsula
                         _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered; // 新增
                         _dropdownHovered = newDropdownHovered;
                         _hoveredDropdownIndex = newHoveredDropdownIndex;
+                        _hoveredLinkIndex = newHoveredLinkIndex;
                         Render();
                     }
                     break;
@@ -221,8 +233,9 @@ namespace NotchPeninsula
                     }
                     else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; Render(); }
-                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); } // 切换到交互设置页
-                    else if (_toggleHovered)
+                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); _dropdownOpen = false; }
+                    else if (_selectedTab == 3 && _hoveredLinkIndex != -1)
                     {
                         _isAutoStartEnabled = !_isAutoStartEnabled;
                         Render();
@@ -345,6 +358,7 @@ namespace NotchPeninsula
             DrawTab(0, "通用设置", 10);
             DrawTab(1, "媒体设置", 50);
             DrawTab(2, "交互设置", 90);
+            DrawTab(3, "关于软件", 130);
 
             // ================= 右侧卡片内容区 =================
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
@@ -401,6 +415,17 @@ namespace NotchPeninsula
             else if (_selectedTab == 2) // 交互设置页面的右侧内容
             {
                 DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
+            }
+            else if (_selectedTab == 3) // 关于页面的右侧内容
+            {
+                // 1. 大 icon 绘制 (居中，尺寸 48x48)
+                
+                // 2. 大标题 (NotchPeninsula)
+
+                // 3. 小文本 (NPS v1.0.0)
+
+                // 4. 一排超链接 (检测更新、仓库地址、Ryen)
+
             }
 
             canvas.Restore(); // 结束大边界裁切
