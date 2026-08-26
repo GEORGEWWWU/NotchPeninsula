@@ -20,7 +20,6 @@ namespace NotchPeninsula
         private readonly Win32.WndProc _wndProcDelegate;
 
         // 动画引擎核心状态
-        private bool _lastActiveState = false;
         private bool _isAnimating = false;
         private float _currentWidth = Renderer.STANDBY_WIDTH;
         private float _startWidth = Renderer.STANDBY_WIDTH;

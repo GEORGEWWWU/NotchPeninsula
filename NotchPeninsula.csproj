@@ -15,13 +15,16 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-	  <Content Include="NPS_NotchPeninsula-Icon-512x-NEW.ico" />
-	  <Content Include="data\image\bilibili-logo.png" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="NPS_NotchPeninsula-Icon-512x-NEW.ico" />
+		<Content Include="data\image\bilibili-logo.png" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\image\qq-icon.svg" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\image\wintoast-icon.svg" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="SkiaSharp" Version="2.88.8" />
 		<PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.8" />
+		<PackageReference Include="Svg.Skia" Version="2.0.0" />
 		<!-- 新增音频采集库 -->
 		<PackageReference Include="NAudio.Core" Version="2.2.1" />
 		<PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
