@@ -25,6 +25,7 @@ namespace NotchPeninsula
         private int _hoveredTab = -1;
         private bool _isAutoStartEnabled;
         private bool _toggleHovered = false;
+        private bool _toastToggleHovered = false;
         // 交互设置状态
         private bool _autoHideToggleHovered = false;
 
@@ -148,6 +149,7 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 90 && y <= TITLE_BAR_HEIGHT + 126) newHoveredTab = 2; // 新增：交互设置 Tab
 
                     bool newToggleHovered = false;
+                    bool newToastToggleHovered = false;
                     bool newMediaToggleHovered = false;
                     bool newAutoHideToggleHovered = false;
                     bool newDropdownHovered = false;
@@ -155,15 +157,20 @@ namespace NotchPeninsula
 
                     if (_selectedTab == 0)
                     {
+                        // 开机自启
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newToggleHovered = true;
+                        // 系统消息通知开关
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
+                            newToastToggleHovered = true;
                     }
                     else if (_selectedTab == 1)
                     {
+                        // 媒体控制
                         if (!_dropdownOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newMediaToggleHovered = true;
 
-                        // 修改下拉菜单
+                        // 下拉菜单
                         if (!_dropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
                             newDropdownHovered = true;
 
@@ -175,18 +182,21 @@ namespace NotchPeninsula
                     }
                     else if (_selectedTab == 2)
                     {
+                        // 自动隐藏
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
                     }
 
                     if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
                         newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
-                        newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered || // 新增
+                        newToastToggleHovered != _toastToggleHovered ||
+                        newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
                         newDropdownHovered != _dropdownHovered ||
                         newHoveredDropdownIndex != _hoveredDropdownIndex)
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
+                        _toastToggleHovered = newToastToggleHovered;
                         _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered; // 新增
                         _dropdownHovered = newDropdownHovered;
                         _hoveredDropdownIndex = newHoveredDropdownIndex;
@@ -211,12 +221,20 @@ namespace NotchPeninsula
                     }
                     else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; Render(); }
-                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); } // 新增：切换到交互设置页
+                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); } // 切换到交互设置页
                     else if (_toggleHovered)
                     {
                         _isAutoStartEnabled = !_isAutoStartEnabled;
                         Render();
                         NotchWindow.ToggleAutoStart(_isAutoStartEnabled, false);
+                    }
+                    else if (_toastToggleHovered)
+                    {
+                        // 切换状态
+                        NotchWindow.IsToastEnabled = !NotchWindow.IsToastEnabled;
+                        // 保存设置
+                        Program.SaveSetting("ToastEnabled", NotchWindow.IsToastEnabled ? 1 : 0);
+                        Render();
                     }
                     else if (_mediaToggleHovered)
                     {
@@ -353,6 +371,7 @@ namespace NotchPeninsula
             if (_selectedTab == 0) // 通用设置页面的右侧内容
             {
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
+                DrawToggleCard(84, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
             }
             else if (_selectedTab == 1) // 媒体控制设置页面的右侧内容
             {
