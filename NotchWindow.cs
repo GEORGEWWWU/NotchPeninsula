@@ -25,6 +25,13 @@ namespace NotchPeninsula
         private float _currentWidth = Renderer.STANDBY_WIDTH;
         private float _startWidth = Renderer.STANDBY_WIDTH;
         private float _targetWidth = Renderer.STANDBY_WIDTH;
+        private float _currentHeight = Renderer.BASE_HEIGHT;
+        private float _startHeight = Renderer.BASE_HEIGHT;
+        private float _targetHeight = Renderer.BASE_HEIGHT;
+
+        // Toast 状态控制
+        private ToastData? _currentToast = null;
+        private DateTime _toastEndTime;
         private DateTime _animStartTime;
         private readonly IntPtr _hCursorArrow;
         private readonly IntPtr _hCursorHand;
@@ -79,7 +86,7 @@ namespace NotchPeninsula
                 Win32.WS_EX_TOPMOST | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
                 "NotchPeninsulaClass", "Notch",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
-                x, y, Renderer.WINDOW_WIDTH, Renderer.HEIGHT,
+                x, y, Renderer.WINDOW_WIDTH, Renderer.MAX_WINDOW_HEIGHT,
                 IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero
             );
 
@@ -132,10 +139,10 @@ namespace NotchPeninsula
             _notifyIcon.Text = "NotchPeninsula";
             _notifyIcon.ContextMenuStrip = contextMenu;
             _notifyIcon.Visible = true;
-            
+
             _ = InitializeListenerAsync();
-            // 例如每 2 秒轮询一次
         }
+
         #region 监听
         private async System.Threading.Tasks.Task InitializeListenerAsync()
         {
@@ -154,11 +161,13 @@ namespace NotchPeninsula
         private void OnToastDetected(ToastData toast)
         {
             if (!_dispatcher.CheckAccess()) { _dispatcher.Invoke(() => OnToastDetected(toast)); return; }
-            // pass along best-effort process identifier for bottom-right display
-            Debug($"通知主体: {toast.Body} | Title: {toast.Title} | NotificationId: {toast.NotificationId} | Appname : {toast.AppName} | ProcessName: {toast.ProcessName} | Aumid: {toast.Aumid}");
+
+            _currentToast = toast;
+            _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
         }
 
         #endregion
+
         public void Run()
         {
             while (Win32.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
@@ -191,11 +200,10 @@ namespace NotchPeninsula
             return value.Trim();
         }
 
-        // 🛠️ 开机自启注册表逻辑 (CurrentUser 级别，无需管理员权限)
-        // 增加 sourceIsTray 参数，实现双向极速同步
+        // 🛠️ 开机自启注册表逻辑
         public static void ToggleAutoStart(bool enable, bool sourceIsTray = false)
         {
-            // 防重入锁：防止程序修改托盘 Checked 时再次触发自身
+            // 防重入锁
             if (_isSyncingState) return;
             _isSyncingState = true;
 
@@ -226,13 +234,10 @@ namespace NotchPeninsula
             // 极速双向同步逻辑
             if (!sourceIsTray && _autoStartItem != null)
             {
-                // 如果是控制台点的开关，则同步更新托盘状态
-                // (这会触发 CheckedChanged，但会被顶部的 _isSyncingState 拦截)
                 _autoStartItem.Checked = enable;
             }
             else if (sourceIsTray)
             {
-                // 如果是托盘点的菜单，则立刻通知控制台重绘（如果控制台开着的话）
                 ConsoleWindow.UpdateAutoStartState(enable);
             }
 
@@ -243,58 +248,43 @@ namespace NotchPeninsula
         {
             try
             {
-                using var key = Registry.CurrentUser.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
-
+                using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
                 string? rawValue = key?.GetValue(AppName) as string;
                 string exePath = GetCurrentExePath();
+                bool enabled = !string.IsNullOrEmpty(exePath) && string.Equals(NormalizeRunValue(rawValue), exePath, StringComparison.OrdinalIgnoreCase);
 
-                bool enabled =
-                    !string.IsNullOrEmpty(exePath) &&
-                    string.Equals(
-                        NormalizeRunValue(rawValue),
-                        exePath,
-                        StringComparison.OrdinalIgnoreCase);
-
-                Info($"开机自启状态: {enabled} | 当前路径: {exePath} | 注册表值: {rawValue}");
-
-                // 若存在残留值但不是当前 exe，则清理掉
                 if (!enabled && !string.IsNullOrWhiteSpace(rawValue))
                 {
                     try
                     {
-                        using var writeKey = Registry.CurrentUser.OpenSubKey(
-                            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
-
+                        using var writeKey = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
                         writeKey?.DeleteValue(AppName, false);
-                        Info("已清理残留的开机自启注册表值");
                     }
                     catch (Exception ex)
                     {
                         Error("清理残留开机自启值失败", ex);
                     }
                 }
-
                 return enabled;
             }
             catch
             {
-                Warn("检查开机自启状态失败，默认返回 false");
                 return false;
             }
         }
 
         private unsafe void RenderLoop()
         {
-            // ================= 1. 自动隐藏 (Y轴) 动画逻辑 =================
-            // 触发条件：开启了自动隐藏 + 无媒体活动 + 没有被用户手动点击展开
-            bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded;
+            // 判断当前 Toast 是否处于激活期
+            bool isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
+            if (!isToastActive && _currentToast != null) _currentToast = null; // 超时清理
 
-            // 如果鼠标正在悬停，绝对不能隐藏 (修复鼠标没上去过不收缩的问题)
+            // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏
+            bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive;
             if (_isHovered) shouldHide = false;
 
-            // 隐藏时保留底部的 4px 尾巴 (窗口整体向上移)
-            float expectedTargetY = shouldHide ? -(Renderer.HEIGHT - 4) : 0f;
+            // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
+            float expectedTargetY = shouldHide ? -(Renderer.MAX_WINDOW_HEIGHT - 4) : 0f;
 
             if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
@@ -330,15 +320,24 @@ namespace NotchPeninsula
                 }
             }
 
-            // ================= 2. 宽度 (X轴) 弹簧动画逻辑 =================
-            // 只有当状态发生变化时才触发新的宽度动画！(修复长度变短的Bug)
+            // ========================================================
+            // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
+            // ========================================================
             bool currentActive = _media.IsActive;
-            if (currentActive != _lastActiveState)
+
+            // 决策尺寸
+            float expectedTargetWidth = isToastActive ? Renderer.MEDIA_WIDTH : (currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH);
+            float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : Renderer.BASE_HEIGHT;
+
+            // 当预期尺寸和当前目标尺寸不同时，立刻重新锚定弹簧起点，不打断原有动量
+            if (Math.Abs(expectedTargetWidth - _targetWidth) > 0.1f || Math.Abs(expectedTargetHeight - _targetHeight) > 0.1f)
             {
-                _lastActiveState = currentActive;
                 _startWidth = _currentWidth;
-                // 确保这里正确指向 MEDIA_WIDTH
-                _targetWidth = currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH;
+                _targetWidth = expectedTargetWidth;
+
+                _startHeight = _currentHeight;
+                _targetHeight = expectedTargetHeight;
+
                 _animStartTime = DateTime.Now;
                 _isAnimating = true;
             }
@@ -352,13 +351,17 @@ namespace NotchPeninsula
                 {
                     _isAnimating = false;
                     _currentWidth = _targetWidth;
+                    _currentHeight = _targetHeight;
                 }
                 else
                 {
                     double freq = 2.4;
                     double decay = 12.0;
                     double spring = 1.0 - Math.Cos(freq * elapsed * 2.0 * Math.PI) * Math.Exp(-decay * elapsed);
+
+                    // X 和 Y 同步套用一个物理弹性引擎，保证视效极度统一协调
                     _currentWidth = (float)(_startWidth + (_targetWidth - _startWidth) * spring);
+                    _currentHeight = (float)(_startHeight + (_targetHeight - _startHeight) * spring);
                 }
             }
 
@@ -386,11 +389,14 @@ namespace NotchPeninsula
                 }
             }
 
-            // ================= 4. 渲染 =================
-            var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
+            // ================= 4. 渲染调用更新 =================
+            // 将此处的高度死锁为 MAX_WINDOW_HEIGHT
+            var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.MAX_WINDOW_HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
-            Renderer.Draw(canvas, _media, _isHovered, _currentWidth, startupProgress, _currentBars);
+
+            // 传入 currentHeight 和 _currentToast
+            Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast);
 
             UpdateWindow(surface.PeekPixels());
         }
@@ -406,7 +412,7 @@ namespace NotchPeninsula
                 {
                     biSize = (uint)Marshal.SizeOf(typeof(Win32.BITMAPINFOHEADER)),
                     biWidth = Renderer.WINDOW_WIDTH,
-                    biHeight = -Renderer.HEIGHT,
+                    biHeight = -Renderer.MAX_WINDOW_HEIGHT, // ★ 替换为 MAX_WINDOW_HEIGHT
                     biPlanes = 1,
                     biBitCount = 32,
                     biCompression = 0
@@ -416,7 +422,7 @@ namespace NotchPeninsula
             IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
             IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
 
-            long bytes = Renderer.WINDOW_WIDTH * Renderer.HEIGHT * 4;
+            long bytes = Renderer.WINDOW_WIDTH * Renderer.MAX_WINDOW_HEIGHT * 4;
             Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
 
             var ptSrc = new Win32.POINT(0, 0);
@@ -427,7 +433,7 @@ namespace NotchPeninsula
             // 强制锚定屏幕顶部，防漂移性能最高：
             ptDst.y = (int)_currentY;
 
-            var size = new Win32.SIZE(Renderer.WINDOW_WIDTH, Renderer.HEIGHT);
+            var size = new Win32.SIZE(Renderer.WINDOW_WIDTH, Renderer.MAX_WINDOW_HEIGHT);
             var blend = new Win32.BLENDFUNCTION
             {
                 BlendOp = Win32.AC_SRC_OVER,
@@ -470,7 +476,7 @@ namespace NotchPeninsula
                         _isHovered = true;
                     }
 
-                    if (_isHovered && _media.IsActive)
+                    if (_isHovered && _media.IsActive && _currentToast == null) // 当 Toast 存在时拦截控制按钮点击区域
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
                         int y = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
@@ -496,18 +502,17 @@ namespace NotchPeninsula
                     _isTrackingMouse = false;
                     _isHovered = false;
                     _isCursorOverIcon = false;
-                    _isManuallyExpanded = false; // 鼠标离开刘海区域后，重置状态，让其自动缩回
+                    _isManuallyExpanded = false;
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    // 如果目前处于隐藏状态（或正在隐藏），且点击了漏出的尾巴，则手动展开
                     if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
                     {
                         _isManuallyExpanded = true;
-                        return (IntPtr)0; // 拦截点击，防止穿透
+                        return (IntPtr)0;
                     }
 
-                    if (_isHovered && _media.IsActive && _isCursorOverIcon)
+                    if (_isHovered && _media.IsActive && _isCursorOverIcon && _currentToast == null)
                     {
                         int x = (short)(lParam.ToInt32() & 0xFFFF);
                         float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
