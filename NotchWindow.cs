@@ -5,11 +5,13 @@ using SkiaSharp;
 using Microsoft.Win32;
 using Timer = System.Timers.Timer;
 using static NotchPeninsula.Logger;
+using System.Windows.Threading;
 
 namespace NotchPeninsula
 {
     public class NotchWindow
     {
+        public static bool IsToastEnabled = true;
         private readonly IntPtr _hwnd;
         private readonly MediaController _media;
         private bool _isHovered = false;
@@ -27,6 +29,9 @@ namespace NotchPeninsula
         private readonly IntPtr _hCursorArrow;
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
+        private ToastNotificationListener? _listener;
+        private DispatcherTimer? _pollingTimer;
+        private readonly Dispatcher _dispatcher;
         private readonly DateTime _appStartTime = DateTime.Now;
         private readonly AudioAnalyzer _audioAnalyzer;
         private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
@@ -35,6 +40,7 @@ namespace NotchPeninsula
         private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
         public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关
+        private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // 新增的 Toast 监听器
         // Y轴动画引擎状态
         private float _currentY = 0f;
         private float _targetY = 0f;
@@ -45,6 +51,7 @@ namespace NotchPeninsula
 
         public NotchWindow()
         {
+            _dispatcher = Dispatcher.CurrentDispatcher;
             _media = new MediaController();
             _audioAnalyzer = new AudioAnalyzer();
             _wndProcDelegate = WndProc;
@@ -125,8 +132,33 @@ namespace NotchPeninsula
             _notifyIcon.Text = "NotchPeninsula";
             _notifyIcon.ContextMenuStrip = contextMenu;
             _notifyIcon.Visible = true;
+            
+            _ = InitializeListenerAsync();
+            // 例如每 2 秒轮询一次
+        }
+        #region 监听
+        private async System.Threading.Tasks.Task InitializeListenerAsync()
+        {
+            _listener = new ToastNotificationListener();
+            var (ok, msg) = await _listener.InitializeAsync();
+            if (!ok) { Error($"监听失败：{msg}"); return; }
+            _listener.OnToastDetected += OnToastDetected;
+            Info("通知监听已启动");
+
+            // Start polling only after listener initialization to reduce CPU usage during startup.
+            _pollingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+            _pollingTimer.Tick += (_, __) => _ = _listener?.FetchLatestNotificationAsync();
+            _pollingTimer.Start();
         }
 
+        private void OnToastDetected(ToastData toast)
+        {
+            if (!_dispatcher.CheckAccess()) { _dispatcher.Invoke(() => OnToastDetected(toast)); return; }
+            // pass along best-effort process identifier for bottom-right display
+            Debug($"通知主体: {toast.Body} | Title: {toast.Title} | NotificationId: {toast.NotificationId} | Appname : {toast.AppName} | ProcessName: {toast.ProcessName} | Aumid: {toast.Aumid}");
+        }
+
+        #endregion
         public void Run()
         {
             while (Win32.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
