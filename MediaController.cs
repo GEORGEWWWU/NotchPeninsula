@@ -139,8 +139,8 @@ namespace NotchPeninsula
                 {
                     // 尝试安全读取，如果底层 COM 对象炸了，外层 try-catch 会兜底
                     Title = string.IsNullOrEmpty(props.Title) ? "Unknown" : props.Title;
-                    // bilibili 视频没有演唱者概念，隐藏 Artist
-                    Artist = _isBilibiliSession ? "" : (string.IsNullOrEmpty(props.Artist) ? "Unknown" : props.Artist);
+                    // 浏览器视频没有艺术家概念，隐藏 Artist
+                    Artist = _isBilibiliSession ? "" : (string.IsNullOrEmpty(props.Artist) ? "" : props.Artist);
 
                     if (_isBilibiliSession)
                     {
