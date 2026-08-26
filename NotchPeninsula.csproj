@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
@@ -15,6 +15,7 @@
 
 	<ItemGroup>
 	  <Content Include="NPS_NotchPeninsula-Icon-512x-NEW.ico" />
+	  <Content Include="data\image\bilibili-logo.png" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 	<ItemGroup>

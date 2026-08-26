@@ -1,4 +1,4 @@
-﻿using SkiaSharp;
+using SkiaSharp;
 
 namespace NotchPeninsula
 {
@@ -43,7 +43,9 @@ namespace NotchPeninsula
 
             canvas.DrawPath(path, bgPaint); //[cite: 1]
 
-            string displayTitle = media.IsActive ? $"{media.Artist} - {media.Title}" : "Code By Ryen"; //[cite: 1]
+            string displayTitle = media.IsActive
+                ? (string.IsNullOrEmpty(media.Artist) ? media.Title : $"{media.Artist} - {media.Title}")
+                : "Code By Ryen"; //[cite: 1]
             using var textPaint = new SKPaint
             {
                 Color = SKColors.White,

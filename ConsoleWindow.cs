@@ -43,7 +43,8 @@ namespace NotchPeninsula
             ("kugou", "酷狗音乐"),
             ("spotify", "Spotify"),
             ("applemusic", "Apple Music"),
-            ("echomusic", "Echomusic")
+            ("echomusic", "Echo Music"),
+            ("lxmusic", "LX Music")
         };
 
         public static void Toggle()
