@@ -8,6 +8,7 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<!-- 添加 WinForms 支持，仅仅为了拿一下屏幕宽度 -->
 		<UseWindowsForms>true</UseWindowsForms>
+		<UseWPF>true</UseWPF>
 		<ApplicationIcon>NPS_NotchPeninsula-Icon-512x-NEW.ico</ApplicationIcon>
 
 	<Version>1.0.0</Version>
