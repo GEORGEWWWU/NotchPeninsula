@@ -255,6 +255,7 @@ namespace NotchPeninsula
                     if (_cachedMediaDisplay != "Code By Ryen")
                     {
                         _cachedMediaDisplay = "Code By Ryen";
+                        _lastMediaTitle = "";
                         var tb = new SKRect();
                         _textPaint.MeasureText(_cachedMediaDisplay, ref tb);
                         _cachedMediaTextTop = tb.Top;
