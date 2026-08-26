@@ -119,9 +119,9 @@ namespace NotchPeninsula
                     // 2. 划定底噪红线，防止在纯静音（0音量）时产生除以零，或者把主板电流底噪无限放大
                     float safePeak = Math.Max(_currentPeak, 0.02f);
 
-                    // 3. 计算动态倍率：期望这首歌的峰值能打到 0.85 的高度
-                    // 限制最大放大倍数为 15 倍（即使系统音量只有 6%，也能看起来像 100%）
-                    float dynamicGain = Math.Clamp(0.85f / safePeak, 1f, 15f);
+                    // 3. 计算动态倍率：
+                    // 将最大放大倍数从 15f 提升到 25f，并将目标高度微调到 0.9f
+                    float dynamicGain = Math.Clamp(0.9f / safePeak, 1f, 30f);
 
                     // 4. 应用动态增益，并进行最终裁剪
                     for (int j = 0; j < 5; j++)
