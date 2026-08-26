@@ -87,18 +87,33 @@ namespace NotchPeninsula
                 IntPtr appIconHandle = IntPtr.Zero;
                 try
                 {
-                    var icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName);
-                    if (icon != null)
+                    // 提取系统级小图标 (专供窗口注册和任务栏底层使用)
+                    var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName);
+                    if (sysIcon != null) appIconHandle = sysIcon.Handle;
+
+                    string iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-Icon-512x-NEW.ico");
+
+                    // 使用 SkiaSharp 直接解码 ICO，绕过 System.Drawing 的低质缩放
+                    // SKBitmap.Decode 对 ICO 会自动选取容器中最大/最匹配的帧，且支持 256px PNG 压缩帧
+                    if (System.IO.File.Exists(iconPath))
                     {
-                        appIconHandle = icon.Handle;
-                        using var bmp = icon.ToBitmap();
+                        _appIconBitmap = SKBitmap.Decode(iconPath);
+                    }
+
+                    // 兜底：如果外部文件丢失或解码失败，用系统图标转存
+                    if (_appIconBitmap == null && sysIcon != null)
+                    {
+                        using var bmp = sysIcon.ToBitmap();
                         using var ms = new System.IO.MemoryStream();
                         bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
                         ms.Position = 0;
                         _appIconBitmap = SKBitmap.Decode(ms);
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Logger.Error("解析高清图标失败", ex);
+                }
 
                 var wc = new Win32.WNDCLASS
                 {
@@ -192,9 +207,17 @@ namespace NotchPeninsula
                     int newHoveredLinkIndex = -1;
                     if (_selectedTab == 3)
                     {
-                        if (x >= 216 && x <= 290 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 155) newHoveredLinkIndex = 0; // 检测更新
-                        else if (x >= 300 && x <= 370 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 155) newHoveredLinkIndex = 1; // 仓库地址
-                        else if (x >= 380 && x <= 430 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 155) newHoveredLinkIndex = 2; // Ryen
+                        // 根据 Render 中的排版高度叠加，文字基线实际在 TITLE_BAR_HEIGHT + 177 左右
+                        int yStart = TITLE_BAR_HEIGHT + 160;
+                        int yEnd = TITLE_BAR_HEIGHT + 190;
+
+                        if (y >= yStart && y <= yEnd)
+                        {
+                            // 修正后的 X 轴热区：基于动态居中的实际渲染宽度重新测量计算，并适当加宽容错
+                            if (x >= 305 && x <= 370) newHoveredLinkIndex = 0;      // 检测更新
+                            else if (x >= 375 && x <= 440) newHoveredLinkIndex = 1; // 仓库地址
+                            else if (x >= 445 && x <= 500) newHoveredLinkIndex = 2; // 开发者 (Ryen)
+                        }
                     }
 
                     if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
@@ -237,9 +260,21 @@ namespace NotchPeninsula
                     else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); _dropdownOpen = false; }
                     else if (_selectedTab == 3 && _hoveredLinkIndex != -1)
                     {
-                        _isAutoStartEnabled = !_isAutoStartEnabled;
-                        Render();
-                        NotchWindow.ToggleAutoStart(_isAutoStartEnabled, false);
+                        string[] urls = {
+                        "https://github.com/GEORGEWWWU/NotchPeninsula/releases", // 0: 检测更新
+                        "https://github.com/GEORGEWWWU/NotchPeninsula",          // 1: 仓库地址
+                        "https://georgewu.top/"                                  // 2: Ryen主页
+                    };
+                        try
+                        {
+                            // .NET 5+ 环境下，调用浏览器打开网页必须指定 UseShellExecute = true
+                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                            {
+                                FileName = urls[_hoveredLinkIndex],
+                                UseShellExecute = true
+                            });
+                        }
+                        catch { /* 防止没装浏览器的极端环境崩溃 */ }
                     }
                     else if (_toastToggleHovered)
                     {
@@ -316,8 +351,9 @@ namespace NotchPeninsula
             float textX = 14f;
             if (_appIconBitmap != null)
             {
+                // 标题栏图标：16x16 逻辑像素，FilterQuality.High 确保从 256→16 是高质量 Lanczos 缩放
                 var iconRect = new SKRect(14, 8, 14 + 16, 8 + 16);
-                using var samplingOpts = new SKPaint { FilterQuality = SKFilterQuality.High };
+                using var samplingOpts = new SKPaint { FilterQuality = SKFilterQuality.High, IsAntialias = true };
                 canvas.DrawBitmap(_appIconBitmap, iconRect, samplingOpts);
                 textX += 24f;
             }
@@ -418,14 +454,45 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 3) // 关于页面的右侧内容
             {
-                // 1. 大 icon 绘制 (居中，尺寸 48x48)
-                
-                // 2. 大标题 (NotchPeninsula)
+                float centerX = 200 + (WIDTH - 200) / 2f;
+                float startY = TITLE_BAR_HEIGHT + 30f; // 稍微上移一点，给高清大图标腾出空间
 
-                // 3. 小文本 (NPS v1.0.0)
+                // 图标绘制 (恢复 64x64 大尺寸！现在原汁原味绝对高清)
+                if (_appIconBitmap != null)
+                {
+                    // 关于页图标：64x64 逻辑像素，从 256 缩放到 64 使用 High 质量
+                    var iconRect = new SKRect(centerX - 32, startY, centerX + 32, startY + 64);
+                    using var hqPaint = new SKPaint { FilterQuality = SKFilterQuality.High, IsAntialias = true };
+                    canvas.DrawBitmap(_appIconBitmap, iconRect, hqPaint);
+                    startY += 90f;
+                }
 
-                // 4. 一排超链接 (检测更新、仓库地址、Ryen)
+                // 大标题 (NotchPeninsula)
+                using var titlePaint = new SKPaint { Color = SKColors.White, TextSize = 20f, IsAntialias = true, Typeface = uiTextPaint.Typeface, TextAlign = SKTextAlign.Center };
+                canvas.DrawText("NotchPeninsula", centerX, startY, titlePaint);
+                startY += 22f; // 标题到版本号的间距
 
+                // 小文本 (NPS v1.0.0)
+                using var versionPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 13f, IsAntialias = true, Typeface = uiTextPaint.Typeface, TextAlign = SKTextAlign.Center };
+                string displayVersion = _appTitleWithVersion.Replace("NotchPeninsula ", "NPS v");
+                canvas.DrawText(displayVersion, centerX, startY, versionPaint);
+                startY += 35f; // 版本号到下方超链接的间距
+
+                // 超链接
+                string[] links = { "检测更新", "项目仓库", "开发者" };
+                using var linkPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = uiTextPaint.Typeface, TextAlign = SKTextAlign.Left };
+
+                float spacing = 15f;
+                float totalWidth = linkPaint.MeasureText(links[0]) + linkPaint.MeasureText(links[1]) + linkPaint.MeasureText(links[2]) + (spacing * 2);
+                float currentX = centerX - (totalWidth / 2f);
+
+                for (int i = 0; i < links.Length; i++)
+                {
+                    float textWidth = linkPaint.MeasureText(links[i]);
+                    linkPaint.Color = _hoveredLinkIndex == i ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                    canvas.DrawText(links[i], currentX, startY, linkPaint);
+                    currentX += textWidth + spacing;
+                }
             }
 
             canvas.Restore(); // 结束大边界裁切
