@@ -91,7 +91,7 @@ namespace NotchPeninsula
                     var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName);
                     if (sysIcon != null) appIconHandle = sysIcon.Handle;
 
-                    string iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-Icon-512x-NEW.ico");
+                    string iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-logo.ico");
 
                     // 使用 SkiaSharp 直接解码 ICO，绕过 System.Drawing 的低质缩放
                     // SKBitmap.Decode 对 ICO 会自动选取容器中最大/最匹配的帧，且支持 256px PNG 压缩帧

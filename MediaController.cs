@@ -23,7 +23,6 @@ namespace NotchPeninsula
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _currentSession;
         private bool _isBilibiliSession; // 通用模式下当前会话是否为 bilibili，用于隐藏 Artist
-        private static SKBitmap? _bilibiliLogo; // 缓存 bilibili 站标封面
 
         public MediaController()
         {
@@ -142,11 +141,12 @@ namespace NotchPeninsula
                     // 浏览器视频没有艺术家概念，隐藏 Artist
                     Artist = _isBilibiliSession ? "" : (string.IsNullOrEmpty(props.Artist) ? "" : props.Artist);
 
-                    if (_isBilibiliSession)
+                    // 统一封面管理：PotPlayer/bilibili 始终用站标；浏览器无 SMTC 封面时用站标兜底
+                    var platformLogo = MediaLogoProvider.GetLogo(_currentSession.SourceAppUserModelId, props.Thumbnail != null);
+                    if (platformLogo != null)
                     {
-                        // bilibili 播放时始终用站标做封面
                         var oldThumb = Thumbnail;
-                        Thumbnail = GetBilibiliLogo();
+                        Thumbnail = platformLogo;
                         oldThumb?.Dispose();
                     }
                     else if (props.Thumbnail != null)
@@ -187,26 +187,6 @@ namespace NotchPeninsula
             catch
             {
                 IsPlaying = false;
-            }
-        }
-
-        // 读取并缓存 bilibili 站标封面，返回副本避免被 Thumbnail 释放时误伤缓存
-        private static SKBitmap? GetBilibiliLogo()
-        {
-            try
-            {
-                if (_bilibiliLogo == null)
-                {
-                    var path = Path.Combine(AppContext.BaseDirectory, "data", "image", "bilibili-logo.png");
-                    using var stream = File.OpenRead(path);
-                    _bilibiliLogo = SKBitmap.Decode(stream);
-                }
-                return _bilibiliLogo?.Copy();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("加载 bilibili 站标失败", ex);
-                return null;
             }
         }
 

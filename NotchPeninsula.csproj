@@ -9,15 +9,18 @@
 		<!-- 添加 WinForms 支持，仅仅为了拿一下屏幕宽度 -->
 		<UseWindowsForms>true</UseWindowsForms>
 		<UseWPF>true</UseWPF>
-		<ApplicationIcon>NPS_NotchPeninsula-Icon-512x-NEW.ico</ApplicationIcon>
+		<ApplicationIcon>NPS_NotchPeninsula-logo.ico</ApplicationIcon>
 
 	<Version>1.0.0</Version>
 	</PropertyGroup>
 
 	<ItemGroup>
 		<!-- 新增的资源在这里引入 -->
-		<Content Include="NPS_NotchPeninsula-Icon-512x-NEW.ico" />
+		<Content Include="NPS_NotchPeninsula-logo.ico" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\bilibili-logo.png" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\image\chrome-logo.png" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\image\edge-logo.png" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\image\potplayer-logo.jpg" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\qq-icon.png" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\wintoast-icon.png" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
