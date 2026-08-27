@@ -5,7 +5,7 @@ using SkiaSharp;
 
 namespace NotchPeninsula
 {
-    public class MediaController
+    public partial class MediaController
     {
         // 暴露给 UI 的静态配置和单例，方便极速调用
         public static MediaController? Instance { get; private set; }
@@ -141,10 +141,15 @@ namespace NotchPeninsula
                     // 尝试安全读取，如果底层 COM 对象炸了，外层 try-catch 会兜底
                     // PotPlayer 本地文件通常没有元数据，无歌名时直接隐藏而非显示 "Unknown"
                     Title = string.IsNullOrEmpty(props.Title) ? (_isPotPlayerSession ? "" : "Unknown") : props.Title;
-                    // 浏览器视频模式下统一清理标题后缀
-                    if (_isBrowserSession) Title = CleanBrowserTitle(Title);
-                    // 浏览器视频没有艺术家概念，隐藏 Artist
-                    Artist = _isBilibiliSession ? "" : (string.IsNullOrEmpty(props.Artist) ? "" : props.Artist);
+
+                    // 浏览器模式：统一清理标题后缀 + 提取「正在播放: 歌名 - 歌手」
+                    string browserArtist = "";
+                    if (_isBrowserSession)
+                        Title = CleanBrowserTitle(Title, out browserArtist);
+
+                    // 浏览器视频没有艺术家概念，隐藏 Artist；若从标题提取到歌手则优先使用
+                    Artist = _isBilibiliSession ? "" : (!string.IsNullOrEmpty(browserArtist) ? browserArtist
+                            : (string.IsNullOrEmpty(props.Artist) ? "" : props.Artist));
 
                     // 统一封面管理：PotPlayer/bilibili 始终用站标；浏览器无 SMTC 封面时用站标兜底
                     var platformLogo = MediaLogoProvider.GetLogo(_currentSession.SourceAppUserModelId, props.Thumbnail != null);
@@ -199,6 +204,7 @@ namespace NotchPeninsula
         // 注意：判定要用清理前的原始标题（清理后后缀已被删掉，无法再判）
         private static readonly string[] BrowserVideoSuffixes =
         [
+            "_哔哩哔哩_bilibili",
             "-电视剧-高清完整正版视频在线观看-优酷",
             "-电影-高清完整正版视频在线观看-优酷",
             "-综艺-高清完整正版视频在线观看-优酷",
@@ -212,27 +218,40 @@ namespace NotchPeninsula
             "-音乐-高清完整正版视频在线观看-优酷",
         ];
 
-        // 哔哩哔哩 标题后缀：_"哔哩哔哩"_bilibili（分隔允许空格/下划线，结尾允许空白）
-        private static readonly Regex BilibiliTitleSuffix = new(
-            @"_[ _]*哔哩哔哩[ _]*bilibili\s*$",
-            RegexOptions.IgnoreCase);
+        // 浏览器 SMTC 标题「正在播放: 歌名 - 歌手」提取正则（同时匹配全角/半角冒号）
+        [GeneratedRegex(@"^正在播放[:：]\s*(.*?)\s*-\s*(.*)$")]
+        private static partial Regex PlayingTitleRegex();
 
         // 统一标题清理：命中浏览器视频后缀则删除该后缀并返回，否则原样返回
-        private static string CleanBrowserTitle(string title)
+        // 若标题为「正在播放: 歌名 - 歌手」格式，同时提取歌手并带回
+        private static string CleanBrowserTitle(string title, out string artist)
         {
+            artist = "";
+
             // 判定基于清理前的原始标题（仅去结尾空白归一化），命中后直接删除后缀
             var trimmed = title.TrimEnd();
 
-            var biliMatch = BilibiliTitleSuffix.Match(trimmed);
-            if (biliMatch.Success)
-                return trimmed[..biliMatch.Index];
+            // 1. 提取「正在播放: 歌名 - 歌手」格式（" - "为分隔符，歌名取短、歌手取到结尾）
+            var playingMatch = PlayingTitleRegex().Match(trimmed);
+            if (playingMatch.Success)
+            {
+                artist = playingMatch.Groups[2].Value.Trim();
+                trimmed = playingMatch.Groups[1].Value.Trim();
+            }
+            // 2. 仅命中「正在播放: 」前缀但无「 - 」分隔时，去掉前缀
+            else if (trimmed.StartsWith("正在播放", StringComparison.Ordinal)
+                     && trimmed.Length > 4 && (trimmed[4] == ':' || trimmed[4] == '：'))
+            {
+                trimmed = trimmed[5..].Trim();
+            }
 
+            // 3. 删除浏览器视频站标题后缀
             foreach (var suffix in BrowserVideoSuffixes)
             {
                 if (trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                     return trimmed[..^suffix.Length];
             }
-            return title;
+            return trimmed;
         }
 
         public async void TogglePlayPause()
