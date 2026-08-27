@@ -1,7 +1,4 @@
-﻿using System;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using System.IO;
 using Windows.Media.Control;
 using SkiaSharp;
 
@@ -11,8 +8,8 @@ namespace NotchPeninsula
     {
         // 暴露给 UI 的静态配置和单例，方便极速调用
         public static MediaController? Instance { get; private set; }
-        public static string TargetPlatform = "other"; // 默认通用媒体
-        public static bool IsMediaControlEnabled = true; // 媒体开关
+        internal static string TargetPlatform = "other"; // 默认通用媒体
+        internal static bool IsMediaControlEnabled = true; // 媒体开关
 
         public string Title { get; private set; } = "Notch Peninsula";
         public string Artist { get; private set; } = "Waiting for media...";
@@ -59,8 +56,8 @@ namespace NotchPeninsula
                 if (TargetPlatform == "other")
                 {
                     // 通用模式屏蔽抖音
-                    newSession = sessions.FirstOrDefault(s => s.SourceAppUserModelId.ToLower().Contains("justsolo"))
-                              ?? sessions.FirstOrDefault(s => !s.SourceAppUserModelId.ToLower().Contains("douyin"));
+                    newSession = sessions.FirstOrDefault(s => s.SourceAppUserModelId.Contains("justsolo", StringComparison.OrdinalIgnoreCase))
+                              ?? sessions.FirstOrDefault(s => !s.SourceAppUserModelId.Contains("douyin", StringComparison.OrdinalIgnoreCase));
                 }
                 else
                 {
@@ -95,7 +92,7 @@ namespace NotchPeninsula
 
             // 命中 bilibili 会话时打标记，供刷新时隐藏 Artist
             _isBilibiliSession = newSession != null
-                                 && newSession.SourceAppUserModelId.ToLower().Contains("bilibili");
+                                 && newSession.SourceAppUserModelId.Contains("bilibili", StringComparison.OrdinalIgnoreCase);
 
             // 2. 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
             if (_currentSession != null && newSession != null && _currentSession.SourceAppUserModelId == newSession.SourceAppUserModelId)

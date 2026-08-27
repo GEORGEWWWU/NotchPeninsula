@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
 using SkiaSharp;
 
@@ -24,12 +22,12 @@ namespace NotchPeninsula
     {
         // 平台规则表：新增平台只需在此追加一条规则
         private static readonly PlatformCoverRule[] PlatformRules =
-        {
-            new("PotPlayer", new[] { "potplayer", "daum" }, "data\\image\\potplayer-logo.jpg", CoverStrategy.Always),
-            new("Bilibili",  new[] { "bilibili" },          "data\\image\\bilibili-logo.png", CoverStrategy.Always),
-            new("Chrome",    new[] { "chrome" },            "data\\image\\chrome-logo.png",   CoverStrategy.Fallback),
-            new("Edge",      new[] { "edge" },              "data\\image\\edge-logo.png",     CoverStrategy.Fallback),
-        };
+        [
+            new("PotPlayer", ["potplayer", "daum"], "data\\image\\potplayer-logo.jpg", CoverStrategy.Always),
+            new("Bilibili",  ["bilibili"],          "data\\image\\bilibili-logo.png", CoverStrategy.Always),
+            new("Chrome",    ["chrome"],            "data\\image\\chrome-logo.png",   CoverStrategy.Fallback),
+            new("Edge",      ["edge"],              "data\\image\\edge-logo.png",     CoverStrategy.Fallback),
+        ];
 
         // 路径 -> 已解码位图缓存，全进程共享，避免重复 IO + 解码
         private static readonly Dictionary<string, SKBitmap> _cache = new(StringComparer.OrdinalIgnoreCase);
