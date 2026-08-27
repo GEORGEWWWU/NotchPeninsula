@@ -51,6 +51,20 @@ namespace NotchPeninsula
             return null;
         }
 
+        // 判断 AppUserModelId 是否命中指定平台（平台名为 PlatformRules 中的 Name，单一数据源）
+        public static bool IsPlatform(string? sourceAppUserModelId, string platformName)
+        {
+            if (string.IsNullOrWhiteSpace(sourceAppUserModelId)) return false;
+
+            var id = sourceAppUserModelId.ToLowerInvariant();
+            foreach (var rule in PlatformRules)
+            {
+                if (rule.Name.Equals(platformName, StringComparison.OrdinalIgnoreCase) && MatchesAppId(rule.AppIds, id))
+                    return true;
+            }
+            return false;
+        }
+
         // 判断 AppUserModelId 是否命中该平台的关键字
         private static bool MatchesAppId(string[] appIds, string lowerId)
         {
