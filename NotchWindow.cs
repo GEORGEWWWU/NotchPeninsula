@@ -12,6 +12,7 @@ namespace NotchPeninsula
     public class NotchWindow
     {
         public static bool IsToastEnabled = true;
+        float _currentVolume = 0f;
         private readonly IntPtr _hwnd;
         private readonly MediaController _media;
         private bool _isHovered = false;
@@ -33,6 +34,7 @@ namespace NotchPeninsula
         private DateTime _toastEndTime;
         private DateTime _animStartTime;
         private readonly IntPtr _hCursorArrow;
+        private readonly SystemSettingsManager? audio;
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
         private ToastNotificationListener? _listener;
@@ -57,6 +59,7 @@ namespace NotchPeninsula
 
         public NotchWindow()
         {
+            audio = new SystemSettingsManager();
             _dispatcher = Dispatcher.CurrentDispatcher;
             _media = new MediaController();
             _audioAnalyzer = new AudioAnalyzer();
@@ -138,10 +141,14 @@ namespace NotchPeninsula
             _notifyIcon.Text = "NotchPeninsula";
             _notifyIcon.ContextMenuStrip = contextMenu;
             _notifyIcon.Visible = true;
-
+            _currentVolume = audio.GetSystemVolume();
+            Debug($"初始音量读取完成，当前音量：{_currentVolume:F2}");
             _ = InitializeListenerAsync();
+            Timer aud = new Timer(500);
+            aud.Elapsed += (s, e) => { if(_currentVolume != audio.GetSystemVolume()) {_currentVolume = audio.GetSystemVolume();audioVolumeChanged();} };
+            aud.Start();
         }
-
+        private void audioVolumeChanged() => Debug($"音量改变{_currentVolume:F2}");
         #region 监听
         private async System.Threading.Tasks.Task InitializeListenerAsync()
         {
