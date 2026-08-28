@@ -38,6 +38,10 @@ namespace NotchPeninsula
         private int _selectedPlatformIndex = 0;
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
+        // DPI 缩放相关
+        private float _dpiScale = 1f;
+        private int _scaledWidth;
+        private int _scaledHeight;
 
         // 预设媒体平台数组
         private static readonly (string Id, string Name)[] _platforms = [
@@ -128,6 +132,10 @@ namespace NotchPeninsula
                 _classRegistered = true;
             }
 
+            _dpiScale = Win32.GetDpiForSystem() / 96f;
+            _scaledWidth = (int)(WIDTH * _dpiScale);
+            _scaledHeight = (int)(HEIGHT * _dpiScale);
+
             int screenWidth = Screen.PrimaryScreen?.Bounds.Width ?? 1920;
             int screenHeight = Screen.PrimaryScreen?.Bounds.Height ?? 1080;
 
@@ -135,7 +143,8 @@ namespace NotchPeninsula
                 Win32.WS_EX_LAYERED,
                 "NotchConsoleClass", "NotchPeninsula",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
-                (screenWidth - WIDTH) / 2, (screenHeight - HEIGHT) / 2, WIDTH, HEIGHT,
+                (screenWidth - _scaledWidth) / 2, (screenHeight - _scaledHeight) / 2, // 使用物理尺寸居中
+                _scaledWidth, _scaledHeight,
                 IntPtr.Zero, IntPtr.Zero, System.Diagnostics.Process.GetCurrentProcess().Handle, IntPtr.Zero
             );
 
@@ -154,8 +163,8 @@ namespace NotchPeninsula
             switch (msg)
             {
                 case Win32.WM_MOUSEMOVE:
-                    int x = (short)(lParam.ToInt32() & 0xFFFF);
-                    int y = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
+                    int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                    int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
                     bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
                     bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
@@ -241,7 +250,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    int clickY = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
+                    int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
                     if (_closeHovered) Win32.DestroyWindow(hwnd);
                     else if (_minHovered) Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
@@ -328,9 +337,12 @@ namespace NotchPeninsula
 
         private unsafe void Render()
         {
-            var info = new SKImageInfo(WIDTH, HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
+            var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
+
+            // 调用 Skia 硬件级矩阵缩放
+            canvas.Scale(_dpiScale);
 
             canvas.Clear(SKColors.Transparent);
             float cornerRadius = 8f;
@@ -538,13 +550,22 @@ namespace NotchPeninsula
             IntPtr memDc = Win32.CreateCompatibleDC(screenDc);
             var bmi = new Win32.BITMAPINFO
             {
-                bmiHeader = new Win32.BITMAPINFOHEADER { biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(), biWidth = WIDTH, biHeight = -HEIGHT, biPlanes = 1, biBitCount = 32, biCompression = 0 }
+                bmiHeader = new Win32.BITMAPINFOHEADER
+                {
+                    biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(),
+                    biWidth = _scaledWidth,
+                    biHeight = -_scaledHeight,
+                    biPlanes = 1,
+                    biBitCount = 32,
+                    biCompression = 0
+                }
             };
 
             IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
             IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
 
-            Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), WIDTH * HEIGHT * 4, WIDTH * HEIGHT * 4);
+            long bytes = (long)_scaledWidth * _scaledHeight * 4;
+            Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
 
             var ptSrc = new Win32.POINT(0, 0);
             var ptDst = new Win32.POINT(0, 0);
@@ -552,7 +573,7 @@ namespace NotchPeninsula
             ptDst.x = rect.Left;
             ptDst.y = rect.Top;
 
-            var size = new Win32.SIZE(WIDTH, HEIGHT);
+            var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
             var blend = new Win32.BLENDFUNCTION { BlendOp = Win32.AC_SRC_OVER, SourceConstantAlpha = 255, AlphaFormat = Win32.AC_SRC_ALPHA };
 
             Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);

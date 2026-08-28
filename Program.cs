@@ -10,7 +10,7 @@ namespace NotchPeninsula
         public static bool _isDebugMode = false;
 
         [DllImport("user32.dll")]
-        static extern bool SetProcessDPIAware();
+        static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
 
         // 启动时极速加载配置，只在栈上操作，不产生多余GC
         public static void LoadSettings()
@@ -58,7 +58,9 @@ namespace NotchPeninsula
                     return; // 极速退出，不分配任何多余内存，不执行任何初始化
                 }
 
-                SetProcessDPIAware();
+                // 支持多屏幕不同缩放自动适应
+                SetProcessDpiAwarenessContext(new IntPtr(-4));
+
                 if (args.Length > 0 && args[0] == "-debug")
                 {
                     _isDebugMode = true;

@@ -56,6 +56,10 @@ namespace NotchPeninsula
         private bool _isYAnimating = false;
         private DateTime _yAnimStartTime;
         private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
+        // DPI 缩放相关
+        private float _dpiScale = 1f;
+        private int _scaledWidth;
+        private int _scaledHeight;
 
         public NotchWindow()
         {
@@ -80,15 +84,20 @@ namespace NotchPeninsula
             if (Win32.RegisterClass(ref wc) == 0)
                 throw new Exception($"注册窗口类失败！错误码: {Marshal.GetLastWin32Error()}");
 
+            _dpiScale = Win32.GetDpiForSystem() / 96f;
+            _scaledWidth = (int)(Renderer.WINDOW_WIDTH * _dpiScale);
+            _scaledHeight = (int)(Renderer.MAX_WINDOW_HEIGHT * _dpiScale);
+
             int screenWidth = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-            int x = (screenWidth - Renderer.WINDOW_WIDTH) / 2;
+            // 使用 _scaledWidth 进行真正的物理居中
+            int x = (screenWidth - _scaledWidth) / 2;
             int y = 0;
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_TOPMOST | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
                 "NotchPeninsulaClass", "Notch",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
-                x, y, Renderer.WINDOW_WIDTH, Renderer.MAX_WINDOW_HEIGHT,
+                x, y, _scaledWidth, _scaledHeight, // 传入缩放后的尺寸
                 IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero
             );
 
@@ -396,10 +405,12 @@ namespace NotchPeninsula
             }
 
             // ================= 4. 渲染调用更新 =================
-            // 将此处的高度死锁为 MAX_WINDOW_HEIGHT
-            var info = new SKImageInfo(Renderer.WINDOW_WIDTH, Renderer.MAX_WINDOW_HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul);
+            var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(info);
             var canvas = surface.Canvas;
+
+            // 让底层 C++ 引擎接管坐标放大
+            canvas.Scale(_dpiScale);
 
             // 传入 currentHeight 和 _currentToast
             Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast);
@@ -417,8 +428,8 @@ namespace NotchPeninsula
                 bmiHeader = new Win32.BITMAPINFOHEADER
                 {
                     biSize = (uint)Marshal.SizeOf(typeof(Win32.BITMAPINFOHEADER)),
-                    biWidth = Renderer.WINDOW_WIDTH,
-                    biHeight = -Renderer.MAX_WINDOW_HEIGHT, // ★ 替换为 MAX_WINDOW_HEIGHT
+                    biWidth = _scaledWidth,
+                    biHeight = -_scaledHeight,
                     biPlanes = 1,
                     biBitCount = 32,
                     biCompression = 0
@@ -428,7 +439,7 @@ namespace NotchPeninsula
             IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
             IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
 
-            long bytes = Renderer.WINDOW_WIDTH * Renderer.MAX_WINDOW_HEIGHT * 4;
+            long bytes = (long)_scaledWidth * _scaledHeight * 4;
             Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
 
             var ptSrc = new Win32.POINT(0, 0);
@@ -436,10 +447,10 @@ namespace NotchPeninsula
 
             Win32.GetWindowRect(_hwnd, out var rect);
             ptDst.x = rect.Left;
-            // 强制锚定屏幕顶部，防漂移性能最高：
             ptDst.y = (int)_currentY;
 
-            var size = new Win32.SIZE(Renderer.WINDOW_WIDTH, Renderer.MAX_WINDOW_HEIGHT);
+            // 提交给系统的图层大小也要用物理尺寸
+            var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
             var blend = new Win32.BLENDFUNCTION
             {
                 BlendOp = Win32.AC_SRC_OVER,
@@ -484,8 +495,8 @@ namespace NotchPeninsula
 
                     if (_isHovered && _media.IsActive && _currentToast == null) // 当 Toast 存在时拦截控制按钮点击区域
                     {
-                        int x = (short)(lParam.ToInt32() & 0xFFFF);
-                        int y = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
+                        int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
                         float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
                         int btnPrevX = (int)right - 90;
@@ -520,7 +531,7 @@ namespace NotchPeninsula
 
                     if (_isHovered && _media.IsActive && _isCursorOverIcon && _currentToast == null)
                     {
-                        int x = (short)(lParam.ToInt32() & 0xFFFF);
+                        int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
 
                         if (x >= right - 84 && x <= right - 66)
