@@ -60,6 +60,12 @@ namespace NotchPeninsula
         private float _dpiScale = 1f;
         private int _scaledWidth;
         private int _scaledHeight;
+        // 持久化零拷贝渲染缓冲
+        private IntPtr _memDc;
+        private IntPtr _hBitmap;
+        private IntPtr _oldBitmap;
+        private IntPtr _pBits;
+        private SKSurface? _renderSurface;
 
         public NotchWindow()
         {
@@ -100,6 +106,8 @@ namespace NotchPeninsula
                 x, y, _scaledWidth, _scaledHeight, // 传入缩放后的尺寸
                 IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero
             );
+
+            InitRenderBuffer();
 
             if (_hwnd == IntPtr.Zero)
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
@@ -405,9 +413,11 @@ namespace NotchPeninsula
             }
 
             // ================= 4. 渲染调用更新 =================
-            var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
-            using var surface = SKSurface.Create(info);
-            var canvas = surface.Canvas;
+            var canvas = _renderSurface!.Canvas;
+            canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
+
+            // 存档矩阵状态，避免缩放无限叠加
+            canvas.Save();
 
             // 让底层 C++ 引擎接管坐标放大
             canvas.Scale(_dpiScale);
@@ -415,32 +425,15 @@ namespace NotchPeninsula
             // 传入 currentHeight 和 _currentToast
             Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast);
 
-            UpdateWindow(surface.PeekPixels());
+            // 恢复原始矩阵状态
+            canvas.Restore();
+
+            UpdateWindow();
         }
 
-        private unsafe void UpdateWindow(SKPixmap pixmap)
+        private void UpdateWindow()
         {
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
-            IntPtr memDc = Win32.CreateCompatibleDC(screenDc);
-
-            var bmi = new Win32.BITMAPINFO
-            {
-                bmiHeader = new Win32.BITMAPINFOHEADER
-                {
-                    biSize = (uint)Marshal.SizeOf(typeof(Win32.BITMAPINFOHEADER)),
-                    biWidth = _scaledWidth,
-                    biHeight = -_scaledHeight,
-                    biPlanes = 1,
-                    biBitCount = 32,
-                    biCompression = 0
-                }
-            };
-
-            IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
-            IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
-
-            long bytes = (long)_scaledWidth * _scaledHeight * 4;
-            Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
 
             var ptSrc = new Win32.POINT(0, 0);
             var ptDst = new Win32.POINT { x = 0, y = 0 };
@@ -449,7 +442,6 @@ namespace NotchPeninsula
             ptDst.x = rect.Left;
             ptDst.y = (int)_currentY;
 
-            // 提交给系统的图层大小也要用物理尺寸
             var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
             var blend = new Win32.BLENDFUNCTION
             {
@@ -459,10 +451,9 @@ namespace NotchPeninsula
                 AlphaFormat = Win32.AC_SRC_ALPHA
             };
 
-            Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
-            Win32.SelectObject(memDc, hOldBitmap);
-            Win32.DeleteObject(hBitmap);
-            Win32.DeleteDC(memDc);
+            // 直接提交已经画好的 _memDc
+            Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
+
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
 
@@ -552,6 +543,36 @@ namespace NotchPeninsula
             }
 
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+
+        // 零拷贝显存通道
+        private void InitRenderBuffer()
+        {
+            IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
+            _memDc = Win32.CreateCompatibleDC(screenDc);
+
+            var bmi = new Win32.BITMAPINFO
+            {
+                bmiHeader = new Win32.BITMAPINFOHEADER
+                {
+                    biSize = (uint)Marshal.SizeOf(typeof(Win32.BITMAPINFOHEADER)),
+                    biWidth = _scaledWidth,
+                    biHeight = -_scaledHeight, // 负数保证从上到下渲染
+                    biPlanes = 1,
+                    biBitCount = 32,
+                    biCompression = 0
+                }
+            };
+
+            // 申请一块持久的 Windows 内存
+            _hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out _pBits, IntPtr.Zero, 0);
+            _oldBitmap = Win32.SelectObject(_memDc, _hBitmap);
+
+            // 将 Skia 直接绑定到这块系统内存上，彻底消灭 Buffer.MemoryCopy
+            var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+            _renderSurface = SKSurface.Create(info, _pBits, _scaledWidth * 4);
+
+            Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
     }
 }
