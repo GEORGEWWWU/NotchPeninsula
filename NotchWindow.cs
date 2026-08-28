@@ -299,7 +299,7 @@ namespace NotchPeninsula
             if (_isHovered) shouldHide = false;
 
             // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
-            float expectedTargetY = shouldHide ? -(Renderer.BASE_HEIGHT - 4) : 0f;
+            float expectedTargetY = shouldHide ? -((Renderer.BASE_HEIGHT - 4) * _dpiScale) : 0f;
 
             if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
