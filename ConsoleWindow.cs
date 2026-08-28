@@ -1,4 +1,5 @@
-﻿using System;
+﻿using System.Drawing.Imaging;
+using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 
@@ -39,7 +40,7 @@ namespace NotchPeninsula
         private int _hoveredLinkIndex = -1;
 
         // 预设媒体平台数组
-        private static readonly (string Id, string Name)[] _platforms = new[] {
+        private static readonly (string Id, string Name)[] _platforms = [
             ("other", "通用媒体"),
             ("netease", "网易云音乐"),
             ("qqmusic", "QQ音乐"),
@@ -48,7 +49,7 @@ namespace NotchPeninsula
             ("applemusic", "Apple Music"),
             ("echomusic", "Echo Music"),
             ("lxmusic", "LX Music")
-        };
+        ];
 
         public static void Toggle()
         {
@@ -88,14 +89,14 @@ namespace NotchPeninsula
                 try
                 {
                     // 提取系统级小图标 (专供窗口注册和任务栏底层使用)
-                    var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName);
+                    var sysIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (sysIcon != null) appIconHandle = sysIcon.Handle;
 
-                    string iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-Icon-512x-NEW.ico");
+                    string iconPath = Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-logo.ico");
 
                     // 使用 SkiaSharp 直接解码 ICO，绕过 System.Drawing 的低质缩放
                     // SKBitmap.Decode 对 ICO 会自动选取容器中最大/最匹配的帧，且支持 256px PNG 压缩帧
-                    if (System.IO.File.Exists(iconPath))
+                    if (File.Exists(iconPath))
                     {
                         _appIconBitmap = SKBitmap.Decode(iconPath);
                     }
@@ -104,8 +105,8 @@ namespace NotchPeninsula
                     if (_appIconBitmap == null && sysIcon != null)
                     {
                         using var bmp = sysIcon.ToBitmap();
-                        using var ms = new System.IO.MemoryStream();
-                        bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                        using var ms = new MemoryStream();
+                        bmp.Save(ms, ImageFormat.Png);
                         ms.Position = 0;
                         _appIconBitmap = SKBitmap.Decode(ms);
                     }
@@ -127,8 +128,8 @@ namespace NotchPeninsula
                 _classRegistered = true;
             }
 
-            int screenWidth = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-            int screenHeight = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Height ?? 1080;
+            int screenWidth = Screen.PrimaryScreen?.Bounds.Width ?? 1920;
+            int screenHeight = Screen.PrimaryScreen?.Bounds.Height ?? 1080;
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_LAYERED,
@@ -240,7 +241,6 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    int clickX = (short)(lParam.ToInt32() & 0xFFFF);
                     int clickY = (short)((lParam.ToInt32() >> 16) & 0xFFFF);
 
                     if (_closeHovered) Win32.DestroyWindow(hwnd);
@@ -260,11 +260,11 @@ namespace NotchPeninsula
                     else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); _dropdownOpen = false; }
                     else if (_selectedTab == 3 && _hoveredLinkIndex != -1)
                     {
-                        string[] urls = {
+                        string[] urls = [
                         "https://github.com/GEORGEWWWU/NotchPeninsula/releases", // 0: 检测更新
                         "https://github.com/GEORGEWWWU/NotchPeninsula",          // 1: 仓库地址
                         "https://georgewu.top/"                                  // 2: Ryen主页
-                    };
+                    ];
                         try
                         {
                             // .NET 5+ 环境下，调用浏览器打开网页必须指定 UseShellExecute = true
@@ -479,7 +479,7 @@ namespace NotchPeninsula
                 startY += 35f; // 版本号到下方超链接的间距
 
                 // 超链接
-                string[] links = { "检测更新", "项目仓库", "开发者" };
+                string[] links = [ "检测更新", "项目仓库", "开发者" ];
                 using var linkPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = uiTextPaint.Typeface, TextAlign = SKTextAlign.Left };
 
                 float spacing = 15f;
@@ -538,7 +538,7 @@ namespace NotchPeninsula
             IntPtr memDc = Win32.CreateCompatibleDC(screenDc);
             var bmi = new Win32.BITMAPINFO
             {
-                bmiHeader = new Win32.BITMAPINFOHEADER { biSize = (uint)Marshal.SizeOf(typeof(Win32.BITMAPINFOHEADER)), biWidth = WIDTH, biHeight = -HEIGHT, biPlanes = 1, biBitCount = 32, biCompression = 0 }
+                bmiHeader = new Win32.BITMAPINFOHEADER { biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(), biWidth = WIDTH, biHeight = -HEIGHT, biPlanes = 1, biBitCount = 32, biCompression = 0 }
             };
 
             IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
@@ -559,7 +559,7 @@ namespace NotchPeninsula
             Win32.SelectObject(memDc, hOldBitmap);
             Win32.DeleteObject(hBitmap);
             Win32.DeleteDC(memDc);
-            Win32.ReleaseDC(IntPtr.Zero, screenDc);
+            _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
 
         public static void UpdateAutoStartState(bool enable)

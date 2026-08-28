@@ -1,13 +1,13 @@
-using System;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using SkiaSharp;
-// 🚀 删除了 Svg.Skia 引用
 
 namespace NotchPeninsula
 {
     public static class Renderer
     {
-        // 🛠️ 1. 布局核心参数 
+        // 1. 布局核心参数 
         public const int WINDOW_WIDTH = 320;
         public const int BASE_HEIGHT = 34;
         public const int TOAST_HEIGHT = 55;
@@ -19,32 +19,32 @@ namespace NotchPeninsula
         public const int OUTER_R = 14;
         public const int INNER_R = 12;
 
-        private static readonly object _renderLock = new object();
+        private static readonly object _renderLock = new();
 
         // 🚀 全局复用池 (彻底实现 60FPS 零 GC 分配)
-        private static readonly SKPaint _bgPaint = new SKPaint { Color = SKColors.Black, IsAntialias = true };
-        private static readonly SKPaint _fallbackIconPaint = new SKPaint { Color = new SKColor(0, 120, 212), IsAntialias = true };
+        private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
+        private static readonly SKPaint _fallbackIconPaint = new() { Color = new SKColor(0, 120, 212), IsAntialias = true };
 
         private static readonly SKTypeface _boldTypeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
         private static readonly SKTypeface _normalTypeface = SKTypeface.FromFamilyName("Microsoft YaHei UI");
         private static readonly SKTypeface _semiBoldTypeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
 
-        private static readonly SKPaint _titlePaint = new SKPaint { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = _boldTypeface };
-        private static readonly SKPaint _bodyPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 11.5f, IsAntialias = true, Typeface = _normalTypeface };
-        private static readonly SKPaint _textPaint = new SKPaint { Color = SKColors.White, TextSize = 13, IsAntialias = true, Typeface = _semiBoldTypeface };
+        private static readonly SKPaint _titlePaint = new() { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = _boldTypeface };
+        private static readonly SKPaint _bodyPaint = new() { Color = new SKColor(200, 200, 200), TextSize = 11.5f, IsAntialias = true, Typeface = _normalTypeface };
+        private static readonly SKPaint _textPaint = new() { Color = SKColors.White, TextSize = 13, IsAntialias = true, Typeface = _semiBoldTypeface };
 
-        private static readonly SKPaint _shadowPaint = new SKPaint { IsAntialias = true, Color = SKColors.White.WithAlpha(50), MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Outer, 1.5f) };
-        private static readonly SKPaint _mediaIconPaint = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
-        private static readonly SKPaint _barPaint = new SKPaint { Color = SKColors.White, IsAntialias = true };
+        private static readonly SKPaint _shadowPaint = new() { IsAntialias = true, Color = SKColors.White.WithAlpha(50), MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Outer, 1.5f) };
+        private static readonly SKPaint _mediaIconPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
+        private static readonly SKPaint _barPaint = new() { Color = SKColors.White, IsAntialias = true };
 
         private static readonly SKShader _fadeShader = SKShader.CreateLinearGradient(
             new SKPoint(0, 0), new SKPoint(1, 0),
-            new[] { SKColors.Black.WithAlpha(0), SKColors.Black },
+            [SKColors.Black.WithAlpha(0), SKColors.Black],
             null, SKShaderTileMode.Clamp);
-        private static readonly SKPaint _fadePaint = new SKPaint { Shader = _fadeShader };
+        private static readonly SKPaint _fadePaint = new() { Shader = _fadeShader };
 
-        private static readonly SKPath _bgPath = new SKPath();
-        private static readonly SKPath _clipPath = new SKPath();
+        private static readonly SKPath _bgPath = new();
+        private static readonly SKPath _clipPath = new();
         private static readonly SKPath _playPath = CreatePlayPath();
         private static readonly SKPath _pausePath = CreatePausePath();
         private static readonly SKPath _prevPath = CreatePrevPath();
@@ -55,7 +55,7 @@ namespace NotchPeninsula
         private static SKBitmap? _qqIcon;
         private static SKBitmap? _defaultToastIcon;
         private static bool _iconsLoaded = false;
-        private static readonly SKPaint _highQualitySampling = new SKPaint { FilterQuality = SKFilterQuality.High };
+        private static readonly SKPaint _highQualitySampling = new() { FilterQuality = SKFilterQuality.High };
 
         private static SKBitmap? GetDefaultAppIcon()
         {
@@ -63,12 +63,12 @@ namespace NotchPeninsula
             {
                 try
                 {
-                    var icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName);
+                    var icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (icon != null)
                     {
                         using var bmp = icon.ToBitmap();
-                        using var ms = new System.IO.MemoryStream();
-                        bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                        using var ms = new MemoryStream();
+                        bmp.Save(ms, ImageFormat.Png);
                         ms.Position = 0;
                         _defaultAppIcon = SKBitmap.Decode(ms);
                     }
@@ -174,7 +174,7 @@ namespace NotchPeninsula
                     {
                         targetIcon = _qqIcon;
                     }
-                    if (targetIcon == null) targetIcon = _defaultToastIcon;
+                    targetIcon ??= _defaultToastIcon;
 
                     // 直接绘制位图，逻辑极其精简
                     if (targetIcon != null)
@@ -341,7 +341,7 @@ namespace NotchPeninsula
             }
             finally
             {
-                System.Threading.Monitor.Exit(_renderLock);
+                Monitor.Exit(_renderLock);
             }
         }
 
