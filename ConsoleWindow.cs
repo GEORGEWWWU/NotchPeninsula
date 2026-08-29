@@ -507,13 +507,13 @@ namespace NotchPeninsula
                 DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
 
                 // 绘制下拉选择卡片
-                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 80, WIDTH - 20, TITLE_BAR_HEIGHT + 142);
+                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 84, WIDTH - 20, TITLE_BAR_HEIGHT + 146);
                 using var cardBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
                 using var cardBorder = new SKPaint { Color = new SKColor(255, 255, 255, 15), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
                 canvas.DrawRoundRect(cardRect, 6, 6, cardBg); canvas.DrawRoundRect(cardRect, 6, 6, cardBorder);
 
-                canvas.DrawText("目标媒体平台", 216, TITLE_BAR_HEIGHT + 106, uiTextPaint);
-                canvas.DrawText("多平台共存时，优先截获并接管的平台", 216, TITLE_BAR_HEIGHT + 126, subTextPaint);
+                canvas.DrawText("目标媒体平台", 216, TITLE_BAR_HEIGHT + 110, uiTextPaint);
+                canvas.DrawText("多平台共存时，优先截获并接管的平台", 216, TITLE_BAR_HEIGHT + 130, subTextPaint);
 
                 // Dropdown 伪输入框
                 float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 96; float dH = 32;
