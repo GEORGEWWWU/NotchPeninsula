@@ -107,7 +107,7 @@ namespace NotchPeninsula
             finally { _iconsLoaded = true; }
         }
 
-        // 🚀 核心优化：高频字符串与排版宽度缓存
+        // 高频字符串与排版宽度缓存
         private static string _lastMediaTitle = "";
         private static string _lastMediaArtist = "";
         private static string _cachedMediaDisplay = "Code By Ryen";
@@ -115,6 +115,16 @@ namespace NotchPeninsula
         private static float _cachedMediaTextHeight = 0f;
 
         private static uint _lastToastId = 0;
+        // 待机时间显示专用画笔
+        private static readonly SKPaint _timePaint = new() { Color = SKColors.White, TextSize = 14.5f, IsAntialias = true, Typeface = _boldTypeface };
+        private static readonly SKPaint _datePaint = new() { Color = new SKColor(200, 200, 200), TextSize = 14.5f, IsAntialias = true, Typeface = _normalTypeface };
+
+        // 时间日期零GC缓存
+        private static int _lastMinute = -1;
+        private static string _cachedTimeStr = "";
+        private static string _cachedDateStr = "";
+        private static float _cachedTimeWidth = 0f;
+        private static float _cachedDateWidth = 0f;
         private static string _cachedToastSender = "";
         private static string _cachedToastBody = "";
         private static float _cachedToastTitleWidth = 0f;
@@ -235,7 +245,7 @@ namespace NotchPeninsula
                     return;
                 }
 
-                // ---------------- [ 媒体控制状态 ] ----------------
+                // ---------------- [ 媒体控制与待机状态 ] ----------------
                 if (media.IsActive)
                 {
                     if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist)
@@ -252,89 +262,70 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    if (_cachedMediaDisplay != "Code By Ryen")
+                    // 零 GC 性能优化：每帧只读取值类型结构体，仅当分钟变化时分配字符串
+                    var now = DateTime.Now;
+                    if (_lastMinute != now.Minute)
                     {
-                        _cachedMediaDisplay = "Code By Ryen";
-                        _lastMediaTitle = "";
-                        var tb = new SKRect();
-                        _textPaint.MeasureText(_cachedMediaDisplay, ref tb);
-                        _cachedMediaTextTop = tb.Top;
-                        _cachedMediaTextHeight = tb.Height;
+                        _lastMinute = now.Minute;
+                        _cachedTimeStr = now.ToString("HH:mm"); // 00:00 24小时制
+                        _cachedDateStr = now.ToString("MM/dd"); // 月/日 格式
+                        _cachedTimeWidth = _timePaint.MeasureText(_cachedTimeStr);
+                        _cachedDateWidth = _datePaint.MeasureText(_cachedDateStr);
                     }
                 }
 
+                // 启动动画的透明度与Y轴偏移控制
                 float textOffsetY = 0f;
-                _textPaint.Color = SKColors.White;
+                byte alpha = 255;
                 if (!media.IsActive && startupProgress < 1f)
                 {
                     textOffsetY = (1f - startupProgress) * 15f;
-                    _textPaint.Color = SKColors.White.WithAlpha((byte)(255 * startupProgress));
+                    alpha = (byte)(255 * startupProgress);
                 }
 
-                float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
-                float textWidth = _textPaint.MeasureText(_cachedMediaDisplay);
-                float textX = media.IsActive ? left + 16 : left + (currentWidth - textWidth) / 2f;
-
-                if (media.IsActive && media.Thumbnail != null)
-                {
-                    float thumbSize = 22f;
-                    float thumbRadius = 4f;
-                    float thumbY = (currentHeight - thumbSize) / 2f;
-                    var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
-
-                    canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
-
-                    canvas.Save();
-                    _clipPath.Rewind();
-                    _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
-                    canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                    canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                    canvas.Restore();
-
-                    textX += thumbSize + 10;
-                }
-
-                canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
-
+                // 拆分绘制逻辑
                 if (media.IsActive)
                 {
-                    float rightOccupiedWidth = isHovered ? 95f : 45f;
-                    float maskEnd = right - rightOccupiedWidth + 5f;
-                    float maskStart = maskEnd - 15f;
+                    _textPaint.Color = SKColors.White.WithAlpha(alpha);
+                    float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
+                    float textX = left + 16;
 
-                    canvas.Save();
-                    canvas.Translate(maskStart, 0);
-                    canvas.Scale(maskEnd - maskStart, currentHeight);
-                    canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                    canvas.Restore();
-
-                    canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
-                    if (isHovered)
+                    if (media.Thumbnail != null)
                     {
-                        DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, 12, _prevPath);
-                        if (media.IsPlaying)
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 10, 11, _pausePath);
-                        else
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 11, 11, _playPath);
-                        DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, 12, _nextPath);
-                    }
-                    else if (bars != null)
-                    {
-                        float barWidth = 2f;
-                        float spacing = 2.8f;
-                        float maxH = 16f;
-                        float totalBarWidth = 21.2f;
-                        float startX = right - 16f - totalBarWidth;
+                        float thumbSize = 22f;
+                        float thumbRadius = 4f;
+                        float thumbY = (currentHeight - thumbSize) / 2f;
+                        var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
 
-                        for (int i = 0; i < 5; i++)
-                        {
-                            float h = Math.Max(2f, bars[i] * maxH);
-                            float y = (currentHeight - h) / 2f;
-                            var rect = new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h);
-                            canvas.DrawRoundRect(rect, 1.5f, 1.5f, _barPaint);
-                        }
+                        canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
+
+                        canvas.Save();
+                        _clipPath.Rewind();
+                        _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
+                        canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                        canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                        canvas.Restore();
+
+                        textX += thumbSize + 10;
                     }
+
+                    canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
+                }
+                else
+                {
+                    // 待机状态：左右布局，两端对齐
+                    _timePaint.Color = SKColors.White.WithAlpha(alpha);
+                    _datePaint.Color = new SKColor(200, 200, 200, alpha);
+
+                    // 统一 Y 轴基线，实现光学垂直居中 (5f 是基于当前字号的基线下沉补偿)
+                    float baselineY = currentHeight / 2f + 5f + textOffsetY;
+
+                    // 计算两端对齐的 X 轴坐标，左右各保留 16f 的安全边距
+                    float timeX = left + 16f;
+                    float dateX = right - 16f - _cachedDateWidth;
+
+                    canvas.DrawText(_cachedTimeStr, timeX, baselineY, _timePaint);
+                    canvas.DrawText(_cachedDateStr, dateX, baselineY, _datePaint);
                 }
 
                 canvas.Restore();

@@ -40,19 +40,16 @@ namespace NotchPeninsula
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
 
-        // ======================= 新增：显示设置状态 =======================
+        // 显示设置状态
         private bool _displayDropdownOpen = false;
         private bool _displayDropdownHovered = false;
         private int _hoveredDisplayDropdownIndex = -1;
         private int _selectedDisplayIndex = 0;
         private static readonly string[] _displayOptions = ["时间日期"];
-        // ==================================================================
-
         // DPI 缩放相关
         private float _dpiScale = 1f;
         private int _scaledWidth;
         private int _scaledHeight;
-
         // 预设媒体平台数组
         private static readonly (string Id, string Name)[] _platforms = [
             ("other", "通用媒体"),
@@ -179,7 +176,7 @@ namespace NotchPeninsula
                     bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
                     bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
 
-                    // Tab Hover 判定 (调整为显示设置在第二项)
+                    // Tab Hover 判定
                     int newHoveredTab = -1;
                     if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 0; // 通用设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 50 && y <= TITLE_BAR_HEIGHT + 86) newHoveredTab = 1; // 显示设置
@@ -402,7 +399,7 @@ namespace NotchPeninsula
             clipPath.AddRoundRect(windowRect, cornerRadius, cornerRadius);
             canvas.ClipPath(clipPath, SKClipOperation.Intersect, true);
 
-            // ================= 标题栏区 =================
+            // 标题栏区
             using var titleBarPaint = new SKPaint { Color = new SKColor(40, 40, 40) };
             canvas.DrawRect(0, 0, WIDTH, TITLE_BAR_HEIGHT, titleBarPaint);
 
@@ -431,7 +428,7 @@ namespace NotchPeninsula
             canvas.DrawLine(cx - 5, cy - 5, cx + 5, cy + 5, iconPaint);
             canvas.DrawLine(cx + 5, cy - 5, cx - 5, cy + 5, iconPaint);
 
-            // ================= 侧边栏 =================
+            // 侧边栏
             void DrawTab(int index, string label, float yOffset)
             {
                 var tabRect = new SKRect(10, TITLE_BAR_HEIGHT + yOffset, 170, TITLE_BAR_HEIGHT + yOffset + 36);
@@ -456,7 +453,7 @@ namespace NotchPeninsula
             DrawTab(3, "交互设置", 130); // 顺延
             DrawTab(4, "关于软件", 170); // 顺延
 
-            // ================= 右侧卡片内容区 =================
+            // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
             {
                 var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + yOffset, WIDTH - 20, TITLE_BAR_HEIGHT + yOffset + 62);
@@ -579,7 +576,7 @@ namespace NotchPeninsula
 
             canvas.Restore(); // 结束大边界裁切
 
-            // ================= 浮动在顶层的下拉菜单 =================
+            // 浮动在顶层的下拉菜单
             // 媒体设置下拉菜单
             if (_selectedTab == 2 && _dropdownOpen)
             {
@@ -631,7 +628,6 @@ namespace NotchPeninsula
                     canvas.DrawText(_displayOptions[i], mX + 12, itemY + 18, itemTextPaint);
                 }
             }
-            // ==============================================================================
 
             // 最后盖上一层极细的全局边框
             using var globalBorderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
