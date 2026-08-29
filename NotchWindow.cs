@@ -66,6 +66,8 @@ namespace NotchPeninsula
         private IntPtr _oldBitmap;
         private IntPtr _pBits;
         private SKSurface? _renderSurface;
+        // 极速无锁防重入标记
+        private int _isRendering = 0;
 
         public NotchWindow()
         {
@@ -298,16 +300,21 @@ namespace NotchPeninsula
 
         private unsafe void RenderLoop()
         {
-            // 判断当前 Toast 是否处于激活期
-            bool isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
-            if (!isToastActive && _currentToast != null) _currentToast = null; // 超时清理
+            // 极限性能优化：原子级防重入。如果当前有线程正在渲染，直接丢弃堆积的重叠帧，保护底层矩阵指针
+            if (System.Threading.Interlocked.Exchange(ref _isRendering, 1) == 1) return;
 
-            // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏
-            bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive;
-            if (_isHovered) shouldHide = false;
+            try
+            {
+                // 判断当前 Toast 是否处于激活期
+                bool isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
+                if (!isToastActive && _currentToast != null) _currentToast = null; // 超时清理
 
-            // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
-            float expectedTargetY = shouldHide ? -((Renderer.BASE_HEIGHT - 4) * _dpiScale) : 0f;
+                // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏
+                bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive;
+                if (_isHovered) shouldHide = false;
+
+                // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
+                float expectedTargetY = shouldHide ? -((Renderer.BASE_HEIGHT - 4) * _dpiScale) : 0f;
 
             if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
@@ -419,16 +426,22 @@ namespace NotchPeninsula
             // 存档矩阵状态，避免缩放无限叠加
             canvas.Save();
 
-            // 让底层 C++ 引擎接管坐标放大
-            canvas.Scale(_dpiScale);
+                // 让底层 C++ 引擎接管坐标放大
+                canvas.Scale(_dpiScale);
 
-            // 传入 currentHeight 和 _currentToast
-            Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast);
+                // 传入 currentHeight 和 _currentToast
+                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast);
 
-            // 恢复原始矩阵状态
-            canvas.Restore();
+                // 恢复原始矩阵状态
+                canvas.Restore();
 
-            UpdateWindow();
+                UpdateWindow();
+            }
+            finally
+            {
+                // 渲染安全结束，释放标记，允许下一帧进入
+                System.Threading.Interlocked.Exchange(ref _isRendering, 0);
+            }
         }
 
         private void UpdateWindow()
