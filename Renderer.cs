@@ -310,6 +310,50 @@ namespace NotchPeninsula
                     }
 
                     canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
+
+                    // ---- 恢复媒体控制按钮和音量条 ----
+                    float rightOccupiedWidth = isHovered ? 95f : 45f;
+                    float maskEnd = right - rightOccupiedWidth + 5f;
+                    float maskStart = maskEnd - 15f;
+
+                    // 右侧渐变遮罩（防止文字过长溢出）
+                    canvas.Save();
+                    canvas.Translate(maskStart, 0);
+                    canvas.Scale(maskEnd - maskStart, currentHeight);
+                    canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                    canvas.Restore();
+
+                    // 用背景色覆盖溢出区域（和窗口背景一致）
+                    canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
+                    if (isHovered)
+                    {
+                        // 鼠标悬停时显示播放控制按钮
+                        DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, 12, _prevPath);
+                        if (media.IsPlaying)
+                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 10, 11, _pausePath);
+                        else
+                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 11, 11, _playPath);
+                        DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, 12, _nextPath);
+                    }
+                    else if (bars != null)
+                    {
+                        // 未悬停且媒体播放时显示音量柱状图（动画）
+                        float barWidth = 2f;
+                        float spacing = 2.8f;
+                        float maxH = 16f;
+                        float totalBarWidth = 21.2f;
+                        float startX = right - 16f - totalBarWidth;
+
+                        for (int i = 0; i < 5; i++)
+                        {
+                            float h = Math.Max(2f, bars[i] * maxH);
+                            float y = (currentHeight - h) / 2f;
+                            var rect = new SKRect(startX + i * (barWidth + spacing), y,
+                                                  startX + i * (barWidth + spacing) + barWidth, y + h);
+                            canvas.DrawRoundRect(rect, 1.5f, 1.5f, _barPaint);
+                        }
+                    }
                 }
                 else
                 {
