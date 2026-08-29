@@ -3,7 +3,7 @@
 <img src="./NPS_NotchPeninsula-logo.ico" alt="NotchPeninsula" width="180" />
 
 <h1>NotchPeninsula</h1>
-<p>专为 Windows 而生的灵动岛式媒体控制与通知增强工具</p>
+<p>专为 Windows 而生的刘海屏/灵动岛组件</p>
 
 <img alt="Windows" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white" />
 <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white" />
