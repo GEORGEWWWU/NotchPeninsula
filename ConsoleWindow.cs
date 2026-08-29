@@ -318,6 +318,13 @@ namespace NotchPeninsula
                         }
                         catch { /* 防止没装浏览器的极端环境崩溃 */ }
                     }
+                    else if (_toggleHovered)
+                    {
+                        bool newState = !_isAutoStartEnabled;
+                        NotchWindow.ToggleAutoStart(newState, false);
+                        _isAutoStartEnabled = newState;
+                        Render();
+                    }
                     else if (_toastToggleHovered)
                     {
                         // 切换状态
