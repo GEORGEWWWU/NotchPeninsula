@@ -2,6 +2,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
+using System.Diagnostics;
 
 namespace NotchPeninsula
 {
@@ -38,6 +39,15 @@ namespace NotchPeninsula
         private int _selectedPlatformIndex = 0;
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
+
+        // ======================= 新增：显示设置状态 =======================
+        private bool _displayDropdownOpen = false;
+        private bool _displayDropdownHovered = false;
+        private int _hoveredDisplayDropdownIndex = -1;
+        private int _selectedDisplayIndex = 0;
+        private static readonly string[] _displayOptions = ["时间日期"];
+        // ==================================================================
+
         // DPI 缩放相关
         private float _dpiScale = 1f;
         private int _scaledWidth;
@@ -123,7 +133,7 @@ namespace NotchPeninsula
                 var wc = new Win32.WNDCLASS
                 {
                     lpfnWndProc = _staticWndProc,
-                    hInstance = System.Diagnostics.Process.GetCurrentProcess().Handle,
+                    hInstance = Process.GetCurrentProcess().Handle,
                     lpszClassName = "NotchConsoleClass",
                     hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW),
                     hIcon = appIconHandle
@@ -145,7 +155,7 @@ namespace NotchPeninsula
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
                 (screenWidth - _scaledWidth) / 2, (screenHeight - _scaledHeight) / 2, // 使用物理尺寸居中
                 _scaledWidth, _scaledHeight,
-                IntPtr.Zero, IntPtr.Zero, System.Diagnostics.Process.GetCurrentProcess().Handle, IntPtr.Zero
+                IntPtr.Zero, IntPtr.Zero, Process.GetCurrentProcess().Handle, IntPtr.Zero
             );
 
             Render();
@@ -169,12 +179,16 @@ namespace NotchPeninsula
                     bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
                     bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
 
-                    // Tab Hover 判定
+                    // Tab Hover 判定 (调整为显示设置在第二项)
                     int newHoveredTab = -1;
-                    if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 0; // 通用页
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 50 && y <= TITLE_BAR_HEIGHT + 86) newHoveredTab = 1; // 媒体页
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 90 && y <= TITLE_BAR_HEIGHT + 126) newHoveredTab = 2; // 交互页
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 166) newHoveredTab = 3; // 关于页
+                    if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 0; // 通用设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 50 && y <= TITLE_BAR_HEIGHT + 86) newHoveredTab = 1; // 显示设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 90 && y <= TITLE_BAR_HEIGHT + 126) newHoveredTab = 2; // 媒体设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 166) newHoveredTab = 3; // 交互设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 170 && y <= TITLE_BAR_HEIGHT + 206) newHoveredTab = 4; // 关于页
+
+                    bool newDisplayDropdownHovered = false;
+                    int newHoveredDisplayDropdownIndex = -1;
 
                     bool newToggleHovered = false;
                     bool newToastToggleHovered = false;
@@ -183,7 +197,7 @@ namespace NotchPeninsula
                     bool newDropdownHovered = false;
                     int newHoveredDropdownIndex = -1;
 
-                    if (_selectedTab == 0)
+                    if (_selectedTab == 0) // 通用设置
                     {
                         // 开机自启
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
@@ -192,7 +206,19 @@ namespace NotchPeninsula
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                             newToastToggleHovered = true;
                     }
-                    else if (_selectedTab == 1)
+                    else if (_selectedTab == 1) // 显示设置
+                    {
+                        // 下拉菜单判定 (直接位于顶部第一张卡片)
+                        if (!_displayDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 26 && y <= TITLE_BAR_HEIGHT + 58)
+                            newDisplayDropdownHovered = true;
+
+                        if (_displayDropdownOpen)
+                        {
+                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 60 && y < TITLE_BAR_HEIGHT + 60 + _displayOptions.Length * 26)
+                                newHoveredDisplayDropdownIndex = (y - (TITLE_BAR_HEIGHT + 60)) / 26;
+                        }
+                    }
+                    else if (_selectedTab == 2) // 媒体设置
                     {
                         // 媒体控制
                         if (!_dropdownOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
@@ -208,14 +234,15 @@ namespace NotchPeninsula
                                 newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
                         }
                     }
-                    else if (_selectedTab == 2)
+                    else if (_selectedTab == 3) // 交互设置
                     {
                         // 自动隐藏
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
                     }
+
                     int newHoveredLinkIndex = -1;
-                    if (_selectedTab == 3)
+                    if (_selectedTab == 4) // 关于页
                     {
                         // 根据 Render 中的排版高度叠加，文字基线实际在 TITLE_BAR_HEIGHT + 177 左右
                         int yStart = TITLE_BAR_HEIGHT + 160;
@@ -235,16 +262,19 @@ namespace NotchPeninsula
                         newToastToggleHovered != _toastToggleHovered ||
                         newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
                         newDropdownHovered != _dropdownHovered ||
-                        newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex
-                        )
+                        newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
+                        newDisplayDropdownHovered != _displayDropdownHovered ||
+                        newHoveredDisplayDropdownIndex != _hoveredDisplayDropdownIndex)
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
                         _toastToggleHovered = newToastToggleHovered;
-                        _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered; // 新增
+                        _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
                         _dropdownHovered = newDropdownHovered;
                         _hoveredDropdownIndex = newHoveredDropdownIndex;
                         _hoveredLinkIndex = newHoveredLinkIndex;
+                        _displayDropdownHovered = newDisplayDropdownHovered;
+                        _hoveredDisplayDropdownIndex = newHoveredDisplayDropdownIndex;
                         Render();
                     }
                     break;
@@ -263,21 +293,27 @@ namespace NotchPeninsula
                     {
                         _dropdownOpen = false; Render(); // 点击菜单外部收起浮窗
                     }
-                    else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; Render(); }
-                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); _dropdownOpen = false; }
-                    else if (_selectedTab == 3 && _hoveredLinkIndex != -1)
+                    // 点击外部收起新增的显示下拉浮窗
+                    else if (_displayDropdownOpen && _hoveredDisplayDropdownIndex == -1)
+                    {
+                        _displayDropdownOpen = false; Render();
+                    }
+                    else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
                     {
                         string[] urls = [
-                        "https://github.com/GEORGEWWWU/NotchPeninsula/releases", // 0: 检测更新
-                        "https://github.com/GEORGEWWWU/NotchPeninsula",          // 1: 仓库地址
-                        "https://georgewu.top/"                                  // 2: Ryen主页
-                    ];
+                            "https://github.com/GEORGEWWWU/NotchPeninsula/releases", // 0: 检测更新
+                            "https://github.com/GEORGEWWWU/NotchPeninsula",          // 1: 仓库地址
+                            "https://georgewu.top/"                                  // 2: Ryen主页
+                        ];
                         try
                         {
                             // .NET 5+ 环境下，调用浏览器打开网页必须指定 UseShellExecute = true
-                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                            Process.Start(new ProcessStartInfo
                             {
                                 FileName = urls[_hoveredLinkIndex],
                                 UseShellExecute = true
@@ -324,6 +360,16 @@ namespace NotchPeninsula
 
                         _ = MediaController.Instance?.ForceRefresh();
                         _dropdownOpen = false;
+                        Render();
+                    }
+                    else if (_displayDropdownHovered)
+                    {
+                        _displayDropdownOpen = true; Render();
+                    }
+                    else if (_displayDropdownOpen && _hoveredDisplayDropdownIndex != -1)
+                    {
+                        _selectedDisplayIndex = _hoveredDisplayDropdownIndex;
+                        _displayDropdownOpen = false;
                         Render();
                     }
                     break;
@@ -403,10 +449,12 @@ namespace NotchPeninsula
                 }
                 canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, uiTextPaint);
             }
+
             DrawTab(0, "通用设置", 10);
-            DrawTab(1, "媒体设置", 50);
-            DrawTab(2, "交互设置", 90);
-            DrawTab(3, "关于软件", 130);
+            DrawTab(1, "显示设置", 50);  // 调至第二位
+            DrawTab(2, "媒体设置", 90);  // 顺延
+            DrawTab(3, "交互设置", 130); // 顺延
+            DrawTab(4, "关于软件", 170); // 顺延
 
             // ================= 右侧卡片内容区 =================
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
@@ -430,12 +478,34 @@ namespace NotchPeninsula
                 else { tCircle.Color = hovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150); canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, tCircle); }
             }
 
-            if (_selectedTab == 0) // 通用设置页面的右侧内容
+            if (_selectedTab == 0) // 通用设置
             {
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
                 DrawToggleCard(84, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
             }
-            else if (_selectedTab == 1) // 媒体控制设置页面的右侧内容
+            else if (_selectedTab == 1) // 显示设置
+            {
+                // 卡片直接贴在顶部 (Y轴 Offset 12)
+                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 74);
+                using var cardBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
+                using var cardBorder = new SKPaint { Color = new SKColor(255, 255, 255, 15), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+                canvas.DrawRoundRect(cardRect, 6, 6, cardBg); canvas.DrawRoundRect(cardRect, 6, 6, cardBorder);
+
+                canvas.DrawText("待机显示内容", 216, TITLE_BAR_HEIGHT + 38, uiTextPaint);
+                canvas.DrawText("刘海处于待机状态时默认展示的信息", 216, TITLE_BAR_HEIGHT + 58, subTextPaint);
+
+                // 右侧的伪输入下拉框
+                float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 26; float dH = 32;
+                var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
+                using var dBg = new SKPaint { Color = _displayDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8), IsAntialias = true };
+                canvas.DrawRoundRect(dRect, 4, 4, dBg);
+                canvas.DrawText(_displayOptions[_selectedDisplayIndex], dX + 10, dY + 21, uiTextPaint);
+
+                using var chevronPaint = new SKPaint { Color = new SKColor(150, 150, 150), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
+                canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, chevronPaint);
+                canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, chevronPaint);
+            }
+            else if (_selectedTab == 2) // 媒体设置
             {
                 DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
 
@@ -460,11 +530,11 @@ namespace NotchPeninsula
                 canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, chevronPaint);
                 canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, chevronPaint);
             }
-            else if (_selectedTab == 2) // 交互设置页面的右侧内容
+            else if (_selectedTab == 3) // 交互设置
             {
                 DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
             }
-            else if (_selectedTab == 3) // 关于页面的右侧内容
+            else if (_selectedTab == 4) // 关于页面
             {
                 float centerX = 200 + (WIDTH - 200) / 2f;
                 float startY = TITLE_BAR_HEIGHT + 30f; // 稍微上移一点，给高清大图标腾出空间
@@ -491,7 +561,7 @@ namespace NotchPeninsula
                 startY += 35f; // 版本号到下方超链接的间距
 
                 // 超链接
-                string[] links = [ "检测更新", "项目仓库", "开发者" ];
+                string[] links = ["检测更新", "项目仓库", "开发者"];
                 using var linkPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = uiTextPaint.Typeface, TextAlign = SKTextAlign.Left };
 
                 float spacing = 15f;
@@ -510,7 +580,8 @@ namespace NotchPeninsula
             canvas.Restore(); // 结束大边界裁切
 
             // ================= 浮动在顶层的下拉菜单 =================
-            if (_selectedTab == 1 && _dropdownOpen)
+            // 媒体设置下拉菜单
+            if (_selectedTab == 2 && _dropdownOpen)
             {
                 float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 130; float mW = 110; float mH = _platforms.Length * 26;
                 var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
@@ -536,6 +607,31 @@ namespace NotchPeninsula
                     canvas.DrawText(_platforms[i].Name, mX + 12, itemY + 18, itemTextPaint);
                 }
             }
+
+            // 显示设置下拉菜单
+            if (_selectedTab == 1 && _displayDropdownOpen)
+            {
+                float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 60; float mW = 110; float mH = _displayOptions.Length * 26;
+                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
+
+                using var menuBg = new SKPaint { Color = new SKColor(40, 40, 40), IsAntialias = true };
+                canvas.DrawRoundRect(mRect, 4, 4, menuBg);
+                using var menuBorder = new SKPaint { Color = new SKColor(80, 80, 80), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+                canvas.DrawRoundRect(mRect, 4, 4, menuBorder);
+
+                for (int i = 0; i < _displayOptions.Length; i++)
+                {
+                    float itemY = mY + i * 26;
+                    if (_hoveredDisplayDropdownIndex == i)
+                    {
+                        using var itemHover = new SKPaint { Color = new SKColor(255, 255, 255, 15), IsAntialias = true };
+                        canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, itemHover);
+                    }
+                    using var itemTextPaint = new SKPaint { Color = i == _selectedDisplayIndex ? new SKColor(0, 120, 212) : SKColors.White, TextSize = 13f, IsAntialias = true, Typeface = uiTextPaint.Typeface };
+                    canvas.DrawText(_displayOptions[i], mX + 12, itemY + 18, itemTextPaint);
+                }
+            }
+            // ==============================================================================
 
             // 最后盖上一层极细的全局边框
             using var globalBorderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
