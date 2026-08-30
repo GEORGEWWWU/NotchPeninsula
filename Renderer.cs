@@ -11,8 +11,8 @@ namespace NotchPeninsula
         private static volatile float _standbyWidth = 130f;
         private static volatile float _baseHeight = 34f;
         private static volatile float _mediaWidth = 260f;
-        private static volatile float _mediaHeight = 34f; // 新增：媒体专属高度
-        private static volatile float _toastWidth = 260f; // 新增：通知专属宽度
+        private static volatile float _mediaHeight = 34f;
+        private static volatile float _toastWidth = 260f;
         private static volatile float _toastHeight = 55f;
         private static volatile float _globalDpi = 1.0f;
 
@@ -23,6 +23,44 @@ namespace NotchPeninsula
         public static float TOAST_WIDTH { get => _toastWidth; set => _toastWidth = value; }
         public static float TOAST_HEIGHT { get => _toastHeight; set => _toastHeight = value; }
         public static float GLOBAL_DPI { get => _globalDpi; set => _globalDpi = value; }
+        public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
+        private static SKColor _currentTextColor = SKColors.White;
+        private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
+        public static void ApplyThemeColors() // 刷新颜色的方法
+        {
+            bool isLight = ThemeMode == 1;
+            if (ThemeMode == 2) // 跟随系统
+            {
+                try
+                {
+                    using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                    if (key != null && key.GetValue("AppsUseLightTheme") is int val) isLight = val == 1;
+                }
+                catch { }
+            }
+
+            // 预计算颜色，避免在渲染树中生成新对象
+            var bg = isLight ? SKColors.White : SKColors.Black;
+            _currentTextColor = isLight ? SKColors.Black : SKColors.White;
+            _currentSubTextColor = isLight ? new SKColor(80, 80, 80) : new SKColor(200, 200, 200);
+
+            // 直接复写已存在的静态画笔属性 (极致内存复用)
+            _bgPaint.Color = bg;
+            _titlePaint.Color = _currentTextColor;
+            _bodyPaint.Color = _currentSubTextColor;
+            _textPaint.Color = _currentTextColor;
+            _timePaint.Color = _currentTextColor;
+            _datePaint.Color = _currentSubTextColor;
+            _mediaIconPaint.Color = _currentTextColor;
+            _barPaint.Color = _currentTextColor;
+            _shadowPaint.Color = _currentTextColor.WithAlpha(50);
+
+            // 渐变着色器需要重新生成一次，但只在点击设置时发生
+            _fadePaint.Shader = SKShader.CreateLinearGradient(
+                new SKPoint(0, 0), new SKPoint(1, 0),
+                [bg.WithAlpha(0), bg],
+                null, SKShaderTileMode.Clamp);
+        }
 
         // 动态计算最大边界，防止因刘海变大导致出界
         public static float WINDOW_WIDTH => Math.Max(320f, Math.Max(MEDIA_WIDTH, TOAST_WIDTH) + 60f);
@@ -298,7 +336,7 @@ namespace NotchPeninsula
                 // 拆分绘制逻辑
                 if (media.IsActive)
                 {
-                    _textPaint.Color = SKColors.White.WithAlpha(alpha);
+                    _textPaint.Color = _currentTextColor.WithAlpha(alpha);
                     float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
                     float textX = left + 16;
 
@@ -370,8 +408,8 @@ namespace NotchPeninsula
                 else
                 {
                     // 待机状态：左右布局，两端对齐
-                    _timePaint.Color = SKColors.White.WithAlpha(alpha);
-                    _datePaint.Color = new SKColor(200, 200, 200, alpha);
+                    _timePaint.Color = _currentTextColor.WithAlpha(alpha);
+                    _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
 
                     // 统一 Y 轴基线，实现光学垂直居中 (5f 是基于当前字号的基线下沉补偿)
                     float baselineY = currentHeight / 2f + 5f + textOffsetY;

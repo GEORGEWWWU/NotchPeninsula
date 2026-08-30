@@ -33,7 +33,19 @@ namespace NotchPeninsula
                     Renderer.TOAST_WIDTH = Convert.ToSingle(key.GetValue("Custom_ToastW", 260f));
                     Renderer.TOAST_HEIGHT = Convert.ToSingle(key.GetValue("Custom_ToastH", 55f));
                     Renderer.GLOBAL_DPI = Convert.ToSingle(key.GetValue("Custom_Dpi", 1.0f));
+                    Renderer.ThemeMode = (int)key.GetValue("ThemeMode", 0);
+                    Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
+
+                // 监听 Windows 系统偏好设置（如深浅色主题）变更事件
+                SystemEvents.UserPreferenceChanged += (s, e) =>
+                {
+                    // 如果当前设置了“跟随系统(2)”，当系统主题改变时立即重新渲染颜色
+                    if (Renderer.ThemeMode == 2)
+                    {
+                        Renderer.ApplyThemeColors();
+                    }
+                };
             }
             catch (Exception ex)
             {

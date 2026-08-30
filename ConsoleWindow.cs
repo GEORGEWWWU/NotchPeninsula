@@ -51,6 +51,7 @@ namespace NotchPeninsula
         private int _hoveredPlusIndex = -1;
         private int _hoveredResetIndex = -1;
         private float[] _customValues = new float[7];
+        private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
         // DPI 缩放相关
         private float _dpiScale = 1f;
         private int _scaledWidth;
@@ -228,13 +229,23 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 3;// 4. 交互设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 190 && y <= TITLE_BAR_HEIGHT + 226) newHoveredTab = 4;// 5. 关于软件 (跨过第二条分割线)
 
+                    int newHoveredTheme = -1;
                     int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
                     if (_selectedTab == 5)
                     {
+                        // 避免和下面的 rightX 冲突，改名为 themeRightX
+                        float themeRightX = WIDTH - 36;
+                        float themeY = GetBtnY(-1);
+
+                        // 主题按钮的三个胶囊热区
+                        if (x >= themeRightX - 140 && x <= themeRightX - 100 && y >= themeY && y <= themeY + 24) newHoveredTheme = 0;
+                        if (x >= themeRightX - 90 && x <= themeRightX - 50 && y >= themeY && y <= themeY + 24) newHoveredTheme = 1;
+                        if (x >= themeRightX - 40 && x <= themeRightX && y >= themeY && y <= themeY + 24) newHoveredTheme = 2;
+
                         for (int i = 0; i < 7; i++)
                         {
-                            float btnY = GetBtnY(i); // 直接调用统一坐标获取
-                            float rightX = WIDTH - 36;
+                            float btnY = GetBtnY(i);
+                            float rightX = WIDTH - 36; // 保持原有变量不动
                             if (x >= rightX - 175 && x <= rightX - 145 && y >= btnY && y <= btnY + 24) newHoverMinus = i;
                             if (x >= rightX - 80 && x <= rightX - 50 && y >= btnY && y <= btnY + 24) newHoverPlus = i;
                             if (x >= rightX - 40 && x <= rightX && y >= btnY && y <= btnY + 24) newHoverReset = i;
@@ -319,7 +330,8 @@ namespace NotchPeninsula
                         newDisplayDropdownHovered != _displayDropdownHovered ||
                         newHoveredDisplayDropdownIndex != _hoveredDisplayDropdownIndex ||
                         newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
-                        newHoverReset != _hoveredResetIndex)
+                        newHoverReset != _hoveredResetIndex ||
+                        newHoveredTheme != _hoveredThemeIndex)
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
@@ -333,6 +345,7 @@ namespace NotchPeninsula
                         _hoveredMinusIndex = newHoverMinus;
                         _hoveredPlusIndex = newHoverPlus;
                         _hoveredResetIndex = newHoverReset;
+                        _hoveredThemeIndex = newHoveredTheme;
                         Render();
                     }
                     break;
@@ -387,6 +400,13 @@ namespace NotchPeninsula
                         else if (updateIdx == 6) { Renderer.GLOBAL_DPI = _customValues[6]; Program.SaveSetting("Custom_Dpi", _customValues[6]); }
 
                         Render();
+                    }
+                    else if (_selectedTab == 5 && _hoveredThemeIndex != -1)
+                    {
+                        Renderer.ThemeMode = _hoveredThemeIndex;
+                        Renderer.ApplyThemeColors(); // 立即反转画笔颜色
+                        Program.SaveSetting("ThemeMode", _hoveredThemeIndex);
+                        Render(); // 刷新控制台UI
                     }
                     else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
                     {
@@ -477,13 +497,14 @@ namespace NotchPeninsula
         {
             return index switch
             {
-                0 => TITLE_BAR_HEIGHT + 12 + 40,             // 待机宽度
-                1 => TITLE_BAR_HEIGHT + 12 + 40 + 34,        // 待机高度
-                2 => TITLE_BAR_HEIGHT + 130 + 40,            // 媒体宽度
-                3 => TITLE_BAR_HEIGHT + 130 + 40 + 34,       // 媒体高度
-                4 => TITLE_BAR_HEIGHT + 248 + 40,            // 通知宽度
-                5 => TITLE_BAR_HEIGHT + 248 + 40 + 34,       // 通知高度
-                6 => TITLE_BAR_HEIGHT + 366 + 40,            // DPI 缩放
+                -1 => TITLE_BAR_HEIGHT + 35,                 // 精准对应卡片高度的垂直中位线
+                0 => TITLE_BAR_HEIGHT + 92 + 40,             // 待机宽度
+                1 => TITLE_BAR_HEIGHT + 92 + 40 + 34,
+                2 => TITLE_BAR_HEIGHT + 210 + 40,            // 媒体宽度
+                3 => TITLE_BAR_HEIGHT + 210 + 40 + 34,
+                4 => TITLE_BAR_HEIGHT + 328 + 40,            // 通知宽度
+                5 => TITLE_BAR_HEIGHT + 328 + 40 + 34,
+                6 => TITLE_BAR_HEIGHT + 446 + 40,            // DPI 缩放
                 _ => 0
             };
         }
@@ -672,6 +693,7 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 5)
             {
+                // --- 完整恢复缺失的 DrawMultiCard 方法 ---
                 void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
                 {
                     float cardHeight = 36 + subLabels.Length * 34;
@@ -684,33 +706,65 @@ namespace NotchPeninsula
                     for (int i = 0; i < subLabels.Length; i++)
                     {
                         int index = indices[i];
-                        float btnY = GetBtnY(index);
+                        float cardBtnY = GetBtnY(index);
 
-                        canvas.DrawText(subLabels[i], 216, btnY + 17, _subTextPaint);
-                        float rightX = WIDTH - 36;
+                        canvas.DrawText(subLabels[i], 216, cardBtnY + 17, _subTextPaint);
+                        float cardRightX = WIDTH - 36; // 局部变量隔离
 
                         _dynamicFillPaint.Color = _hoveredMinusIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
-                        canvas.DrawRoundRect(new SKRect(rightX - 175, btnY, rightX - 145, btnY + 24), 4, 4, _dynamicFillPaint);
-                        canvas.DrawText("-", rightX - 164, btnY + 17, _uiTextPaint);
+                        canvas.DrawRoundRect(new SKRect(cardRightX - 175, cardBtnY, cardRightX - 145, cardBtnY + 24), 4, 4, _dynamicFillPaint);
+                        canvas.DrawText("-", cardRightX - 164, cardBtnY + 17, _uiTextPaint);
 
                         string valStr = index == 6 ? $"{_customValues[index]:F2} {unit}" : $"{(int)_customValues[index]} {unit}";
                         float textW = _uiTextPaint.MeasureText(valStr);
-                        canvas.DrawText(valStr, rightX - 90 - textW, btnY + 17, _uiTextPaint);
+                        canvas.DrawText(valStr, cardRightX - 90 - textW, cardBtnY + 17, _uiTextPaint);
 
                         _dynamicFillPaint.Color = _hoveredPlusIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
-                        canvas.DrawRoundRect(new SKRect(rightX - 80, btnY, rightX - 50, btnY + 24), 4, 4, _dynamicFillPaint);
-                        canvas.DrawText("+", rightX - 69, btnY + 17, _uiTextPaint);
+                        canvas.DrawRoundRect(new SKRect(cardRightX - 80, cardBtnY, cardRightX - 50, cardBtnY + 24), 4, 4, _dynamicFillPaint);
+                        canvas.DrawText("+", cardRightX - 69, cardBtnY + 17, _uiTextPaint);
 
                         _dynamicFillPaint.Color = _hoveredResetIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
-                        canvas.DrawRoundRect(new SKRect(rightX - 40, btnY, rightX, btnY + 24), 4, 4, _dynamicFillPaint);
-                        canvas.DrawText("重置", rightX - 33, btnY + 17, _subTextPaint);
+                        canvas.DrawRoundRect(new SKRect(cardRightX - 40, cardBtnY, cardRightX, cardBtnY + 24), 4, 4, _dynamicFillPaint);
+                        canvas.DrawText("重置", cardRightX - 33, cardBtnY + 17, _subTextPaint);
                     }
                 }
 
-                DrawMultiCard(12, "待机显示", ["水平宽度", "垂直高度"], [0, 1], "px");
-                DrawMultiCard(130, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
-                DrawMultiCard(248, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
-                DrawMultiCard(366, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+                // 绘制新增的主题卡片
+                float themeY = TITLE_BAR_HEIGHT + 12;
+                var themeRect = new SKRect(200, themeY, WIDTH - 20, themeY + 70);
+                canvas.DrawRoundRect(themeRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(themeRect, 6, 6, _cardBorder);
+
+                canvas.DrawText("刘海主题", 216, themeY + 26, _uiTextPaint);
+                canvas.DrawText("刘海背景与文本颜色自适应反转", 216, themeY + 46, _subTextPaint);
+
+                float themeRightX = WIDTH - 36; // 变量隔离
+                float btnY = GetBtnY(-1);
+
+                void DrawThemeBtn(int index, string label, float leftOffset, float rightOffset)
+                {
+                    bool isActive = Renderer.ThemeMode == index;
+                    bool isHovered = _hoveredThemeIndex == index;
+                    float btnWidth = leftOffset - rightOffset;
+
+                    _dynamicFillPaint.Color = (isActive || isHovered) ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
+                    canvas.DrawRoundRect(new SKRect(themeRightX - leftOffset, btnY, themeRightX - rightOffset, btnY + 24), 4, 4, _dynamicFillPaint);
+
+                    _dynamicTextPaint.Color = isActive ? new SKColor(0, 140, 240) : SKColors.White;
+
+                    // 根据文本真实长度在胶囊内部完美居中
+                    float textWidth = _dynamicTextPaint.MeasureText(label);
+                    float textX = themeRightX - leftOffset + (btnWidth - textWidth) / 2f;
+                    canvas.DrawText(label, textX, btnY + 17, _dynamicTextPaint);
+                }
+
+                DrawThemeBtn(0, "黑", 140, 100);
+                DrawThemeBtn(1, "白", 90, 50);
+                DrawThemeBtn(2, "系统", 40, 0);
+                DrawMultiCard(92, "待机显示", ["水平宽度", "垂直高度"], [0, 1], "px");
+                DrawMultiCard(210, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
+                DrawMultiCard(328, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
+                DrawMultiCard(446, "全局 DPI 缩放", ["视觉比例"], [6], "x");
             }
 
             canvas.Restore();
