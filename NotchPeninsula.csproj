@@ -10,12 +10,16 @@
 		<UseWindowsForms>true</UseWindowsForms>
 		<UseWPF>true</UseWPF>
 		<ApplicationIcon>NPS_NotchPeninsula-logo.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 
 	<Version>1.0.0</Version>
 	</PropertyGroup>
 
 	<ItemGroup>
 		<!-- 新增的资源在这里引入 -->
+    <Content Include="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="NPS_NotchPeninsula-logo.ico" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\bilibili-logo.png" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\chrome-logo.png" CopyToOutputDirectory="PreserveNewest" />

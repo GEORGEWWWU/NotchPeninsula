@@ -80,7 +80,7 @@ namespace NotchPeninsula
             var wc = new Win32.WNDCLASS
             {
                 lpfnWndProc = _wndProcDelegate,
-                hInstance = Process.GetCurrentProcess().Handle,
+                hInstance = Marshal.GetHINSTANCE(typeof(NotchWindow).Module),
                 lpszClassName = "NotchPeninsulaClass",
                 hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW)
             };

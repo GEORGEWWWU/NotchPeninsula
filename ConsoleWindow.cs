@@ -130,7 +130,7 @@ namespace NotchPeninsula
                 var wc = new Win32.WNDCLASS
                 {
                     lpfnWndProc = _staticWndProc,
-                    hInstance = Process.GetCurrentProcess().Handle,
+                    hInstance = Marshal.GetHINSTANCE(typeof(ConsoleWindow).Module),
                     lpszClassName = "NotchConsoleClass",
                     hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW),
                     hIcon = appIconHandle
@@ -152,7 +152,7 @@ namespace NotchPeninsula
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
                 (screenWidth - _scaledWidth) / 2, (screenHeight - _scaledHeight) / 2, // 使用物理尺寸居中
                 _scaledWidth, _scaledHeight,
-                IntPtr.Zero, IntPtr.Zero, Process.GetCurrentProcess().Handle, IntPtr.Zero
+                IntPtr.Zero, IntPtr.Zero, Marshal.GetHINSTANCE(typeof(ConsoleWindow).Module), IntPtr.Zero
             );
 
             Render();
