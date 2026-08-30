@@ -46,6 +46,11 @@ namespace NotchPeninsula
         private int _hoveredDisplayDropdownIndex = -1;
         private int _selectedDisplayIndex = 0;
         private static readonly string[] _displayOptions = ["时间日期"];
+        // 个性化中心状态
+        private int _hoveredMinusIndex = -1;
+        private int _hoveredPlusIndex = -1;
+        private int _hoveredResetIndex = -1;
+        private float[] _customValues = new float[7];
         // DPI 缩放相关
         private float _dpiScale = 1f;
         private int _scaledWidth;
@@ -78,6 +83,13 @@ namespace NotchPeninsula
         private ConsoleWindow()
         {
             _isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
+            _customValues[0] = Renderer.STANDBY_WIDTH;
+            _customValues[1] = Renderer.BASE_HEIGHT;
+            _customValues[2] = Renderer.MEDIA_WIDTH;
+            _customValues[3] = Renderer.MEDIA_HEIGHT;
+            _customValues[4] = Renderer.TOAST_WIDTH;
+            _customValues[5] = Renderer.TOAST_HEIGHT;
+            _customValues[6] = Renderer.GLOBAL_DPI;
 
             // 匹配目前加载的媒体平台索引
             for (int i = 0; i < _platforms.Length; i++)
@@ -183,10 +195,23 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 90 && y <= TITLE_BAR_HEIGHT + 126) newHoveredTab = 2; // 媒体设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 130 && y <= TITLE_BAR_HEIGHT + 166) newHoveredTab = 3; // 交互设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 170 && y <= TITLE_BAR_HEIGHT + 206) newHoveredTab = 4; // 关于页
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 210 && y <= TITLE_BAR_HEIGHT + 246) newHoveredTab = 5; // 个性化中心
+
+                    int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
+                    if (_selectedTab == 5)
+                    {
+                        for (int i = 0; i < 7; i++)
+                        {
+                            float btnY = GetBtnY(i); // 直接调用统一坐标获取
+                            float rightX = WIDTH - 36;
+                            if (x >= rightX - 175 && x <= rightX - 145 && y >= btnY && y <= btnY + 24) newHoverMinus = i;
+                            if (x >= rightX - 80 && x <= rightX - 50 && y >= btnY && y <= btnY + 24) newHoverPlus = i;
+                            if (x >= rightX - 40 && x <= rightX && y >= btnY && y <= btnY + 24) newHoverReset = i;
+                        }
+                    }
 
                     bool newDisplayDropdownHovered = false;
                     int newHoveredDisplayDropdownIndex = -1;
-
                     bool newToggleHovered = false;
                     bool newToastToggleHovered = false;
                     bool newMediaToggleHovered = false;
@@ -261,7 +286,9 @@ namespace NotchPeninsula
                         newDropdownHovered != _dropdownHovered ||
                         newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
                         newDisplayDropdownHovered != _displayDropdownHovered ||
-                        newHoveredDisplayDropdownIndex != _hoveredDisplayDropdownIndex)
+                        newHoveredDisplayDropdownIndex != _hoveredDisplayDropdownIndex ||
+                        newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
+                        newHoverReset != _hoveredResetIndex)
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
@@ -272,6 +299,9 @@ namespace NotchPeninsula
                         _hoveredLinkIndex = newHoveredLinkIndex;
                         _displayDropdownHovered = newDisplayDropdownHovered;
                         _hoveredDisplayDropdownIndex = newHoveredDisplayDropdownIndex;
+                        _hoveredMinusIndex = newHoverMinus;
+                        _hoveredPlusIndex = newHoverPlus;
+                        _hoveredResetIndex = newHoverReset;
                         Render();
                     }
                     break;
@@ -300,6 +330,33 @@ namespace NotchPeninsula
                     else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
                     else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
                     else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_selectedTab == 5 && (_hoveredMinusIndex != -1 || _hoveredPlusIndex != -1 || _hoveredResetIndex != -1))
+                    {
+                        int updateIdx;
+                        if (_hoveredResetIndex != -1)
+                        {
+                            updateIdx = _hoveredResetIndex;
+                            float[] defaultVals = { 130f, 34f, 260f, 34f, 260f, 55f, 1.0f }; // 内置7项默认值
+                            _customValues[updateIdx] = defaultVals[updateIdx];
+                        }
+                        else
+                        {
+                            updateIdx = _hoveredMinusIndex != -1 ? _hoveredMinusIndex : _hoveredPlusIndex;
+                            float delta = _hoveredPlusIndex != -1 ? (updateIdx == 6 ? 0.05f : 5f) : (updateIdx == 6 ? -0.05f : -5f);
+                            _customValues[updateIdx] = Math.Max(updateIdx == 6 ? 0.5f : 20f, _customValues[updateIdx] + delta);
+                        }
+
+                        if (updateIdx == 0) { Renderer.STANDBY_WIDTH = _customValues[0]; Program.SaveSetting("Custom_StandbyW", _customValues[0]); }
+                        else if (updateIdx == 1) { Renderer.BASE_HEIGHT = _customValues[1]; Program.SaveSetting("Custom_BaseH", _customValues[1]); }
+                        else if (updateIdx == 2) { Renderer.MEDIA_WIDTH = _customValues[2]; Program.SaveSetting("Custom_MediaW", _customValues[2]); }
+                        else if (updateIdx == 3) { Renderer.MEDIA_HEIGHT = _customValues[3]; Program.SaveSetting("Custom_MediaH", _customValues[3]); }
+                        else if (updateIdx == 4) { Renderer.TOAST_WIDTH = _customValues[4]; Program.SaveSetting("Custom_ToastW", _customValues[4]); }
+                        else if (updateIdx == 5) { Renderer.TOAST_HEIGHT = _customValues[5]; Program.SaveSetting("Custom_ToastH", _customValues[5]); }
+                        else if (updateIdx == 6) { Renderer.GLOBAL_DPI = _customValues[6]; Program.SaveSetting("Custom_Dpi", _customValues[6]); }
+
+                        Render();
+                    }
                     else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
                     {
                         string[] urls = [
@@ -385,6 +442,21 @@ namespace NotchPeninsula
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
         }
 
+        private float GetBtnY(int index)
+        {
+            return index switch
+            {
+                0 => TITLE_BAR_HEIGHT + 12 + 40,             // 待机宽度
+                1 => TITLE_BAR_HEIGHT + 12 + 40 + 34,        // 待机高度
+                2 => TITLE_BAR_HEIGHT + 130 + 40,            // 媒体宽度
+                3 => TITLE_BAR_HEIGHT + 130 + 40 + 34,       // 媒体高度
+                4 => TITLE_BAR_HEIGHT + 248 + 40,            // 通知宽度
+                5 => TITLE_BAR_HEIGHT + 248 + 40 + 34,       // 通知高度
+                6 => TITLE_BAR_HEIGHT + 366 + 40,            // DPI 缩放
+                _ => 0
+            };
+        }
+
         private unsafe void Render()
         {
             var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
@@ -459,6 +531,7 @@ namespace NotchPeninsula
             DrawTab(2, "媒体设置", 90);  // 顺延
             DrawTab(3, "交互设置", 130); // 顺延
             DrawTab(4, "关于软件", 170); // 顺延
+            DrawTab(5, "个性化中心", 210);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
@@ -579,6 +652,55 @@ namespace NotchPeninsula
                     canvas.DrawText(links[i], currentX, startY, linkPaint);
                     currentX += textWidth + spacing;
                 }
+            }
+            else if (_selectedTab == 5) // 个性化中心
+            {
+                void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
+                {
+                    // 动态高度：标题留白 36，每一行占用 34
+                    float cardHeight = 36 + subLabels.Length * 34;
+                    var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + yOffset, WIDTH - 20, TITLE_BAR_HEIGHT + yOffset + cardHeight);
+                    using var cardBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
+                    using var cardBorder = new SKPaint { Color = new SKColor(255, 255, 255, 15), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+                    canvas.DrawRoundRect(cardRect, 6, 6, cardBg); canvas.DrawRoundRect(cardRect, 6, 6, cardBorder);
+
+                    canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + 26, uiTextPaint);
+
+                    for (int i = 0; i < subLabels.Length; i++)
+                    {
+                        int index = indices[i];
+                        float btnY = GetBtnY(index); // 使用绝对一致的坐标
+
+                        canvas.DrawText(subLabels[i], 216, btnY + 17, subTextPaint);
+                        float rightX = WIDTH - 36;
+
+                        // 绘制减号 (-)
+                        using var minusBg = new SKPaint { Color = _hoveredMinusIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15), IsAntialias = true };
+                        canvas.DrawRoundRect(new SKRect(rightX - 175, btnY, rightX - 145, btnY + 24), 4, 4, minusBg);
+                        canvas.DrawText("-", rightX - 164, btnY + 17, uiTextPaint);
+
+                        // 绘制数值（动态测宽确保不重叠）
+                        string valStr = index == 6 ? $"{_customValues[index]:F2} {unit}" : $"{(int)_customValues[index]} {unit}";
+                        float textW = uiTextPaint.MeasureText(valStr);
+                        canvas.DrawText(valStr, rightX - 90 - textW, btnY + 17, uiTextPaint);
+
+                        // 绘制加号 (+)
+                        using var plusBg = new SKPaint { Color = _hoveredPlusIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15), IsAntialias = true };
+                        canvas.DrawRoundRect(new SKRect(rightX - 80, btnY, rightX - 50, btnY + 24), 4, 4, plusBg);
+                        canvas.DrawText("+", rightX - 69, btnY + 17, uiTextPaint);
+
+                        // 绘制重置按钮
+                        using var resetBg = new SKPaint { Color = _hoveredResetIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15), IsAntialias = true };
+                        canvas.DrawRoundRect(new SKRect(rightX - 40, btnY, rightX, btnY + 24), 4, 4, resetBg);
+                        canvas.DrawText("重置", rightX - 33, btnY + 17, subTextPaint);
+                    }
+                }
+
+                // 结构化排版
+                DrawMultiCard(12, "待机显示", ["水平宽度", "垂直高度"], [0, 1], "px");
+                DrawMultiCard(130, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
+                DrawMultiCard(248, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
+                DrawMultiCard(366, "全局 DPI 缩放", ["视觉比例"], [6], "x");
             }
 
             canvas.Restore(); // 结束大边界裁切

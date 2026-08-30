@@ -24,6 +24,15 @@ namespace NotchPeninsula
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
                     MediaController.TargetPlatform = (string)key.GetValue("TargetPlatform", "other") ?? "other";
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
+
+                    // 读取个性化参数
+                    Renderer.STANDBY_WIDTH = Convert.ToSingle(key.GetValue("Custom_StandbyW", 130f));
+                    Renderer.BASE_HEIGHT = Convert.ToSingle(key.GetValue("Custom_BaseH", 34f));
+                    Renderer.MEDIA_WIDTH = Convert.ToSingle(key.GetValue("Custom_MediaW", 260f));
+                    Renderer.MEDIA_HEIGHT = Convert.ToSingle(key.GetValue("Custom_MediaH", 34f));
+                    Renderer.TOAST_WIDTH = Convert.ToSingle(key.GetValue("Custom_ToastW", 260f));
+                    Renderer.TOAST_HEIGHT = Convert.ToSingle(key.GetValue("Custom_ToastH", 55f));
+                    Renderer.GLOBAL_DPI = Convert.ToSingle(key.GetValue("Custom_Dpi", 1.0f));
                 }
             }
             catch (Exception ex)

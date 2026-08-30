@@ -68,6 +68,7 @@ namespace NotchPeninsula
         private SKSurface? _renderSurface;
         // 极速无锁防重入标记
         private int _isRendering = 0;
+        private volatile bool _needsBufferResize = false; // 显存重建标记
 
         public NotchWindow()
         {
@@ -300,11 +301,29 @@ namespace NotchPeninsula
 
         private unsafe void RenderLoop()
         {
-            // 极限性能优化：原子级防重入。如果当前有线程正在渲染，直接丢弃堆积的重叠帧，保护底层矩阵指针
             if (System.Threading.Interlocked.Exchange(ref _isRendering, 1) == 1) return;
 
             try
             {
+                // 实时追踪目标尺寸，动态安全重建底层显存画布
+                float currentTargetDpi = (Win32.GetDpiForSystem() / 96f) * Renderer.GLOBAL_DPI;
+                int targetScaledWidth = (int)(Renderer.WINDOW_WIDTH * currentTargetDpi);
+                int targetScaledHeight = (int)(Renderer.MAX_WINDOW_HEIGHT * currentTargetDpi);
+
+                // 核心修复：不但要判断 DPI 变化，还要检测目标物理宽高是否发生改变
+                if (Math.Abs(_dpiScale - currentTargetDpi) > 0.01f || _scaledWidth != targetScaledWidth || _scaledHeight != targetScaledHeight || _needsBufferResize)
+                {
+                    _dpiScale = currentTargetDpi;
+                    _scaledWidth = targetScaledWidth;
+                    _scaledHeight = targetScaledHeight;
+
+                    _renderSurface?.Dispose();
+                    Win32.DeleteObject(_hBitmap);
+                    Win32.DeleteDC(_memDc);
+                    InitRenderBuffer(); // 重新向系统申请足够大尺寸的内存
+                    _needsBufferResize = false;
+                }
+
                 // 判断当前 Toast 是否处于激活期
                 bool isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
                 if (!isToastActive && _currentToast != null) _currentToast = null; // 超时清理
@@ -350,17 +369,17 @@ namespace NotchPeninsula
                 }
             }
 
-            // ========================================================
-            // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
-            // ========================================================
-            bool currentActive = _media.IsActive;
+                // ========================================================
+                // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
+                // ========================================================
+                bool currentActive = _media.IsActive;
 
-            // 决策尺寸
-            float expectedTargetWidth = isToastActive ? Renderer.MEDIA_WIDTH : (currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH);
-            float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : Renderer.BASE_HEIGHT;
+                // 决策尺寸 (分别引用专属宽度和高度)
+                float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH);
+                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? Renderer.MEDIA_HEIGHT : Renderer.BASE_HEIGHT);
 
-            // 当预期尺寸和当前目标尺寸不同时，立刻重新锚定弹簧起点，不打断原有动量
-            if (Math.Abs(expectedTargetWidth - _targetWidth) > 0.1f || Math.Abs(expectedTargetHeight - _targetHeight) > 0.1f)
+                // 当预期尺寸和当前目标尺寸不同时，立刻重新锚定弹簧起点，不打断原有动量
+                if (Math.Abs(expectedTargetWidth - _targetWidth) > 0.1f || Math.Abs(expectedTargetHeight - _targetHeight) > 0.1f)
             {
                 _startWidth = _currentWidth;
                 _targetWidth = expectedTargetWidth;
@@ -451,8 +470,9 @@ namespace NotchPeninsula
             var ptSrc = new Win32.POINT(0, 0);
             var ptDst = new Win32.POINT { x = 0, y = 0 };
 
-            Win32.GetWindowRect(_hwnd, out var rect);
-            ptDst.x = rect.Left;
+            // 获取主屏幕实时宽度，减去当前缩放宽度后除以 2，保证刘海永远严格居中
+            int screenWidth = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
+            ptDst.x = (screenWidth - _scaledWidth) / 2;
             ptDst.y = (int)_currentY;
 
             var size = new Win32.SIZE(_scaledWidth, _scaledHeight);

@@ -7,14 +7,26 @@ namespace NotchPeninsula
 {
     public static class Renderer
     {
-        // 1. 布局核心参数 
-        public const int WINDOW_WIDTH = 320;
-        public const int BASE_HEIGHT = 34;
-        public const int TOAST_HEIGHT = 55;
-        public const int MAX_WINDOW_HEIGHT = 55;
+        // 1. 布局核心参数 (改为无锁动态变量)
+        private static volatile float _standbyWidth = 130f;
+        private static volatile float _baseHeight = 34f;
+        private static volatile float _mediaWidth = 260f;
+        private static volatile float _mediaHeight = 34f; // 新增：媒体专属高度
+        private static volatile float _toastWidth = 260f; // 新增：通知专属宽度
+        private static volatile float _toastHeight = 55f;
+        private static volatile float _globalDpi = 1.0f;
 
-        public const int STANDBY_WIDTH = 130;
-        public const int MEDIA_WIDTH = 260;
+        public static float STANDBY_WIDTH { get => _standbyWidth; set => _standbyWidth = value; }
+        public static float BASE_HEIGHT { get => _baseHeight; set => _baseHeight = value; }
+        public static float MEDIA_WIDTH { get => _mediaWidth; set => _mediaWidth = value; }
+        public static float MEDIA_HEIGHT { get => _mediaHeight; set => _mediaHeight = value; }
+        public static float TOAST_WIDTH { get => _toastWidth; set => _toastWidth = value; }
+        public static float TOAST_HEIGHT { get => _toastHeight; set => _toastHeight = value; }
+        public static float GLOBAL_DPI { get => _globalDpi; set => _globalDpi = value; }
+
+        // 动态计算最大边界，防止因刘海变大导致出界
+        public static float WINDOW_WIDTH => Math.Max(320f, Math.Max(MEDIA_WIDTH, TOAST_WIDTH) + 60f);
+        public static float MAX_WINDOW_HEIGHT => Math.Max(55f, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT) + 20f);
 
         public const int OUTER_R = 14;
         public const int INNER_R = 12;
