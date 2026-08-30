@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.RegularExpressions;
 using Windows.Media.Control;
 using SkiaSharp;
@@ -17,6 +17,8 @@ namespace NotchPeninsula
         public bool IsPlaying { get; private set; } = false;
         public bool IsActive { get; private set; } = false;
         public SKBitmap? Thumbnail { get; private set; }
+        // 当前 Thumbnail 是否来自 MediaLogoProvider 的共享缓存（由提供方持有，替换时不得 Dispose）
+        private bool _thumbnailIsShared;
 
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _currentSession;
@@ -44,6 +46,14 @@ namespace NotchPeninsula
         public async Task ForceRefresh()
         {
             if (_manager != null) await UpdateSession(_manager);
+        }
+
+        // 统一替换缩略图：共享站标由 MediaLogoProvider 持有，绝不能 Dispose；仅 SMTC 解码出的才归本类所有
+        private void SetThumbnail(SKBitmap? newThumb, bool shared)
+        {
+            if (!_thumbnailIsShared) Thumbnail?.Dispose();
+            Thumbnail = newThumb;
+            _thumbnailIsShared = shared;
         }
 
         private async Task UpdateSession(GlobalSystemMediaTransportControlsSessionManager manager)
@@ -124,8 +134,7 @@ namespace NotchPeninsula
                 Title = "No Media";
                 Artist = "";
                 IsPlaying = false;
-                Thumbnail?.Dispose();
-                Thumbnail = null;
+                SetThumbnail(null, false);
             }
         }
 
@@ -152,12 +161,11 @@ namespace NotchPeninsula
                             : (string.IsNullOrEmpty(props.Artist) ? "" : props.Artist));
 
                     // 统一封面管理：PotPlayer/bilibili 始终用站标；浏览器无 SMTC 封面时用站标兜底
+                    // 站标为共享缓存（shared=true），仅持有引用，替换时不得 Dispose，避免误伤缓存
                     var platformLogo = MediaLogoProvider.GetLogo(_currentSession.SourceAppUserModelId, props.Thumbnail != null);
                     if (platformLogo != null)
                     {
-                        var oldThumb = Thumbnail;
-                        Thumbnail = platformLogo;
-                        oldThumb?.Dispose();
+                        SetThumbnail(platformLogo, true);
                     }
                     else if (props.Thumbnail != null)
                     {
@@ -166,17 +174,15 @@ namespace NotchPeninsula
                             using var stream = await props.Thumbnail.OpenReadAsync();
                             using var dotNetStream = stream.AsStreamForRead();
 
-                            var oldThumb = Thumbnail;
-                            Thumbnail = SKBitmap.Decode(dotNetStream);
-                            oldThumb?.Dispose();
+                            SetThumbnail(SKBitmap.Decode(dotNetStream), false);
                         }
                         catch (Exception ex)
                         {
                             Logger.Error("封面解析失败", ex);
-                            Thumbnail = null;
+                            SetThumbnail(null, false);
                         }
                     }
-                    else Thumbnail = null;
+                    else SetThumbnail(null, false);
                 }
             }
             catch (Exception ex)
@@ -185,7 +191,7 @@ namespace NotchPeninsula
                 Logger.Error("读取媒体属性失败，可能遇到不规范的媒体源", ex);
                 Title = _isPotPlayerSession ? "" : "Unknown";
                 Artist = (_isBilibiliSession || _isPotPlayerSession) ? "" : "Unknown";
-                Thumbnail = null;
+                SetThumbnail(null, false);
             }
 
             // 播放状态的读取也建议加上保护

@@ -30,13 +30,40 @@ namespace NotchPeninsula
         ];
 
         // 路径 -> 已解码位图缓存，全进程共享，避免重复 IO + 解码
+        // 与 Renderer 的 QQ 图标一致：只预加载一次，持有共享引用，调用方不得 Dispose
         private static readonly Dictionary<string, SKBitmap> _cache = new(StringComparer.OrdinalIgnoreCase);
+        private static bool _loaded = false;
 
-        // 根据会话 AppUserModelId 返回对应平台站标封面副本；未命中返回 null
+        // 一次性预加载所有站标（参照 QQ 图标的 EnsureIconsLoaded 加载方式）
+        private static void EnsureLoaded()
+        {
+            if (_loaded) return;
+            try
+            {
+                foreach (var rule in PlatformRules)
+                {
+                    var path = Path.Combine(AppContext.BaseDirectory, rule.LogoPath);
+                    if (File.Exists(path))
+                    {
+                        using var stream = File.OpenRead(path);
+                        _cache[rule.LogoPath] = SKBitmap.Decode(stream);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("加载平台封面失败", ex);
+            }
+            finally { _loaded = true; }
+        }
+
+        // 根据会话 AppUserModelId 返回对应平台站标封面（共享缓存引用，调用方不得 Dispose）；未命中返回 null
         // hasThumbnail 表示会话是否提供了 SMTC 封面，Fallback 平台仅在其为空时才使用站标
         public static SKBitmap? GetLogo(string? sourceAppUserModelId, bool hasThumbnail)
         {
             if (string.IsNullOrWhiteSpace(sourceAppUserModelId)) return null;
+
+            EnsureLoaded();
 
             var id = sourceAppUserModelId.ToLowerInvariant();
             foreach (var rule in PlatformRules)
@@ -45,7 +72,7 @@ namespace NotchPeninsula
 
                 // 一旦 AppID 命中即确定应用：Always 始终用站标；Fallback 仅无封面时兜底
                 if (rule.Strategy == CoverStrategy.Always || !hasThumbnail)
-                    return LoadAndCache(rule.LogoPath);
+                    return _cache.TryGetValue(rule.LogoPath, out var bmp) ? bmp : null;
                 return null;
             }
             return null;
@@ -74,27 +101,6 @@ namespace NotchPeninsula
                     return true;
             }
             return false;
-        }
-
-        // 读取并缓存平台站标封面，返回副本避免被调用方 Dispose 时误伤缓存
-        private static SKBitmap? LoadAndCache(string relativePath)
-        {
-            try
-            {
-                if (!_cache.TryGetValue(relativePath, out var bmp))
-                {
-                    var path = Path.Combine(AppContext.BaseDirectory, relativePath);
-                    using var stream = File.OpenRead(path);
-                    bmp = SKBitmap.Decode(stream);
-                    _cache[relativePath] = bmp;
-                }
-                return bmp?.Copy();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"加载平台封面 {relativePath} 失败", ex);
-                return null;
-            }
         }
     }
 }
