@@ -310,7 +310,7 @@ namespace NotchPeninsula
                 int targetScaledWidth = (int)(Renderer.WINDOW_WIDTH * currentTargetDpi);
                 int targetScaledHeight = (int)(Renderer.MAX_WINDOW_HEIGHT * currentTargetDpi);
 
-                // 核心修复：不但要判断 DPI 变化，还要检测目标物理宽高是否发生改变
+                // 不但要判断 DPI 变化，还要检测目标物理宽高是否发生改变
                 if (Math.Abs(_dpiScale - currentTargetDpi) > 0.01f || _scaledWidth != targetScaledWidth || _scaledHeight != targetScaledHeight || _needsBufferResize)
                 {
                     _dpiScale = currentTargetDpi;
