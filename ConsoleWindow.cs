@@ -236,10 +236,11 @@ namespace NotchPeninsula
                     // Tab Hover 判定（匹配新的视觉排版位置与分割线）
                     int newHoveredTab = -1;
                     if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 5;      // 1. 个性化中心
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 60 && y <= TITLE_BAR_HEIGHT + 96) newHoveredTab = 0; // 2. 通用设置 (跨过第一条分割线)
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 2;// 3. 媒体设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 3;// 4. 交互设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 190 && y <= TITLE_BAR_HEIGHT + 226) newHoveredTab = 4;// 5. 关于软件 (跨过第二条分割线)
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 60 && y <= TITLE_BAR_HEIGHT + 96) newHoveredTab = 0; // 2. 通用设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 1; // 3. 显示设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 2; // 4. 媒体设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 180 && y <= TITLE_BAR_HEIGHT + 216) newHoveredTab = 3; // 5. 交互设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 4; // 6. 关于软件
 
                     int newHoveredTheme = -1;
                     int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
@@ -579,14 +580,15 @@ namespace NotchPeninsula
                 canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, _uiTextPaint);
             }
 
-            // 按照你的要求重新排序：个性化中心最上，两条分割线
+            // 个性化中心最上，两条分割线
             DrawTab(5, "个性化中心", 10);
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + 52, 160, TITLE_BAR_HEIGHT + 52, _separatorPaint);
             DrawTab(0, "通用设置", 60);
-            DrawTab(2, "媒体设置", 100);
-            DrawTab(3, "交互设置", 140);
-            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 182, 160, TITLE_BAR_HEIGHT + 182, _separatorPaint);
-            DrawTab(4, "关于软件", 190);
+            DrawTab(1, "显示设置", 100);
+            DrawTab(2, "媒体设置", 140);
+            DrawTab(3, "交互设置", 180);
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 222, 160, TITLE_BAR_HEIGHT + 222, _separatorPaint);
+            DrawTab(4, "关于软件", 230);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
