@@ -51,6 +51,8 @@ namespace NotchPeninsula
         private int _hoveredPlusIndex = -1;
         private int _hoveredResetIndex = -1;
         private float[] _customValues = new float[7];
+        private static readonly float[] _defaultCustomValues = [130f, 34f, 260f, 34f, 260f, 55f, 1.0f];
+        private readonly string[] _valStrCache = new string[7];
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
         // DPI 缩放相关
         private float _dpiScale = 1f;
@@ -200,7 +202,17 @@ namespace NotchPeninsula
                 IntPtr.Zero, IntPtr.Zero, Marshal.GetHINSTANCE(typeof(ConsoleWindow).Module), IntPtr.Zero
             );
 
+            for (int i = 0; i < 7; i++)
+            {
+                UpdateValueString(i);
+            }
+
             Render();
+        }
+
+        private void UpdateValueString(int index)
+        {
+            _valStrCache[index] = index == 6 ? $"{_customValues[index]:F2} x" : $"{(int)_customValues[index]} px";
         }
 
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -381,7 +393,7 @@ namespace NotchPeninsula
                         if (_hoveredResetIndex != -1)
                         {
                             updateIdx = _hoveredResetIndex;
-                            float[] defaultVals = { 130f, 34f, 260f, 34f, 260f, 55f, 1.0f }; // 内置7项默认值
+                            float[] defaultVals = { 130f, 34f, 260f, 34f, 260f, 55f, 1.0f };
                             _customValues[updateIdx] = defaultVals[updateIdx];
                         }
                         else
@@ -390,6 +402,9 @@ namespace NotchPeninsula
                             float delta = _hoveredPlusIndex != -1 ? (updateIdx == 6 ? 0.05f : 5f) : (updateIdx == 6 ? -0.05f : -5f);
                             _customValues[updateIdx] = Math.Max(updateIdx == 6 ? 0.5f : 20f, _customValues[updateIdx] + delta);
                         }
+
+                        // 数值变动时才更新字符串缓存，避免渲染循环产生 GC 垃圾
+                        UpdateValueString(updateIdx);
 
                         if (updateIdx == 0) { Renderer.STANDBY_WIDTH = _customValues[0]; Program.SaveSetting("Custom_StandbyW", _customValues[0]); }
                         else if (updateIdx == 1) { Renderer.BASE_HEIGHT = _customValues[1]; Program.SaveSetting("Custom_BaseH", _customValues[1]); }
@@ -693,9 +708,19 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 5)
             {
-                // --- 完整恢复缺失的 DrawMultiCard 方法 ---
                 void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
                 {
+                    // 检测该卡片对应的尺寸设置是否已被改动
+                    bool isModified = false;
+                    foreach (int index in indices)
+                    {
+                        if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
+                        {
+                            isModified = true;
+                            break;
+                        }
+                    }
+
                     float cardHeight = 36 + subLabels.Length * 34;
                     var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + yOffset, WIDTH - 20, TITLE_BAR_HEIGHT + yOffset + cardHeight);
                     canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
@@ -703,19 +728,37 @@ namespace NotchPeninsula
 
                     canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + 26, _uiTextPaint);
 
+                    // 如果改动了某个尺寸设置，在标题旁边显示已生效标签
+                    if (isModified)
+                    {
+                        float titleWidth = _uiTextPaint.MeasureText(title);
+                        float tagX = 216 + titleWidth + 10;
+                        float tagY = TITLE_BAR_HEIGHT + yOffset + 13;
+                        var tagRect = new SKRect(tagX, tagY, tagX + 38, tagY + 18);
+
+                        _dynamicFillPaint.Color = new SKColor(0, 120, 212, 35); // 浅背景颜色
+                        canvas.DrawRoundRect(tagRect, 3f, 3f, _dynamicFillPaint); // 小圆角
+
+                        _dynamicTextPaint.TextSize = 10f; // 小文本样式
+                        _dynamicTextPaint.Color = new SKColor(0, 140, 240);
+                        canvas.DrawText("已生效", tagX + 4, tagY + 13, _dynamicTextPaint);
+                        _dynamicTextPaint.TextSize = 13f; // 还原字号，防止污染后续文字渲染
+                    }
+
                     for (int i = 0; i < subLabels.Length; i++)
                     {
                         int index = indices[i];
                         float cardBtnY = GetBtnY(index);
 
                         canvas.DrawText(subLabels[i], 216, cardBtnY + 17, _subTextPaint);
-                        float cardRightX = WIDTH - 36; // 局部变量隔离
+                        float cardRightX = WIDTH - 36;
 
                         _dynamicFillPaint.Color = _hoveredMinusIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
                         canvas.DrawRoundRect(new SKRect(cardRightX - 175, cardBtnY, cardRightX - 145, cardBtnY + 24), 4, 4, _dynamicFillPaint);
                         canvas.DrawText("-", cardRightX - 164, cardBtnY + 17, _uiTextPaint);
 
-                        string valStr = index == 6 ? $"{_customValues[index]:F2} {unit}" : $"{(int)_customValues[index]} {unit}";
+                        // 使用静态缓存字符串，零 GC 开销
+                        string valStr = _valStrCache[index];
                         float textW = _uiTextPaint.MeasureText(valStr);
                         canvas.DrawText(valStr, cardRightX - 90 - textW, cardBtnY + 17, _uiTextPaint);
 
