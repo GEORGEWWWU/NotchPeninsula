@@ -399,13 +399,18 @@ namespace NotchPeninsula
 
                     if (isHovered)
                     {
+                        // 动态计算 Y 轴绝对居中，替代写死的 11 和 12
+                        // 上一曲/下一曲图标高度为 10f，播放/暂停图标高度为 12f
+                        float prevNextY = (currentHeight - 10f) / 2f;
+                        float playPauseY = (currentHeight - 12f) / 2f;
+
                         // 鼠标悬停时显示播放控制按钮
-                        DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, 12, _prevPath);
+                        DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
                         if (media.IsPlaying)
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 10, 11, _pausePath);
+                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 10, playPauseY, _pausePath);
                         else
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 11, 11, _playPath);
-                        DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, 12, _nextPath);
+                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 11, playPauseY, _playPath);
+                        DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
                     }
                     else if (bars != null)
                     {
