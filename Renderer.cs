@@ -64,8 +64,9 @@ namespace NotchPeninsula
         }
 
         // 动态计算最大边界，防止因刘海变大导致出界
-        public static float WINDOW_WIDTH => Math.Max(320f, Math.Max(MEDIA_WIDTH, TOAST_WIDTH) + 60f);
-        public static float MAX_WINDOW_HEIGHT => Math.Max(55f, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT) + 20f);
+        // 包含待机尺寸(STANDBY/BASE)，并增加灵动岛下沉和弹性动画拉伸时的溢出安全边距
+        public static float WINDOW_WIDTH => Math.Max(320f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);
+        public static float MAX_WINDOW_HEIGHT => Math.Max(70f, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f);
 
         public const int OUTER_R = 14;
         public const int INNER_R = 12;
