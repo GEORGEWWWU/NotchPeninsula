@@ -28,6 +28,12 @@ namespace NotchPeninsula
         private float _currentHeight = Renderer.BASE_HEIGHT;
         private float _startHeight = Renderer.BASE_HEIGHT;
         private float _targetHeight = Renderer.BASE_HEIGHT;
+        // 形态弹簧动画状态
+        private float _currentStyleProgress = Renderer.NotchStyle;
+        private float _startStyleProgress = Renderer.NotchStyle;
+        private float _targetStyleProgress = Renderer.NotchStyle;
+        private bool _isStyleAnimating = false;
+        private DateTime _styleAnimStartTime;
 
         // Toast 状态控制
         private ToastData? _currentToast = null;
@@ -378,6 +384,36 @@ namespace NotchPeninsula
                 float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH);
                 float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? Renderer.MEDIA_HEIGHT : Renderer.BASE_HEIGHT);
 
+                // 形态(刘海/灵动岛) 弹簧物理插值引擎
+                float expectedStyleTarget = Renderer.NotchStyle;
+                if (Math.Abs(expectedStyleTarget - _targetStyleProgress) > 0.001f)
+                {
+                    _startStyleProgress = _currentStyleProgress;
+                    _targetStyleProgress = expectedStyleTarget;
+                    _styleAnimStartTime = DateTime.Now;
+                    _isStyleAnimating = true;
+                }
+
+                if (_isStyleAnimating)
+                {
+                    double elapsedS = (DateTime.Now - _styleAnimStartTime).TotalSeconds;
+                    double durationS = 0.400; // 与你的长宽缩放保持同频 400ms
+
+                    if (elapsedS >= durationS)
+                    {
+                        _isStyleAnimating = false;
+                        _currentStyleProgress = _targetStyleProgress;
+                    }
+                    else
+                    {
+                        // 完全复用原有的完美物理尼奎斯特阻尼公式
+                        double freq = 2.4;
+                        double decay = 12.0;
+                        double spring = 1.0 - Math.Cos(freq * elapsedS * 2.0 * Math.PI) * Math.Exp(-decay * elapsedS);
+                        _currentStyleProgress = (float)(_startStyleProgress + (_targetStyleProgress - _startStyleProgress) * spring);
+                    }
+                }
+
                 // 当预期尺寸和当前目标尺寸不同时，立刻重新锚定弹簧起点，不打断原有动量
                 if (Math.Abs(expectedTargetWidth - _targetWidth) > 0.1f || Math.Abs(expectedTargetHeight - _targetHeight) > 0.1f)
             {
@@ -449,7 +485,7 @@ namespace NotchPeninsula
                 canvas.Scale(_dpiScale);
 
                 // 传入 currentHeight 和 _currentToast
-                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast);
+                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress);
 
                 // 恢复原始矩阵状态
                 canvas.Restore();

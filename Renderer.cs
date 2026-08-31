@@ -24,6 +24,7 @@ namespace NotchPeninsula
         public static float TOAST_HEIGHT { get => _toastHeight; set => _toastHeight = value; }
         public static float GLOBAL_DPI { get => _globalDpi; set => _globalDpi = value; }
         public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
+        public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
         private static SKColor _currentTextColor = SKColors.White;
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
         public static void ApplyThemeColors() // 刷新颜色的方法
@@ -180,7 +181,7 @@ namespace NotchPeninsula
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
 
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null)
+        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f)
         {
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
@@ -193,15 +194,27 @@ namespace NotchPeninsula
                 int btnPlayX = (int)right - 60;
                 int btnNextX = (int)right - 30;
 
+                // 灵动岛悬浮距离顶部的 Y 轴高度 (随过渡进度平滑变化)
+                float topY = 12f * styleProgress;
+
+                canvas.Save();
+                // 整个画布向下平移，让内部所有元素自动完美适应居中，零开销！
+                canvas.Translate(0, topY);
+
                 _bgPath.Rewind();
-                _bgPath.MoveTo(left - OUTER_R, 0);
-                _bgPath.QuadTo(left, 0, left, OUTER_R);
+                // 纯数学变形算法：当 styleProgress 为 0 (刘海) 时，画反向外圆角；当为 1 (灵动岛) 时，画标准内圆角
+                // 顶部左侧圆角渐变
+                _bgPath.MoveTo(left - OUTER_R * (1 - styleProgress) + INNER_R * styleProgress, 0);
+                _bgPath.QuadTo(left, 0, left, OUTER_R * (1 - styleProgress) + INNER_R * styleProgress);
+                // 底部左侧
                 _bgPath.LineTo(left, currentHeight - INNER_R);
                 _bgPath.QuadTo(left, currentHeight, left + INNER_R, currentHeight);
+                // 底部右侧
                 _bgPath.LineTo(right - INNER_R, currentHeight);
                 _bgPath.QuadTo(right, currentHeight, right, currentHeight - INNER_R);
-                _bgPath.LineTo(right, OUTER_R);
-                _bgPath.QuadTo(right, 0, right + OUTER_R, 0);
+                // 顶部右侧圆角渐变
+                _bgPath.LineTo(right, OUTER_R * (1 - styleProgress) + INNER_R * styleProgress);
+                _bgPath.QuadTo(right, 0, right + OUTER_R * (1 - styleProgress) - INNER_R * styleProgress, 0);
                 _bgPath.Close();
 
                 canvas.DrawPath(_bgPath, _bgPaint);
@@ -421,8 +434,8 @@ namespace NotchPeninsula
                     canvas.DrawText(_cachedTimeStr, timeX, baselineY, _timePaint);
                     canvas.DrawText(_cachedDateStr, dateX, baselineY, _datePaint);
                 }
-
                 canvas.Restore();
+                canvas.Restore(); // 恢复 Translate 对外部环境的影响
             }
             finally
             {

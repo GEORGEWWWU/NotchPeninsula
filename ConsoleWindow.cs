@@ -46,6 +46,7 @@ namespace NotchPeninsula
         private int _hoveredDisplayDropdownIndex = -1;
         private int _selectedDisplayIndex = 0;
         private static readonly string[] _displayOptions = ["时间日期"];
+        private int _hoveredStyleIndex = -1;
         // 个性化中心状态
         private int _hoveredMinusIndex = -1;
         private int _hoveredPlusIndex = -1;
@@ -267,6 +268,7 @@ namespace NotchPeninsula
 
                     bool newDisplayDropdownHovered = false;
                     int newHoveredDisplayDropdownIndex = -1;
+                    int newHoveredStyleIndex = -1;
                     bool newToggleHovered = false;
                     bool newToastToggleHovered = false;
                     bool newMediaToggleHovered = false;
@@ -285,14 +287,20 @@ namespace NotchPeninsula
                     }
                     else if (_selectedTab == 1) // 显示设置
                     {
-                        // 下拉菜单判定 (直接位于顶部第一张卡片)
-                        if (!_displayDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 26 && y <= TITLE_BAR_HEIGHT + 58)
+                        // 刘海形态选择器的点击热区
+                        float styleY = TITLE_BAR_HEIGHT + 50;
+                        if (x >= 220 && x <= 370 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 0;
+                        if (x >= 390 && x <= 540 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 1;
+
+                        // 下拉菜单判定 (原卡片整体下移避让)
+                        float dY = TITLE_BAR_HEIGHT + 186; // 172 + 14
+                        if (!_displayDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= dY && y <= dY + 32)
                             newDisplayDropdownHovered = true;
 
                         if (_displayDropdownOpen)
                         {
-                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 60 && y < TITLE_BAR_HEIGHT + 60 + _displayOptions.Length * 26)
-                                newHoveredDisplayDropdownIndex = (y - (TITLE_BAR_HEIGHT + 60)) / 26;
+                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= dY + 34 && y < dY + 34 + _displayOptions.Length * 26)
+                                newHoveredDisplayDropdownIndex = (y - (int)(dY + 34)) / 26;
                         }
                     }
                     else if (_selectedTab == 2) // 媒体设置
@@ -342,6 +350,7 @@ namespace NotchPeninsula
                         newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
                         newDisplayDropdownHovered != _displayDropdownHovered ||
                         newHoveredDisplayDropdownIndex != _hoveredDisplayDropdownIndex ||
+                        newHoveredStyleIndex != _hoveredStyleIndex ||
                         newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                         newHoverReset != _hoveredResetIndex ||
                         newHoveredTheme != _hoveredThemeIndex)
@@ -355,6 +364,7 @@ namespace NotchPeninsula
                         _hoveredLinkIndex = newHoveredLinkIndex;
                         _displayDropdownHovered = newDisplayDropdownHovered;
                         _hoveredDisplayDropdownIndex = newHoveredDisplayDropdownIndex;
+                        _hoveredStyleIndex = newHoveredStyleIndex;
                         _hoveredMinusIndex = newHoverMinus;
                         _hoveredPlusIndex = newHoverPlus;
                         _hoveredResetIndex = newHoverReset;
@@ -381,6 +391,12 @@ namespace NotchPeninsula
                     else if (_displayDropdownOpen && _hoveredDisplayDropdownIndex == -1)
                     {
                         _displayDropdownOpen = false; Render();
+                    }
+                    else if (_selectedTab == 1 && _hoveredStyleIndex != -1)
+                    {
+                        Renderer.NotchStyle = _hoveredStyleIndex;
+                        Program.SaveSetting("NotchStyle", _hoveredStyleIndex);
+                        Render();
                     }
                     else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
                     else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
@@ -631,14 +647,72 @@ namespace NotchPeninsula
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
                 DrawToggleCard(84, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
             }
-            else if (_selectedTab == 1) // 显示设置已被移出侧边栏，但保留渲染逻辑防错
+            else if (_selectedTab == 1)
             {
-                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 74);
-                canvas.DrawRoundRect(cardRect, 6, 6, _cardBg); canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
-                canvas.DrawText("待机显示内容", 216, TITLE_BAR_HEIGHT + 38, _uiTextPaint);
-                canvas.DrawText("刘海处于待机状态时默认展示的信息", 216, TITLE_BAR_HEIGHT + 58, _subTextPaint);
+                // 刘海形态两列布局选择器
+                var styleCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 160);
+                canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBorder);
+                canvas.DrawText("刘海形态", 216, TITLE_BAR_HEIGHT + 38, _uiTextPaint);
 
-                float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 26; float dH = 32;
+                void DrawStyleOption(int index, string name, float x, float y)
+                {
+                    bool isSelected = Renderer.NotchStyle == index;
+                    bool isHovered = _hoveredStyleIndex == index;
+
+                    // 选项外框与背景反馈
+                    var optRect = new SKRect(x, y, x + 150, y + 90);
+                    _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8));
+                    canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
+                    _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : new SKColor(80, 80, 80);
+                    canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
+
+                    // 绘制纯血 Skia 伪 PNG 视觉特效图
+                    float cx = x + 75; float cy = y + 35;
+                    _dynamicFillPaint.Color = Renderer.ThemeMode == 1 ? SKColors.Black : SKColors.White;
+
+                    if (index == 0) // 模拟经典刘海
+                    {
+                        var path = new SKPath();
+                        path.MoveTo(cx - 30, cy - 20);
+                        path.QuadTo(cx - 20, cy - 20, cx - 20, cy - 10);
+                        path.LineTo(cx - 20, cy + 5);
+                        path.QuadTo(cx - 20, cy + 15, cx - 10, cy + 15);
+                        path.LineTo(cx + 10, cy + 15);
+                        path.QuadTo(cx + 20, cy + 15, cx + 20, cy + 5);
+                        path.LineTo(cx + 20, cy - 10);
+                        path.QuadTo(cx + 20, cy - 20, cx + 30, cy - 20);
+                        canvas.DrawPath(path, _dynamicFillPaint);
+                    }
+                    else // 模拟灵动岛
+                    {
+                        canvas.DrawRoundRect(new SKRect(cx - 25, cy - 8, cx + 25, cy + 12), 10, 10, _dynamicFillPaint);
+                    }
+
+                    // 单选 Radio 按钮与文本
+                    float radioY = y + 72;
+                    canvas.DrawCircle(cx - 30, radioY - 4, 6, _dynamicStrokePaint);
+                    if (isSelected)
+                    {
+                        _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                        canvas.DrawCircle(cx - 30, radioY - 4, 3, _dynamicFillPaint);
+                    }
+                    _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : SKColors.White;
+                    canvas.DrawText(name, cx - 15, radioY + 1, _dynamicTextPaint);
+                }
+
+                DrawStyleOption(0, "经典刘海", 220, TITLE_BAR_HEIGHT + 50);
+                DrawStyleOption(1, "悬浮胶囊", 390, TITLE_BAR_HEIGHT + 50);
+
+                // 待机显示内容卡片
+                float displayCardY = TITLE_BAR_HEIGHT + 172;
+                var cardRect = new SKRect(200, displayCardY, WIDTH - 20, displayCardY + 62);
+                canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+                canvas.DrawText("待机显示内容", 216, displayCardY + 26, _uiTextPaint);
+                canvas.DrawText("刘海处于待机状态时默认展示的信息", 216, displayCardY + 46, _subTextPaint);
+
+                float dW = 110; float dX = WIDTH - 140; float dY = displayCardY + 14; float dH = 32;
                 var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
                 _dynamicFillPaint.Color = _displayDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8);
                 canvas.DrawRoundRect(dRect, 4, 4, _dynamicFillPaint);
@@ -836,7 +910,8 @@ namespace NotchPeninsula
 
             if (_selectedTab == 1 && _displayDropdownOpen)
             {
-                float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 60; float mW = 110; float mH = _displayOptions.Length * 26;
+                // 将 mY 的坐标由 + 60 调整到下移后的避让位置：+ 220
+                float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 220; float mW = 110; float mH = _displayOptions.Length * 26;
                 var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
 
                 canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
