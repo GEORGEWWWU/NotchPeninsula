@@ -671,22 +671,23 @@ namespace NotchPeninsula
                     float cx = x + 75; float cy = y + 35;
                     _dynamicFillPaint.Color = Renderer.ThemeMode == 1 ? SKColors.Black : SKColors.White;
 
-                    if (index == 0) // 模拟经典刘海
+                    if (index == 0) // 调整经典刘海的矢量绘图比例，使其视觉高度和灵动岛保持一致
                     {
                         var path = new SKPath();
-                        path.MoveTo(cx - 30, cy - 20);
-                        path.QuadTo(cx - 20, cy - 20, cx - 20, cy - 10);
-                        path.LineTo(cx - 20, cy + 5);
-                        path.QuadTo(cx - 20, cy + 15, cx - 10, cy + 15);
-                        path.LineTo(cx + 10, cy + 15);
-                        path.QuadTo(cx + 20, cy + 15, cx + 20, cy + 5);
-                        path.LineTo(cx + 20, cy - 10);
-                        path.QuadTo(cx + 20, cy - 20, cx + 30, cy - 20);
+                        path.MoveTo(cx - 35, cy - 10);
+                        path.QuadTo(cx - 25, cy - 10, cx - 25, cy - 5);
+                        path.LineTo(cx - 25, cy + 5);
+                        path.QuadTo(cx - 25, cy + 10, cx - 15, cy + 10);
+                        path.LineTo(cx + 15, cy + 10);
+                        path.QuadTo(cx + 25, cy + 10, cx + 25, cy + 5);
+                        path.LineTo(cx + 25, cy - 5);
+                        path.QuadTo(cx + 25, cy - 10, cx + 35, cy - 10);
                         canvas.DrawPath(path, _dynamicFillPaint);
                     }
                     else // 模拟灵动岛
                     {
-                        canvas.DrawRoundRect(new SKRect(cx - 25, cy - 8, cx + 25, cy + 12), 10, 10, _dynamicFillPaint);
+                        // 统一高度 20px，圆角 10px 形成胶囊
+                        canvas.DrawRoundRect(new SKRect(cx - 25, cy - 10, cx + 25, cy + 10), 10, 10, _dynamicFillPaint);
                     }
 
                     // 单选 Radio 按钮与文本

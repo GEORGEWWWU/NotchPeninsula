@@ -339,9 +339,11 @@ namespace NotchPeninsula
                 if (_isHovered) shouldHide = false;
 
                 // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
-                float expectedTargetY = shouldHide ? -((Renderer.BASE_HEIGHT - 4) * _dpiScale) : 0f;
+                // Y 轴的隐藏位移量必须加上灵动岛专属的下沉高度，否则藏不进屏幕
+                float currentTopY = 12f * _currentStyleProgress;
+                float expectedTargetY = shouldHide ? -((Renderer.BASE_HEIGHT + currentTopY - 4) * _dpiScale) : 0f;
 
-            if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
+                if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
                 _startY = _currentY;
                 _targetY = expectedTargetY;
@@ -563,9 +565,12 @@ namespace NotchPeninsula
                         int btnPlayX = (int)right - 60;
                         int btnNextX = (int)right - 30;
 
-                        bool overPrev = x >= btnPrevX + 6 && x <= btnPrevX + 24 && y >= 8 && y <= 26;
-                        bool overPlay = x >= btnPlayX + 6 && x <= btnPlayX + 24 && y >= 8 && y <= 26;
-                        bool overNext = x >= btnNextX + 6 && x <= btnNextX + 24 && y >= 8 && y <= 26;
+                        // 媒体控制按钮的悬停交互位移补偿
+                        float hitTopY = 12f * _currentStyleProgress;
+
+                        bool overPrev = x >= btnPrevX + 6 && x <= btnPrevX + 24 && y >= 8 + hitTopY && y <= 26 + hitTopY;
+                        bool overPlay = x >= btnPlayX + 6 && x <= btnPlayX + 24 && y >= 8 + hitTopY && y <= 26 + hitTopY;
+                        bool overNext = x >= btnNextX + 6 && x <= btnNextX + 24 && y >= 8 + hitTopY && y <= 26 + hitTopY;
 
                         _isCursorOverIcon = overPrev || overPlay || overNext;
                     }
@@ -592,14 +597,23 @@ namespace NotchPeninsula
                     if (_isHovered && _media.IsActive && _isCursorOverIcon && _currentToast == null)
                     {
                         int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                        // 新增这一行：从系统底层消息中解析出 Y 轴真实的点击坐标并除以缩放比例
+                        int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
-                        if (x >= right - 84 && x <= right - 66)
-                            _media.Previous();
-                        else if (x >= right - 54 && x <= right - 36)
-                            _media.TogglePlayPause();
-                        else if (x >= right - 24 && x <= right - 6)
-                            _media.Next();
+                        float hitTopY = 12f * _currentStyleProgress;
+
+                        // 点击时也必须补偿 Y 轴热区位移
+                        if (clickY >= 8 + hitTopY && clickY <= 26 + hitTopY)
+                        {
+                            float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+
+                            if (x >= right - 84 && x <= right - 66)
+                                _media.Previous();
+                            else if (x >= right - 54 && x <= right - 36)
+                                _media.TogglePlayPause();
+                            else if (x >= right - 24 && x <= right - 6)
+                                _media.Next();
+                        }
                     }
                     break;
 

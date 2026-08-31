@@ -202,19 +202,22 @@ namespace NotchPeninsula
                 canvas.Translate(0, topY);
 
                 _bgPath.Rewind();
-                // 纯数学变形算法：当 styleProgress 为 0 (刘海) 时，画反向外圆角；当为 1 (灵动岛) 时，画标准内圆角
-                // 顶部左侧圆角渐变
-                _bgPath.MoveTo(left - OUTER_R * (1 - styleProgress) + INNER_R * styleProgress, 0);
-                _bgPath.QuadTo(left, 0, left, OUTER_R * (1 - styleProgress) + INNER_R * styleProgress);
-                // 底部左侧
-                _bgPath.LineTo(left, currentHeight - INNER_R);
-                _bgPath.QuadTo(left, currentHeight, left + INNER_R, currentHeight);
-                // 底部右侧
-                _bgPath.LineTo(right - INNER_R, currentHeight);
-                _bgPath.QuadTo(right, currentHeight, right, currentHeight - INNER_R);
-                // 顶部右侧圆角渐变
-                _bgPath.LineTo(right, OUTER_R * (1 - styleProgress) + INNER_R * styleProgress);
-                _bgPath.QuadTo(right, 0, right + OUTER_R * (1 - styleProgress) - INNER_R * styleProgress, 0);
+
+                // 自动把四个圆角调到最大，动态计算插值半径
+                // 刘海形态时是 INNER_R，灵动岛形态时是当前高度的一半（完美的胶囊圆角）
+                float rBottom = INNER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
+                float rTopY = OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
+                float rTopX = -OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
+
+                // 纯数学变形算法
+                _bgPath.MoveTo(left + rTopX, 0);
+                _bgPath.QuadTo(left, 0, left, rTopY);
+                _bgPath.LineTo(left, currentHeight - rBottom);
+                _bgPath.QuadTo(left, currentHeight, left + rBottom, currentHeight);
+                _bgPath.LineTo(right - rBottom, currentHeight);
+                _bgPath.QuadTo(right, currentHeight, right, currentHeight - rBottom);
+                _bgPath.LineTo(right, rTopY);
+                _bgPath.QuadTo(right, 0, right - rTopX, 0);
                 _bgPath.Close();
 
                 canvas.DrawPath(_bgPath, _bgPaint);
