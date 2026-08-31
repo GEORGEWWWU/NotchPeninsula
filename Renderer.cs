@@ -209,15 +209,18 @@ namespace NotchPeninsula
                 float rTopY = OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
                 float rTopX = -OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
 
-                // 纯数学变形算法
+                // 纯数学魔法：完美正圆形的 Conic 曲线权重 (Math.Sqrt(2) / 2)
+                float w = 0.70710678f;
+
+                // 纯数学变形算法：全部使用 ConicTo 替换 QuadTo 强制生成完美圆形弧度
                 _bgPath.MoveTo(left + rTopX, 0);
-                _bgPath.QuadTo(left, 0, left, rTopY);
+                _bgPath.ConicTo(left, 0, left, rTopY, w);
                 _bgPath.LineTo(left, currentHeight - rBottom);
-                _bgPath.QuadTo(left, currentHeight, left + rBottom, currentHeight);
+                _bgPath.ConicTo(left, currentHeight, left + rBottom, currentHeight, w);
                 _bgPath.LineTo(right - rBottom, currentHeight);
-                _bgPath.QuadTo(right, currentHeight, right, currentHeight - rBottom);
+                _bgPath.ConicTo(right, currentHeight, right, currentHeight - rBottom, w);
                 _bgPath.LineTo(right, rTopY);
-                _bgPath.QuadTo(right, 0, right - rTopX, 0);
+                _bgPath.ConicTo(right, 0, right - rTopX, 0, w);
                 _bgPath.Close();
 
                 canvas.DrawPath(_bgPath, _bgPaint);
