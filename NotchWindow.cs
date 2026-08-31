@@ -555,7 +555,7 @@ namespace NotchPeninsula
                         _isHovered = true;
                     }
 
-                    if (_isHovered && _media.IsActive && _currentToast == null) // 当 Toast 存在时拦截控制按钮点击区域
+                    if (_isHovered && _media.IsActive && _currentToast == null)
                     {
                         int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
@@ -568,9 +568,13 @@ namespace NotchPeninsula
                         // 媒体控制按钮的悬停交互位移补偿
                         float hitTopY = 12f * _currentStyleProgress;
 
-                        bool overPrev = x >= btnPrevX + 6 && x <= btnPrevX + 24 && y >= 8 + hitTopY && y <= 26 + hitTopY;
-                        bool overPlay = x >= btnPlayX + 6 && x <= btnPlayX + 24 && y >= 8 + hitTopY && y <= 26 + hitTopY;
-                        bool overNext = x >= btnNextX + 6 && x <= btnNextX + 24 && y >= 8 + hitTopY && y <= 26 + hitTopY;
+                        // 动态计算 Y 轴热区（设定热区高度为 18）
+                        float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
+                        float btnEndY = btnStartY + 18f;
+
+                        bool overPrev = x >= btnPrevX + 6 && x <= btnPrevX + 24 && y >= btnStartY && y <= btnEndY;
+                        bool overPlay = x >= btnPlayX + 6 && x <= btnPlayX + 24 && y >= btnStartY && y <= btnEndY;
+                        bool overNext = x >= btnNextX + 6 && x <= btnNextX + 24 && y >= btnStartY && y <= btnEndY;
 
                         _isCursorOverIcon = overPrev || overPlay || overNext;
                     }
@@ -597,13 +601,16 @@ namespace NotchPeninsula
                     if (_isHovered && _media.IsActive && _isCursorOverIcon && _currentToast == null)
                     {
                         int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        // 新增这一行：从系统底层消息中解析出 Y 轴真实的点击坐标并除以缩放比例
                         int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
                         float hitTopY = 12f * _currentStyleProgress;
 
-                        // 点击时也必须补偿 Y 轴热区位移
-                        if (clickY >= 8 + hitTopY && clickY <= 26 + hitTopY)
+                        // 动态计算点击时的 Y 轴边界
+                        float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
+                        float btnEndY = btnStartY + 18f;
+
+                        // 使用动态边界判断点击
+                        if (clickY >= btnStartY && clickY <= btnEndY)
                         {
                             float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
 
