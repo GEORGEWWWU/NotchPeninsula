@@ -312,6 +312,7 @@ namespace NotchPeninsula
                     }
 
                     canvas.Restore();
+                    canvas.Restore();
                     return;
                 }
 
