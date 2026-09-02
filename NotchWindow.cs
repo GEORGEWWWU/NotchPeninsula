@@ -61,6 +61,9 @@ namespace NotchPeninsula
         private bool _isYAnimating = false;
         private DateTime _yAnimStartTime;
         private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
+        // 用于跟踪内容状态，实现 0.3s 叠化过渡
+        private int _lastDisplayState = -1;
+        private DateTime _stateChangeTime;
         // DPI 缩放相关
         private float _dpiScale = 1f;
         private int _scaledWidth;
@@ -398,6 +401,15 @@ namespace NotchPeninsula
                 // ========================================================
                 bool currentActive = _media.IsActive;
 
+                // 状态叠化透明度计算 (0.3s 平滑过渡)
+                int currentDisplayState = isToastActive ? 2 : (currentActive ? 1 : 0);
+                if (currentDisplayState != _lastDisplayState)
+                {
+                    _lastDisplayState = currentDisplayState;
+                    _stateChangeTime = DateTime.Now;
+                }
+                float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
+
                 // 决策尺寸 (分别引用专属宽度和高度)
                 float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH);
                 float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? Renderer.MEDIA_HEIGHT : Renderer.BASE_HEIGHT);
@@ -503,7 +515,7 @@ namespace NotchPeninsula
                 canvas.Scale(_dpiScale);
 
                 // 传入 currentHeight 和 _currentToast
-                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress);
+                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
 
                 // 恢复原始矩阵状态
                 canvas.Restore();

@@ -182,7 +182,7 @@ namespace NotchPeninsula
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
 
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f)
+        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
         {
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
@@ -228,6 +228,28 @@ namespace NotchPeninsula
 
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
+
+                // 保留纯粹的透明度叠化，去除多余上浮
+                byte alpha = (byte)(255 * startupProgress * transitionAlpha);
+                float textOffsetY = 0f;
+
+                // 仅恢复原版代码中软件刚启动时的位移，不影响状态切换
+                if (!media.IsActive && startupProgress < 1f)
+                {
+                    textOffsetY = (1f - startupProgress) * 15f;
+                }
+
+                SKColor currentA = _currentTextColor.WithAlpha(alpha);
+                SKColor subA = _currentSubTextColor.WithAlpha(alpha);
+
+                _titlePaint.Color = currentA;
+                _bodyPaint.Color = subA;
+                _textPaint.Color = currentA;
+                _timePaint.Color = currentA;
+                _datePaint.Color = subA;
+                _mediaIconPaint.Color = currentA;
+                _barPaint.Color = currentA;
+                _highQualitySampling.Color = SKColors.White.WithAlpha(alpha); // 同步作用于图片图标
 
                 // ---------------- [ Toast 消息通知 ] ----------------
                 if (toast != null)
@@ -343,15 +365,6 @@ namespace NotchPeninsula
                         _cachedTimeWidth = _timePaint.MeasureText(_cachedTimeStr);
                         _cachedDateWidth = _datePaint.MeasureText(_cachedDateStr);
                     }
-                }
-
-                // 启动动画的透明度与Y轴偏移控制
-                float textOffsetY = 0f;
-                byte alpha = 255;
-                if (!media.IsActive && startupProgress < 1f)
-                {
-                    textOffsetY = (1f - startupProgress) * 15f;
-                    alpha = (byte)(255 * startupProgress);
                 }
 
                 // 拆分绘制逻辑
