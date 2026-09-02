@@ -1,6 +1,4 @@
-﻿using System;
-using System.Runtime.InteropServices;
-using System.Threading;
+﻿using System.Runtime.InteropServices;
 using Microsoft.Win32; // 添加注册表命名空间
 
 namespace NotchPeninsula
@@ -91,6 +89,9 @@ namespace NotchPeninsula
 
                 // 在实例化任何窗口和媒体控制器之前，先将配置注入内存
                 LoadSettings();
+
+                // 启动时异步静默检测更新，不阻塞主线程
+                UpdateManager.StartSilentCheck();
 
                 var window = new NotchWindow();
                 window.Run();
