@@ -10,7 +10,7 @@ namespace NotchPeninsula
         private static volatile float _standbyWidth = 130f;
         private static volatile float _baseHeight = 34f;
         private static volatile float _mediaWidth = 260f;
-        private static volatile float _mediaHeight = 34f;
+        private static volatile float _mediaHeight = 40f;
         private static volatile float _toastWidth = 260f;
         private static volatile float _toastHeight = 55f;
         private static volatile float _globalDpi = 1.0f;

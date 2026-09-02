@@ -52,7 +52,7 @@ namespace NotchPeninsula
         private int _hoveredPlusIndex = -1;
         private int _hoveredResetIndex = -1;
         private float[] _customValues = new float[7];
-        private static readonly float[] _defaultCustomValues = [130f, 34f, 260f, 34f, 260f, 55f, 1.0f];
+        private static readonly float[] _defaultCustomValues = [130f, 34f, 260f, 40f, 260f, 55f, 1.0f];
         private readonly string[] _valStrCache = new string[7];
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
         // DPI 缩放相关
@@ -410,7 +410,7 @@ namespace NotchPeninsula
                         if (_hoveredResetIndex != -1)
                         {
                             updateIdx = _hoveredResetIndex;
-                            float[] defaultVals = { 130f, 34f, 260f, 34f, 260f, 55f, 1.0f };
+                            float[] defaultVals = { 130f, 34f, 260f, 40f, 260f, 55f, 1.0f };
                             _customValues[updateIdx] = defaultVals[updateIdx];
                         }
                         else
