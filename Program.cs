@@ -33,6 +33,7 @@ namespace NotchPeninsula
                     Renderer.GLOBAL_DPI = Convert.ToSingle(key.GetValue("Custom_Dpi", 1.0f));
                     Renderer.ThemeMode = (int)key.GetValue("ThemeMode", 0);
                     Renderer.NotchStyle = (int)key.GetValue("NotchStyle", 0);
+                    Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 0); // 极速从注册表栈读取
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
 

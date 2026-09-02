@@ -45,7 +45,7 @@ namespace NotchPeninsula
         private bool _displayDropdownHovered = false;
         private int _hoveredDisplayDropdownIndex = -1;
         private int _selectedDisplayIndex = 0;
-        private static readonly string[] _displayOptions = ["时间日期"];
+        private static readonly string[] _displayOptions = ["时间日期", "空白"];
         private int _hoveredStyleIndex = -1;
         // 个性化中心状态
         private int _hoveredMinusIndex = -1;
@@ -208,6 +208,7 @@ namespace NotchPeninsula
                 UpdateValueString(i);
             }
 
+            _selectedDisplayIndex = Renderer.StandbyDisplayMode; // 初始化时同步当前选择
             Render();
         }
 
@@ -513,6 +514,8 @@ namespace NotchPeninsula
                     else if (_displayDropdownOpen && _hoveredDisplayDropdownIndex != -1)
                     {
                         _selectedDisplayIndex = _hoveredDisplayDropdownIndex;
+                        Renderer.StandbyDisplayMode = _selectedDisplayIndex; // 同步给渲染器
+                        Program.SaveSetting("StandbyDisplayMode", _selectedDisplayIndex); // 直接持久化保存
                         _displayDropdownOpen = false;
                         Render();
                     }

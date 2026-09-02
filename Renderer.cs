@@ -24,6 +24,7 @@ namespace NotchPeninsula
         public static float GLOBAL_DPI { get => _globalDpi; set => _globalDpi = value; }
         public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
         public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
+        public static int StandbyDisplayMode { get; set; } = 0; // 0=时间日期, 1=空白
         private static SKColor _currentTextColor = SKColors.White;
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
         public static void ApplyThemeColors() // 刷新颜色的方法
@@ -444,7 +445,8 @@ namespace NotchPeninsula
                         }
                     }
                 }
-                else
+                // 改为:
+                else if (StandbyDisplayMode == 0)
                 {
                     // 待机状态：左右布局，两端对齐
                     _timePaint.Color = _currentTextColor.WithAlpha(alpha);
