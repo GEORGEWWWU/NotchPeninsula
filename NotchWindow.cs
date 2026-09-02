@@ -415,7 +415,7 @@ namespace NotchPeninsula
                 if (_isStyleAnimating)
                 {
                     double elapsedS = (DateTime.Now - _styleAnimStartTime).TotalSeconds;
-                    double durationS = 0.400; // 与你的长宽缩放保持同频 400ms
+                    double durationS = 0.450; // 稍微放宽 50ms 时长，保证 Q 弹尾迹完整渲染不被硬切
 
                     if (elapsedS >= durationS)
                     {
@@ -424,9 +424,9 @@ namespace NotchPeninsula
                     }
                     else
                     {
-                        // 完全复用原有的完美物理尼奎斯特阻尼公式
-                        double freq = 2.4;
-                        double decay = 12.0;
+                        // 提高振动频率让爆发力更干脆，微微降低阻尼多保留一丝余震，果味更浓
+                        double freq = 2.65;
+                        double decay = 10.8;
                         double spring = 1.0 - Math.Cos(freq * elapsedS * 2.0 * Math.PI) * Math.Exp(-decay * elapsedS);
                         _currentStyleProgress = (float)(_startStyleProgress + (_targetStyleProgress - _startStyleProgress) * spring);
                     }
@@ -448,19 +448,19 @@ namespace NotchPeninsula
             if (_isAnimating)
             {
                 double elapsed = (DateTime.Now - _animStartTime).TotalSeconds;
-                double duration = 0.400; // 动画总时长 400ms
+                    double duration = 0.450; // 保持与上方形态切换同频
 
-                if (elapsed >= duration)
-                {
-                    _isAnimating = false;
-                    _currentWidth = _targetWidth;
-                    _currentHeight = _targetHeight;
-                }
-                else
-                {
-                    double freq = 2.4;
-                    double decay = 12.0;
-                    double spring = 1.0 - Math.Cos(freq * elapsed * 2.0 * Math.PI) * Math.Exp(-decay * elapsed);
+                    if (elapsed >= duration)
+                    {
+                        _isAnimating = false;
+                        _currentWidth = _targetWidth;
+                        _currentHeight = _targetHeight;
+                    }
+                    else
+                    {
+                        double freq = 2.65;  // 匹配形态切换的弹簧张力
+                        double decay = 10.8; // 匹配形态切换的阻尼衰减
+                        double spring = 1.0 - Math.Cos(freq * elapsed * 2.0 * Math.PI) * Math.Exp(-decay * elapsed);
 
                     // X 和 Y 同步套用一个物理弹性引擎，保证视效极度统一协调
                     _currentWidth = (float)(_startWidth + (_targetWidth - _startWidth) * spring);
