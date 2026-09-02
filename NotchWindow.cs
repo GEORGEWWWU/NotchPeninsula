@@ -170,7 +170,14 @@ namespace NotchPeninsula
             Debug($"初始音量读取完成，当前音量：{_currentVolume:F2}");
             _ = InitializeListenerAsync();
             Timer aud = new Timer(500);
-            aud.Elapsed += (s, e) => { if(_currentVolume != audio.GetSystemVolume()) {_currentVolume = audio.GetSystemVolume();audioVolumeChanged();} };
+            aud.Elapsed += (s, e) => {
+                float vol = audio.GetSystemVolume(); // 只读取一次，减少底层通信开销
+                if (_currentVolume != vol)
+                {
+                    _currentVolume = vol;
+                    audioVolumeChanged();
+                }
+            };
             aud.Start();
         }
         private void audioVolumeChanged() => Debug($"音量改变{_currentVolume:F2}");
@@ -184,7 +191,7 @@ namespace NotchPeninsula
             Info("通知监听已启动");
 
             // Start polling only after listener initialization to reduce CPU usage during startup.
-            _pollingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+            _pollingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) };
             _pollingTimer.Tick += (_, __) => _ = _listener?.FetchLatestNotificationAsync();
             _pollingTimer.Start();
         }
@@ -323,6 +330,11 @@ namespace NotchPeninsula
                     _scaledHeight = targetScaledHeight;
 
                     _renderSurface?.Dispose();
+                    // 在删除 GDI 对象前，必须先把旧的备用位图选回 DC 中解锁，否则内存永远无法释放
+                    if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero)
+                    {
+                        Win32.SelectObject(_memDc, _oldBitmap);
+                    }
                     Win32.DeleteObject(_hBitmap);
                     Win32.DeleteDC(_memDc);
                     InitRenderBuffer(); // 重新向系统申请足够大尺寸的内存

@@ -55,7 +55,8 @@ namespace NotchPeninsula
             _barPaint.Color = _currentTextColor;
             _shadowPaint.Color = _currentTextColor.WithAlpha(50);
 
-            // 渐变着色器需要重新生成一次，但只在点击设置时发生
+            // 渐变着色器需要重新生成一次，但必须先手动释放旧的，防止非托管内存泄漏
+            _fadePaint.Shader?.Dispose();
             _fadePaint.Shader = SKShader.CreateLinearGradient(
                 new SKPoint(0, 0), new SKPoint(1, 0),
                 [bg.WithAlpha(0), bg],

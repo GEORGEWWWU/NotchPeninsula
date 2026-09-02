@@ -108,12 +108,20 @@ namespace NotchPeninsula
             }
 
             // 3. 切换到了新的会话（或者置空）
+            if (_currentSession != null)
+            {
+                // 切换前，必须先解绑旧会话的事件，防止幽灵对象吃内存
+                _currentSession.MediaPropertiesChanged -= OnMediaPropertiesChanged;
+                _currentSession.PlaybackInfoChanged -= OnPlaybackInfoChanged;
+            }
+
             _currentSession = newSession;
 
             if (_currentSession != null)
             {
-                _currentSession.MediaPropertiesChanged += async (s, e) => await RefreshProperties();
-                _currentSession.PlaybackInfoChanged += async (s, e) => await RefreshProperties();
+                // 绑定新会话事件
+                _currentSession.MediaPropertiesChanged += OnMediaPropertiesChanged;
+                _currentSession.PlaybackInfoChanged += OnPlaybackInfoChanged;
 
                 await RefreshProperties();
                 IsActive = true;
@@ -263,5 +271,15 @@ namespace NotchPeninsula
 
         public async void Next() => await _currentSession?.TrySkipNextAsync();
         public async void Previous() => await _currentSession?.TrySkipPreviousAsync();
+
+        private async void OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
+        {
+            await RefreshProperties();
+        }
+
+        private async void OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
+        {
+            await RefreshProperties();
+        }
     }
 }
