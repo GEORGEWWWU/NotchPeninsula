@@ -334,9 +334,14 @@ namespace NotchPeninsula
                 bool isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
                 if (!isToastActive && _currentToast != null) _currentToast = null; // 超时清理
 
+                // 如果灵动岛已展开，且鼠标不在岛上(!_isHovered)，且按下了左键(0x01)
+                if (_isManuallyExpanded && !_isHovered && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
+                {
+                    _isManuallyExpanded = false; // 触发收起
+                }
+
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏
                 bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive;
-                if (_isHovered) shouldHide = false;
 
                 // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
                 // Y 轴的隐藏位移量必须加上灵动岛专属的下沉高度，否则藏不进屏幕
@@ -588,7 +593,6 @@ namespace NotchPeninsula
                     _isTrackingMouse = false;
                     _isHovered = false;
                     _isCursorOverIcon = false;
-                    _isManuallyExpanded = false;
                     break;
 
                 case Win32.WM_LBUTTONDOWN:

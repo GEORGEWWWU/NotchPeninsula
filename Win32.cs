@@ -200,5 +200,8 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern uint GetDpiForSystem();
+
+        [DllImport("user32.dll")]
+        public static extern short GetAsyncKeyState(int vKey);
     }
 }
