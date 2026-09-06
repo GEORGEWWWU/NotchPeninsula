@@ -31,6 +31,7 @@ namespace NotchPeninsula
                     Renderer.TOAST_WIDTH = Convert.ToSingle(key.GetValue("Custom_ToastW", 260f));
                     Renderer.TOAST_HEIGHT = Convert.ToSingle(key.GetValue("Custom_ToastH", 55f));
                     Renderer.GLOBAL_DPI = Convert.ToSingle(key.GetValue("Custom_Dpi", 1.0f));
+                    Renderer.NOTCH_BOTTOM_RADIUS = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_NotchBottomR", 12f)), 0f, 28f);
                     Renderer.ThemeMode = (int)key.GetValue("ThemeMode", 0);
                     Renderer.NotchStyle = (int)key.GetValue("NotchStyle", 0);
                     Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 0); // 极速从注册表栈读取

@@ -14,6 +14,7 @@ namespace NotchPeninsula
         private static volatile float _toastWidth = 260f;
         private static volatile float _toastHeight = 55f;
         private static volatile float _globalDpi = 1.0f;
+        private static volatile float _notchBottomRadius = 12f;
 
         public static float STANDBY_WIDTH { get => _standbyWidth; set => _standbyWidth = value; }
         public static float BASE_HEIGHT { get => _baseHeight; set => _baseHeight = value; }
@@ -22,6 +23,7 @@ namespace NotchPeninsula
         public static float TOAST_WIDTH { get => _toastWidth; set => _toastWidth = value; }
         public static float TOAST_HEIGHT { get => _toastHeight; set => _toastHeight = value; }
         public static float GLOBAL_DPI { get => _globalDpi; set => _globalDpi = value; }
+        public static float NOTCH_BOTTOM_RADIUS { get => _notchBottomRadius; set => _notchBottomRadius = value; }
         public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
         public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
         public static int StandbyDisplayMode { get; set; } = 0; // 0=时间日期, 1=空白
@@ -206,8 +208,8 @@ namespace NotchPeninsula
                 _bgPath.Rewind();
 
                 // 自动把四个圆角调到最大，动态计算插值半径
-                // 刘海形态时是 INNER_R，灵动岛形态时是当前高度的一半（完美的胶囊圆角）
-                float rBottom = INNER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
+                // 刘海形态时是 NOTCH_BOTTOM_RADIUS，灵动岛形态时是当前高度的一半（完美的胶囊圆角）
+                float rBottom = NOTCH_BOTTOM_RADIUS * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
                 float rTopY = OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
                 float rTopX = -OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
 

@@ -51,9 +51,9 @@ namespace NotchPeninsula
         private int _hoveredMinusIndex = -1;
         private int _hoveredPlusIndex = -1;
         private int _hoveredResetIndex = -1;
-        private float[] _customValues = new float[7];
-        private static readonly float[] _defaultCustomValues = [130f, 34f, 260f, 40f, 260f, 55f, 1.0f];
-        private readonly string[] _valStrCache = new string[7];
+        private float[] _customValues = new float[8];
+        private static readonly float[] _defaultCustomValues = [130f, 34f, 260f, 40f, 260f, 55f, 1.0f, 12f];
+        private readonly string[] _valStrCache = new string[8];
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
         // DPI 缩放相关
         private float _dpiScale = 1f;
@@ -126,6 +126,7 @@ namespace NotchPeninsula
             _customValues[4] = Renderer.TOAST_WIDTH;
             _customValues[5] = Renderer.TOAST_HEIGHT;
             _customValues[6] = Renderer.GLOBAL_DPI;
+            _customValues[7] = Renderer.NOTCH_BOTTOM_RADIUS;
 
             // 匹配目前加载的媒体平台索引
             for (int i = 0; i < _platforms.Length; i++)
@@ -203,7 +204,7 @@ namespace NotchPeninsula
                 IntPtr.Zero, IntPtr.Zero, Marshal.GetHINSTANCE(typeof(ConsoleWindow).Module), IntPtr.Zero
             );
 
-            for (int i = 0; i < 7; i++)
+            for (int i = 0; i < 8; i++)
             {
                 UpdateValueString(i);
             }
@@ -257,7 +258,7 @@ namespace NotchPeninsula
                         if (x >= themeRightX - 90 && x <= themeRightX - 50 && y >= themeY && y <= themeY + 24) newHoveredTheme = 1;
                         if (x >= themeRightX - 40 && x <= themeRightX && y >= themeY && y <= themeY + 24) newHoveredTheme = 2;
 
-                        for (int i = 0; i < 7; i++)
+                        for (int i = 0; i < 8; i++)
                         {
                             float btnY = GetBtnY(i);
                             float rightX = WIDTH - 36; // 保持原有变量不动
@@ -411,14 +412,17 @@ namespace NotchPeninsula
                         if (_hoveredResetIndex != -1)
                         {
                             updateIdx = _hoveredResetIndex;
-                            float[] defaultVals = { 130f, 34f, 260f, 40f, 260f, 55f, 1.0f };
+                            float[] defaultVals = { 130f, 34f, 260f, 40f, 260f, 55f, 1.0f, 12f }; // 扩充默认值
                             _customValues[updateIdx] = defaultVals[updateIdx];
                         }
                         else
                         {
                             updateIdx = _hoveredMinusIndex != -1 ? _hoveredMinusIndex : _hoveredPlusIndex;
                             float delta = _hoveredPlusIndex != -1 ? (updateIdx == 6 ? 0.05f : 5f) : (updateIdx == 6 ? -0.05f : -5f);
-                            _customValues[updateIdx] = Math.Max(updateIdx == 6 ? 0.5f : 20f, _customValues[updateIdx] + delta);
+                            if (updateIdx == 7)
+                                _customValues[updateIdx] = Math.Clamp(_customValues[updateIdx] + delta, 0f, 28f); // 限制：最小 0px，最大 28px
+                            else
+                                _customValues[updateIdx] = Math.Max(updateIdx == 6 ? 0.5f : 20f, _customValues[updateIdx] + delta);
                         }
 
                         // 数值变动时才更新字符串缓存，避免渲染循环产生 GC 垃圾
@@ -431,6 +435,7 @@ namespace NotchPeninsula
                         else if (updateIdx == 4) { Renderer.TOAST_WIDTH = _customValues[4]; Program.SaveSetting("Custom_ToastW", _customValues[4]); }
                         else if (updateIdx == 5) { Renderer.TOAST_HEIGHT = _customValues[5]; Program.SaveSetting("Custom_ToastH", _customValues[5]); }
                         else if (updateIdx == 6) { Renderer.GLOBAL_DPI = _customValues[6]; Program.SaveSetting("Custom_Dpi", _customValues[6]); }
+                        else if (updateIdx == 7) { Renderer.NOTCH_BOTTOM_RADIUS = _customValues[7]; Program.SaveSetting("Custom_NotchBottomR", _customValues[7]); }
 
                         Render();
                     }
@@ -532,14 +537,15 @@ namespace NotchPeninsula
         {
             return index switch
             {
-                -1 => TITLE_BAR_HEIGHT + 35,                 // 精准对应卡片高度的垂直中位线
-                0 => TITLE_BAR_HEIGHT + 92 + 40,             // 待机宽度
+                -1 => TITLE_BAR_HEIGHT + 35,                 
+                0 => TITLE_BAR_HEIGHT + 92 + 40,             
                 1 => TITLE_BAR_HEIGHT + 92 + 40 + 34,
-                2 => TITLE_BAR_HEIGHT + 210 + 40,            // 媒体宽度
-                3 => TITLE_BAR_HEIGHT + 210 + 40 + 34,
-                4 => TITLE_BAR_HEIGHT + 328 + 40,            // 通知宽度
-                5 => TITLE_BAR_HEIGHT + 328 + 40 + 34,
-                6 => TITLE_BAR_HEIGHT + 446 + 40,            // DPI 缩放
+                7 => TITLE_BAR_HEIGHT + 92 + 40 + 68,
+                2 => TITLE_BAR_HEIGHT + 244 + 40,
+                3 => TITLE_BAR_HEIGHT + 244 + 40 + 34,
+                4 => TITLE_BAR_HEIGHT + 362 + 40,
+                5 => TITLE_BAR_HEIGHT + 362 + 40 + 34,
+                6 => TITLE_BAR_HEIGHT + 480 + 40,
                 _ => 0
             };
         }
@@ -887,10 +893,10 @@ namespace NotchPeninsula
                 DrawThemeBtn(0, "黑", 140, 100);
                 DrawThemeBtn(1, "白", 90, 50);
                 DrawThemeBtn(2, "系统", 40, 0);
-                DrawMultiCard(92, "待机显示", ["水平宽度", "垂直高度"], [0, 1], "px");
-                DrawMultiCard(210, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
-                DrawMultiCard(328, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
-                DrawMultiCard(446, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+                DrawMultiCard(92, "待机显示", ["水平宽度", "垂直高度", "底部圆角"], [0, 1, 7], "px");
+                DrawMultiCard(244, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
+                DrawMultiCard(362, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
+                DrawMultiCard(480, "全局 DPI 缩放", ["视觉比例"], [6], "x");
             }
 
             canvas.Restore();
