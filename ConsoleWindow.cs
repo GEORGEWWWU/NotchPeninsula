@@ -30,6 +30,7 @@ namespace NotchPeninsula
         private bool _toastToggleHovered = false;
         // 交互设置状态
         private bool _autoHideToggleHovered = false;
+        private bool _mediaExpToggleHovered = false;
 
         // 媒体设置状态
         private bool _mediaToggleHovered = false;
@@ -277,6 +278,7 @@ namespace NotchPeninsula
                     bool newAutoHideToggleHovered = false;
                     bool newDropdownHovered = false;
                     int newHoveredDropdownIndex = -1;
+                    bool newMediaExpToggleHovered = false;
 
                     if (_selectedTab == 0) // 通用设置
                     {
@@ -326,6 +328,9 @@ namespace NotchPeninsula
                         // 自动隐藏
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
+                        // 媒体交互模式
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
+                            newMediaExpToggleHovered = true;
                     }
 
                     int newHoveredLinkIndex = -1;
@@ -354,7 +359,7 @@ namespace NotchPeninsula
                         newHoveredDisplayDropdownIndex != _hoveredDisplayDropdownIndex ||
                         newHoveredStyleIndex != _hoveredStyleIndex ||
                         newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
-                        newHoverReset != _hoveredResetIndex ||
+                        newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                         newHoveredTheme != _hoveredThemeIndex)
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -371,6 +376,7 @@ namespace NotchPeninsula
                         _hoveredPlusIndex = newHoverPlus;
                         _hoveredResetIndex = newHoverReset;
                         _hoveredThemeIndex = newHoveredTheme;
+                        _mediaExpToggleHovered = newMediaExpToggleHovered;
                         Render();
                     }
                     break;
@@ -494,6 +500,13 @@ namespace NotchPeninsula
                         // 保存自动隐藏开关 (转换为0/1)
                         Program.SaveSetting("AutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0);
 
+                        Render();
+                    }
+                    else if (_mediaExpToggleHovered)
+                    {
+                        Renderer.MediaInteractionMode = Renderer.MediaInteractionMode == 1 ? 0 : 1;
+                        if (Renderer.MediaInteractionMode == 0) Renderer.IsMediaExpanded = false; // 关闭时强制收起
+                        Program.SaveSetting("MediaInteractionMode", Renderer.MediaInteractionMode);
                         Render();
                     }
                     else if (_dropdownHovered)
@@ -755,6 +768,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 3)
             {
                 DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
+                DrawToggleCard(84, "媒体交互方式", "开启为展开交互，关闭为直接交互", Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
             }
             else if (_selectedTab == 4)
             {

@@ -27,6 +27,9 @@ namespace NotchPeninsula
         public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
         public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
         public static int StandbyDisplayMode { get; set; } = 0; // 0=时间日期, 1=空白
+        // 媒体交互状态：0=直接交互，1=展开交互(默认)
+        public static int MediaInteractionMode = 1;
+        public static bool IsMediaExpanded = false;
         private static SKColor _currentTextColor = SKColors.White;
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
         public static void ApplyThemeColors() // 刷新颜色的方法
@@ -68,8 +71,8 @@ namespace NotchPeninsula
 
         // 动态计算最大边界，防止因刘海变大导致出界
         // 包含待机尺寸(STANDBY/BASE)，并增加灵动岛下沉和弹性动画拉伸时的溢出安全边距
-        public static float WINDOW_WIDTH => Math.Max(320f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);
-        public static float MAX_WINDOW_HEIGHT => Math.Max(70f, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f);
+        public static float WINDOW_WIDTH => Math.Max(360f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);
+        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f);
 
         public const int OUTER_R = 14;
         public const int INNER_R = 12;
@@ -208,10 +211,11 @@ namespace NotchPeninsula
                 _bgPath.Rewind();
 
                 // 自动把四个圆角调到最大，动态计算插值半径
-                // 刘海形态时是 NOTCH_BOTTOM_RADIUS，灵动岛形态时是当前高度的一半（完美的胶囊圆角）
-                float rBottom = NOTCH_BOTTOM_RADIUS * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
-                float rTopY = OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
-                float rTopX = -OUTER_R * (1 - styleProgress) + (currentHeight / 2f) * styleProgress;
+                // 限制灵动岛展开后的最大圆角为 20f，防止变成大圆球
+                float islandRadius = Math.Min(currentHeight / 2f, 20f);
+                float rBottom = NOTCH_BOTTOM_RADIUS * (1 - styleProgress) + islandRadius * styleProgress;
+                float rTopY = OUTER_R * (1 - styleProgress) + islandRadius * styleProgress;
+                float rTopX = -OUTER_R * (1 - styleProgress) + islandRadius * styleProgress;
 
                 // 纯数学魔法：完美正圆形的 Conic 曲线权重 (Math.Sqrt(2) / 2)
                 float w = 0.70710678f;
@@ -374,80 +378,125 @@ namespace NotchPeninsula
                 if (media.IsActive)
                 {
                     _textPaint.Color = _currentTextColor.WithAlpha(alpha);
-                    float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
-                    float textX = left + 16;
 
-                    if (media.Thumbnail != null)
+                    if (IsMediaExpanded && currentHeight > 60f) // 展开模式布局
                     {
-                        float thumbSize = 22f;
-                        float thumbRadius = 4f;
-                        float thumbY = (currentHeight - thumbSize) / 2f;
-                        var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
+                        float coverSize = 60f; // 封面缩小一点点
+                        float coverX = left + 20f;
+                        float coverY = 15f;    // 封面往上提
 
-                        canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
-
-                        canvas.Save();
-                        _clipPath.Rewind();
-                        _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
-                        canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                        canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                        canvas.Restore();
-
-                        textX += thumbSize + 10;
-                    }
-
-                    canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
-
-                    // ---- 恢复媒体控制按钮和音量条 ----
-                    float rightOccupiedWidth = isHovered ? 95f : 45f;
-                    float maskEnd = right - rightOccupiedWidth + 5f;
-                    float maskStart = maskEnd - 15f;
-
-                    // 右侧渐变遮罩（防止文字过长溢出）
-                    canvas.Save();
-                    canvas.Translate(maskStart, 0);
-                    canvas.Scale(maskEnd - maskStart, currentHeight);
-                    canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                    canvas.Restore();
-
-                    // 用背景色覆盖溢出区域（和窗口背景一致）
-                    canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
-                    if (isHovered)
-                    {
-                        // 动态计算 Y 轴绝对居中，替代写死的 11 和 12
-                        // 上一曲/下一曲图标高度为 10f，播放/暂停图标高度为 12f
-                        float prevNextY = (currentHeight - 10f) / 2f;
-                        float playPauseY = (currentHeight - 12f) / 2f;
-
-                        // 鼠标悬停时显示播放控制按钮
-                        DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
-                        if (media.IsPlaying)
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 10, playPauseY, _pausePath);
-                        else
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + 11, playPauseY, _playPath);
-                        DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
-                    }
-                    else if (bars != null)
-                    {
-                        // 未悬停且媒体播放时显示音量柱状图（动画）
-                        float barWidth = 2f;
-                        float spacing = 2.8f;
-                        float maxH = 16f;
-                        float totalBarWidth = 21.2f;
-                        float startX = right - 16f - totalBarWidth;
-
-                        for (int i = 0; i < 5; i++)
+                        // 封面
+                        if (media.Thumbnail != null)
                         {
-                            float h = Math.Max(2f, bars[i] * maxH);
-                            float y = (currentHeight - h) / 2f;
-                            var rect = new SKRect(startX + i * (barWidth + spacing), y,
-                                                  startX + i * (barWidth + spacing) + barWidth, y + h);
-                            canvas.DrawRoundRect(rect, 1.5f, 1.5f, _barPaint);
+                            var thumbRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
+                            canvas.DrawRoundRect(thumbRect, 8f, 8f, _shadowPaint);
+                            canvas.Save();
+                            _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, 8f, 8f);
+                            canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                            canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                            canvas.Restore();
+                        }
+                        else
+                        {
+                            canvas.DrawRoundRect(new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize), 8f, 8f, _fallbackIconPaint);
+                        }
+
+                        // 双行文字 (上面歌名，下面歌手)
+                        _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
+                        _titlePaint.TextSize = 14.5f; // 字号稍微精致一点
+                        canvas.DrawText(_lastMediaTitle, coverX + coverSize + 15f, coverY + 22f, _titlePaint);
+
+                        _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
+                        _bodyPaint.TextSize = 12.5f;
+                        canvas.DrawText(_lastMediaArtist, coverX + coverSize + 15f, coverY + 45f, _bodyPaint);
+
+                        // 复用律动频谱 (放右上角)
+                        if (bars != null)
+                        {
+                            float barWidth = 2.5f, spacing = 3.5f, maxH = 18f, totalBarWidth = 26.5f;
+                            float startX = right - 20f - totalBarWidth;
+                            for (int i = 0; i < 5; i++)
+                            {
+                                float h = Math.Max(2f, bars[i] * maxH);
+                                float barY = coverY + 22f + (maxH - h) / 2f;
+                                canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), barY, startX + i * (barWidth + spacing) + barWidth, barY + h), 1.5f, 1.5f, _barPaint);
+                            }
+                        }
+
+                        // 底部放大媒体控件 (按钮位置上移)
+                        float btnY = currentHeight - 32f;
+                        float centerX = left + currentWidth / 2f;
+                        DrawSvgPath(canvas, _mediaIconPaint, centerX - 60, btnY, _prevPath, 1.3f);
+                        DrawSvgPath(canvas, _mediaIconPaint, centerX - 7, btnY, media.IsPlaying ? _pausePath : _playPath, 1.3f);
+                        DrawSvgPath(canvas, _mediaIconPaint, centerX + 45, btnY, _nextPath, 1.3f);
+                    }
+                    else // 原版折叠模式布局
+                    {
+                        float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
+                        float textX = left + 16;
+                        if (media.Thumbnail != null)
+                        {
+                            float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
+                            var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
+                            canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
+                            canvas.Save();
+                            _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
+                            canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                            canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                            canvas.Restore();
+                            textX += thumbSize + 10;
+                        }
+
+                        canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
+
+                        if (MediaInteractionMode == 0) // 直接交互模式，保留所有原版控件和音频柱
+                        {
+                            float rightOccupiedWidth = isHovered ? 95f : 45f;
+                            float maskEnd = right - rightOccupiedWidth + 5f;
+                            float maskStart = maskEnd - 15f;
+                            canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
+                            canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
+                            if (isHovered)
+                            {
+                                float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
+                                DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
+                                DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
+                                DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
+                            }
+                            else if (bars != null)
+                            {
+                                float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
+                                for (int i = 0; i < 5; i++)
+                                {
+                                    float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
+                                    canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+                                }
+                            }
+                        }
+                        else // 展开交互模式，折叠时隐藏按钮，但保留律动频谱
+                        {
+                            // 动态计算右侧遮罩范围：如果有律动条，留出 45f 的空间，否则只留 15f 边距
+                            float rightOccupiedWidth = bars != null ? 45f : 15f;
+                            float maskEnd = right - rightOccupiedWidth + 5f;
+                            float maskStart = maskEnd - 15f;
+
+                            canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
+                            canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
+                            // 律动频谱
+                            if (bars != null)
+                            {
+                                float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
+                                for (int i = 0; i < 5; i++)
+                                {
+                                    float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
+                                    canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+                                }
+                            }
                         }
                     }
                 }
-                // 改为:
                 else if (StandbyDisplayMode == 0)
                 {
                     // 待机状态：左右布局，两端对齐
@@ -473,10 +522,11 @@ namespace NotchPeninsula
             }
         }
 
-        private static void DrawSvgPath(SKCanvas canvas, SKPaint paint, float x, float y, SKPath path)
+        private static void DrawSvgPath(SKCanvas canvas, SKPaint paint, float x, float y, SKPath path, float scale = 1f)
         {
             canvas.Save();
             canvas.Translate(x, y);
+            if (scale != 1f) canvas.Scale(scale);
             canvas.DrawPath(path, paint);
             canvas.Restore();
         }

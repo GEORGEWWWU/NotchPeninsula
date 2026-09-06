@@ -410,9 +410,9 @@ namespace NotchPeninsula
                 }
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
-                // 决策尺寸 (分别引用专属宽度和高度)
-                float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? Renderer.MEDIA_WIDTH : Renderer.STANDBY_WIDTH);
-                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? Renderer.MEDIA_HEIGHT : Renderer.BASE_HEIGHT);
+                // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x150)
+                float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH);
+                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
@@ -588,23 +588,29 @@ namespace NotchPeninsula
                         int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
-                        float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
-                        int btnPrevX = (int)right - 90;
-                        int btnPlayX = (int)right - 60;
-                        int btnNextX = (int)right - 30;
-
-                        // 媒体控制按钮的悬停交互位移补偿
                         float hitTopY = 12f * _currentStyleProgress;
-
-                        // 动态计算 Y 轴热区（设定热区高度为 18）
-                        float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
-                        float btnEndY = btnStartY + 18f;
-
-                        bool overPrev = x >= btnPrevX + 6 && x <= btnPrevX + 24 && y >= btnStartY && y <= btnEndY;
-                        bool overPlay = x >= btnPlayX + 6 && x <= btnPlayX + 24 && y >= btnStartY && y <= btnEndY;
-                        bool overNext = x >= btnNextX + 6 && x <= btnNextX + 24 && y >= btnStartY && y <= btnEndY;
-
-                        _isCursorOverIcon = overPrev || overPlay || overNext;
+                        if (Renderer.IsMediaExpanded)
+                        {
+                            float btnY = (_currentHeight - 32f) + hitTopY;
+                            float center = Renderer.WINDOW_WIDTH / 2f;
+                            _isCursorOverIcon = (y >= btnY - 5 && y <= btnY + 25) && ((x >= center - 65 && x <= center - 35) || (x >= center - 15 && x <= center + 15) || (x >= center + 35 && x <= center + 65));
+                        }
+                        else
+                        {
+                            if (Renderer.MediaInteractionMode == 1) // 展开模式下，未展开时整个刘海都是可点击区域
+                            {
+                                float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                                float right = left + _currentWidth;
+                                _isCursorOverIcon = (x >= left && x <= right && y >= hitTopY && y <= hitTopY + _currentHeight);
+                            }
+                            else
+                            {
+                                float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
+                                float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
+                                _isCursorOverIcon = (y >= btnStartY && y <= btnEndY) && ((x >= btnPrevX + 6 && x <= btnPrevX + 24) || (x >= btnPlayX + 6 && x <= btnPlayX + 24) || (x >= btnNextX + 6 && x <= btnNextX + 24));
+                            }
+                        }
                     }
                     else
                     {
@@ -616,6 +622,7 @@ namespace NotchPeninsula
                     _isTrackingMouse = false;
                     _isHovered = false;
                     _isCursorOverIcon = false;
+                    Renderer.IsMediaExpanded = false;
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
@@ -625,28 +632,43 @@ namespace NotchPeninsula
                         return (IntPtr)0;
                     }
 
-                    if (_isHovered && _media.IsActive && _isCursorOverIcon && _currentToast == null)
+                    if (_isHovered && _media.IsActive && _currentToast == null)
                     {
                         int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-
                         float hitTopY = 12f * _currentStyleProgress;
+                        bool hitButtons = false;
 
-                        // 动态计算点击时的 Y 轴边界
-                        float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
-                        float btnEndY = btnStartY + 18f;
-
-                        // 使用动态边界判断点击
-                        if (clickY >= btnStartY && clickY <= btnEndY)
+                        if (Renderer.IsMediaExpanded)
                         {
-                            float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                            float btnY = (_currentHeight - 32f) + hitTopY;
+                            float center = Renderer.WINDOW_WIDTH / 2f;
+                            if (clickY >= btnY - 5 && clickY <= btnY + 25)
+                            {
+                                if (x >= center - 65 && x <= center - 35) { _media.Previous(); hitButtons = true; }
+                                else if (x >= center - 15 && x <= center + 15) { _media.TogglePlayPause(); hitButtons = true; }
+                                else if (x >= center + 35 && x <= center + 65) { _media.Next(); hitButtons = true; }
+                            }
+                        }
+                        else
+                        {
+                            if (Renderer.MediaInteractionMode == 0) // 只有直接交互模式，才检测折叠状态下的按钮点击
+                            {
+                                float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
+                                if (clickY >= btnStartY && clickY <= btnStartY + 18f)
+                                {
+                                    if (x >= right - 84 && x <= right - 66) { _media.Previous(); hitButtons = true; }
+                                    else if (x >= right - 54 && x <= right - 36) { _media.TogglePlayPause(); hitButtons = true; }
+                                    else if (x >= right - 24 && x <= right - 6) { _media.Next(); hitButtons = true; }
+                                }
+                            }
+                        }
 
-                            if (x >= right - 84 && x <= right - 66)
-                                _media.Previous();
-                            else if (x >= right - 54 && x <= right - 36)
-                                _media.TogglePlayPause();
-                            else if (x >= right - 24 && x <= right - 6)
-                                _media.Next();
+                        // 如果没有点到按钮，且开启了展开交互，点击只负责触发展开
+                        if (!hitButtons && Renderer.MediaInteractionMode == 1)
+                        {
+                            Renderer.IsMediaExpanded = true;
                         }
                     }
                     break;

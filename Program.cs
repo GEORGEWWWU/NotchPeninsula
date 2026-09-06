@@ -34,7 +34,8 @@ namespace NotchPeninsula
                     Renderer.NOTCH_BOTTOM_RADIUS = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_NotchBottomR", 12f)), 0f, 28f);
                     Renderer.ThemeMode = (int)key.GetValue("ThemeMode", 0);
                     Renderer.NotchStyle = (int)key.GetValue("NotchStyle", 0);
-                    Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 0); // 极速从注册表栈读取
+                    Renderer.MediaInteractionMode = (int)key.GetValue("MediaInteractionMode", 1);
+                    Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 0);
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
 
