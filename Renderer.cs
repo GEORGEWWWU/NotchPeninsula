@@ -30,6 +30,11 @@ namespace NotchPeninsula
         public static int StandbyDisplayMode { get; set; } = 0; // 0=时间日期, 1=空白
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
+        public static float MeasureCurrentLyricWidth(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            return _textPaint.MeasureText(text);
+        }
         public static bool IsMediaExpanded = false;
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
         private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔
@@ -75,8 +80,8 @@ namespace NotchPeninsula
         }
 
         // 动态计算最大边界，防止因刘海变大导致出界
-        // 包含待机尺寸(STANDBY/BASE)，并增加灵动岛下沉和弹性动画拉伸时的溢出安全边距
-        public static float WINDOW_WIDTH => Math.Max(360f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);
+        // 将透明原生窗口的基础画布拓宽至 1200f，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
+        public static float WINDOW_WIDTH => Math.Max(1200f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);
         public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f);
 
         public const int OUTER_R = 14;

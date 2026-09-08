@@ -410,8 +410,14 @@ namespace NotchPeninsula
                 }
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
-                // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x150)
+                // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
                 float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH);
+                // 自动歌词长度自适应逻辑
+                if (currentActive && !Renderer.IsMediaExpanded && MediaController.IsAutoLyricWidthEnabled && !string.IsNullOrEmpty(_media.CurrentLyric))
+                {
+                    float requiredWidth = Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric) + 115f;
+                    if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
+                }
                 float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
