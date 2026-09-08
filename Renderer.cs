@@ -35,6 +35,12 @@ namespace NotchPeninsula
             if (string.IsNullOrEmpty(text)) return 0;
             return _textPaint.MeasureText(text);
         }
+        // 计算Toast消息自适应宽度，限制最大500px
+        public static float GetToastAutoWidth()
+        {
+            float maxTextW = Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
+            return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), 800f);
+        }
         public static bool IsMediaExpanded = false;
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
         private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔

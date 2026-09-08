@@ -411,7 +411,7 @@ namespace NotchPeninsula
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
                 // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
-                float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH);
+                float expectedTargetWidth = isToastActive ? Renderer.GetToastAutoWidth() : (currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH);
                 // 自动文本长度自适应逻辑
                 if (currentActive && !Renderer.IsMediaExpanded)
                 {
