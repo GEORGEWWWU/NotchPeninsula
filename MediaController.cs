@@ -13,6 +13,8 @@ namespace NotchPeninsula
         public static MediaController? Instance { get; private set; }
         internal static string TargetPlatform = "other"; // 默认通用媒体
         internal static bool IsMediaControlEnabled = true; // 媒体开关
+        internal static bool IsLyricsEnabled = true;
+        internal static float LyricDelayOffset = 0f;
         private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
         {
             ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
@@ -490,12 +492,14 @@ namespace NotchPeninsula
 
                 // 从后往前找当前时间对应的歌词，加上 0.6 秒的系统通信延迟补偿
                 string found = "";
-                TimeSpan compensatedPosition = _currentSimulatedPosition + TimeSpan.FromSeconds(0.6);
+                TimeSpan compensatedPosition = _currentSimulatedPosition + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
                 for (int i = _lyrics.Length - 1; i >= 0; i--)
                 {
                     if (compensatedPosition >= _lyrics[i].Time) { found = _lyrics[i].Text; break; }
                 }
-                CurrentLyric = found;
+                // 后台时间轴引擎照常跑，仅在最后输出给渲染器时做拦截
+                // 输出为空时，Renderer.cs 会自动回退显示标题和艺术家
+                CurrentLyric = IsLyricsEnabled ? found : "";
             }
             catch { }
         }

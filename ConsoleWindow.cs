@@ -38,6 +38,10 @@ namespace NotchPeninsula
         private bool _dropdownHovered = false;
         private int _hoveredDropdownIndex = -1;
         private int _selectedPlatformIndex = 0;
+        private bool _lyricToggleHovered = false;
+        private bool _lyricMinusHovered = false;
+        private bool _lyricPlusHovered = false;
+        private bool _lyricResetHovered = false;
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
 
@@ -322,6 +326,25 @@ namespace NotchPeninsula
                             if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 130 && y < TITLE_BAR_HEIGHT + 130 + _platforms.Length * 26)
                                 newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
                         }
+
+                        // 歌词设置
+                        float lyricY = TITLE_BAR_HEIGHT + 160;
+                        bool newLyricToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
+
+                        float btnY = lyricY + 67;
+                        float cardRightX = WIDTH - 36;
+                        bool newLyricMinusHovered = !_dropdownOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
+                        bool newLyricPlusHovered = !_dropdownOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
+                        bool newLyricResetHovered = !_dropdownOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
+
+                        if (newLyricToggleHovered != _lyricToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
+                        {
+                            _lyricToggleHovered = newLyricToggleHovered;
+                            _lyricMinusHovered = newLyricMinusHovered;
+                            _lyricPlusHovered = newLyricPlusHovered;
+                            _lyricResetHovered = newLyricResetHovered;
+                            Render(); // 触发重绘
+                        }
                     }
                     else if (_selectedTab == 3) // 交互设置
                     {
@@ -492,6 +515,23 @@ namespace NotchPeninsula
                         Program.SaveSetting("MediaControl", MediaController.IsMediaControlEnabled ? 1 : 0);
 
                         _ = MediaController.Instance?.ForceRefresh();
+                        Render();
+                    }
+                    else if (_selectedTab == 2 && _lyricToggleHovered)
+                    {
+                        MediaController.IsLyricsEnabled = !MediaController.IsLyricsEnabled;
+                        Program.SaveSetting("LyricsEnabled", MediaController.IsLyricsEnabled ? 1 : 0);
+                        Render();
+                    }
+                    else if (_selectedTab == 2 && (_lyricMinusHovered || _lyricPlusHovered || _lyricResetHovered))
+                    {
+                        if (_lyricResetHovered) MediaController.LyricDelayOffset = 0f;
+                        else if (_lyricMinusHovered) MediaController.LyricDelayOffset -= 0.1f;
+                        else if (_lyricPlusHovered) MediaController.LyricDelayOffset += 0.1f;
+
+                        // 避免浮点数精度爆炸，固定为 1 位小数
+                        MediaController.LyricDelayOffset = (float)Math.Round(MediaController.LyricDelayOffset, 1);
+                        Program.SaveSetting("LyricDelayOffset", MediaController.LyricDelayOffset);
                         Render();
                     }
                     else if (_autoHideToggleHovered)
@@ -764,6 +804,55 @@ namespace NotchPeninsula
 
                 canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, _chevronPaint);
                 canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, _chevronPaint);
+
+                // 歌词设置卡片
+                float lyricY = TITLE_BAR_HEIGHT + 160;
+                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 100);
+                canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
+                canvas.DrawText("歌词设置", 216, lyricY + 26, _uiTextPaint);
+
+                // 歌词开关
+                canvas.DrawText("在刘海中显示歌词", 216, lyricY + 52, _subTextPaint);
+                float tW = 42, tH = 20;
+                float tX = WIDTH - 20 - 16 - tW, tY = lyricY + 37;
+                var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+                if (MediaController.IsLyricsEnabled)
+                {
+                    _dynamicFillPaint.Color = _lyricToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                    canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                }
+                else
+                {
+                    _dynamicStrokePaint.Color = _lyricToggleHovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
+                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                    _toggleCirclePaint.Color = _lyricToggleHovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
+                    canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                    _toggleCirclePaint.Color = SKColors.White; // 恢复白色供下次使用
+                }
+
+                // 延迟调整
+                canvas.DrawText("歌词延迟补偿", 216, lyricY + 84, _subTextPaint);
+                float cardRightX = WIDTH - 36;
+                float btnY = lyricY + 67;
+
+                _dynamicFillPaint.Color = _lyricMinusHovered ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
+                canvas.DrawRoundRect(new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), 4, 4, _dynamicFillPaint);
+                canvas.DrawText("-", cardRightX - 164, btnY + 17, _uiTextPaint);
+
+                string valStr = $"{MediaController.LyricDelayOffset:F1} s";
+                if (MediaController.LyricDelayOffset > 0) valStr = "+" + valStr;
+                float textW = _uiTextPaint.MeasureText(valStr);
+                canvas.DrawText(valStr, cardRightX - 90 - textW, btnY + 17, _uiTextPaint);
+
+                _dynamicFillPaint.Color = _lyricPlusHovered ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
+                canvas.DrawRoundRect(new SKRect(cardRightX - 80, btnY, cardRightX - 50, btnY + 24), 4, 4, _dynamicFillPaint);
+                canvas.DrawText("+", cardRightX - 69, btnY + 17, _uiTextPaint);
+
+                _dynamicFillPaint.Color = _lyricResetHovered ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
+                canvas.DrawRoundRect(new SKRect(cardRightX - 40, btnY, cardRightX, btnY + 24), 4, 4, _dynamicFillPaint);
+                canvas.DrawText("重置", cardRightX - 33, btnY + 17, _subTextPaint);
             }
             else if (_selectedTab == 3)
             {

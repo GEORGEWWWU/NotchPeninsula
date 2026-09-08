@@ -21,6 +21,8 @@ namespace NotchPeninsula
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
                     MediaController.TargetPlatform = (string)key.GetValue("TargetPlatform", "other") ?? "other";
+                    MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
+                    MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
 
                     // 读取个性化参数
