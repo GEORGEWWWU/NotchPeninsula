@@ -26,6 +26,7 @@ namespace NotchPeninsula
 
         private (TimeSpan Time, string Text)[] _lyrics = Array.Empty<(TimeSpan, string)>();
         public string CurrentLyric { get; private set; } = "";
+        public float CurrentLyricProgress { get; private set; } = 0f;
         private TimeSpan _currentSimulatedPosition = TimeSpan.Zero;
         private TimeSpan _lastSmtcPosition = TimeSpan.Zero;
         private DateTime _lastUpdateTime = DateTime.UtcNow;
@@ -490,16 +491,29 @@ namespace NotchPeninsula
                 // 只有等时间轴正确走完后，如果还没歌词，我们再退出渲染拦截
                 if (_lyrics.Length == 0) { CurrentLyric = ""; return; }
 
-                // 从后往前找当前时间对应的歌词，加上 0.6 秒的系统通信延迟补偿
                 string found = "";
+                float progress = 0f;
                 TimeSpan compensatedPosition = _currentSimulatedPosition + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
                 for (int i = _lyrics.Length - 1; i >= 0; i--)
                 {
-                    if (compensatedPosition >= _lyrics[i].Time) { found = _lyrics[i].Text; break; }
+                    if (compensatedPosition >= _lyrics[i].Time)
+                    {
+                        found = _lyrics[i].Text;
+                        // 算出当前这句歌词的停留时长，并转换成 0.0 ~ 1.0 的进度
+                        TimeSpan endTime = (i < _lyrics.Length - 1) ? _lyrics[i + 1].Time : _lyrics[i].Time + TimeSpan.FromSeconds(4);
+                        double duration = (endTime - _lyrics[i].Time).TotalSeconds;
+                        if (duration > 0)
+                        {
+                            progress = (float)((compensatedPosition - _lyrics[i].Time).TotalSeconds / duration);
+                            progress = Math.Clamp(progress, 0f, 1f); // 锁定在 0~1 之间
+                        }
+                        break;
+                    }
                 }
 
-                // 输出为空时，Renderer.cs 会自动回退显示标题和艺术家
+                // 输出结果，供渲染层使用
                 CurrentLyric = IsLyricsEnabled ? found : "";
+                CurrentLyricProgress = IsLyricsEnabled ? progress : 0f;
             }
             catch { }
         }

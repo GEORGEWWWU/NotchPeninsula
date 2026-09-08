@@ -451,22 +451,23 @@ namespace NotchPeninsula
                         _bodyPaint.TextSize = 12.5f;
                         string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
 
-                        // --- 核心视差引擎：展开模式下的平滑叠化渲染 ---
-                        if (_lyricAnimProgress < 1f && !string.IsNullOrEmpty(_lastLyric))
+                        // 展开模式下的平滑叠化渲染 (带卡拉OK)
+                        bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+                        if (_lyricAnimProgress < 1f && isLyricDisplay)
                         {
                             float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
                             if (!string.IsNullOrEmpty(_prevLyric))
                             {
-                                _bodyPaint.Color = _currentSubTextColor.WithAlpha((byte)(alpha * (1f - easeOut)));
-                                canvas.DrawText(_prevLyric, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint);
+                                // 旧歌词淡出时进度直接锁定 100% (1f)
+                                DrawKaraoke(canvas, _prevLyric, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
                             }
-                            _bodyPaint.Color = _currentSubTextColor.WithAlpha((byte)(alpha * easeOut));
-                            canvas.DrawText(displaySub, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint);
-                            _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha); // 恢复画笔透明度
+                            // 新歌词套用当前进度
+                            DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                            _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
                         }
                         else
                         {
-                            canvas.DrawText(displaySub, textStartX, coverY + 42f, _bodyPaint);
+                            DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                         }
 
                         // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
@@ -523,28 +524,23 @@ namespace NotchPeninsula
                             textX += thumbSize + 10;
                         }
 
-                        // --- 核心视差引擎：折叠模式下的歌词叠化与位移动画 ---
-                        if (_lyricAnimProgress < 1f && !string.IsNullOrEmpty(_lastLyric))
+                        // 折叠模式下的歌词叠化与位移动画 (带卡拉OK)
+                        bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+                        if (_lyricAnimProgress < 1f && isLyricDisplay)
                         {
-                            // 缓动曲线：模拟物理弹性减速
                             float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
 
                             if (!string.IsNullOrEmpty(_prevLyric))
                             {
-                                // 旧歌词：向上滑动并淡出
-                                _textPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * (1f - easeOut)));
-                                canvas.DrawText(_prevLyric, textX, textY - (10f * easeOut), _textPaint);
+                                DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
                             }
 
-                            // 新歌词：从下方滑入并淡入
-                            _textPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * easeOut));
-                            canvas.DrawText(_cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint);
-
-                            _textPaint.Color = _currentTextColor.WithAlpha(alpha); // 恢复画笔
+                            DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                            _textPaint.Color = _currentTextColor.WithAlpha(alpha);
                         }
                         else
                         {
-                            canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
+                            DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                         }
 
                         if (MediaInteractionMode == 0) // 直接交互模式
@@ -631,5 +627,31 @@ namespace NotchPeninsula
         private static SKPath CreatePausePath() { var path = new SKPath(); path.AddRect(new SKRect(0, 0, 3, 12)); path.AddRect(new SKRect(6, 0, 9, 12)); return path; }
         private static SKPath CreatePrevPath() { var path = new SKPath(); path.AddRect(new SKRect(0, 0, 2, 10)); path.MoveTo(8, 0); path.LineTo(2, 5); path.LineTo(8, 10); path.Close(); return path; }
         private static SKPath CreateNextPath() { var path = new SKPath(); path.MoveTo(0, 0); path.LineTo(6, 5); path.LineTo(0, 10); path.Close(); path.AddRect(new SKRect(6, 0, 8, 10)); return path; }
+
+        // 卡拉OK渲染引擎
+        private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
+        {
+            if (!isLyric || progress <= 0f)
+            {
+                paint.Color = paint.Color.WithAlpha(targetAlpha);
+                canvas.DrawText(text, x, y, paint);
+                return;
+            }
+
+            // 1. 先画完整的半透明底板 (40% 亮度)
+            paint.Color = paint.Color.WithAlpha((byte)(targetAlpha * 0.4f));
+            canvas.DrawText(text, x, y, paint);
+
+            // 2. 算出现在应该亮起到多宽
+            float scanWidth = paint.MeasureText(text) * progress;
+
+            // 3. 硬件级裁剪高亮部分并覆盖上去
+            canvas.Save();
+            // y-30 到 y+10 足够包裹住字体的上下最高/低点
+            canvas.ClipRect(new SKRect(x, y - 30f, x + scanWidth, y + 10f), SKClipOperation.Intersect, true);
+            paint.Color = paint.Color.WithAlpha(targetAlpha);
+            canvas.DrawText(text, x, y, paint);
+            canvas.Restore();
+        }
     }
 }
