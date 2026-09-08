@@ -401,8 +401,8 @@ namespace NotchPeninsula
                 // ========================================================
                 bool currentActive = _media.IsActive;
 
-                // 状态叠化透明度计算 (0.3s 平滑过渡)
-                int currentDisplayState = isToastActive ? 2 : (currentActive ? 1 : 0);
+                // 状态叠化透明度计算 (0.3s 平滑过渡，将媒体展开与折叠拆分为独立状态触发叠化)
+                int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0);
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
