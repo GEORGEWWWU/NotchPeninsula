@@ -14,6 +14,7 @@ namespace NotchPeninsula
         internal static string TargetPlatform = "other"; // 默认通用媒体
         internal static bool IsMediaControlEnabled = true; // 媒体开关
         internal static bool IsLyricsEnabled = true;
+        internal static bool IsKaraokeEnabled = true;
         internal static float LyricDelayOffset = 0f;
         private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
         {

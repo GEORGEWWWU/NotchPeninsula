@@ -39,6 +39,7 @@ namespace NotchPeninsula
         private int _hoveredDropdownIndex = -1;
         private int _selectedPlatformIndex = 0;
         private bool _lyricToggleHovered = false;
+        private bool _karaokeToggleHovered = false;
         private bool _lyricMinusHovered = false;
         private bool _lyricPlusHovered = false;
         private bool _lyricResetHovered = false;
@@ -356,16 +357,19 @@ namespace NotchPeninsula
 
                         float lyricY = TITLE_BAR_HEIGHT + 160;
                         bool newLyricToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
+                        bool newKaraokeToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 77 && y <= lyricY + 97);
 
-                        float btnY = lyricY + 67;
+                        // 按钮整体下移 40px 给新开关让位
+                        float btnY = lyricY + 107;
                         float cardRightX = WIDTH - 36;
                         bool newLyricMinusHovered = !_dropdownOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
                         bool newLyricPlusHovered = !_dropdownOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
                         bool newLyricResetHovered = !_dropdownOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
 
-                        if (newLyricToggleHovered != _lyricToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
+                        if (newLyricToggleHovered != _lyricToggleHovered || newKaraokeToggleHovered != _karaokeToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
                         {
                             _lyricToggleHovered = newLyricToggleHovered;
+                            _karaokeToggleHovered = newKaraokeToggleHovered;
                             _lyricMinusHovered = newLyricMinusHovered;
                             _lyricPlusHovered = newLyricPlusHovered;
                             _lyricResetHovered = newLyricResetHovered;
@@ -553,6 +557,12 @@ namespace NotchPeninsula
                     {
                         MediaController.IsLyricsEnabled = !MediaController.IsLyricsEnabled;
                         Program.SaveSetting("LyricsEnabled", MediaController.IsLyricsEnabled ? 1 : 0);
+                        Render();
+                    }
+                    else if (_selectedTab == 2 && _karaokeToggleHovered)
+                    {
+                        MediaController.IsKaraokeEnabled = !MediaController.IsKaraokeEnabled;
+                        Program.SaveSetting("KaraokeEnabled", MediaController.IsKaraokeEnabled ? 1 : 0);
                         Render();
                     }
                     else if (_selectedTab == 2 && (_lyricMinusHovered || _lyricPlusHovered || _lyricResetHovered))
@@ -839,7 +849,7 @@ namespace NotchPeninsula
 
                 // 歌词设置卡片
                 float lyricY = TITLE_BAR_HEIGHT + 160;
-                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 100);
+                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 140); // 🚀 高度从 100 增高到 140
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
                 canvas.DrawText("歌词设置", 216, lyricY + 26, _uiTextPaint);
@@ -864,10 +874,29 @@ namespace NotchPeninsula
                     _toggleCirclePaint.Color = SKColors.White;
                 }
 
+                // 卡拉OK效果开关
+                canvas.DrawText("开启卡拉OK动效", 216, lyricY + 92, _subTextPaint);
+                float kY = lyricY + 77;
+                var kRect = new SKRect(tX, kY, tX + tW, kY + tH);
+                if (MediaController.IsKaraokeEnabled)
+                {
+                    _dynamicFillPaint.Color = _karaokeToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicFillPaint);
+                    canvas.DrawCircle(tX + tW - tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                }
+                else
+                {
+                    _dynamicStrokePaint.Color = _karaokeToggleHovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
+                    canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                    _toggleCirclePaint.Color = _karaokeToggleHovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
+                    canvas.DrawCircle(tX + tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                    _toggleCirclePaint.Color = SKColors.White;
+                }
+
                 // 延迟调整
-                canvas.DrawText("歌词延迟补偿", 216, lyricY + 84, _subTextPaint);
+                canvas.DrawText("歌词延迟补偿", 216, lyricY + 124, _subTextPaint);
                 float cardRightX = WIDTH - 36;
-                float btnY = lyricY + 67;
+                float btnY = lyricY + 107;
 
                 _dynamicFillPaint.Color = _lyricMinusHovered ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
                 canvas.DrawRoundRect(new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), 4, 4, _dynamicFillPaint);

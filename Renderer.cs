@@ -631,7 +631,8 @@ namespace NotchPeninsula
         // 卡拉OK渲染引擎
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
-            if (!isLyric || progress <= 0f)
+            // 如果没开启卡拉OK，直接短路渲染普通的实体文字，瞬间返回，0 性能开销
+            if (!isLyric || progress <= 0f || !MediaController.IsKaraokeEnabled)
             {
                 paint.Color = paint.Color.WithAlpha(targetAlpha);
                 canvas.DrawText(text, x, y, paint);
