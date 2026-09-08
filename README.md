@@ -20,7 +20,9 @@
 </p>
 
 ![NPS 1.0](./data/image/nps-1.0-cover.png)
-<img width="1600" height="575" alt="image" src="https://github.com/user-attachments/assets/557a8627-583f-46a0-9831-024566bcd9ca" />
+<img width="1920" height="200" alt="NotchPeninsula 封面 1 3 0 效果" src="https://github.com/user-attachments/assets/b80857fa-58a5-4379-8f1c-cf75db704ab1" />
+
+
 
 
 </div>
