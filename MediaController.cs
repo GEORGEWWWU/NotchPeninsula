@@ -465,33 +465,41 @@ namespace NotchPeninsula
         {
             var now = DateTime.UtcNow;
             var dt = now - _lastUpdateTime;
-            _lastUpdateTime = now;
+            _lastUpdateTime = now; // 无论是否在播放，每一帧都更新绝对时间差
 
-            if (_lyrics.Length == 0 || _currentSession == null) { CurrentLyric = ""; return; }
+            // 拦截无效会话，但不再在这里拦截空歌词
+            if (_currentSession == null) { CurrentLyric = ""; return; }
+
             try
             {
                 var props = _currentSession.GetTimelineProperties();
                 var smtcPos = props.Position;
 
-                // SMTC 数据发生跳变 > 1.5秒
+                // SMTC 数据发生跳变 > 1.5秒（例如用户手动拖动了进度条，或者遇到了良心播放器主动更新了）
                 if (Math.Abs((smtcPos - _lastSmtcPosition).TotalSeconds) > 1.5)
                 {
                     _currentSimulatedPosition = smtcPos;
                     _lastSmtcPosition = smtcPos;
                 }
 
-                // 自己接管进度！
+                // 自己接管进度！不管有没有拿到歌词，底层的时间轴必须一直跟着播放状态往前走！
                 if (IsPlaying)
                 {
                     _currentSimulatedPosition += dt;
                 }
 
+                // 只有等时间轴正确走完后，如果还没歌词，我们再退出渲染拦截
+                if (_lyrics.Length == 0) { CurrentLyric = ""; return; }
+
+                // 从后往前找当前时间对应的歌词，加上 0.6 秒的系统通信延迟补偿
                 string found = "";
                 TimeSpan compensatedPosition = _currentSimulatedPosition + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
                 for (int i = _lyrics.Length - 1; i >= 0; i--)
                 {
                     if (compensatedPosition >= _lyrics[i].Time) { found = _lyrics[i].Text; break; }
                 }
+
+                // 输出为空时，Renderer.cs 会自动回退显示标题和艺术家
                 CurrentLyric = IsLyricsEnabled ? found : "";
             }
             catch { }
