@@ -1,6 +1,7 @@
+using SkiaSharp;
 using System.Drawing.Imaging;
 using System.IO;
-using SkiaSharp;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace NotchPeninsula
 {
@@ -177,7 +178,11 @@ namespace NotchPeninsula
         private static float _cachedMediaTextHeight = 0f;
 
         private static uint _lastToastId = 0;
+        // 歌词动画专属独立变量
         private static string _lastLyric = "";
+        private static string _prevLyric = ""; // 保存上一句歌词
+        private static float _lyricAnimProgress = 1f; // 动画进度 0~1
+        private static DateTime _lyricChangeTime; // 动画起始时间
         // 待机时间显示专用画笔
         private static readonly SKPaint _timePaint = new() { Color = SKColors.White, TextSize = 14.5f, IsAntialias = true, Typeface = _boldTypeface };
         private static readonly SKPaint _datePaint = new() { Color = new SKColor(200, 200, 200), TextSize = 14.5f, IsAntialias = true, Typeface = _normalTypeface };
@@ -357,9 +362,16 @@ namespace NotchPeninsula
                     {
                         _lastMediaTitle = media.Title ?? "";
                         _lastMediaArtist = media.Artist ?? "";
-                        _lastLyric = media.CurrentLyric ?? "";
 
-                        // 有歌词时，剔除歌名，只显示歌词
+                        // 触发叠化动画
+                        if (_lastLyric != media.CurrentLyric)
+                        {
+                            _prevLyric = _lastLyric;
+                            _lastLyric = media.CurrentLyric ?? "";
+                            _lyricAnimProgress = 0f;
+                            _lyricChangeTime = DateTime.Now;
+                        }
+
                         if (!string.IsNullOrEmpty(_lastLyric))
                         {
                             _cachedMediaDisplay = _lastLyric;
@@ -373,6 +385,13 @@ namespace NotchPeninsula
                         _textPaint.MeasureText(_cachedMediaDisplay, ref tb);
                         _cachedMediaTextTop = tb.Top;
                         _cachedMediaTextHeight = tb.Height;
+                    }
+
+                    // 纯数学计算动画插值 (0.0 -> 1.0，周期约 350ms)，零 GC 分配
+                    if (_lyricAnimProgress < 1f)
+                    {
+                        _lyricAnimProgress = (float)(DateTime.Now - _lyricChangeTime).TotalSeconds / 0.35f;
+                        if (_lyricAnimProgress > 1f) _lyricAnimProgress = 1f;
                     }
                 }
                 else
@@ -425,7 +444,24 @@ namespace NotchPeninsula
                         _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
                         _bodyPaint.TextSize = 12.5f;
                         string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
-                        canvas.DrawText(displaySub, textStartX, coverY + 42f, _bodyPaint);
+
+                        // --- 核心视差引擎：展开模式下的平滑叠化渲染 ---
+                        if (_lyricAnimProgress < 1f && !string.IsNullOrEmpty(_lastLyric))
+                        {
+                            float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
+                            if (!string.IsNullOrEmpty(_prevLyric))
+                            {
+                                _bodyPaint.Color = _currentSubTextColor.WithAlpha((byte)(alpha * (1f - easeOut)));
+                                canvas.DrawText(_prevLyric, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint);
+                            }
+                            _bodyPaint.Color = _currentSubTextColor.WithAlpha((byte)(alpha * easeOut));
+                            canvas.DrawText(displaySub, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint);
+                            _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha); // 恢复画笔透明度
+                        }
+                        else
+                        {
+                            canvas.DrawText(displaySub, textStartX, coverY + 42f, _bodyPaint);
+                        }
 
                         // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
                         float maskEnd = right - 55f;
@@ -450,17 +486,13 @@ namespace NotchPeninsula
                             }
                         }
 
-                        // 3. 底部放大媒体控件 (SVG放大至 1.6f，增加浅色悬浮背景)
+                        // 3. 底部放大媒体控件
                         float btnY = currentHeight - 34f;
                         float centerX = left + currentWidth / 2f;
                         float scale = 1.6f;
-
-                        // 光学居中补偿：播放/暂停的SVG高度比前后首多2px，放大后需单独上提1.6px
                         float playBtnY = btnY - 1.6f;
 
-                        // 渲染悬浮反馈底圈
                         if (HoveredExpandedButton == 0) canvas.DrawCircle(centerX - 54f, btnY + 8f, 20f, _hoverCirclePaint);
-                        // 中间底圈跟随上提，并微调中心点(+9.6f)使其完美包裹图标
                         if (HoveredExpandedButton == 1) canvas.DrawCircle(centerX + 1f, playBtnY + 9.6f, 20f, _hoverCirclePaint);
                         if (HoveredExpandedButton == 2) canvas.DrawCircle(centerX + 52f, btnY + 8f, 20f, _hoverCirclePaint);
 
@@ -485,9 +517,31 @@ namespace NotchPeninsula
                             textX += thumbSize + 10;
                         }
 
-                        canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
+                        // --- 核心视差引擎：折叠模式下的歌词叠化与位移动画 ---
+                        if (_lyricAnimProgress < 1f && !string.IsNullOrEmpty(_lastLyric))
+                        {
+                            // 缓动曲线：模拟物理弹性减速
+                            float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
 
-                        if (MediaInteractionMode == 0) // 直接交互模式，保留所有原版控件和音频柱
+                            if (!string.IsNullOrEmpty(_prevLyric))
+                            {
+                                // 旧歌词：向上滑动并淡出
+                                _textPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * (1f - easeOut)));
+                                canvas.DrawText(_prevLyric, textX, textY - (10f * easeOut), _textPaint);
+                            }
+
+                            // 新歌词：从下方滑入并淡入
+                            _textPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * easeOut));
+                            canvas.DrawText(_cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint);
+
+                            _textPaint.Color = _currentTextColor.WithAlpha(alpha); // 恢复画笔
+                        }
+                        else
+                        {
+                            canvas.DrawText(_cachedMediaDisplay, textX, textY, _textPaint);
+                        }
+
+                        if (MediaInteractionMode == 0) // 直接交互模式
                         {
                             float rightOccupiedWidth = isHovered ? 95f : 45f;
                             float maskEnd = right - rightOccupiedWidth + 5f;
@@ -512,9 +566,8 @@ namespace NotchPeninsula
                                 }
                             }
                         }
-                        else // 展开交互模式，折叠时隐藏按钮，但保留律动频谱
+                        else // 展开交互模式
                         {
-                            // 动态计算右侧遮罩范围：如果有律动条，留出 45f 的空间，否则只留 15f 边距
                             float rightOccupiedWidth = bars != null ? 45f : 15f;
                             float maskEnd = right - rightOccupiedWidth + 5f;
                             float maskStart = maskEnd - 15f;
@@ -522,7 +575,6 @@ namespace NotchPeninsula
                             canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
                             canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
 
-                            // 律动频谱
                             if (bars != null)
                             {
                                 float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;

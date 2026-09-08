@@ -23,6 +23,8 @@ namespace NotchPeninsula
         private TimeSpan _currentSimulatedPosition = TimeSpan.Zero;
         private TimeSpan _lastSmtcPosition = TimeSpan.Zero;
         private DateTime _lastUpdateTime = DateTime.UtcNow;
+        private string _lastFetchedTitle = "";
+        private string _lastFetchedArtist = "";
 
         public string Title { get; private set; } = "Notch Peninsula";
         public string Artist { get; private set; } = "Waiting for media...";
@@ -221,7 +223,15 @@ namespace NotchPeninsula
 
             long durationSec = 0;
             try { if (_currentSession.GetTimelineProperties() is { } t) durationSec = (long)t.EndTime.TotalSeconds; } catch { }
-            _ = FetchLyricsAsync(Title, Artist, durationSec);
+
+            // 独立歌词进程！只有真正的切歌才允许重新抓取和重置时间轴。
+            // 免疫系统通知弹窗导致的音量闪避干扰
+            if (Title != _lastFetchedTitle || Artist != _lastFetchedArtist)
+            {
+                _lastFetchedTitle = Title;
+                _lastFetchedArtist = Artist;
+                _ = FetchLyricsAsync(Title, Artist, durationSec);
+            }
         }
 
         // 浏览器视频站标题后缀列表：命中任一后缀即判定为浏览器视频模式，并统一删除该后缀
