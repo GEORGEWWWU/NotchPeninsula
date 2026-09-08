@@ -14,7 +14,7 @@ namespace NotchPeninsula
         private static bool _classRegistered = false;
 
         private const int WIDTH = 600;
-        private const int HEIGHT = 600;
+        private const int HEIGHT = 660;
         private const int TITLE_BAR_HEIGHT = 32;
 
         private bool _minHovered = false;
@@ -61,6 +61,7 @@ namespace NotchPeninsula
         private static readonly float[] _defaultCustomValues = [130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f];
         private readonly string[] _valStrCache = new string[8];
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
+        private int _hoveredOpacityIndex = -1;
         // DPI 缩放相关
         private float _dpiScale = 1f;
         private int _scaledWidth;
@@ -252,6 +253,7 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 4; // 6. 关于软件
 
                     int newHoveredTheme = -1;
+                    int newHoveredOpacityIndex = -1;
                     int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
                     if (_selectedTab == 5)
                     {
@@ -263,6 +265,31 @@ namespace NotchPeninsula
                         if (x >= themeRightX - 140 && x <= themeRightX - 100 && y >= themeY && y <= themeY + 24) newHoveredTheme = 0;
                         if (x >= themeRightX - 90 && x <= themeRightX - 50 && y >= themeY && y <= themeY + 24) newHoveredTheme = 1;
                         if (x >= themeRightX - 40 && x <= themeRightX && y >= themeY && y <= themeY + 24) newHoveredTheme = 2;
+
+                        // 透明度滑块热区判定与【拖拽滑动】逻辑
+                        float sliderY = TITLE_BAR_HEIGHT + 95;
+                        float sliderX = 216;
+                        float sliderW = WIDTH - 40 - 216;
+
+                        // 放宽 Y 轴的判定区域，提升拖拽时的手感，防止手抖断触
+                        if (x >= sliderX - 20 && x <= sliderX + sliderW + 20 && y >= sliderY - 20 && y <= sliderY + 20)
+                        {
+                            newHoveredOpacityIndex = (int)Math.Round((x - sliderX) / (sliderW / 4));
+                            if (newHoveredOpacityIndex < 0) newHoveredOpacityIndex = 0;
+                            if (newHoveredOpacityIndex > 4) newHoveredOpacityIndex = 4;
+
+                            // 核心滑动逻辑：判断此时鼠标左键是否处于“按住”状态 (MK_LBUTTON = 0x0001)
+                            if ((wParam.ToInt32() & 0x0001) != 0)
+                            {
+                                if (Renderer.BgOpacityLevel != newHoveredOpacityIndex)
+                                {
+                                    Renderer.BgOpacityLevel = newHoveredOpacityIndex;
+                                    Renderer.ApplyThemeColors();
+                                    Program.SaveSetting("BgOpacityLevel", newHoveredOpacityIndex);
+                                    Render(); // 数据一旦跨越档位，立刻触发重绘，实现跟手滑动
+                                }
+                            }
+                        }
 
                         for (int i = 0; i < 8; i++)
                         {
@@ -386,7 +413,7 @@ namespace NotchPeninsula
                         newHoveredStyleIndex != _hoveredStyleIndex ||
                         newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                         newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
-                        newHoveredTheme != _hoveredThemeIndex)
+                        newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex)
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
@@ -403,6 +430,7 @@ namespace NotchPeninsula
                         _hoveredResetIndex = newHoverReset;
                         _hoveredThemeIndex = newHoveredTheme;
                         _mediaExpToggleHovered = newMediaExpToggleHovered;
+                        _hoveredOpacityIndex = newHoveredOpacityIndex;
                         Render();
                     }
                     break;
@@ -477,6 +505,13 @@ namespace NotchPeninsula
                         Renderer.ApplyThemeColors(); // 立即反转画笔颜色
                         Program.SaveSetting("ThemeMode", _hoveredThemeIndex);
                         Render(); // 刷新控制台UI
+                    }
+                    else if (_selectedTab == 5 && _hoveredOpacityIndex != -1)
+                    {
+                        Renderer.BgOpacityLevel = _hoveredOpacityIndex;
+                        Renderer.ApplyThemeColors(); // 立刻应用透明度
+                        Program.SaveSetting("BgOpacityLevel", _hoveredOpacityIndex); // 持久化保存
+                        Render(); // 刷新UI
                     }
                     else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
                     {
@@ -599,15 +634,15 @@ namespace NotchPeninsula
         {
             return index switch
             {
-                -1 => TITLE_BAR_HEIGHT + 35,                 
-                0 => TITLE_BAR_HEIGHT + 92 + 40,             
-                1 => TITLE_BAR_HEIGHT + 92 + 40 + 34,
-                7 => TITLE_BAR_HEIGHT + 92 + 40 + 68,
-                2 => TITLE_BAR_HEIGHT + 244 + 40,
-                3 => TITLE_BAR_HEIGHT + 244 + 40 + 34,
-                4 => TITLE_BAR_HEIGHT + 362 + 40,
-                5 => TITLE_BAR_HEIGHT + 362 + 40 + 34,
-                6 => TITLE_BAR_HEIGHT + 480 + 40,
+                -1 => TITLE_BAR_HEIGHT + 35,
+                0 => TITLE_BAR_HEIGHT + 147 + 40,
+                1 => TITLE_BAR_HEIGHT + 147 + 40 + 34,
+                7 => TITLE_BAR_HEIGHT + 147 + 40 + 68,
+                2 => TITLE_BAR_HEIGHT + 299 + 40,
+                3 => TITLE_BAR_HEIGHT + 299 + 40 + 34,
+                4 => TITLE_BAR_HEIGHT + 417 + 40,
+                5 => TITLE_BAR_HEIGHT + 417 + 40 + 34,
+                6 => TITLE_BAR_HEIGHT + 535 + 40,
                 _ => 0
             };
         }
@@ -994,7 +1029,7 @@ namespace NotchPeninsula
 
                 // 绘制新增的主题卡片
                 float themeY = TITLE_BAR_HEIGHT + 12;
-                var themeRect = new SKRect(200, themeY, WIDTH - 20, themeY + 70);
+                var themeRect = new SKRect(200, themeY, WIDTH - 20, themeY + 125);
                 canvas.DrawRoundRect(themeRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(themeRect, 6, 6, _cardBorder);
 
@@ -1024,10 +1059,39 @@ namespace NotchPeninsula
                 DrawThemeBtn(0, "黑", 140, 100);
                 DrawThemeBtn(1, "白", 90, 50);
                 DrawThemeBtn(2, "系统", 40, 0);
-                DrawMultiCard(92, "待机显示", ["水平宽度", "垂直高度", "底部圆角"], [0, 1, 7], "px");
-                DrawMultiCard(244, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
-                DrawMultiCard(362, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
-                DrawMultiCard(480, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+                canvas.DrawText("背景透明度", 216, themeY + 75, _subTextPaint);
+                float sliderY = themeY + 95;
+                float sliderX = 216;
+                float sliderW = WIDTH - 40 - 216;
+                // 背景透明度滑轨
+                canvas.DrawLine(sliderX, sliderY, sliderX + sliderW, sliderY, _separatorPaint);
+                float activePx = sliderX + (sliderW / 4) * Renderer.BgOpacityLevel;
+                _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
+                _dynamicStrokePaint.StrokeWidth = 2f;
+                canvas.DrawLine(sliderX, sliderY, activePx, sliderY, _dynamicStrokePaint);
+                _dynamicStrokePaint.StrokeWidth = 1.5f;
+                for (int i = 0; i < 5; i++)
+                {
+                    float px = sliderX + (sliderW / 4) * i;
+                    bool isSelected = Renderer.BgOpacityLevel == i;
+                    bool isHovered = _hoveredOpacityIndex == i;
+                    // 只画当前选中的小蓝球，或者鼠标悬停时的半透明反馈，去掉丑陋的灰色固定点
+                    if (isSelected || isHovered)
+                    {
+                        _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212) : new SKColor(255, 255, 255, 80);
+                        canvas.DrawCircle(px, sliderY, isSelected ? 6 : 4, _dynamicFillPaint);
+                    }
+                    _dynamicTextPaint.Color = isSelected ? SKColors.White : new SKColor(150, 150, 150);
+                    _dynamicTextPaint.TextSize = 11f;
+                    string pct = (i * 25) + "%";
+                    float tw = _dynamicTextPaint.MeasureText(pct);
+                    canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
+                    _dynamicTextPaint.TextSize = 13f;
+                }
+                DrawMultiCard(147, "待机显示", ["水平宽度", "垂直高度", "底部圆角"], [0, 1, 7], "px");
+                DrawMultiCard(299, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
+                DrawMultiCard(417, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
+                DrawMultiCard(535, "全局 DPI 缩放", ["视觉比例"], [6], "x");
             }
 
             canvas.Restore();

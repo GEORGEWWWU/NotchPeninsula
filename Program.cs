@@ -39,6 +39,7 @@ namespace NotchPeninsula
                     Renderer.NotchStyle = (int)key.GetValue("NotchStyle", 0);
                     Renderer.MediaInteractionMode = (int)key.GetValue("MediaInteractionMode", 1);
                     Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 0);
+                    Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
 

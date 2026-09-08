@@ -28,6 +28,7 @@ namespace NotchPeninsula
         public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
         public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
         public static int StandbyDisplayMode { get; set; } = 0; // 0=时间日期, 1=空白
+        public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
         public static float MeasureCurrentLyricWidth(string text)
@@ -54,7 +55,9 @@ namespace NotchPeninsula
             }
 
             // 预计算颜色，避免在渲染树中生成新对象
-            var bg = isLight ? SKColors.White : SKColors.Black;
+            byte bgAlpha = (byte)(BgOpacityLevel * 255 / 4); // 计算5个档位对应的透明度值(0~255)
+            var baseBg = isLight ? SKColors.White : SKColors.Black;
+            var bg = baseBg.WithAlpha(bgAlpha); // 只改变背景色的透明度，不影响内部元素
             _currentTextColor = isLight ? SKColors.Black : SKColors.White;
             _currentSubTextColor = isLight ? new SKColor(80, 80, 80) : new SKColor(200, 200, 200);
 
