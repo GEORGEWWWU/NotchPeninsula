@@ -381,10 +381,9 @@ namespace NotchPeninsula
                             _cachedMediaDisplay = string.IsNullOrEmpty(_lastMediaArtist) ? _lastMediaTitle : $"{_lastMediaArtist} - {_lastMediaTitle}";
                         }
 
-                        var tb = new SKRect();
-                        _textPaint.MeasureText(_cachedMediaDisplay, ref tb);
-                        _cachedMediaTextTop = tb.Top;
-                        _cachedMediaTextHeight = tb.Height;
+                        var metrics = _textPaint.FontMetrics;
+                        _cachedMediaTextTop = metrics.Ascent;
+                        _cachedMediaTextHeight = metrics.Descent - metrics.Ascent;
                     }
 
                     // 纯数学计算动画插值 (0.0 -> 1.0，周期约 350ms)，零 GC 分配
