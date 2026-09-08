@@ -104,7 +104,7 @@ namespace NotchPeninsula
         private static readonly SKPaint _globalBorderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
         private static readonly SKPaint _toggleCirclePaint = new SKPaint { Color = SKColors.White, IsAntialias = true };
 
-        // 动态状态画笔 (专门用于需要根据 Hover 状态变色的元素)
+        // 动态状态画笔
         private static readonly SKPaint _dynamicFillPaint = new SKPaint { IsAntialias = true };
         private static readonly SKPaint _dynamicStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
         private static readonly SKPaint _dynamicTextPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
@@ -242,7 +242,7 @@ namespace NotchPeninsula
                     bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
                     bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
 
-                    // Tab Hover 判定（匹配新的视觉排版位置与分割线）
+                    // Tab Hover 判定
                     int newHoveredTab = -1;
                     if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 5;      // 1. 个性化中心
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 60 && y <= TITLE_BAR_HEIGHT + 96) newHoveredTab = 0; // 2. 通用设置
@@ -265,7 +265,7 @@ namespace NotchPeninsula
                         if (x >= themeRightX - 90 && x <= themeRightX - 50 && y >= themeY && y <= themeY + 24) newHoveredTheme = 1;
                         if (x >= themeRightX - 40 && x <= themeRightX && y >= themeY && y <= themeY + 24) newHoveredTheme = 2;
 
-                        // 透明度滑块热区判定与【拖拽滑动】逻辑
+                        // 透明度滑块热区判定与拖拽滑动逻辑
                         float sliderY = TITLE_BAR_HEIGHT + 95;
                         float sliderX = 216;
                         float sliderW = WIDTH - 40 - 216;
@@ -327,8 +327,8 @@ namespace NotchPeninsula
                         if (x >= 220 && x <= 370 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 0;
                         if (x >= 390 && x <= 540 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 1;
 
-                        // 下拉菜单判定 (原卡片整体下移避让)
-                        float dY = TITLE_BAR_HEIGHT + 186; // 172 + 14
+                        // 下拉菜单判定
+                        float dY = TITLE_BAR_HEIGHT + 186;
                         if (!_displayDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= dY && y <= dY + 32)
                             newDisplayDropdownHovered = true;
 
@@ -385,13 +385,11 @@ namespace NotchPeninsula
                     int newHoveredLinkIndex = -1;
                     if (_selectedTab == 4) // 关于页
                     {
-                        // 根据 Render 中的排版高度叠加，文字基线实际在 TITLE_BAR_HEIGHT + 177 左右
                         int yStart = TITLE_BAR_HEIGHT + 160;
                         int yEnd = TITLE_BAR_HEIGHT + 190;
 
                         if (y >= yStart && y <= yEnd)
                         {
-                            // 修正后的 X 轴热区：基于动态居中的实际渲染宽度重新测量计算，并适当加宽容错
                             if (x >= 305 && x <= 370) newHoveredLinkIndex = 0;      // 检测更新
                             else if (x >= 375 && x <= 440) newHoveredLinkIndex = 1; // 仓库地址
                             else if (x >= 445 && x <= 500) newHoveredLinkIndex = 2; // 开发者 (Ryen)
@@ -571,7 +569,7 @@ namespace NotchPeninsula
                     else if (_autoHideToggleHovered)
                     {
                         NotchWindow.IsAutoHideEnabled = !NotchWindow.IsAutoHideEnabled;
-                        // 保存自动隐藏开关 (转换为0/1)
+                        // 保存自动隐藏开关
                         Program.SaveSetting("AutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0);
 
                         Render();
@@ -734,7 +732,7 @@ namespace NotchPeninsula
                 {
                     _toggleCirclePaint.Color = hovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
                     canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                    _toggleCirclePaint.Color = SKColors.White; // 恢复白色供下次使用
+                    _toggleCirclePaint.Color = SKColors.White;
                 }
             }
 
@@ -841,7 +839,7 @@ namespace NotchPeninsula
 
                 // 歌词设置卡片
                 float lyricY = TITLE_BAR_HEIGHT + 160;
-                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 100); // 缩小卡片高度 (132 -> 100)
+                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 100);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
                 canvas.DrawText("歌词设置", 216, lyricY + 26, _uiTextPaint);
@@ -866,7 +864,7 @@ namespace NotchPeninsula
                     _toggleCirclePaint.Color = SKColors.White;
                 }
 
-                // 延迟调整 (整体上移)
+                // 延迟调整
                 canvas.DrawText("歌词延迟补偿", 216, lyricY + 84, _subTextPaint);
                 float cardRightX = WIDTH - 36;
                 float btnY = lyricY + 67;
@@ -1089,7 +1087,6 @@ namespace NotchPeninsula
 
             if (_selectedTab == 1 && _displayDropdownOpen)
             {
-                // 将 mY 的坐标由 + 60 调整到下移后的避让位置：+ 220
                 float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 220; float mW = 110; float mH = _displayOptions.Length * 26;
                 var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
 

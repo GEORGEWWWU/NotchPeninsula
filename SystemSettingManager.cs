@@ -25,9 +25,7 @@ public sealed class SystemSettingsManager : IDisposable
     // ====== 音量 ======
     public float GetSystemVolume()
     {
-        var v = _audio?.GetVolume() ?? 0f;
-        Logger.Debug($"读取系统音量：{v:F2}");
-        return v;
+        return _audio?.GetVolume() ?? 0f;
     }
 
     /// <summary>level: 0.0 ~ 1.0</summary>

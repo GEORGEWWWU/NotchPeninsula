@@ -1,7 +1,4 @@
-﻿using System;
-using System.Threading;
-using NAudio.CoreAudioApi;
-using NAudio.Wave;
+﻿using NAudio.Wave;
 
 namespace NotchPeninsula
 {
