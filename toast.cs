@@ -50,11 +50,9 @@ namespace NotchPeninsula
             try
             {
                 var listener = new System.Net.HttpListener();
-                // 监听 PostForwarder 转发的目标地址（必须以斜杠结尾）
                 listener.Prefixes.Add("http://127.0.0.1:47300/api/activities/");
                 listener.Start();
 
-                // 静态复用返回包，拒绝每次请求产生新的 GC 垃圾
                 byte[] okRes = System.Text.Encoding.UTF8.GetBytes("{\"ok\":true}");
 
                 Task.Run(async () =>
@@ -66,29 +64,32 @@ namespace NotchPeninsula
                             var ctx = await listener.GetContextAsync();
                             if (ctx.Request.HttpMethod == "POST")
                             {
-                                // 直接从底层内存流异步解析 JSON，杜绝使用耗费内存的 string 中转
-                                using var doc = await System.Text.Json.JsonDocument.ParseAsync(ctx.Request.InputStream);
+                                // 读取原始字符串
+                                string rawJson = await new System.IO.StreamReader(ctx.Request.InputStream).ReadToEndAsync();
+
+                                // 暴力修复非法的反斜杠转义（解决 \N 报错问题），兼容严格的 JSON 解析
+                                rawJson = rawJson.Replace("\\", "\\\\").Replace("\\\\\"", "\\\"");
+
+                                using var doc = System.Text.Json.JsonDocument.Parse(rawJson);
                                 var root = doc.RootElement;
 
-                                // 提取字段
                                 string appName = root.TryGetProperty("kind", out var k) ? k.GetString() ?? "手机消息" : "手机消息";
                                 string title = root.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
                                 string body = root.TryGetProperty("subtitle", out var s) ? s.GetString() ?? "" : "";
 
-                                // 直接调用系统自带的 Logger 输出收到的消息
                                 Logger.Info($"[HTTP接口] 收到发送端消息推送到灵动岛 -> 类型: {appName}, 标题: {title}, 内容: {body}");
 
-                                // 复用现有的 OnToastDetected 弹窗通道上岛
                                 OnToastDetected?.Invoke(new ToastData
                                 {
                                     AppName = appName,
                                     Title = title,
                                     Body = body,
-                                    ProcessName = "PostForwarder" // 伪装进程名，走默认的通知图标
+                                    ProcessName = "PostForwarder",
+                                    // 赋予动态 ID，强制让 Renderer 更新文本缓存
+                                    NotificationId = (uint)Environment.TickCount
                                 });
                             }
 
-                            // 极速响应 200 OK，防止 PostForwarder 阻塞
                             ctx.Response.StatusCode = 200;
                             ctx.Response.ContentType = "application/json";
                             ctx.Response.ContentLength64 = okRes.Length;
@@ -97,11 +98,12 @@ namespace NotchPeninsula
                         }
                         catch (Exception ex)
                         {
-                            // 出错时也记录一下，方便排查 JSON 格式不对等问题
                             Logger.Error("[HTTP接口] 消息解析或处理异常", ex);
                         }
                     }
                 });
+
+                Logger.Info("[HTTP接口] 本地 47300 端口监听已启动，等待接收手机消息...");
             }
             catch (Exception ex)
             {
