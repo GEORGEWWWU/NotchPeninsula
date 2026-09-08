@@ -593,7 +593,15 @@ namespace NotchPeninsula
                         {
                             float btnY = (_currentHeight - 32f) + hitTopY;
                             float center = Renderer.WINDOW_WIDTH / 2f;
-                            _isCursorOverIcon = (y >= btnY - 5 && y <= btnY + 25) && ((x >= center - 65 && x <= center - 35) || (x >= center - 15 && x <= center + 15) || (x >= center + 35 && x <= center + 65));
+
+                            // 重新计算放大 1.6 倍后的物理热区
+                            bool inY = y >= btnY - 12 && y <= btnY + 30;
+                            bool hitPrev = x >= center - 75 && x <= center - 34;
+                            bool hitPlay = x >= center - 20 && x <= center + 22;
+                            bool hitNext = x >= center + 32 && x <= center + 75;
+
+                            Renderer.HoveredExpandedButton = inY ? (hitPrev ? 0 : (hitPlay ? 1 : (hitNext ? 2 : -1))) : -1;
+                            _isCursorOverIcon = Renderer.HoveredExpandedButton != -1;
                         }
                         else
                         {
@@ -622,6 +630,7 @@ namespace NotchPeninsula
                     _isTrackingMouse = false;
                     _isHovered = false;
                     _isCursorOverIcon = false;
+                    Renderer.HoveredExpandedButton = -1;
                     Renderer.IsMediaExpanded = false;
                     break;
 

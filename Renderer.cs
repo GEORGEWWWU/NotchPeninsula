@@ -9,8 +9,8 @@ namespace NotchPeninsula
         // 1. 布局核心参数 (改为无锁动态变量)
         private static volatile float _standbyWidth = 130f;
         private static volatile float _baseHeight = 34f;
-        private static volatile float _mediaWidth = 260f;
-        private static volatile float _mediaHeight = 40f;
+        private static volatile float _mediaWidth = 250f;
+        private static volatile float _mediaHeight = 35f;
         private static volatile float _toastWidth = 260f;
         private static volatile float _toastHeight = 55f;
         private static volatile float _globalDpi = 1.0f;
@@ -30,6 +30,8 @@ namespace NotchPeninsula
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
         public static bool IsMediaExpanded = false;
+        public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
+        private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔
         private static SKColor _currentTextColor = SKColors.White;
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
         public static void ApplyThemeColors() // 刷新颜色的方法
@@ -60,6 +62,8 @@ namespace NotchPeninsula
             _mediaIconPaint.Color = _currentTextColor;
             _barPaint.Color = _currentTextColor;
             _shadowPaint.Color = _currentTextColor.WithAlpha(50);
+            // 绑定悬浮圆圈底色为文字颜色的 25% 透明度，实现系统级无缝浅色适配
+            _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
 
             // 渐变着色器需要重新生成一次，但必须先手动释放旧的，防止非托管内存泄漏
             _fadePaint.Shader?.Dispose();
@@ -89,7 +93,7 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _titlePaint = new() { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = _boldTypeface };
         private static readonly SKPaint _bodyPaint = new() { Color = new SKColor(200, 200, 200), TextSize = 11.5f, IsAntialias = true, Typeface = _normalTypeface };
-        private static readonly SKPaint _textPaint = new() { Color = SKColors.White, TextSize = 12f, IsAntialias = true, Typeface = _semiBoldTypeface };
+        private static readonly SKPaint _textPaint = new() { Color = SKColors.White, TextSize = 12.5f, IsAntialias = true, Typeface = _semiBoldTypeface };
 
         private static readonly SKPaint _shadowPaint = new() { IsAntialias = true, Color = SKColors.White.WithAlpha(50), MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Outer, 1.5f) };
         private static readonly SKPaint _mediaIconPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
@@ -381,9 +385,9 @@ namespace NotchPeninsula
 
                     if (IsMediaExpanded && currentHeight > 60f) // 展开模式布局
                     {
-                        float coverSize = 60f; // 封面缩小一点点
+                        float coverSize = 50f; // 1. 封面缩小 10px
                         float coverX = left + 20f;
-                        float coverY = 15f;    // 封面往上提
+                        float coverY = 20f;    // 封面微调光学居中
 
                         // 封面
                         if (media.Thumbnail != null)
@@ -401,14 +405,25 @@ namespace NotchPeninsula
                             canvas.DrawRoundRect(new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize), 8f, 8f, _fallbackIconPaint);
                         }
 
-                        // 双行文字 (上面歌名，下面歌手)
+                        // 双行文字
+                        float textStartX = coverX + coverSize + 12f;
                         _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
-                        _titlePaint.TextSize = 14.5f; // 字号稍微精致一点
-                        canvas.DrawText(_lastMediaTitle, coverX + coverSize + 15f, coverY + 22f, _titlePaint);
+                        _titlePaint.TextSize = 14.5f;
+                        canvas.DrawText(_lastMediaTitle, textStartX, coverY + 18f, _titlePaint);
 
                         _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
                         _bodyPaint.TextSize = 12.5f;
-                        canvas.DrawText(_lastMediaArtist, coverX + coverSize + 15f, coverY + 45f, _bodyPaint);
+                        canvas.DrawText(_lastMediaArtist, textStartX, coverY + 42f, _bodyPaint);
+
+                        // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
+                        float maskEnd = right - 55f;
+                        float maskStart = maskEnd - 20f;
+                        canvas.Save();
+                        canvas.Translate(maskStart, 0);
+                        canvas.Scale(maskEnd - maskStart, currentHeight);
+                        canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                        canvas.Restore();
+                        canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
 
                         // 复用律动频谱 (放右上角)
                         if (bars != null)
@@ -423,12 +438,23 @@ namespace NotchPeninsula
                             }
                         }
 
-                        // 底部放大媒体控件 (按钮位置上移)
-                        float btnY = currentHeight - 32f;
+                        // 3. 底部放大媒体控件 (SVG放大至 1.6f，增加浅色悬浮背景)
+                        float btnY = currentHeight - 34f;
                         float centerX = left + currentWidth / 2f;
-                        DrawSvgPath(canvas, _mediaIconPaint, centerX - 60, btnY, _prevPath, 1.3f);
-                        DrawSvgPath(canvas, _mediaIconPaint, centerX - 7, btnY, media.IsPlaying ? _pausePath : _playPath, 1.3f);
-                        DrawSvgPath(canvas, _mediaIconPaint, centerX + 45, btnY, _nextPath, 1.3f);
+                        float scale = 1.6f;
+
+                        // 光学居中补偿：播放/暂停的SVG高度比前后首多2px，放大后需单独上提1.6px
+                        float playBtnY = btnY - 1.6f;
+
+                        // 渲染悬浮反馈底圈
+                        if (HoveredExpandedButton == 0) canvas.DrawCircle(centerX - 54f, btnY + 8f, 20f, _hoverCirclePaint);
+                        // 中间底圈跟随上提，并微调中心点(+9.6f)使其完美包裹图标
+                        if (HoveredExpandedButton == 1) canvas.DrawCircle(centerX + 1f, playBtnY + 9.6f, 20f, _hoverCirclePaint);
+                        if (HoveredExpandedButton == 2) canvas.DrawCircle(centerX + 52f, btnY + 8f, 20f, _hoverCirclePaint);
+
+                        DrawSvgPath(canvas, _mediaIconPaint, centerX - 60f, btnY, _prevPath, scale);
+                        DrawSvgPath(canvas, _mediaIconPaint, centerX - 7f, playBtnY, media.IsPlaying ? _pausePath : _playPath, scale);
+                        DrawSvgPath(canvas, _mediaIconPaint, centerX + 45f, btnY, _nextPath, scale);
                     }
                     else // 原版折叠模式布局
                     {

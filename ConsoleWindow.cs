@@ -53,7 +53,7 @@ namespace NotchPeninsula
         private int _hoveredPlusIndex = -1;
         private int _hoveredResetIndex = -1;
         private float[] _customValues = new float[8];
-        private static readonly float[] _defaultCustomValues = [130f, 34f, 260f, 40f, 260f, 55f, 1.0f, 12f];
+        private static readonly float[] _defaultCustomValues = [130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f];
         private readonly string[] _valStrCache = new string[8];
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
         // DPI 缩放相关
@@ -418,7 +418,7 @@ namespace NotchPeninsula
                         if (_hoveredResetIndex != -1)
                         {
                             updateIdx = _hoveredResetIndex;
-                            float[] defaultVals = { 130f, 34f, 260f, 40f, 260f, 55f, 1.0f, 12f }; // 扩充默认值
+                            float[] defaultVals = { 130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f }; // 扩充默认值
                             _customValues[updateIdx] = defaultVals[updateIdx];
                         }
                         else
@@ -881,8 +881,8 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(themeRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(themeRect, 6, 6, _cardBorder);
 
-                canvas.DrawText("刘海主题", 216, themeY + 26, _uiTextPaint);
-                canvas.DrawText("刘海背景与文本颜色自适应反转", 216, themeY + 46, _subTextPaint);
+                canvas.DrawText("刘海 / 灵动岛主题", 216, themeY + 26, _uiTextPaint);
+                canvas.DrawText("背景与文本颜色自适应反转", 216, themeY + 46, _subTextPaint);
 
                 float themeRightX = WIDTH - 36; // 变量隔离
                 float btnY = GetBtnY(-1);
