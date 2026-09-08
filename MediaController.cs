@@ -454,7 +454,11 @@ namespace NotchPeninsula
                         }
                     }
                 }
-                _lyrics = lines.ToArray();
+                // 状态锁：只有当网络请求结束，且当前播放的歌曲没被切走时，才允许写入
+                if (this.Title == title && this.Artist == artist)
+                {
+                    _lyrics = lines.ToArray();
+                }
             }
         }
 
@@ -484,11 +488,12 @@ namespace NotchPeninsula
                     _currentSimulatedPosition += dt;
                 }
 
-                // 从后往前找当前时间对应的歌词
+                // 从后往前找当前时间对应的歌词，加上 0.6 秒的系统通信延迟补偿
                 string found = "";
+                TimeSpan compensatedPosition = _currentSimulatedPosition + TimeSpan.FromSeconds(0.6);
                 for (int i = _lyrics.Length - 1; i >= 0; i--)
                 {
-                    if (_currentSimulatedPosition >= _lyrics[i].Time) { found = _lyrics[i].Text; break; }
+                    if (compensatedPosition >= _lyrics[i].Time) { found = _lyrics[i].Text; break; }
                 }
                 CurrentLyric = found;
             }
