@@ -412,10 +412,16 @@ namespace NotchPeninsula
 
                 // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
                 float expectedTargetWidth = isToastActive ? Renderer.TOAST_WIDTH : (currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH);
-                // 自动歌词长度自适应逻辑
-                if (currentActive && !Renderer.IsMediaExpanded && MediaController.IsAutoLyricWidthEnabled && !string.IsNullOrEmpty(_media.CurrentLyric))
+                // 自动文本长度自适应逻辑
+                if (currentActive && !Renderer.IsMediaExpanded)
                 {
-                    float requiredWidth = Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric) + 115f;
+                    float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
+                        ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
+                        : (string.IsNullOrEmpty(_media.Artist)
+                            ? Renderer.MeasureCurrentLyricWidth(_media.Title)
+                            : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
+
+                    float requiredWidth = textWidth + 115f;
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
                 float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
