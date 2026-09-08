@@ -177,6 +177,7 @@ namespace NotchPeninsula
         private static float _cachedMediaTextHeight = 0f;
 
         private static uint _lastToastId = 0;
+        private static string _lastLyric = "";
         // 待机时间显示专用画笔
         private static readonly SKPaint _timePaint = new() { Color = SKColors.White, TextSize = 14.5f, IsAntialias = true, Typeface = _boldTypeface };
         private static readonly SKPaint _datePaint = new() { Color = new SKColor(200, 200, 200), TextSize = 14.5f, IsAntialias = true, Typeface = _normalTypeface };
@@ -352,11 +353,21 @@ namespace NotchPeninsula
                 // ---------------- [ 媒体控制与待机状态 ] ----------------
                 if (media.IsActive)
                 {
-                    if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist)
+                    if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist || _lastLyric != media.CurrentLyric)
                     {
                         _lastMediaTitle = media.Title ?? "";
                         _lastMediaArtist = media.Artist ?? "";
-                        _cachedMediaDisplay = string.IsNullOrEmpty(_lastMediaArtist) ? _lastMediaTitle : $"{_lastMediaArtist} - {_lastMediaTitle}";
+                        _lastLyric = media.CurrentLyric ?? "";
+
+                        // 有歌词时，剔除歌名，只显示歌词
+                        if (!string.IsNullOrEmpty(_lastLyric))
+                        {
+                            _cachedMediaDisplay = _lastLyric;
+                        }
+                        else
+                        {
+                            _cachedMediaDisplay = string.IsNullOrEmpty(_lastMediaArtist) ? _lastMediaTitle : $"{_lastMediaArtist} - {_lastMediaTitle}";
+                        }
 
                         var tb = new SKRect();
                         _textPaint.MeasureText(_cachedMediaDisplay, ref tb);
@@ -413,7 +424,8 @@ namespace NotchPeninsula
 
                         _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
                         _bodyPaint.TextSize = 12.5f;
-                        canvas.DrawText(_lastMediaArtist, textStartX, coverY + 42f, _bodyPaint);
+                        string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
+                        canvas.DrawText(displaySub, textStartX, coverY + 42f, _bodyPaint);
 
                         // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
                         float maskEnd = right - 55f;

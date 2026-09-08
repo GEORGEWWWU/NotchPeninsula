@@ -514,6 +514,8 @@ namespace NotchPeninsula
                 // 让底层 C++ 引擎接管坐标放大
                 canvas.Scale(_dpiScale);
 
+                _media.UpdateLyrics(); // 更新歌词
+
                 // 传入 currentHeight 和 _currentToast
                 Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
 

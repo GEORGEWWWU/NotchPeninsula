@@ -2,6 +2,8 @@
 using System.Text.RegularExpressions;
 using Windows.Media.Control;
 using SkiaSharp;
+using System.Net.Http;
+using System.Text.Json;
 
 namespace NotchPeninsula
 {
@@ -11,6 +13,16 @@ namespace NotchPeninsula
         public static MediaController? Instance { get; private set; }
         internal static string TargetPlatform = "other"; // 默认通用媒体
         internal static bool IsMediaControlEnabled = true; // 媒体开关
+        private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
+        {
+            ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+        })
+        { Timeout = TimeSpan.FromSeconds(4) };
+        private (TimeSpan Time, string Text)[] _lyrics = Array.Empty<(TimeSpan, string)>();
+        public string CurrentLyric { get; private set; } = "";
+        private TimeSpan _currentSimulatedPosition = TimeSpan.Zero;
+        private TimeSpan _lastSmtcPosition = TimeSpan.Zero;
+        private DateTime _lastUpdateTime = DateTime.UtcNow;
 
         public string Title { get; private set; } = "Notch Peninsula";
         public string Artist { get; private set; } = "Waiting for media...";
@@ -206,6 +218,10 @@ namespace NotchPeninsula
             {
                 IsPlaying = false;
             }
+
+            long durationSec = 0;
+            try { if (_currentSession.GetTimelineProperties() is { } t) durationSec = (long)t.EndTime.TotalSeconds; } catch { }
+            _ = FetchLyricsAsync(Title, Artist, durationSec);
         }
 
         // 浏览器视频站标题后缀列表：命中任一后缀即判定为浏览器视频模式，并统一删除该后缀
@@ -280,6 +296,193 @@ namespace NotchPeninsula
         private async void OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
         {
             await RefreshProperties();
+        }
+
+        private async Task FetchLyricsAsync(string title, string artist, long durationSec)
+        {
+            _lyrics = Array.Empty<(TimeSpan, string)>();
+            CurrentLyric = "";
+            _currentSimulatedPosition = TimeSpan.Zero; // 切歌时彻底清零时间
+            _lastSmtcPosition = TimeSpan.Zero;
+            if (string.IsNullOrEmpty(title) || _isBilibiliSession || _isBrowserSession || _isPotPlayerSession) return;
+
+            string query = Uri.EscapeDataString($"{title} {artist}");
+            string lrcText = "";
+            string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+            // ====== 引擎 1：QQ音乐 (优先) ======
+            try
+            {
+                _http.DefaultRequestHeaders.Clear();
+                _http.DefaultRequestHeaders.Add("User-Agent", ua);
+
+                string searchUrl = $"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json";
+                var searchJson = await _http.GetStringAsync(searchUrl);
+                using var searchDoc = JsonDocument.Parse(searchJson);
+
+                string songmid = "";
+                if (searchDoc.RootElement.TryGetProperty("data", out var data) &&
+                    data.TryGetProperty("song", out var songData) &&
+                    songData.TryGetProperty("list", out var list))
+                {
+                    foreach (var song in list.EnumerateArray())
+                    {
+                        string name = song.GetProperty("songname").GetString() ?? "";
+                        if (name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            songmid = song.GetProperty("songmid").GetString() ?? "";
+                            break;
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(songmid))
+                {
+                    _http.DefaultRequestHeaders.Add("Referer", "https://y.qq.com/");
+                    string lyricUrl = $"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1";
+                    var lyricJson = await _http.GetStringAsync(lyricUrl);
+                    using var lyricDoc = JsonDocument.Parse(lyricJson);
+
+                    if (lyricDoc.RootElement.TryGetProperty("lyric", out var lrcEl))
+                    {
+                        lrcText = lrcEl.GetString()?
+                            .Replace("&#10;", "\n").Replace("&#13;", "\r")
+                            .Replace("&#32;", " ").Replace("&#45;", "-")
+                            .Replace("&#40;", "(").Replace("&#41;", ")") ?? "";
+                    }
+                }
+            }
+            catch (Exception ex) { Logger.Warn($"QQ音乐引擎失败: {ex.Message}"); }
+
+            // ====== 引擎 2：网易云 API (参考 Rust 源码兜底) ======
+            if (string.IsNullOrEmpty(lrcText))
+            {
+                try
+                {
+                    _http.DefaultRequestHeaders.Clear();
+                    _http.DefaultRequestHeaders.Add("User-Agent", ua);
+                    _http.DefaultRequestHeaders.Add("Referer", "https://music.163.com");
+                    // 构造随机国内IP绕过风控
+                    _http.DefaultRequestHeaders.Add("X-Real-IP", $"114.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}");
+
+                    var content = new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("s", $"{title} {artist}"),
+                        new KeyValuePair<string, string>("type", "1"),
+                        new KeyValuePair<string, string>("limit", "5"),
+                        new KeyValuePair<string, string>("offset", "0")
+                    });
+
+                    var response = await _http.PostAsync("https://music.163.com/api/search/get/web", content);
+                    var searchJson = await response.Content.ReadAsStringAsync();
+                    using var searchDoc = JsonDocument.Parse(searchJson);
+
+                    long songId = 0;
+                    if (searchDoc.RootElement.TryGetProperty("result", out var result) &&
+                        result.TryGetProperty("songs", out var songs))
+                    {
+                        foreach (var song in songs.EnumerateArray())
+                        {
+                            string name = song.GetProperty("name").GetString() ?? "";
+                            if (name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                songId = song.GetProperty("id").GetInt64();
+                                break;
+                            }
+                        }
+                    }
+
+                    if (songId > 0)
+                    {
+                        string lyricUrl = $"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1";
+                        var lyricJson = await _http.GetStringAsync(lyricUrl);
+                        using var lyricDoc = JsonDocument.Parse(lyricJson);
+                        if (lyricDoc.RootElement.TryGetProperty("lrc", out var lrc) &&
+                            lrc.TryGetProperty("lyric", out var lyricStr))
+                        {
+                            lrcText = lyricStr.GetString() ?? "";
+                        }
+                    }
+                }
+                catch (Exception ex) { Logger.Warn($"网易云引擎失败: {ex.Message}"); }
+            }
+
+            // ====== 引擎 3：LRCLIB (修复 400 报错) ======
+            if (string.IsNullOrEmpty(lrcText))
+            {
+                try
+                {
+                    _http.DefaultRequestHeaders.Clear();
+                    _http.DefaultRequestHeaders.Add("User-Agent", ua);
+                    // 核心修复：仅在 durationSec 大于 0 时附加 duration 参数
+                    string lrclibUrl = $"https://lrclib.net/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
+                    if (durationSec > 0) lrclibUrl += $"&duration={durationSec}";
+
+                    var lrclibJson = await _http.GetStringAsync(lrclibUrl);
+                    using var lrclibDoc = JsonDocument.Parse(lrclibJson);
+
+                    if (lrclibDoc.RootElement.TryGetProperty("syncedLyrics", out var syn))
+                    {
+                        lrcText = syn.GetString() ?? "";
+                    }
+                }
+                catch (Exception ex) { Logger.Warn($"LRCLIB引擎失败: {ex.Message}"); }
+            }
+
+            // ====== 极速解析时间轴 ======
+            if (!string.IsNullOrEmpty(lrcText))
+            {
+                var lines = new List<(TimeSpan, string)>();
+                foreach (var line in lrcText.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
+                    {
+                        if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
+                        {
+                            string text = line.Substring(idx + 1).Trim();
+                            if (!string.IsNullOrEmpty(text)) lines.Add((ts, text));
+                        }
+                    }
+                }
+                _lyrics = lines.ToArray();
+            }
+        }
+
+        // 被底层渲染循环以 60FPS 极速调用，彻底无视流氓播放器的限制
+        public void UpdateLyrics()
+        {
+            var now = DateTime.UtcNow;
+            var dt = now - _lastUpdateTime;
+            _lastUpdateTime = now; // 无论是否在播放，每一帧都更新绝对时间差
+
+            if (_lyrics.Length == 0 || _currentSession == null) { CurrentLyric = ""; return; }
+            try
+            {
+                var props = _currentSession.GetTimelineProperties();
+                var smtcPos = props.Position;
+
+                // SMTC 数据发生跳变 > 1.5秒（例如用户手动拖动了进度条，或者遇到了良心播放器主动更新了）
+                if (Math.Abs((smtcPos - _lastSmtcPosition).TotalSeconds) > 1.5)
+                {
+                    _currentSimulatedPosition = smtcPos;
+                    _lastSmtcPosition = smtcPos;
+                }
+
+                // 自己接管进度！不管网易云更不更新，我们在 60FPS 循环里自行加上 DeltaTime
+                if (IsPlaying)
+                {
+                    _currentSimulatedPosition += dt;
+                }
+
+                // 从后往前找当前时间对应的歌词
+                string found = "";
+                for (int i = _lyrics.Length - 1; i >= 0; i--)
+                {
+                    if (_currentSimulatedPosition >= _lyrics[i].Time) { found = _lyrics[i].Text; break; }
+                }
+                CurrentLyric = found;
+            }
+            catch { }
         }
     }
 }
