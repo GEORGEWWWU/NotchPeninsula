@@ -113,7 +113,7 @@ namespace NotchPeninsula
             var wc = new Win32.WNDCLASS
             {
                 lpfnWndProc = _wndProcDelegate,
-                hInstance = Marshal.GetHINSTANCE(typeof(NotifyWindow).Module),
+                hInstance = Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero,
                 lpszClassName = "NpsNotifyClass",
                 hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW)
             };

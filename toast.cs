@@ -188,13 +188,16 @@ namespace NotchPeninsula
                 
                 string title = textElements[0]?.Text ?? "";
                 string body = string.Join(" ", textElements.Skip(1).Select(t => t.Text));
-                
+
                 if (title.Contains("微信") || title.Contains("WeChat") ||
-                    body.Contains("微信") || body.Contains("WeChat"))
+    body.Contains("微信") || body.Contains("WeChat"))
                 {
+                    Logger.Debug($"[Toast] 已过滤微信通知 -> 应用: {appName}, 标题: {title}");
                     return null;
                 }
-                
+
+                Logger.Info($"[Toast] 捕获系统通知 -> 应用: {appName} ({aumid}), 标题: {title}, 内容: {body}, ID: {notification.Id}");
+
                 return new ToastData
                 {
                     AppName = appName,
