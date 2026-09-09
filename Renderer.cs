@@ -209,6 +209,10 @@ namespace NotchPeninsula
         private static float _cachedDateWidth = 0f;
         private static string _cachedToastSender = "";
         private static string _cachedToastBody = "";
+        // 预加载 Windows 自带 Emoji 彩色字体与零 GC 渲染缓存列表
+        private static readonly SKTypeface _emojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
+        private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastSenderRuns = new();
+        private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastBodyRuns = new();
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
 
@@ -290,8 +294,10 @@ namespace NotchPeninsula
                         _lastToastId = toast.NotificationId;
                         _cachedToastSender = !string.IsNullOrEmpty(toast.Title) ? toast.Title : (!string.IsNullOrEmpty(toast.AppName) ? toast.AppName : "通知");
                         _cachedToastBody = toast.Body ?? "";
-                        _cachedToastTitleWidth = _titlePaint.MeasureText(_cachedToastSender);
-                        _cachedToastBodyWidth = _bodyPaint.MeasureText(_cachedToastBody);
+
+                        // 只在接收到新消息时分配一次内存
+                        BuildTextRuns(_cachedToastSender, _titlePaint, _boldTypeface, _cachedToastSenderRuns, out _cachedToastTitleWidth);
+                        BuildTextRuns(_cachedToastBody, _bodyPaint, _normalTypeface, _cachedToastBodyRuns, out _cachedToastBodyWidth);
                     }
 
                     float iconSize = 28f;
@@ -347,8 +353,21 @@ namespace NotchPeninsula
                     float line1Y = toastTextY + 11.5f;
                     float line2Y = line1Y + 13.5f + textSpacing;
 
-                    canvas.DrawText(_cachedToastSender, toastTextX, line1Y, _titlePaint);
-                    canvas.DrawText(_cachedToastBody, toastTextX, line2Y, _bodyPaint);
+                    // 渲染标题：自动在常规字体与 Emoji 字体间热切换
+                    foreach (var run in _cachedToastSenderRuns)
+                    {
+                        _titlePaint.Typeface = run.IsEmoji ? _emojiTypeface : _boldTypeface;
+                        canvas.DrawText(run.Text, toastTextX + run.X, line1Y, _titlePaint);
+                    }
+                    _titlePaint.Typeface = _boldTypeface; // 重置
+
+                    // 渲染内容主体
+                    foreach (var run in _cachedToastBodyRuns)
+                    {
+                        _bodyPaint.Typeface = run.IsEmoji ? _emojiTypeface : _normalTypeface;
+                        canvas.DrawText(run.Text, toastTextX + run.X, line2Y, _bodyPaint);
+                    }
+                    _bodyPaint.Typeface = _normalTypeface; // 重置
 
                     if ((toastTextX + _cachedToastTitleWidth > toastMaxTextRight) || (toastTextX + _cachedToastBodyWidth > toastMaxTextRight))
                     {
@@ -634,6 +653,81 @@ namespace NotchPeninsula
         private static SKPath CreatePausePath() { var path = new SKPath(); path.AddRect(new SKRect(0, 0, 3, 12)); path.AddRect(new SKRect(6, 0, 9, 12)); return path; }
         private static SKPath CreatePrevPath() { var path = new SKPath(); path.AddRect(new SKRect(0, 0, 2, 10)); path.MoveTo(8, 0); path.LineTo(2, 5); path.LineTo(8, 10); path.Close(); return path; }
         private static SKPath CreateNextPath() { var path = new SKPath(); path.MoveTo(0, 0); path.LineTo(6, 5); path.LineTo(0, 10); path.Close(); path.AddRect(new SKRect(6, 0, 8, 10)); return path; }
+
+        // 文本拆分引擎，实现emoji显示
+        private static void BuildTextRuns(string text, SKPaint paint, SKTypeface baseTypeface, List<(string Text, bool IsEmoji, float X)> runs, out float totalWidth)
+        {
+            runs.Clear();
+            totalWidth = 0;
+            if (string.IsNullOrEmpty(text)) return;
+
+            int start = 0;
+            bool currentIsEmoji = false;
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                int cp = text[i];
+                int charLen = 1;
+                if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length)
+                {
+                    cp = char.ConvertToUtf32(text, i);
+                    charLen = 2;
+                }
+
+                // 基础判定：默认字体里没有这个字，那就是 Emoji
+                bool isEmoji = baseTypeface.GetGlyph(cp) == 0;
+
+                // 1. 向前探测：如果当前字符（比如 # 或 ⛸）后面紧跟了 Emoji 变体选择器(FE0F)或零宽连字(200D)，
+                // 说明它是 Emoji 组合的开头，强制视为 Emoji，防止被默认字体抢走。
+                if (!isEmoji && i + charLen < text.Length)
+                {
+                    char nextChar = text[i + charLen];
+                    if (nextChar == '\uFE0F' || nextChar == '\u200D' || nextChar == '\u20E3')
+                    {
+                        isEmoji = true;
+                    }
+                }
+
+                // 2. 修饰符绑定：这些不可见字符本身必须作为 Emoji 处理，不能断开
+                if (cp == 0xFE0F || cp == 0xFE0E || cp == 0x200D || cp == 0x20E3)
+                {
+                    isEmoji = true;
+                }
+
+                // 3. 肤色修饰符 (U+1F3FB ~ U+1F3FF)，强制绑定为 Emoji
+                if (cp >= 0x1F3FB && cp <= 0x1F3FF)
+                {
+                    isEmoji = true;
+                }
+
+                if (i == 0) currentIsEmoji = isEmoji; // 初始化第一个状态
+
+                // 只有当字体类型发生真正的改变时，才进行安全切割
+                if (isEmoji != currentIsEmoji)
+                {
+                    string sub = text.Substring(start, i - start);
+                    runs.Add((sub, currentIsEmoji, totalWidth));
+                    paint.Typeface = currentIsEmoji ? _emojiTypeface : baseTypeface;
+                    totalWidth += paint.MeasureText(sub);
+
+                    currentIsEmoji = isEmoji;
+                    start = i;
+                }
+
+                if (charLen == 2) i++; // 跳过代理对的后半段
+            }
+
+            // 处理收尾文本
+            if (start < text.Length)
+            {
+                string sub = text.Substring(start);
+                runs.Add((sub, currentIsEmoji, totalWidth));
+                paint.Typeface = currentIsEmoji ? _emojiTypeface : baseTypeface;
+                totalWidth += paint.MeasureText(sub);
+            }
+
+            paint.Typeface = baseTypeface; // 重置画笔
+        }
 
         // 卡拉OK渲染引擎
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
