@@ -1,4 +1,5 @@
 ﻿using System.Runtime.InteropServices;
+using System.Windows;
 using Microsoft.Win32; // 添加注册表命名空间
 
 namespace NotchPeninsula
@@ -102,8 +103,36 @@ namespace NotchPeninsula
                 UpdateManager.StartSilentCheck();
 
                 var window = new NotchWindow();
+                window.WindowClicked += async (s, e) =>
+                {
+                    if (window.isToastActive)
+                    {
+                        Logger.Debug($"窗口点击：X={e.X}, Y={e.Y}");
+                        if (window.CurrentToast == null) return;
+
+                        try
+                        {
+                            var (ok, msg) = await AppActivator.active_app(window.CurrentToast.Aumid);
+                            if (!ok)
+                            {
+                                Logger.Debug($"[AppActivator] 唤醒失败：{msg}");
+                                // fallback: try to bring a running process forward by app name
+                                if (!string.IsNullOrWhiteSpace(window.CurrentToast.Aumid))
+                                {
+                                    var (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.Aumid);
+                                    if (!ok2)
+                                        Logger.Debug($"[AppActivator] 按应用名置前失败：{msg2}");
+                                }
+                            }else window.clicked_info = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Debug($"[AppActivator] 异步唤醒异常：{ex.Message}");
+                        }
+                    }
+                };
                 window.Run();
-            } // 离开作用域时，Mutex 的 Dispose() 被自动调用，绝无句柄泄露
+            }; // 离开作用域时，Mutex 的 Dispose() 被自动调用，绝无句柄泄露
         }
     }
 }

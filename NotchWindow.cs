@@ -8,8 +8,21 @@ using System.Windows.Threading;
 
 namespace NotchPeninsula
 {
+    public class WindowClickEventArgs : EventArgs
+    {
+        
+        public int X { get; set; }
+        public int Y { get; set; }
+        public bool IsLeftButton { get; set; } = true;
+        public string? HitTarget { get; set; }
+    }
+
     public class NotchWindow
     {
+        public bool clicked_info =true;
+        public bool isToastActive;
+        public event EventHandler<WindowClickEventArgs>? WindowClicked;
+
         public static bool IsToastEnabled = true;
         float _currentVolume = 0f;
         private readonly IntPtr _hwnd;
@@ -35,7 +48,8 @@ namespace NotchPeninsula
         private DateTime _styleAnimStartTime;
 
         // Toast 状态控制
-        private ToastData? _currentToast = null;
+        private ToastData? _currentToast = new ToastData();
+        public ToastData CurrentToast => _currentToast;
         private DateTime _toastEndTime;
         private DateTime _animStartTime;
         private readonly IntPtr _hCursorArrow;
@@ -214,6 +228,8 @@ namespace NotchPeninsula
 
         private void OnToastDetected(ToastData toast)
         {
+            if (toast == null) return;
+            clicked_info = false;
             if (!_dispatcher.CheckAccess()) { _dispatcher.Invoke(() => OnToastDetected(toast)); return; }
 
             _currentToast = toast;
@@ -358,8 +374,8 @@ namespace NotchPeninsula
                 }
 
                 // 判断当前 Toast 是否处于激活期
-                bool isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
-                if (!isToastActive && _currentToast != null) _currentToast = null; // 超时清理
+                isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
+                if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
 
                 // 如果灵动岛已展开，且鼠标不在岛上(!_isHovered)，且按下了左键(0x01)
                 if (_isManuallyExpanded && !_isHovered && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
@@ -582,6 +598,17 @@ namespace NotchPeninsula
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
 
+        private void RaiseWindowClicked(int x, int y, string? hitTarget = null)
+        {
+            WindowClicked?.Invoke(this, new WindowClickEventArgs
+            {
+                X = x,
+                Y = y,
+                IsLeftButton = true,
+                HitTarget = hitTarget
+            });
+        }
+
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             switch (msg)
@@ -611,8 +638,8 @@ namespace NotchPeninsula
 
                     if (_isHovered && _media.IsActive && _currentToast == null)
                     {
-                        int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int _x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int _y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
                         float hitTopY = 12f * _currentStyleProgress;
                         if (Renderer.IsMediaExpanded)
@@ -621,10 +648,10 @@ namespace NotchPeninsula
                             float center = Renderer.WINDOW_WIDTH / 2f;
 
                             // 重新计算放大 1.6 倍后的物理热区
-                            bool inY = y >= btnY - 12 && y <= btnY + 30;
-                            bool hitPrev = x >= center - 75 && x <= center - 34;
-                            bool hitPlay = x >= center - 20 && x <= center + 22;
-                            bool hitNext = x >= center + 32 && x <= center + 75;
+                            bool inY = _y >= btnY - 12 && _y <= btnY + 30;
+                            bool hitPrev = _x >= center - 75 && _x <= center - 34;
+                            bool hitPlay = _x >= center - 20 && _x <= center + 22;
+                            bool hitNext = _x >= center + 32 && _x <= center + 75;
 
                             Renderer.HoveredExpandedButton = inY ? (hitPrev ? 0 : (hitPlay ? 1 : (hitNext ? 2 : -1))) : -1;
                             _isCursorOverIcon = Renderer.HoveredExpandedButton != -1;
@@ -635,14 +662,14 @@ namespace NotchPeninsula
                             {
                                 float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
                                 float right = left + _currentWidth;
-                                _isCursorOverIcon = (x >= left && x <= right && y >= hitTopY && y <= hitTopY + _currentHeight);
+                                _isCursorOverIcon = (_x >= left && _x <= right && _y >= hitTopY && _y <= hitTopY + _currentHeight);
                             }
                             else
                             {
                                 float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
                                 int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
                                 float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
-                                _isCursorOverIcon = (y >= btnStartY && y <= btnEndY) && ((x >= btnPrevX + 6 && x <= btnPrevX + 24) || (x >= btnPlayX + 6 && x <= btnPlayX + 24) || (x >= btnNextX + 6 && x <= btnNextX + 24));
+                                _isCursorOverIcon = (_y >= btnStartY && _y <= btnEndY) && ((_x >= btnPrevX + 6 && _x <= btnPrevX + 24) || (_x >= btnPlayX + 6 && _x <= btnPlayX + 24) || (_x >= btnNextX + 6 && _x <= btnNextX + 24));
                             }
                         }
                     }
@@ -661,6 +688,12 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
+                    // 先抛窗口点击事件
+                    int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                    int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                    RaiseWindowClicked(x, y, "main-window");
+
+                    // 下面是你原来的点击逻辑，保持不动
                     if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
                     {
                         _isManuallyExpanded = true;
@@ -669,8 +702,8 @@ namespace NotchPeninsula
 
                     if (_isHovered && _media.IsActive && _currentToast == null)
                     {
-                        int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int clickX = x;
+                        int clickY = y;
                         float hitTopY = 12f * _currentStyleProgress;
                         bool hitButtons = false;
 
@@ -680,22 +713,46 @@ namespace NotchPeninsula
                             float center = Renderer.WINDOW_WIDTH / 2f;
                             if (clickY >= btnY - 5 && clickY <= btnY + 25)
                             {
-                                if (x >= center - 65 && x <= center - 35) { _media.Previous(); hitButtons = true; }
-                                else if (x >= center - 15 && x <= center + 15) { _media.TogglePlayPause(); hitButtons = true; }
-                                else if (x >= center + 35 && x <= center + 65) { _media.Next(); hitButtons = true; }
+                                if (clickX >= center - 65 && clickX <= center - 35)
+                                {
+                                    _media.Previous();
+                                    hitButtons = true;
+                                }
+                                else if (clickX >= center - 15 && clickX <= center + 15)
+                                {
+                                    _media.TogglePlayPause();
+                                    hitButtons = true;
+                                }
+                                else if (clickX >= center + 35 && clickX <= center + 65)
+                                {
+                                    _media.Next();
+                                    hitButtons = true;
+                                }
                             }
                         }
                         else
                         {
-                            if (Renderer.MediaInteractionMode == 0) // 只有直接交互模式，才检测折叠状态下的按钮点击
+                            if (Renderer.MediaInteractionMode == 0)
                             {
                                 float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
                                 float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
                                 if (clickY >= btnStartY && clickY <= btnStartY + 18f)
                                 {
-                                    if (x >= right - 84 && x <= right - 66) { _media.Previous(); hitButtons = true; }
-                                    else if (x >= right - 54 && x <= right - 36) { _media.TogglePlayPause(); hitButtons = true; }
-                                    else if (x >= right - 24 && x <= right - 6) { _media.Next(); hitButtons = true; }
+                                    if (clickX >= right - 84 && clickX <= right - 66)
+                                    {
+                                        _media.Previous();
+                                        hitButtons = true;
+                                    }
+                                    else if (clickX >= right - 54 && clickX <= right - 36)
+                                    {
+                                        _media.TogglePlayPause();
+                                        hitButtons = true;
+                                    }
+                                    else if (clickX >= right - 24 && clickX <= right - 6)
+                                    {
+                                        _media.Next();
+                                        hitButtons = true;
+                                    }
                                 }
                             }
                         }
