@@ -75,6 +75,8 @@ namespace NotchPeninsula
         private int _hoveredMinusIndex = -1;
         private int _hoveredPlusIndex = -1;
         private int _hoveredResetIndex = -1;
+        // 硬件检测模式切换前的待机宽度快照（用于切回时恢复）
+        private float _savedStandbyWidth = -1f;
         private float[] _customValues = new float[8];
         private static readonly float[] _defaultCustomValues = [130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f];
         private readonly string[] _valStrCache = new string[8];
@@ -250,6 +252,12 @@ namespace NotchPeninsula
             });
 
             _selectedDisplayIndex = Renderer.StandbyDisplayMode; // 初始化时同步当前选择
+
+            // 如果启动时就是硬件检测模式，标记快照为未记录（-1），
+            // 这样切走时会回退到默认 130px
+            if (Renderer.StandbyDisplayMode == 2)
+                _savedStandbyWidth = -1f;
+
             Render();
         }
 
@@ -526,6 +534,10 @@ namespace NotchPeninsula
                                 if (updateIdx == 0 && _customValues[0] < 170f) _customValues[0] = 170f;
                                 if (updateIdx == 1 && _customValues[1] < 34f) _customValues[1] = 34f;
                             }
+
+                            // 重置待机宽度时，同步更新快照，防止切回时恢复到旧值
+                            if (updateIdx == 0)
+                                _savedStandbyWidth = -1f; // 清除快照，切回时用默认130
                         }
                         else
                         {
@@ -672,14 +684,43 @@ namespace NotchPeninsula
                     }
                     else if (_selectedTab == 1 && _hoveredDisplayOptionIndex != -1)
                     {
+                        int previousMode = Renderer.StandbyDisplayMode;
                         _selectedDisplayIndex = _hoveredDisplayOptionIndex;
                         Renderer.StandbyDisplayMode = _selectedDisplayIndex;
 
-                        // 启用硬件监控时，强制限制尺寸并更新滑块的值
-                        if (Renderer.StandbyDisplayMode == 2)
+                        // 进入硬件检测：快照当前宽度，然后强制拉宽
+                        if (Renderer.StandbyDisplayMode == 2 && previousMode != 2)
                         {
-                            if (Renderer.STANDBY_WIDTH < 170f) { Renderer.STANDBY_WIDTH = 170f; _customValues[0] = 170f; Program.SaveSetting("Custom_StandbyW", 170f); UpdateValueString(0); }
-                            if (Renderer.BASE_HEIGHT < 34f) { Renderer.BASE_HEIGHT = 34f; _customValues[1] = 34f; Program.SaveSetting("Custom_BaseH", 34f); UpdateValueString(1); }
+                            // 保存用户切换前的真实宽度（只在首次进入时快照，防止反复覆盖）
+                            if (_savedStandbyWidth < 0f)
+                                _savedStandbyWidth = Renderer.STANDBY_WIDTH;
+
+                            if (Renderer.STANDBY_WIDTH < 170f)
+                            {
+                                Renderer.STANDBY_WIDTH = 170f;
+                                _customValues[0] = 170f;
+                                Program.SaveSetting("Custom_StandbyW", 170f);
+                                UpdateValueString(0);
+                            }
+                            if (Renderer.BASE_HEIGHT < 34f)
+                            {
+                                Renderer.BASE_HEIGHT = 34f;
+                                _customValues[1] = 34f;
+                                Program.SaveSetting("Custom_BaseH", 34f);
+                                UpdateValueString(1);
+                            }
+                        }
+                        // 离开硬件检测：恢复用户之前的宽度
+                        else if (previousMode == 2 && Renderer.StandbyDisplayMode != 2)
+                        {
+                            float restoreWidth = _savedStandbyWidth > 0f ? _savedStandbyWidth : 130f;
+                            Renderer.STANDBY_WIDTH = restoreWidth;
+                            _customValues[0] = restoreWidth;
+                            Program.SaveSetting("Custom_StandbyW", restoreWidth);
+                            UpdateValueString(0);
+
+                            // 重置快照，下次再进入硬件检测时重新记录
+                            _savedStandbyWidth = -1f;
                         }
 
                         Program.SaveSetting("StandbyDisplayMode", _selectedDisplayIndex);
