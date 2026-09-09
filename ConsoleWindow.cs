@@ -374,10 +374,11 @@ namespace NotchPeninsula
                                 newHoveredMonitorDropdownIndex = (y - (int)listY) / 26;
                         }
 
-                        // 待机显示内容卡片
+                        // 待机显示内容卡片 (1/3 布局)
                         float displayOptY = TITLE_BAR_HEIGHT + 306;
-                        if (x >= 220 && x <= 370 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0;
-                        if (x >= 390 && x <= 540 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1;
+                        if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2; // 硬件占用
+                        if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0; // 时间日期
+                        if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1; // 空白
                     }
                     else if (_selectedTab == 2) // 媒体设置
                     {
@@ -516,17 +517,33 @@ namespace NotchPeninsula
                         if (_hoveredResetIndex != -1)
                         {
                             updateIdx = _hoveredResetIndex;
-                            float[] defaultVals = { 130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f }; // 扩充默认值
+                            float[] defaultVals = { 130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f };
                             _customValues[updateIdx] = defaultVals[updateIdx];
+
+                            // 重置时如果处于硬件监控，拦截至最小限制
+                            if (Renderer.StandbyDisplayMode == 2)
+                            {
+                                if (updateIdx == 0 && _customValues[0] < 170f) _customValues[0] = 170f;
+                                if (updateIdx == 1 && _customValues[1] < 34f) _customValues[1] = 34f;
+                            }
                         }
                         else
                         {
                             updateIdx = _hoveredMinusIndex != -1 ? _hoveredMinusIndex : _hoveredPlusIndex;
                             float delta = _hoveredPlusIndex != -1 ? (updateIdx == 6 ? 0.05f : 5f) : (updateIdx == 6 ? -0.05f : -5f);
                             if (updateIdx == 7)
-                                _customValues[updateIdx] = Math.Clamp(_customValues[updateIdx] + delta, 0f, 28f); // 限制：最小 0px，最大 28px
+                                _customValues[updateIdx] = Math.Clamp(_customValues[updateIdx] + delta, 0f, 28f);
                             else
-                                _customValues[updateIdx] = Math.Max(updateIdx == 6 ? 0.5f : 20f, _customValues[updateIdx] + delta);
+                            {
+                                float minLimit = updateIdx == 6 ? 0.5f : 20f;
+                                // 滑动尺寸时的保护墙
+                                if (Renderer.StandbyDisplayMode == 2)
+                                {
+                                    if (updateIdx == 0) minLimit = 170f;
+                                    if (updateIdx == 1) minLimit = 34f;
+                                }
+                                _customValues[updateIdx] = Math.Max(minLimit, _customValues[updateIdx] + delta);
+                            }
                         }
 
                         // 数值变动时才更新字符串缓存，避免渲染循环产生 GC 垃圾
@@ -657,6 +674,14 @@ namespace NotchPeninsula
                     {
                         _selectedDisplayIndex = _hoveredDisplayOptionIndex;
                         Renderer.StandbyDisplayMode = _selectedDisplayIndex;
+
+                        // 启用硬件监控时，强制限制尺寸并更新滑块的值
+                        if (Renderer.StandbyDisplayMode == 2)
+                        {
+                            if (Renderer.STANDBY_WIDTH < 170f) { Renderer.STANDBY_WIDTH = 170f; _customValues[0] = 170f; Program.SaveSetting("Custom_StandbyW", 170f); UpdateValueString(0); }
+                            if (Renderer.BASE_HEIGHT < 34f) { Renderer.BASE_HEIGHT = 34f; _customValues[1] = 34f; Program.SaveSetting("Custom_BaseH", 34f); UpdateValueString(1); }
+                        }
+
                         Program.SaveSetting("StandbyDisplayMode", _selectedDisplayIndex);
                         Render();
                     }
@@ -881,33 +906,40 @@ namespace NotchPeninsula
                 {
                     bool isSelected = _selectedDisplayIndex == index;
                     bool isHovered = _hoveredDisplayOptionIndex == index;
-                    // 选项外框与背景
-                    var optRect = new SKRect(x, y, x + 150, y + 40);
+
+                    var optRect = new SKRect(x, y, x + 110, y + 40);
                     _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8));
                     canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
                     _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : new SKColor(80, 80, 80);
                     canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
-                    // 图标
-                    float cx = x + 30; float cy = y + 20;
+
+                    float cx = x + 20; float cy = y + 20;
                     _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 140, 240) : SKColors.White;
                     _dynamicStrokePaint.StrokeWidth = 1.5f;
-                    if (index == 0)
+
+                    if (index == 0) // 时间
                     {
-                        canvas.DrawCircle(cx, cy, 8, _dynamicStrokePaint); // 表盘
-                        canvas.DrawLine(cx, cy, cx, cy - 4, _dynamicStrokePaint); // 时针
-                        canvas.DrawLine(cx, cy, cx + 3, cy + 3, _dynamicStrokePaint); // 分针
+                        canvas.DrawCircle(cx, cy, 8, _dynamicStrokePaint);
+                        canvas.DrawLine(cx, cy, cx, cy - 4, _dynamicStrokePaint);
+                        canvas.DrawLine(cx, cy, cx + 3, cy + 3, _dynamicStrokePaint);
                     }
-                    else
+                    else if (index == 1) // 空白
                     {
-                        canvas.DrawLine(cx - 6, cy, cx + 6, cy, _dynamicStrokePaint); // 空白横线
+                        canvas.DrawLine(cx - 6, cy, cx + 6, cy, _dynamicStrokePaint);
                     }
-                    // 文本
+                    else if (index == 2) // 硬件
+                    {
+                        canvas.DrawRect(cx - 7, cy - 6, 14, 12, _dynamicStrokePaint);
+                        canvas.DrawLine(cx - 3, cy - 3, cx + 3, cy - 3, _dynamicStrokePaint);
+                    }
+
                     _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : SKColors.White;
-                    canvas.DrawText(name, cx + 22, cy + 5, _dynamicTextPaint);
+                    canvas.DrawText(name, cx + 18, cy + 5, _dynamicTextPaint);
                 }
 
-                DrawDisplayOpt(0, "时间日期", 220, displayCardY + 58);
-                DrawDisplayOpt(1, "空白", 390, displayCardY + 58);
+                DrawDisplayOpt(2, "硬件占用", 220, displayCardY + 58);
+                DrawDisplayOpt(0, "时间日期", 340, displayCardY + 58);
+                DrawDisplayOpt(1, "空白", 460, displayCardY + 58);
             }
             else if (_selectedTab == 2)
             {

@@ -1,6 +1,7 @@
 using SkiaSharp;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace NotchPeninsula
 {
@@ -86,6 +87,10 @@ namespace NotchPeninsula
                 new SKPoint(0, 0), new SKPoint(1, 0),
                 [bg.WithAlpha(0), bg],
                 null, SKShaderTileMode.Clamp);
+
+            _tagTextPaint.Color = _currentTextColor;
+            _tagBgPaint.Color = _currentTextColor.WithAlpha(25);  // 浅色半透明背景标签
+            _barBgPaint.Color = _currentTextColor.WithAlpha(30);   // 未填充进度条的半透明纯色底槽
         }
 
         // 动态计算最大边界，防止因刘海变大导致出界
@@ -200,6 +205,63 @@ namespace NotchPeninsula
         // 待机时间显示专用画笔
         private static readonly SKPaint _timePaint = new() { Color = SKColors.White, TextSize = 14.5f, IsAntialias = true, Typeface = _boldTypeface };
         private static readonly SKPaint _datePaint = new() { Color = new SKColor(200, 200, 200), TextSize = 14.5f, IsAntialias = true, Typeface = _normalTypeface };
+        // 硬件监控零 GC 缓存池 (预热101个字符串，避免每帧 ToString 分配内存)
+        private static string[]? _cpuStrs;
+        private static string[]? _ramStrs;
+        private static int _cpuUsage = 0;
+        private static int _ramUsage = 0;
+        private static ulong _lastIdleTime = 0, _lastSystemTime = 0;
+        private static int _lastHardwareTick = 0;
+        // 硬件监控平滑过渡与标签零 GC 缓存
+        private static float _smoothCpuUsage = 0f;
+        private static float _smoothRamUsage = 0f;
+        private static string[]? _pctStrs;
+        private static readonly SKPaint _tagTextPaint = new() { Color = SKColors.White, TextSize = 10.5f, IsAntialias = true, Typeface = _boldTypeface };
+        private static readonly SKPaint _tagBgPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+        private static readonly SKPaint _barBgPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+
+        private static void UpdateHardwareStats()
+        {
+            if (_cpuStrs == null)
+            {
+                _cpuStrs = new string[101];
+                _ramStrs = new string[101];
+                _pctStrs = new string[101];
+                for (int i = 0; i <= 100; i++)
+                {
+                    _cpuStrs[i] = $"CPU {i}%";
+                    _ramStrs[i] = $"RAM {i}%";
+                    _pctStrs[i] = $"{i}%";
+                }
+            }
+
+            int now = Environment.TickCount;
+            if (now - _lastHardwareTick >= 1000)
+            {
+                _lastHardwareTick = now;
+
+                var memInfo = new Win32.MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf(typeof(Win32.MEMORYSTATUSEX)) };
+                if (Win32.GlobalMemoryStatusEx(ref memInfo)) _ramUsage = (int)memInfo.dwMemoryLoad;
+
+                if (Win32.GetSystemTimes(out var idle, out var kernel, out var user))
+                {
+                    ulong currentIdle = ((ulong)idle.dwHighDateTime << 32) | idle.dwLowDateTime;
+                    ulong currentSystem = (((ulong)kernel.dwHighDateTime << 32) | kernel.dwLowDateTime) + (((ulong)user.dwHighDateTime << 32) | user.dwLowDateTime);
+
+                    if (_lastSystemTime > 0)
+                    {
+                        ulong idleDiff = currentIdle - _lastIdleTime;
+                        ulong sysDiff = currentSystem - _lastSystemTime;
+                        if (sysDiff > 0) _cpuUsage = (int)((sysDiff - idleDiff) * 100 / sysDiff);
+                    }
+                    _lastIdleTime = currentIdle; _lastSystemTime = currentSystem;
+                }
+            }
+
+            // 帧级线性插值（Lerp），实现丝滑过渡动画
+            _smoothCpuUsage += (_cpuUsage - _smoothCpuUsage) * 0.2f;
+            _smoothRamUsage += (_ramUsage - _smoothRamUsage) * 0.2f;
+        }
 
         // 时间日期零GC缓存
         private static int _lastMinute = -1;
@@ -617,22 +679,96 @@ namespace NotchPeninsula
                 }
                 else if (StandbyDisplayMode == 0)
                 {
-                    // 待机状态：左右布局，两端对齐
                     _timePaint.Color = _currentTextColor.WithAlpha(alpha);
                     _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
-
-                    // 统一 Y 轴基线，实现光学垂直居中 (5f 是基于当前字号的基线下沉补偿)
                     float baselineY = currentHeight / 2f + 5f + textOffsetY;
-
-                    // 计算两端对齐的 X 轴坐标，左右各保留 16f 的安全边距
-                    float timeX = left + 16f;
-                    float dateX = right - 16f - _cachedDateWidth;
-
-                    canvas.DrawText(_cachedTimeStr, timeX, baselineY, _timePaint);
-                    canvas.DrawText(_cachedDateStr, dateX, baselineY, _datePaint);
+                    canvas.DrawText(_cachedTimeStr, left + 16f, baselineY, _timePaint);
+                    canvas.DrawText(_cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint);
                 }
+                else if (StandbyDisplayMode == 2) // 硬件占用检测渲染
+                {
+                    UpdateHardwareStats();
+
+                    // 颜色同步
+                    _tagTextPaint.Color = _currentTextColor.WithAlpha(alpha);
+                    _tagBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.12f));
+                    _barPaint.Color = _currentTextColor.WithAlpha(alpha);
+                    _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.20f));
+                    _tagTextPaint.Typeface = _boldTypeface; // 防污染
+
+                    // 垂直布局
+                    float contentCenterY = currentHeight / 2f + textOffsetY;
+                    float textBaseline = contentCenterY - 1f;
+                    float barTop = contentCenterY + 9f;
+                    float barH = 3.5f;
+                    float tagPadX = 3f;
+                    float tagPadY = 1.5f;
+                    float tagRadius = 3.5f;
+                    float gapBetweenLabelAndPct = 4f;   // 标签与百分比间距
+                    float gapBetweenCpuAndRam = 16f;     // CPU组与RAM组间距
+
+                    // 预测量所有文本宽度（零GC，用预缓存字符串）
+                    string cpuLabel = "CPU";
+                    string ramLabel = "RAM";
+                    string cpuPct = _pctStrs![_cpuUsage];
+                    string ramPct = _pctStrs![_ramUsage];
+                    float cpuLabelW = _tagTextPaint.MeasureText(cpuLabel);
+                    float ramLabelW = _tagTextPaint.MeasureText(ramLabel);
+                    float cpuPctW = _textPaint.MeasureText(cpuPct);
+                    float ramPctW = _textPaint.MeasureText(ramPct);
+                    float cpuTagW = cpuLabelW + tagPadX * 2f;
+                    float ramTagW = ramLabelW + tagPadX * 2f;
+                    float cpuGroupW = cpuTagW + gapBetweenLabelAndPct + cpuPctW;
+                    float ramGroupW = ramTagW + gapBetweenLabelAndPct + ramPctW;
+                    float totalContentW = cpuGroupW + gapBetweenCpuAndRam + ramGroupW;
+                    float centerX = left + currentWidth / 2f;
+                    float startX = centerX - totalContentW / 2f;
+                    float cpuBarW = cpuGroupW;
+                    float ramBarW = ramGroupW;
+
+                    // ================= [ CPU ] =================
+                    float cpuX = startX;
+                    var cpuTagRect = new SKRect(
+                        cpuX,
+                        textBaseline - 10f - tagPadY,
+                        cpuX + cpuTagW,
+                        textBaseline + 2.5f + tagPadY
+                    );
+                    canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
+                    canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
+                    canvas.DrawText(cpuPct, cpuTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
+                    canvas.DrawRoundRect(
+                        new SKRect(cpuX, barTop, cpuX + cpuBarW, barTop + barH),
+                        barH / 2f, barH / 2f, _barBgPaint);
+                    float cpuFillW = cpuBarW * (_smoothCpuUsage / 100f);
+                    if (cpuFillW > 0.5f)
+                        canvas.DrawRoundRect(
+                            new SKRect(cpuX, barTop, cpuX + cpuFillW, barTop + barH),
+                            barH / 2f, barH / 2f, _barPaint);
+
+                    // ================= [ RAM ] =================
+                    float ramX = startX + cpuGroupW + gapBetweenCpuAndRam;
+                    var ramTagRect = new SKRect(
+                        ramX,
+                        textBaseline - 10f - tagPadY,
+                        ramX + ramTagW,
+                        textBaseline + 2.5f + tagPadY
+                    );
+                    canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
+                    canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
+                    canvas.DrawText(ramPct, ramTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
+                    canvas.DrawRoundRect(
+                        new SKRect(ramX, barTop, ramX + ramBarW, barTop + barH),
+                        barH / 2f, barH / 2f, _barBgPaint);
+                    float ramFillW = ramBarW * (_smoothRamUsage / 100f);
+                    if (ramFillW > 0.5f)
+                        canvas.DrawRoundRect(
+                            new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH),
+                            barH / 2f, barH / 2f, _barPaint);
+                }
+
                 canvas.Restore();
-                canvas.Restore(); // 恢复 Translate 对外部环境的影响
+                canvas.Restore();
             }
             finally
             {
