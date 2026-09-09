@@ -72,7 +72,7 @@ namespace NotchPeninsula
         {
             GlobalSystemMediaTransportControlsSession? newSession = null;
 
-            // 1. 如果总开关打开，执行精确的平台过滤
+            // 如果总开关打开，执行精确的平台过滤
             if (IsMediaControlEnabled)
             {
                 var sessions = manager.GetSessions();
@@ -121,7 +121,7 @@ namespace NotchPeninsula
             _isBrowserSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Chrome")
                              || MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Edge");
 
-            // 2. 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
+            // 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
             if (_currentSession != null && newSession != null && _currentSession.SourceAppUserModelId == newSession.SourceAppUserModelId)
             {
                 await RefreshProperties();
@@ -129,7 +129,7 @@ namespace NotchPeninsula
                 return;
             }
 
-            // 3. 切换到了新的会话（或者置空）
+            // 切换到了新的会话（或者置空）
             if (_currentSession != null)
             {
                 // 切换前，必须先解绑旧会话的事件，防止幽灵对象吃内存
@@ -321,9 +321,9 @@ namespace NotchPeninsula
                     _http.DefaultRequestHeaders.Clear();
                     _http.DefaultRequestHeaders.Add("User-Agent", ua);
 
-                    string searchUrl = $"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json";
-                    var searchJson = await _http.GetStringAsync(searchUrl);
-                    using var searchDoc = JsonDocument.Parse(searchJson);
+                    // 内存优化：使用 Stream 流直接解析 JSON，避免生成大字符串吃内存
+                    using var searchStream = await _http.GetStreamAsync($"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json");
+                    using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
                     string songmid = "";
                     if (searchDoc.RootElement.TryGetProperty("data", out var data) &&
@@ -333,7 +333,13 @@ namespace NotchPeninsula
                         foreach (var song in list.EnumerateArray())
                         {
                             string name = song.GetProperty("songname").GetString() ?? "";
-                            if (name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase))
+                            string singer = "";
+                            if (song.TryGetProperty("singer", out var singers) && singers.GetArrayLength() > 0)
+                                singer = singers[0].GetProperty("name").GetString() ?? "";
+
+                            // 精度优化：同时验证歌名和歌手名，避免同名歌曲乱串
+                            if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
+                                (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
                             {
                                 songmid = song.GetProperty("songmid").GetString() ?? "";
                                 break;
@@ -344,9 +350,8 @@ namespace NotchPeninsula
                     if (!string.IsNullOrEmpty(songmid))
                     {
                         _http.DefaultRequestHeaders.Add("Referer", "https://y.qq.com/");
-                        string lyricUrl = $"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1";
-                        var lyricJson = await _http.GetStringAsync(lyricUrl);
-                        using var lyricDoc = JsonDocument.Parse(lyricJson);
+                        using var lyricStream = await _http.GetStreamAsync($"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1");
+                        using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
 
                         if (lyricDoc.RootElement.TryGetProperty("lyric", out var lrcEl))
                         {
@@ -359,7 +364,7 @@ namespace NotchPeninsula
                 }
                 catch (Exception ex) { Logger.Warn($"QQ音乐引擎失败: {ex.Message}"); }
 
-                // ====== 引擎 2：网易云 API (参考 Rust 源码兜底) ======
+                // ====== 引擎 2：网易云 API ======
                 if (string.IsNullOrEmpty(lrcText))
                 {
                     try
@@ -378,8 +383,8 @@ namespace NotchPeninsula
                         });
 
                         var response = await _http.PostAsync("https://music.163.com/api/search/get/web", content);
-                        var searchJson = await response.Content.ReadAsStringAsync();
-                        using var searchDoc = JsonDocument.Parse(searchJson);
+                        using var searchStream = await response.Content.ReadAsStreamAsync();
+                        using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
                         long songId = 0;
                         if (searchDoc.RootElement.TryGetProperty("result", out var result) &&
@@ -388,19 +393,28 @@ namespace NotchPeninsula
                             foreach (var song in songs.EnumerateArray())
                             {
                                 string name = song.GetProperty("name").GetString() ?? "";
-                                if (name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase))
+                                string singer = "";
+                                if (song.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
+                                    singer = artists[0].GetProperty("name").GetString() ?? "";
+
+                                // 精度优化：匹配歌名+歌手，并引入时长校验（误差4秒内）屏蔽 Live/伴奏 版
+                                if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
+                                    (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
                                 {
-                                    songId = song.GetProperty("id").GetInt64();
-                                    break;
+                                    long durationMs = song.GetProperty("duration").GetInt64();
+                                    if (durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4)
+                                    {
+                                        songId = song.GetProperty("id").GetInt64();
+                                        break;
+                                    }
                                 }
                             }
                         }
 
                         if (songId > 0)
                         {
-                            string lyricUrl = $"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1";
-                            var lyricJson = await _http.GetStringAsync(lyricUrl);
-                            using var lyricDoc = JsonDocument.Parse(lyricJson);
+                            using var lyricStream = await _http.GetStreamAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1");
+                            using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
                             if (lyricDoc.RootElement.TryGetProperty("lrc", out var lrc) &&
                                 lrc.TryGetProperty("lyric", out var lyricStr))
                             {
@@ -411,7 +425,7 @@ namespace NotchPeninsula
                     catch (Exception ex) { Logger.Warn($"网易云引擎失败: {ex.Message}"); }
                 }
 
-                // ====== 引擎 3：LRCLIB (修复 400 报错) ======
+                // ====== 引擎 3：LRCLIB ======
                 if (string.IsNullOrEmpty(lrcText))
                 {
                     try
@@ -421,8 +435,9 @@ namespace NotchPeninsula
                         string lrclibUrl = $"https://lrclib.net/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
                         if (durationSec > 0) lrclibUrl += $"&duration={durationSec}";
 
-                        var lrclibJson = await _http.GetStringAsync(lrclibUrl);
-                        using var lrclibDoc = JsonDocument.Parse(lrclibJson);
+                        // 同样优化为 Stream 流解析
+                        using var lrclibStream = await _http.GetStreamAsync(lrclibUrl);
+                        using var lrclibDoc = await JsonDocument.ParseAsync(lrclibStream);
 
                         if (lrclibDoc.RootElement.TryGetProperty("syncedLyrics", out var syn))
                         {
@@ -453,7 +468,7 @@ namespace NotchPeninsula
                         _lyrics = lines.ToArray();
                     }
                 }
-            } // 这里就是之前漏掉的 try 闭合括号！
+            }
             finally
             {
                 // 必须释放锁，让下一首歌可以正常获取
