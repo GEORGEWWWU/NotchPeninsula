@@ -27,6 +27,7 @@ namespace NotchPeninsula
         public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
         public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
         public static int StandbyDisplayMode { get; set; } = 0; // 0=时间日期, 1=空白
+        public static int TargetMonitorIndex { get; set; } = 0; // 目标显示器索引
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;

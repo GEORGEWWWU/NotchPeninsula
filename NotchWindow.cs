@@ -77,6 +77,20 @@ namespace NotchPeninsula
         // 极速无锁防重入标记
         private int _isRendering = 0;
         private volatile bool _needsBufferResize = false; // 显存重建标记
+        private static int _cachedMonitorIndex = -1;
+        private static int _cachedMonitorX = 0;
+        private static int _cachedMonitorY = 0;
+        private static int _cachedMonitorWidth = 1920;
+
+        private void UpdateMonitorBounds()
+        {
+            var screens = System.Windows.Forms.Screen.AllScreens;
+            int idx = Renderer.TargetMonitorIndex < screens.Length ? Renderer.TargetMonitorIndex : 0;
+            _cachedMonitorX = screens[idx].Bounds.X;
+            _cachedMonitorY = screens[idx].Bounds.Y;
+            _cachedMonitorWidth = screens[idx].Bounds.Width;
+            _cachedMonitorIndex = Renderer.TargetMonitorIndex;
+        }
 
         public NotchWindow()
         {
@@ -105,10 +119,9 @@ namespace NotchPeninsula
             _scaledWidth = (int)(Renderer.WINDOW_WIDTH * _dpiScale);
             _scaledHeight = (int)(Renderer.MAX_WINDOW_HEIGHT * _dpiScale);
 
-            int screenWidth = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-            // 使用 _scaledWidth 进行真正的物理居中
-            int x = (screenWidth - _scaledWidth) / 2;
-            int y = 0;
+            UpdateMonitorBounds();
+            int x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
+            int y = _cachedMonitorY;
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_TOPMOST | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
@@ -550,10 +563,9 @@ namespace NotchPeninsula
             var ptSrc = new Win32.POINT(0, 0);
             var ptDst = new Win32.POINT { x = 0, y = 0 };
 
-            // 获取主屏幕实时宽度，减去当前缩放宽度后除以 2，保证刘海永远严格居中
-            int screenWidth = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-            ptDst.x = (screenWidth - _scaledWidth) / 2;
-            ptDst.y = (int)_currentY;
+            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
+            ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
+            ptDst.y = _cachedMonitorY + (int)_currentY;
 
             var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
             var blend = new Win32.BLENDFUNCTION
