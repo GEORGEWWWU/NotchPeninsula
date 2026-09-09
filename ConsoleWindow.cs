@@ -46,11 +46,9 @@ namespace NotchPeninsula
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
 
-        // 显示设置状态
-        private bool _displayDropdownOpen = false;
-        private bool _displayDropdownHovered = false;
-        private int _hoveredDisplayDropdownIndex = -1;
+        // 显示设置
         private int _selectedDisplayIndex = 0;
+        private int _hoveredDisplayOptionIndex = -1;
         private static readonly string[] _displayOptions = ["时间日期", "空白"];
         private int _hoveredStyleIndex = -1;
         private bool _monitorDropdownOpen = false;
@@ -336,8 +334,7 @@ namespace NotchPeninsula
                         }
                     }
 
-                    bool newDisplayDropdownHovered = false;
-                    int newHoveredDisplayDropdownIndex = -1;
+                    int newHoveredDisplayOptionIndex = -1;
                     int newHoveredStyleIndex = -1;
                     bool newToggleHovered = false;
                     bool newToastToggleHovered = false;
@@ -378,16 +375,9 @@ namespace NotchPeninsula
                         }
 
                         // 待机显示内容卡片
-                        float dY = TITLE_BAR_HEIGHT + 262;
-                        if (!_displayDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= dY && y <= dY + 32)
-                            newDisplayDropdownHovered = true;
-
-                        if (_displayDropdownOpen)
-                        {
-                            float listY = TITLE_BAR_HEIGHT + 296;
-                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= listY && y < listY + _displayOptions.Length * 26)
-                                newHoveredDisplayDropdownIndex = (y - (int)listY) / 26;
-                        }
+                        float displayOptY = TITLE_BAR_HEIGHT + 306;
+                        if (x >= 220 && x <= 370 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0;
+                        if (x >= 390 && x <= 540 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1;
                     }
                     else if (_selectedTab == 2) // 媒体设置
                     {
@@ -456,8 +446,7 @@ namespace NotchPeninsula
                         newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
                         newDropdownHovered != _dropdownHovered ||
                         newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
-                        newDisplayDropdownHovered != _displayDropdownHovered ||
-                        newHoveredDisplayDropdownIndex != _hoveredDisplayDropdownIndex ||
+                        newHoveredDisplayOptionIndex != _hoveredDisplayOptionIndex ||
                         newHoveredStyleIndex != _hoveredStyleIndex ||
                         newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                         newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
@@ -472,8 +461,7 @@ namespace NotchPeninsula
                         _dropdownHovered = newDropdownHovered;
                         _hoveredDropdownIndex = newHoveredDropdownIndex;
                         _hoveredLinkIndex = newHoveredLinkIndex;
-                        _displayDropdownHovered = newDisplayDropdownHovered;
-                        _hoveredDisplayDropdownIndex = newHoveredDisplayDropdownIndex;
+                        _hoveredDisplayOptionIndex = newHoveredDisplayOptionIndex;
                         _hoveredStyleIndex = newHoveredStyleIndex;
                         _hoveredMinusIndex = newHoverMinus;
                         _hoveredPlusIndex = newHoverPlus;
@@ -501,11 +489,6 @@ namespace NotchPeninsula
                     {
                         _dropdownOpen = false; Render(); // 点击菜单外部收起浮窗
                     }
-                    // 点击外部收起新增的显示下拉浮窗
-                    else if (_displayDropdownOpen && _hoveredDisplayDropdownIndex == -1)
-                    {
-                        _displayDropdownOpen = false; Render();
-                    }
                     else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex == -1) { _monitorDropdownOpen = false; Render(); }
                     else if (_selectedTab == 1 && _hoveredStyleIndex != -1)
                     {
@@ -513,12 +496,12 @@ namespace NotchPeninsula
                         Program.SaveSetting("NotchStyle", _hoveredStyleIndex);
                         Render();
                     }
-                    else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; _displayDropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; Render(); }
                     else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
                     else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
                     {
@@ -670,16 +653,11 @@ namespace NotchPeninsula
                         _dropdownOpen = false;
                         Render();
                     }
-                    else if (_displayDropdownHovered)
+                    else if (_selectedTab == 1 && _hoveredDisplayOptionIndex != -1)
                     {
-                        _displayDropdownOpen = true; Render();
-                    }
-                    else if (_displayDropdownOpen && _hoveredDisplayDropdownIndex != -1)
-                    {
-                        _selectedDisplayIndex = _hoveredDisplayDropdownIndex;
-                        Renderer.StandbyDisplayMode = _selectedDisplayIndex; // 同步给渲染器
-                        Program.SaveSetting("StandbyDisplayMode", _selectedDisplayIndex); // 直接持久化保存
-                        _displayDropdownOpen = false;
+                        _selectedDisplayIndex = _hoveredDisplayOptionIndex;
+                        Renderer.StandbyDisplayMode = _selectedDisplayIndex;
+                        Program.SaveSetting("StandbyDisplayMode", _selectedDisplayIndex);
                         Render();
                     }
                     break;
@@ -892,21 +870,44 @@ namespace NotchPeninsula
                 canvas.DrawLine(mdX + mdW - 20, mdY + 14, mdX + mdW - 15, mdY + 19, _chevronPaint);
                 canvas.DrawLine(mdX + mdW - 15, mdY + 19, mdX + mdW - 10, mdY + 14, _chevronPaint);
 
-                // 待机显示内容卡片
+                // 待机显示内容卡片 (极简宫格布局)
                 float displayCardY = TITLE_BAR_HEIGHT + 248;
-                var cardRect = new SKRect(200, displayCardY, WIDTH - 20, displayCardY + 62);
-                canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-                canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+                var displayCardRect = new SKRect(200, displayCardY, WIDTH - 20, displayCardY + 112); // 卡片高度减半收缩
+                canvas.DrawRoundRect(displayCardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(displayCardRect, 6, 6, _cardBorder);
                 canvas.DrawText("待机显示内容", 216, displayCardY + 26, _uiTextPaint);
                 canvas.DrawText("刘海处于待机状态时默认展示的信息", 216, displayCardY + 46, _subTextPaint);
+                void DrawDisplayOpt(int index, string name, float x, float y)
+                {
+                    bool isSelected = _selectedDisplayIndex == index;
+                    bool isHovered = _hoveredDisplayOptionIndex == index;
+                    // 选项外框与背景
+                    var optRect = new SKRect(x, y, x + 150, y + 40);
+                    _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8));
+                    canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
+                    _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : new SKColor(80, 80, 80);
+                    canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
+                    // 图标
+                    float cx = x + 30; float cy = y + 20;
+                    _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 140, 240) : SKColors.White;
+                    _dynamicStrokePaint.StrokeWidth = 1.5f;
+                    if (index == 0)
+                    {
+                        canvas.DrawCircle(cx, cy, 8, _dynamicStrokePaint); // 表盘
+                        canvas.DrawLine(cx, cy, cx, cy - 4, _dynamicStrokePaint); // 时针
+                        canvas.DrawLine(cx, cy, cx + 3, cy + 3, _dynamicStrokePaint); // 分针
+                    }
+                    else
+                    {
+                        canvas.DrawLine(cx - 6, cy, cx + 6, cy, _dynamicStrokePaint); // 空白横线
+                    }
+                    // 文本
+                    _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : SKColors.White;
+                    canvas.DrawText(name, cx + 22, cy + 5, _dynamicTextPaint);
+                }
 
-                float dW = 110; float dX = WIDTH - 140; float dY = displayCardY + 14; float dH = 32;
-                var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
-                _dynamicFillPaint.Color = _displayDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8);
-                canvas.DrawRoundRect(dRect, 4, 4, _dynamicFillPaint);
-                canvas.DrawText(_displayOptions[_selectedDisplayIndex], dX + 10, dY + 21, _uiTextPaint);
-                canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, _chevronPaint);
-                canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, _chevronPaint);
+                DrawDisplayOpt(0, "时间日期", 220, displayCardY + 58);
+                DrawDisplayOpt(1, "空白", 390, displayCardY + 58);
             }
             else if (_selectedTab == 2)
             {
@@ -1190,27 +1191,6 @@ namespace NotchPeninsula
                     }
                     _dynamicTextPaint.Color = i == _selectedPlatformIndex ? new SKColor(0, 120, 212) : SKColors.White;
                     canvas.DrawText(_platforms[i].Name, mX + 12, itemY + 18, _dynamicTextPaint);
-                }
-            }
-
-            // 待机显示内容
-            if (_selectedTab == 1 && _displayDropdownOpen)
-            {
-                float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 296; float mW = 110; float mH = _displayOptions.Length * 26;
-                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
-
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBorder);
-
-                for (int i = 0; i < _displayOptions.Length; i++)
-                {
-                    float itemY = mY + i * 26;
-                    if (_hoveredDisplayDropdownIndex == i)
-                    {
-                        canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, _tabBgSelected);
-                    }
-                    _dynamicTextPaint.Color = i == _selectedDisplayIndex ? new SKColor(0, 120, 212) : SKColors.White;
-                    canvas.DrawText(_displayOptions[i], mX + 12, itemY + 18, _dynamicTextPaint);
                 }
             }
 
