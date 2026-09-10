@@ -1082,13 +1082,13 @@ namespace NotchPeninsula
                 if (hasPrev) width += 16f; // 如果前面有组件，加上 16px 间距
 
                 // 加上 MediaController 类前缀
-                float textWidth = (!string.IsNullOrEmpty(media.CurrentLyric) && MediaController.IsLyricsEnabled)
+                float textWidth = (!string.IsNullOrEmpty(media?.CurrentLyric) && MediaController.IsLyricsEnabled)
                     ? _textPaint.MeasureText(media.CurrentLyric)
-                    : (string.IsNullOrEmpty(media.Artist)
-                        ? _textPaint.MeasureText(media.Title)
+                    : (string.IsNullOrEmpty(media?.Artist)
+                        ? _textPaint.MeasureText(media?.Title)
                         : _textPaint.MeasureText(media.Artist) + _textPaint.MeasureText(media.Title) + 15f);
 
-                float thumbW = media.Thumbnail != null ? 32f : 0f;
+                float thumbW = media?.Thumbnail != null ? 32f : 0f;
                 float spectrumW = 21.2f;
                 float gapBeforeSpectrum = 12f;
 
@@ -1096,7 +1096,7 @@ namespace NotchPeninsula
                 hasPrev = true;
             }
 
-            width += 16f; // 加上固定的右侧边距 16px
+            width += 10f; // 加上固定的右侧边距
 
             return Math.Clamp(width, 60f, 900f);
         }
