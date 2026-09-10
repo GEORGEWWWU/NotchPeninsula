@@ -274,6 +274,8 @@ namespace NotchPeninsula
         private static string _cachedDateStr = "";
         private static float _cachedTimeWidth = 0f;
         private static float _cachedDateWidth = 0f;
+        public static float CachedTimeWidth => _cachedTimeWidth;
+        public static float CachedDateWidth => _cachedDateWidth;
         private static string _cachedToastSender = "";
         private static string _cachedToastBody = "";
         // 预加载 Windows 自带 Emoji 彩色字体与零 GC 渲染缓存列表
@@ -1042,6 +1044,61 @@ namespace NotchPeninsula
             paint.Color = paint.Color.WithAlpha(targetAlpha);
             canvas.DrawText(text, x, y, paint);
             canvas.Restore();
+        }
+
+        public static float GetCompositeWidth(MediaController media)
+        {
+            if (!CompositeModeEnabled) return STANDBY_WIDTH;
+
+            float width = 16f; // 初始只有左边距 16px
+            bool hasPrev = false;
+
+            // 1. 时间日期组件实际宽度
+            if (CompShowDateTime)
+            {
+                width += _cachedTimeWidth + 12f + _cachedDateWidth;
+                hasPrev = true;
+            }
+
+            // 2. 硬件占用组件实际宽度
+            if (CompShowHardware)
+            {
+                if (hasPrev) width += 16f; // 如果前面有组件，加上 16px 间距
+                float cpuLabelW = _tagTextPaint.MeasureText("CPU");
+                float ramLabelW = _tagTextPaint.MeasureText("RAM");
+                float pctW = _textPaint.MeasureText("100%");
+                float cpuTagW = cpuLabelW + 6f;
+                float ramTagW = ramLabelW + 6f;
+                float cpuGroupW = cpuTagW + 4f + pctW;
+                float ramGroupW = ramTagW + 4f + pctW;
+                width += cpuGroupW + 16f + ramGroupW;
+                hasPrev = true;
+            }
+
+            // 3. 媒体控制器组件实际宽度
+            bool mediaActive = media != null && media.IsActive;
+            if (CompShowMedia && mediaActive)
+            {
+                if (hasPrev) width += 16f; // 如果前面有组件，加上 16px 间距
+
+                // 加上 MediaController 类前缀
+                float textWidth = (!string.IsNullOrEmpty(media.CurrentLyric) && MediaController.IsLyricsEnabled)
+                    ? _textPaint.MeasureText(media.CurrentLyric)
+                    : (string.IsNullOrEmpty(media.Artist)
+                        ? _textPaint.MeasureText(media.Title)
+                        : _textPaint.MeasureText(media.Artist) + _textPaint.MeasureText(media.Title) + 15f);
+
+                float thumbW = media.Thumbnail != null ? 32f : 0f;
+                float spectrumW = 21.2f;
+                float gapBeforeSpectrum = 12f;
+
+                width += thumbW + textWidth + gapBeforeSpectrum + spectrumW;
+                hasPrev = true;
+            }
+
+            width += 16f; // 加上固定的右侧边距 16px
+
+            return Math.Clamp(width, 60f, 900f);
         }
     }
 }

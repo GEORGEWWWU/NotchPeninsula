@@ -403,10 +403,10 @@ namespace NotchPeninsula
                         float compCardY = TITLE_BAR_HEIGHT + 372;
                         newCompositeToggleHover = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= compCardY + 72 && y <= compCardY + 92;
                         if (Renderer.CompositeModeEnabled)
-                        { // 新增状态拦截，防止关闭时产生幽灵悬停
-                            newCompDateTimeHover = x >= 216 && x <= 350 && y >= compCardY + 100 && y <= compCardY + 116;
-                            newCompHardwareHover = x >= 216 && x <= 350 && y >= compCardY + 130 && y <= compCardY + 146;
-                            newCompMediaHover = x >= 216 && x <= 380 && y >= compCardY + 160 && y <= compCardY + 176;
+                        { // 状态拦截，防止关闭时产生幽灵悬停
+                            newCompDateTimeHover = x >= 216 && x <= 350 && y >= compCardY + 105 && y <= compCardY + 121;
+                            newCompHardwareHover = x >= 216 && x <= 350 && y >= compCardY + 140 && y <= compCardY + 156;
+                            newCompMediaHover = x >= 216 && x <= 380 && y >= compCardY + 175 && y <= compCardY + 191;
                         }
 
                     }
@@ -1129,7 +1129,7 @@ namespace NotchPeninsula
                 DrawDisplayOpt(0, "时间日期", 340, displayCardY + 58);
                 DrawDisplayOpt(1, "空白", 460, displayCardY + 58);
 
-                // ========== 自定义组合模式卡片 ==========
+                // 自定义组合模式卡片
                 float compositeCardY = TITLE_BAR_HEIGHT + 372;
                 var compositeCardRect = new SKRect(200, compositeCardY, WIDTH - 20, compositeCardY + 200);
                 canvas.DrawRoundRect(compositeCardRect, 6, 6, _cardBg);
@@ -1140,10 +1140,10 @@ namespace NotchPeninsula
                 // 总开关
                 DrawToggleCard_Inline(compositeCardY + 62, "启用组合模式", "开启后可同时显示多个功能模块", Renderer.CompositeModeEnabled, _compositeToggleHovered);
 
-                // 子选项（坐标下移，间距从 28px 放宽至 30px）
-                DrawCheckItem(compositeCardY + 100, "时间日期", Renderer.CompShowDateTime, _compDateTimeHovered, !Renderer.CompositeModeEnabled);
-                DrawCheckItem(compositeCardY + 130, "资源占用检测", Renderer.CompShowHardware, _compHardwareHovered, !Renderer.CompositeModeEnabled);
-                DrawCheckItem(compositeCardY + 160, "媒体控制器(含频谱)", Renderer.CompShowMedia, _compMediaHovered, !Renderer.CompositeModeEnabled);
+                // 子选项
+                DrawCheckItem(compositeCardY + 105, "时间日期", Renderer.CompShowDateTime, _compDateTimeHovered, !Renderer.CompositeModeEnabled);
+                DrawCheckItem(compositeCardY + 140, "资源占用检测", Renderer.CompShowHardware, _compHardwareHovered, !Renderer.CompositeModeEnabled);
+                DrawCheckItem(compositeCardY + 175, "媒体控制器(含频谱)", Renderer.CompShowMedia, _compMediaHovered, !Renderer.CompositeModeEnabled);
 
             }
             else if (_selectedTab == 2)
@@ -1166,7 +1166,7 @@ namespace NotchPeninsula
 
                 // 歌词设置卡片
                 float lyricY = TITLE_BAR_HEIGHT + 160;
-                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 140); // 🚀 高度从 100 增高到 140
+                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 140);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
                 canvas.DrawText("歌词设置", 216, lyricY + 26, _uiTextPaint);

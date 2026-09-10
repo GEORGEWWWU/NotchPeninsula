@@ -49,7 +49,7 @@ namespace NotchPeninsula
 
         // Toast 状态控制
         private ToastData? _currentToast = new ToastData();
-        public ToastData CurrentToast => _currentToast;
+        public ToastData? CurrentToast => _currentToast;
         private DateTime _toastEndTime;
         private DateTime _animStartTime;
         private readonly IntPtr _hCursorArrow;
@@ -67,7 +67,7 @@ namespace NotchPeninsula
         private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
         public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关
-        private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // 新增的 Toast 监听器
+        private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
         // Y轴动画引擎状态
         private float _currentY = 0f;
         private float _targetY = 0f;
@@ -445,26 +445,16 @@ namespace NotchPeninsula
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
                 else if (Renderer.CompositeModeEnabled)
                 {
-                    // 组合模式动态计算总宽度
-                    float compWidth = 32f; // 左右边距
-                    if (Renderer.CompShowDateTime) compWidth += 105f;
-                    if (Renderer.CompShowHardware) compWidth += 150f;
-                    if (Renderer.CompShowMedia && currentActive)
-                    {
-                        float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
-                            ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
-                            : (string.IsNullOrEmpty(_media.Artist)
-                                ? Renderer.MeasureCurrentLyricWidth(_media.Title)
-                                : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f);
-                        // 精准贴合封面与文本大小
-                        compWidth += textWidth + (_media.Thumbnail != null ? 32f : 0f) + 85f;
-                    }
-                    expectedTargetWidth = Math.Max(compWidth, Renderer.STANDBY_WIDTH);
+                    // 调用渲染器中的像素级精确动态宽度计算，拒绝任何多余空白与错位
+                    expectedTargetWidth = Renderer.GetCompositeWidth(_media);
                 }
                 else
                     expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH;
+
                 // 自动文本长度自适应逻辑
-                if (currentActive && !Renderer.IsMediaExpanded)
+                // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
+                bool bypassAutoWidth = Renderer.CompositeModeEnabled;
+                if (currentActive && !Renderer.IsMediaExpanded && !bypassAutoWidth)
                 {
                     float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
                         ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
