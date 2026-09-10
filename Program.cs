@@ -42,6 +42,11 @@ namespace NotchPeninsula
                     Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 2);
                     Renderer.TargetMonitorIndex = (int)key.GetValue("TargetMonitorIndex", 0);
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
+                    Renderer.CompositeModeEnabled = (int)key.GetValue("CompositeMode_Enabled", 0) != 0;
+                    Renderer.CompShowDateTime = (int)key.GetValue("Composite_ShowDateTime", 1) != 0;
+                    Renderer.CompShowHardware = (int)key.GetValue("Composite_ShowHardware", 1) != 0;
+                    Renderer.CompShowMedia = (int)key.GetValue("Composite_ShowMedia", 1) != 0;
+
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
 

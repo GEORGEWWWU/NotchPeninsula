@@ -54,6 +54,13 @@ namespace NotchPeninsula
         private bool _monitorDropdownOpen = false;
         private bool _monitorDropdownHovered = false;
         private int _hoveredMonitorDropdownIndex = -1;
+        // 组合模式 UI 状态
+        private bool _compositeToggleHovered = false;
+        private bool _compDateTimeHovered = false;
+        private bool _compHardwareHovered = false;
+        private bool _compMediaHovered = false;
+        private bool _isHoveringDisabledArea = false;
+
         private static string[] _monitorOptions = GetInitialMonitorOptions();
 
         private static string[] GetInitialMonitorOptions()
@@ -353,6 +360,10 @@ namespace NotchPeninsula
                     bool newMediaExpToggleHovered = false;
                     bool newMonitorDropdownHovered = false;
                     int newHoveredMonitorDropdownIndex = -1;
+                    bool newCompositeToggleHover = false;
+                    bool newCompDateTimeHover = false;
+                    bool newCompHardwareHover = false;
+                    bool newCompMediaHover = false;
 
                     if (_selectedTab == 0) // 通用设置
                     {
@@ -387,6 +398,24 @@ namespace NotchPeninsula
                         if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2; // 硬件占用
                         if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0; // 时间日期
                         if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1; // 空白
+
+                        // 组合模式hover判定
+                        float compCardY = TITLE_BAR_HEIGHT + 372;
+                        newCompositeToggleHover = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= compCardY + 72 && y <= compCardY + 92;
+                        if (Renderer.CompositeModeEnabled)
+                        { // 新增状态拦截，防止关闭时产生幽灵悬停
+                            newCompDateTimeHover = x >= 216 && x <= 350 && y >= compCardY + 100 && y <= compCardY + 116;
+                            newCompHardwareHover = x >= 216 && x <= 350 && y >= compCardY + 130 && y <= compCardY + 146;
+                            newCompMediaHover = x >= 216 && x <= 380 && y >= compCardY + 160 && y <= compCardY + 176;
+                        }
+
+                    }
+                    if (_selectedTab == 1 && !Renderer.CompositeModeEnabled)
+                    {
+                        float displayOptY = TITLE_BAR_HEIGHT + 306;
+                        if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2;
+                        if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0;
+                        if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1;
                     }
                     else if (_selectedTab == 2) // 媒体设置
                     {
@@ -431,7 +460,7 @@ namespace NotchPeninsula
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
                         // 媒体交互模式
-                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
+                        if (!Renderer.CompositeModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                             newMediaExpToggleHovered = true;
                     }
 
@@ -449,6 +478,15 @@ namespace NotchPeninsula
                         }
                     }
 
+                    bool newIsHoveringDisabledArea = false;
+                    // 当处于“显示设置(1)”或“交互设置(3)”且开启了组合模式时，拦截特定卡片区域的指针
+                    if (_selectedTab == 1 && Renderer.CompositeModeEnabled && x >= 200 && x <= WIDTH - 20 && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 360)
+                        newIsHoveringDisabledArea = true;
+                    else if (_selectedTab == 3 && Renderer.CompositeModeEnabled && x >= 200 && x <= WIDTH - 20 && y >= TITLE_BAR_HEIGHT + 84 && y <= TITLE_BAR_HEIGHT + 146)
+                        newIsHoveringDisabledArea = true;
+
+                    if (newIsHoveringDisabledArea != _isHoveringDisabledArea) _isHoveringDisabledArea = newIsHoveringDisabledArea;
+
                     if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
                         newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
                         newToastToggleHovered != _toastToggleHovered ||
@@ -461,7 +499,12 @@ namespace NotchPeninsula
                         newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                         newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
                         newMonitorDropdownHovered != _monitorDropdownHovered ||
-                        newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex)
+                        newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
+                        newCompositeToggleHover != _compositeToggleHovered ||
+                        newCompDateTimeHover != _compDateTimeHovered ||
+                        newCompHardwareHover != _compHardwareHovered ||
+                        newCompMediaHover != _compMediaHovered
+                        )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
@@ -480,6 +523,10 @@ namespace NotchPeninsula
                         _hoveredOpacityIndex = newHoveredOpacityIndex;
                         _monitorDropdownHovered = newMonitorDropdownHovered;
                         _hoveredMonitorDropdownIndex = newHoveredMonitorDropdownIndex;
+                        _compositeToggleHovered = newCompositeToggleHover;
+                        _compDateTimeHovered = newCompDateTimeHover;
+                        _compHardwareHovered = newCompHardwareHover;
+                        _compMediaHovered = newCompMediaHover;
                         Render();
                     }
                     break;
@@ -726,10 +773,43 @@ namespace NotchPeninsula
                         Program.SaveSetting("StandbyDisplayMode", _selectedDisplayIndex);
                         Render();
                     }
+                    // 组合模式点击处理
+                    else if (_compositeToggleHovered)
+                    {
+                        Renderer.CompositeModeEnabled = !Renderer.CompositeModeEnabled;
+                        Program.SaveSetting("CompositeMode_Enabled", Renderer.CompositeModeEnabled ? 1 : 0);
+                        Render();
+                    }
+                    else if (_compDateTimeHovered && Renderer.CompositeModeEnabled)
+                    {
+                        Renderer.CompShowDateTime = !Renderer.CompShowDateTime;
+                        Program.SaveSetting("Composite_ShowDateTime", Renderer.CompShowDateTime ? 1 : 0);
+                        Render();
+                    }
+                    else if (_compHardwareHovered && Renderer.CompositeModeEnabled)
+                    {
+                        Renderer.CompShowHardware = !Renderer.CompShowHardware;
+                        Program.SaveSetting("Composite_ShowHardware", Renderer.CompShowHardware ? 1 : 0);
+                        Render();
+                    }
+                    else if (_compMediaHovered && Renderer.CompositeModeEnabled)
+                    {
+                        Renderer.CompShowMedia = !Renderer.CompShowMedia;
+                        Program.SaveSetting("Composite_ShowMedia", Renderer.CompShowMedia ? 1 : 0);
+                        Render();
+                    }
                     break;
 
                 case Win32.WM_DESTROY:
                     _instance = null;
+                    break;
+
+                case Win32.WM_SETCURSOR:
+                    if (_isHoveringDisabledArea && (lParam.ToInt32() & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
+                    {
+                        Win32.SetCursor(Win32.LoadCursor(IntPtr.Zero, (int)32648)); // 强制注入系统 NO (禁止) 指针
+                        return (IntPtr)1;
+                    }
                     break;
             }
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
@@ -818,40 +898,114 @@ namespace NotchPeninsula
             DrawTab(4, "关于软件", 230);
 
             // 右侧卡片内容区
-            void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered)
+            void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
             {
                 var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + yOffset, WIDTH - 20, TITLE_BAR_HEIGHT + yOffset + 62);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
 
+                _uiTextPaint.Color = disabled ? new SKColor(100, 100, 100) : SKColors.White;
                 canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + 26, _uiTextPaint);
+                _uiTextPaint.Color = SKColors.White;
+
+                _subTextPaint.Color = disabled ? new SKColor(80, 80, 80) : new SKColor(170, 170, 170);
                 canvas.DrawText(sub, 216, TITLE_BAR_HEIGHT + yOffset + 46, _subTextPaint);
+                _subTextPaint.Color = new SKColor(170, 170, 170);
 
                 float tW = 42; float tH = 20; float tX = WIDTH - 20 - 16 - tW; float tY = TITLE_BAR_HEIGHT + yOffset + 20;
                 var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
 
+                if (disabled)
+                {
+                    _dynamicStrokePaint.Color = new SKColor(80, 80, 80);
+                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                    _toggleCirclePaint.Color = new SKColor(100, 100, 100);
+                    canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                    _toggleCirclePaint.Color = SKColors.White;
+                }
+                else
+                {
+                    if (state)
+                    {
+                        _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                        canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                    }
+                    else
+                    {
+                        _dynamicStrokePaint.Color = hovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
+                        canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                    }
+
+                    if (state) canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                    else
+                    {
+                        _toggleCirclePaint.Color = hovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
+                        canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                        _toggleCirclePaint.Color = SKColors.White;
+                    }
+                }
+            }
+
+            // 行内小开关（组合模式总开关用）
+            void DrawToggleCard_Inline(float yOffset, string title, string sub, bool state, bool hovered)
+            {
+                canvas.DrawText(title, 216, yOffset + 16, _uiTextPaint);
+                canvas.DrawText(sub, 216, yOffset + 36, _subTextPaint);
+                float tW = 42; float tH = 20; float tX = WIDTH - 20 - 16 - tW; float tY = yOffset + 10;
+                var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
                 if (state)
                 {
                     _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                     canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                    canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
                 }
                 else
                 {
                     _dynamicStrokePaint.Color = hovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
                     canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                }
-
-                if (state)
-                {
-                    canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                }
-                else
-                {
                     _toggleCirclePaint.Color = hovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
                     canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
                     _toggleCirclePaint.Color = SKColors.White;
                 }
             }
+
+            // 勾选框选项
+            void DrawCheckItem(float yOffset, string label, bool isChecked, bool hovered, bool disabled)
+            {
+                float boxX = 216;
+                float boxY = yOffset;
+                float boxSize = 16f;
+                var boxRect = new SKRect(boxX, boxY, boxX + boxSize, boxY + boxSize);
+
+                if (disabled)
+                {
+                    _dynamicStrokePaint.Color = new SKColor(80, 80, 80);
+                    _dynamicFillPaint.Color = new SKColor(60, 60, 60);
+                }
+                else
+                {
+                    _dynamicStrokePaint.Color = isChecked ? new SKColor(0, 120, 212) : (hovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100));
+                    _dynamicFillPaint.Color = isChecked ? new SKColor(0, 120, 212) : SKColors.Transparent;
+                }
+
+                canvas.DrawRoundRect(boxRect, 3, 3, _dynamicFillPaint);
+                canvas.DrawRoundRect(boxRect, 3, 3, _dynamicStrokePaint);
+
+                if (isChecked)
+                {
+                    _iconPaint.Color = SKColors.White;
+                    canvas.DrawLine(boxX + 3, boxY + 8, boxX + 6, boxY + 11, _iconPaint);
+                    canvas.DrawLine(boxX + 6, boxY + 11, boxX + 13, boxY + 4, _iconPaint);
+                }
+
+                if (disabled)
+                    _uiTextPaint.Color = new SKColor(100, 100, 100);
+                else
+                    _uiTextPaint.Color = SKColors.White;
+                canvas.DrawText(label, boxX + 24, boxY + 13, _uiTextPaint);
+                _uiTextPaint.Color = SKColors.White;
+            }
+
 
             if (_selectedTab == 0)
             {
@@ -941,46 +1095,56 @@ namespace NotchPeninsula
                 var displayCardRect = new SKRect(200, displayCardY, WIDTH - 20, displayCardY + 112); // 卡片高度减半收缩
                 canvas.DrawRoundRect(displayCardRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(displayCardRect, 6, 6, _cardBorder);
+                _uiTextPaint.Color = Renderer.CompositeModeEnabled ? new SKColor(100, 100, 100) : SKColors.White;
                 canvas.DrawText("待机显示内容", 216, displayCardY + 26, _uiTextPaint);
+                _uiTextPaint.Color = SKColors.White;
+                _subTextPaint.Color = Renderer.CompositeModeEnabled ? new SKColor(80, 80, 80) : new SKColor(170, 170, 170);
                 canvas.DrawText("刘海处于待机状态时默认展示的信息", 216, displayCardY + 46, _subTextPaint);
+                _subTextPaint.Color = new SKColor(170, 170, 170);
                 void DrawDisplayOpt(int index, string name, float x, float y)
                 {
-                    bool isSelected = _selectedDisplayIndex == index;
-                    bool isHovered = _hoveredDisplayOptionIndex == index;
+                    bool isDisabled = Renderer.CompositeModeEnabled;
+                    bool isSelected = _selectedDisplayIndex == index && !isDisabled;
+                    bool isHovered = _hoveredDisplayOptionIndex == index && !isDisabled;
 
                     var optRect = new SKRect(x, y, x + 110, y + 40);
-                    _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8));
+                    _dynamicFillPaint.Color = isDisabled ? new SKColor(255, 255, 255, 3) : (isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8)));
                     canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
-                    _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : new SKColor(80, 80, 80);
+                    _dynamicStrokePaint.Color = isDisabled ? new SKColor(60, 60, 60) : (isSelected ? new SKColor(0, 120, 212) : new SKColor(80, 80, 80));
                     canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
 
                     float cx = x + 20; float cy = y + 20;
-                    _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 140, 240) : SKColors.White;
+                    _dynamicStrokePaint.Color = isDisabled ? new SKColor(100, 100, 100) : (isSelected ? new SKColor(0, 140, 240) : SKColors.White);
                     _dynamicStrokePaint.StrokeWidth = 1.5f;
 
-                    if (index == 0) // 时间
-                    {
-                        canvas.DrawCircle(cx, cy, 8, _dynamicStrokePaint);
-                        canvas.DrawLine(cx, cy, cx, cy - 4, _dynamicStrokePaint);
-                        canvas.DrawLine(cx, cy, cx + 3, cy + 3, _dynamicStrokePaint);
-                    }
-                    else if (index == 1) // 空白
-                    {
-                        canvas.DrawLine(cx - 6, cy, cx + 6, cy, _dynamicStrokePaint);
-                    }
-                    else if (index == 2) // 硬件
-                    {
-                        canvas.DrawRect(cx - 7, cy - 6, 14, 12, _dynamicStrokePaint);
-                        canvas.DrawLine(cx - 3, cy - 3, cx + 3, cy - 3, _dynamicStrokePaint);
-                    }
+                    if (index == 0) { canvas.DrawCircle(cx, cy, 8, _dynamicStrokePaint); canvas.DrawLine(cx, cy, cx, cy - 4, _dynamicStrokePaint); canvas.DrawLine(cx, cy, cx + 3, cy + 3, _dynamicStrokePaint); }
+                    else if (index == 1) { canvas.DrawLine(cx - 6, cy, cx + 6, cy, _dynamicStrokePaint); }
+                    else if (index == 2) { canvas.DrawRect(cx - 7, cy - 6, 14, 12, _dynamicStrokePaint); canvas.DrawLine(cx - 3, cy - 3, cx + 3, cy - 3, _dynamicStrokePaint); }
 
-                    _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : SKColors.White;
+                    _dynamicTextPaint.Color = isDisabled ? new SKColor(100, 100, 100) : (isSelected ? new SKColor(0, 140, 240) : SKColors.White);
                     canvas.DrawText(name, cx + 18, cy + 5, _dynamicTextPaint);
                 }
 
                 DrawDisplayOpt(2, "硬件占用", 220, displayCardY + 58);
                 DrawDisplayOpt(0, "时间日期", 340, displayCardY + 58);
                 DrawDisplayOpt(1, "空白", 460, displayCardY + 58);
+
+                // ========== 自定义组合模式卡片 ==========
+                float compositeCardY = TITLE_BAR_HEIGHT + 372;
+                var compositeCardRect = new SKRect(200, compositeCardY, WIDTH - 20, compositeCardY + 200);
+                canvas.DrawRoundRect(compositeCardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(compositeCardRect, 6, 6, _cardBorder);
+                canvas.DrawText("自定义组合模式", 216, compositeCardY + 26, _uiTextPaint);
+                canvas.DrawText("自由选择刘海内显示的功能模块", 216, compositeCardY + 46, _subTextPaint);
+
+                // 总开关
+                DrawToggleCard_Inline(compositeCardY + 62, "启用组合模式", "开启后可同时显示多个功能模块", Renderer.CompositeModeEnabled, _compositeToggleHovered);
+
+                // 子选项（坐标下移，间距从 28px 放宽至 30px）
+                DrawCheckItem(compositeCardY + 100, "时间日期", Renderer.CompShowDateTime, _compDateTimeHovered, !Renderer.CompositeModeEnabled);
+                DrawCheckItem(compositeCardY + 130, "资源占用检测", Renderer.CompShowHardware, _compHardwareHovered, !Renderer.CompositeModeEnabled);
+                DrawCheckItem(compositeCardY + 160, "媒体控制器(含频谱)", Renderer.CompShowMedia, _compMediaHovered, !Renderer.CompositeModeEnabled);
+
             }
             else if (_selectedTab == 2)
             {
@@ -1071,7 +1235,12 @@ namespace NotchPeninsula
             else if (_selectedTab == 3)
             {
                 DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
-                DrawToggleCard(84, "媒体交互方式", "开启为展开交互，关闭为直接交互", Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
+
+                bool isMediaExpDisabled = Renderer.CompositeModeEnabled;
+                DrawToggleCard(84, "媒体交互方式", isMediaExpDisabled ? "组合模式下固定为直接交互" : "开启为展开交互，关闭为直接交互",
+                    isMediaExpDisabled ? false : (Renderer.MediaInteractionMode == 1),
+                    !isMediaExpDisabled && _mediaExpToggleHovered,
+                    isMediaExpDisabled);
             }
             else if (_selectedTab == 4)
             {

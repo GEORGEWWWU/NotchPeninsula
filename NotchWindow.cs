@@ -440,7 +440,29 @@ namespace NotchPeninsula
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
                 // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
-                float expectedTargetWidth = isToastActive ? Renderer.GetToastAutoWidth() : (currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH);
+                float expectedTargetWidth;
+                if (isToastActive)
+                    expectedTargetWidth = Renderer.GetToastAutoWidth();
+                else if (Renderer.CompositeModeEnabled)
+                {
+                    // 组合模式动态计算总宽度
+                    float compWidth = 32f; // 左右边距
+                    if (Renderer.CompShowDateTime) compWidth += 105f;
+                    if (Renderer.CompShowHardware) compWidth += 150f;
+                    if (Renderer.CompShowMedia && currentActive)
+                    {
+                        float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
+                            ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
+                            : (string.IsNullOrEmpty(_media.Artist)
+                                ? Renderer.MeasureCurrentLyricWidth(_media.Title)
+                                : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f);
+                        // 精准贴合封面与文本大小
+                        compWidth += textWidth + (_media.Thumbnail != null ? 32f : 0f) + 85f;
+                    }
+                    expectedTargetWidth = Math.Max(compWidth, Renderer.STANDBY_WIDTH);
+                }
+                else
+                    expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH;
                 // 自动文本长度自适应逻辑
                 if (currentActive && !Renderer.IsMediaExpanded)
                 {
@@ -664,7 +686,7 @@ namespace NotchPeninsula
                         }
                         else
                         {
-                            if (Renderer.MediaInteractionMode == 1) // 展开模式下，未展开时整个刘海都是可点击区域
+                            if (Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
                             {
                                 float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
                                 float right = left + _currentWidth;
@@ -738,7 +760,8 @@ namespace NotchPeninsula
                         }
                         else
                         {
-                            if (Renderer.MediaInteractionMode == 0)
+                            // 放行直接交互：开启组合模式时，强制支持直接点击切歌/暂停
+                            if (Renderer.MediaInteractionMode == 0 || Renderer.CompositeModeEnabled)
                             {
                                 float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
                                 float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
@@ -764,7 +787,8 @@ namespace NotchPeninsula
                         }
 
                         // 如果没有点到按钮，且开启了展开交互，点击只负责触发展开
-                        if (!hitButtons && Renderer.MediaInteractionMode == 1)
+                        // 组合模式下直接免疫任何触发展开的指令
+                        if (!hitButtons && Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
                         {
                             Renderer.IsMediaExpanded = true;
                         }
