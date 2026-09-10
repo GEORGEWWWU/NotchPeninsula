@@ -636,7 +636,13 @@ namespace NotchPeninsula
                         _isHovered = true;
                     }
 
-                    if (_isHovered && _media.IsActive && _currentToast == null)
+                    // 如果当前有消息弹窗且鼠标悬浮，直接全局显示手型指针
+                    if (_isHovered && _currentToast != null)
+                    {
+                        _isCursorOverIcon = true;
+                    }
+
+                    else if (_isHovered && _media.IsActive && _currentToast == null)
                     {
                         int _x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int _y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
