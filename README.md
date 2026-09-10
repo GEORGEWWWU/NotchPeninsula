@@ -3,7 +3,7 @@
 <img src="./NPS_NotchPeninsula-logo.ico" alt="NotchPeninsula" width="180" />
 
 <h1>NotchPeninsula</h1>
-<p>专为 Windows 而生的刘海屏/灵动岛组件</p>
+<p>专为 Windows 而生的刘海屏/灵动岛组件，极致内存占用与性能</p>
 
 <img alt="Windows" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white" />
 <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white" />
@@ -12,10 +12,8 @@
 <img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-green.svg" />
 
 <p>
-  <a href="#-项目概览">项目概览</a> &nbsp; | &nbsp;
-  <a href="#-功能特性">功能特性</a> &nbsp; | &nbsp;
-  <a href="#-使用方式">使用方式</a> &nbsp; | &nbsp;
-  <a href="#-构建与运行">构建与运行</a> &nbsp; | &nbsp;
+  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/wiki">进阶玩法</a> &nbsp; | &nbsp;
+  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest">下载地址</a> &nbsp; | &nbsp;
   <a href="https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW&jump_from=webapi&authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87" target="_blank">交流群 1080730621</a>
 </p>
 
