@@ -12,13 +12,39 @@ public sealed class HelloPlugin : INotchPlugin
 
     public void Initialize(IPluginHost host)
     {
-        host.RegisterWidget(new HelloWidget());
+        host.RegisterWidget(new HelloWidget(host));
+        host.RegisterSettingsPage(new HelloSettingsPage());
     }
+}
+
+/// <summary>Hello 插件的设置页。</summary>
+public sealed class HelloSettingsPage : ISettingsPage
+{
+    public string Title => "Hello 演示插件";
+    public IReadOnlyList<SettingControl> Controls { get; } = new SettingControl[]
+    {
+        new ToggleSetting("ShowCheck", "显示 ✓", true),
+    };
 }
 
 /// <summary>一个自包含文本组件：验证插件 DLL 被加载并渲染。</summary>
 public sealed class HelloWidget : IWidget
 {
+    private readonly IPluginHost _host;
+    private volatile bool _showCheck;
+
+    public HelloWidget(IPluginHost host)
+    {
+        _host = host;
+        _showCheck = host.GetSetting("ShowCheck", "1") == "1";
+        // 每秒重新读取设置（演示 ScheduleRefresh；真实插件可用事件/手动触发）
+        _ = host.ScheduleRefresh(TimeSpan.FromSeconds(1), () =>
+        {
+            bool v = host.GetSetting("ShowCheck", "1") == "1";
+            if (v != _showCheck) _showCheck = v;
+        });
+    }
+
     public string Id => "hello.text";
     public string DisplayName => "Hello";
     public IDetailPage? DetailPage { get; } = new HelloDetailPage();
@@ -36,7 +62,7 @@ public sealed class HelloWidget : IWidget
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
         _paint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
-        canvas.DrawText("插件已运行 ✓", rect.Left + 16f, rect.MidY + 5f, _paint);
+        canvas.DrawText(_showCheck ? "插件已运行 ✓" : "插件已运行", rect.Left + 16f, rect.MidY + 5f, _paint);
     }
 
     public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;

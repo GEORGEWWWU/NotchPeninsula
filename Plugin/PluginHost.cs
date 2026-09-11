@@ -12,15 +12,15 @@ public sealed class PluginHost
 
     private readonly List<IWidget> _widgets = new();
     private readonly List<ISecondaryWidget> _secondaryWidgets = new();
-    private readonly Dictionary<string, ISettingsPage> _settingsPages = new();
+    private readonly List<(string PluginId, ISettingsPage Page)> _settingsPages = new();
 
     public IReadOnlyList<IWidget> Widgets => _widgets;
     public IReadOnlyList<ISecondaryWidget> SecondaryWidgets => _secondaryWidgets;
-    public IReadOnlyDictionary<string, ISettingsPage> SettingsPages => _settingsPages;
+    public IReadOnlyList<(string PluginId, ISettingsPage Page)> SettingsPages => _settingsPages;
 
     public void RegisterWidget(IWidget widget) => _widgets.Add(widget);
     public void RegisterSecondaryWidget(ISecondaryWidget widget) => _secondaryWidgets.Add(widget);
-    public void RegisterSettingsPage(ISettingsPage page) => _settingsPages[page.Title] = page;
+    public void RegisterSettingsPage(string pluginId, ISettingsPage page) => _settingsPages.Add((pluginId, page));
 
     /// <summary>为某个插件创建绑定其 Id 的宿主视图（设置持久化自动加前缀）。</summary>
     public IPluginHost CreateScopedHost(string pluginId) => new ScopedPluginHost(this, pluginId);
@@ -112,7 +112,7 @@ public sealed class ScopedPluginHost : IPluginHost
 
     public void RegisterWidget(IWidget widget) => _host.RegisterWidget(widget);
     public void RegisterSecondaryWidget(ISecondaryWidget widget) => _host.RegisterSecondaryWidget(widget);
-    public void RegisterSettingsPage(ISettingsPage page) => _host.RegisterSettingsPage(page);
+    public void RegisterSettingsPage(ISettingsPage page) => _host.RegisterSettingsPage(_pluginId, page);
 
     public RenderTheme CurrentTheme => _host.CurrentTheme;
     public void PostReminder(ReminderData reminder) => _host.PostReminder(reminder);

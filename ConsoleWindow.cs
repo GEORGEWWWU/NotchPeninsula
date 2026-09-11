@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 using System.Diagnostics;
+using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -47,6 +48,8 @@ namespace NotchPeninsula
         private bool _lyricResetHovered = false;
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
+        private int _hoveredPluginSetting = -1;
+        private readonly List<(ToggleSetting Setting, string PluginId, SKRect Rect)> _pluginToggles = new();
 
         // 显示设置
         private int _selectedDisplayIndex = 0;
@@ -477,6 +480,7 @@ namespace NotchPeninsula
                     }
 
                     int newHoveredLinkIndex = -1;
+                    int newHoveredPluginSetting = -1;
                     if (_selectedTab == 4) // 关于页
                     {
                         int yStart = TITLE_BAR_HEIGHT + 160;
@@ -487,6 +491,14 @@ namespace NotchPeninsula
                             if (x >= 305 && x <= 370) newHoveredLinkIndex = 0;      // 检测更新
                             else if (x >= 375 && x <= 440) newHoveredLinkIndex = 1; // 仓库地址
                             else if (x >= 445 && x <= 500) newHoveredLinkIndex = 2; // 开发者 (Ryen)
+                        }
+                    }
+
+                    if (_selectedTab == 6)
+                    {
+                        for (int i = 0; i < _pluginToggles.Count; i++)
+                        {
+                            if (_pluginToggles[i].Rect.Contains(x, y)) { newHoveredPluginSetting = i; break; }
                         }
                     }
 
@@ -515,7 +527,8 @@ namespace NotchPeninsula
                         newCompositeToggleHover != _compositeToggleHovered ||
                         newCompDateTimeHover != _compDateTimeHovered ||
                         newCompHardwareHover != _compHardwareHovered ||
-                        newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered
+                        newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered ||
+                        newHoveredPluginSetting != _hoveredPluginSetting
                         )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -541,6 +554,7 @@ namespace NotchPeninsula
                         _compMediaHovered = newCompMediaHover;
                         _topmostToggleHovered = newTopmostToggleHovered;
                         _passToggleHovered = newPassToggleHovered;
+                        _hoveredPluginSetting = newHoveredPluginSetting;
                         Render();
                     }
                     break;
@@ -572,6 +586,14 @@ namespace NotchPeninsula
                     else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 6 && _selectedTab != 6) { _selectedTab = 6; _dropdownOpen = false; Render(); }
+                    else if (_selectedTab == 6 && _hoveredPluginSetting != -1)
+                    {
+                        var (ptoggle, pplugin, _) = _pluginToggles[_hoveredPluginSetting];
+                        bool pcurrent = NotchWindow.PluginHostInstance.GetSetting(pplugin, ptoggle.Key, ptoggle.DefaultValue ? "1" : "0") == "1";
+                        NotchWindow.PluginHostInstance.SetSetting(pplugin, ptoggle.Key, pcurrent ? "0" : "1");
+                        Render();
+                    }
                     else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
                     else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
                     {
@@ -925,6 +947,7 @@ namespace NotchPeninsula
             DrawTab(3, "交互设置", 180);
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + 222, 160, TITLE_BAR_HEIGHT + 222, _separatorPaint);
             DrawTab(4, "关于软件", 230);
+            DrawTab(6, "插件", 270);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
@@ -1311,6 +1334,29 @@ namespace NotchPeninsula
                     _dynamicTextPaint.Color = _hoveredLinkIndex == i ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                     canvas.DrawText(links[i], currentX, startY, _dynamicTextPaint);
                     currentX += textWidth + spacing;
+                }
+            }
+            else if (_selectedTab == 6)
+            {
+                _pluginToggles.Clear();
+                float y = 12f;
+                foreach (var (pluginId, page) in NotchWindow.PluginHostInstance.SettingsPages)
+                {
+                    foreach (var control in page.Controls)
+                    {
+                        if (control is ToggleSetting toggle)
+                        {
+                            bool state = NotchWindow.PluginHostInstance.GetSetting(pluginId, toggle.Key, toggle.DefaultValue ? "1" : "0") == "1";
+                            int idx = _pluginToggles.Count;
+                            DrawToggleCard(y, toggle.Label, page.Title, state, _hoveredPluginSetting == idx);
+                            _pluginToggles.Add((toggle, pluginId, new SKRect(200, TITLE_BAR_HEIGHT + y, WIDTH - 20, TITLE_BAR_HEIGHT + y + 62)));
+                            y += 74f;
+                        }
+                    }
+                }
+                if (_pluginToggles.Count == 0)
+                {
+                    canvas.DrawText("暂无插件设置", 216, TITLE_BAR_HEIGHT + 40, _subTextPaint);
                 }
             }
             else if (_selectedTab == 5)

@@ -30,7 +30,7 @@ namespace NotchPeninsula
         float _currentVolume = 0f;
         private readonly IntPtr _hwnd;
         private readonly MediaController _media;
-        private readonly PluginHost _pluginHost = new();
+        public static readonly PluginHost PluginHostInstance = new();
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
         private readonly Timer _renderTimer;
@@ -223,7 +223,7 @@ namespace NotchPeninsula
             // 加载 plugins 目录下的插件 DLL
             try
             {
-                var plugins = PluginLoader.LoadAll(_pluginHost);
+                var plugins = PluginLoader.LoadAll(PluginHostInstance);
                 Info($"[插件] 共加载 {plugins.Count} 个插件");
             }
             catch (Exception ex)
@@ -626,7 +626,7 @@ namespace NotchPeninsula
                 _media.UpdateLyrics(); // 更新歌词
 
                 // 传入 currentHeight 和 _currentToast
-                Renderer.PluginWidgets = _pluginHost.Widgets;
+                Renderer.PluginWidgets = PluginHostInstance.Widgets;
                 Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
 
                 // 恢复原始矩阵状态
