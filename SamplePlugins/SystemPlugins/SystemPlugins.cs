@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using NotchPeninsula.Plugins;
 using SkiaSharp;
@@ -15,7 +16,7 @@ public sealed class SystemPluginsPlugin : INotchPlugin
     public void Initialize(IPluginHost host)
     {
         host.RegisterWidget(new ClockWidget());
-        host.RegisterWidget(new HardwareWidget());
+        host.RegisterWidget(new HardwareWidget(host));
         host.RegisterWidget(new MediaWidget(host));
     }
 }
@@ -102,14 +103,35 @@ public sealed class HardwareWidget : IWidget
     private static readonly SKPaint _bar = new() { IsAntialias = true };
     private static readonly string[] _pctStrs = BuildPcts();
 
-    private int _cpu, _ram;
+    private volatile int _cpu, _ram;
     private float _smoothCpu, _smoothRam;
-    private int _lastTick;
     private ulong _lastIdle, _lastSys;
+    private readonly object _histLock = new();
+    private readonly List<float> _cpuHistory = new();
+    private readonly List<float> _ramHistory = new();
+    private readonly HardwareDetailPage _detailPage;
+
+    public HardwareWidget(IPluginHost host)
+    {
+        _detailPage = new HardwareDetailPage(this);
+        // 常驻采样：每秒读一次 Win32 并推入历史，保证详情页打开时曲线连贯
+        host.ScheduleRefresh(TimeSpan.FromSeconds(1), () => SampleOnce());
+    }
+
+    internal int CpuPercent => _cpu;
+    internal int RamPercent => _ram;
+
+    internal (float[] Cpu, float[] Ram, int Count) GetHistorySnapshot()
+    {
+        lock (_histLock)
+        {
+            return (_cpuHistory.ToArray(), _ramHistory.ToArray(), _cpuHistory.Count);
+        }
+    }
 
     public string Id => "builtin.hardware";
     public string DisplayName => "系统资源";
-    public IDetailPage? DetailPage => null;
+    public IDetailPage? DetailPage => _detailPage;
 
     public float MeasureWidth(float availableHeight)
     {
@@ -123,7 +145,8 @@ public sealed class HardwareWidget : IWidget
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
-        UpdateStats();
+        _smoothCpu += (_cpu - _smoothCpu) * 0.2f;
+        _smoothRam += (_ram - _smoothRam) * 0.2f;
         byte alpha = frame.Alpha;
         _tagPaint.Color = frame.Theme.TextColor.WithAlpha(alpha);
         _tagBg.Color = frame.Theme.TextColor.WithAlpha((byte)(alpha * 0.12f));
@@ -169,12 +192,8 @@ public sealed class HardwareWidget : IWidget
             canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH), barH / 2f, barH / 2f, _bar);
     }
 
-    private void UpdateStats()
+    private void SampleOnce()
     {
-        int now = Environment.TickCount;
-        if (now - _lastTick < 1000) return;
-        _lastTick = now;
-
         var mem = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX)) };
         if (GlobalMemoryStatusEx(ref mem)) _ram = (int)mem.dwMemoryLoad;
 
@@ -191,8 +210,13 @@ public sealed class HardwareWidget : IWidget
             _lastIdle = idleV; _lastSys = sysV;
         }
 
-        _smoothCpu += (_cpu - _smoothCpu) * 0.2f;
-        _smoothRam += (_ram - _smoothRam) * 0.2f;
+        lock (_histLock)
+        {
+            _cpuHistory.Add(_cpu);
+            _ramHistory.Add(_ram);
+            if (_cpuHistory.Count > 60) _cpuHistory.RemoveAt(0);
+            if (_ramHistory.Count > 60) _ramHistory.RemoveAt(0);
+        }
     }
 
     private static string[] BuildPcts()
@@ -209,13 +233,83 @@ public sealed class HardwareWidget : IWidget
     public void OnDeactivate() { }
 }
 
-/// <summary>媒体组件（自包含 SMTC 读取，基础版：标题/艺术家/播放状态）。</summary>
+/// <summary>系统资源详情页：CPU/RAM 实时曲线（类似任务管理器性能页）。</summary>
+public sealed class HardwareDetailPage : IDetailPage
+{
+    private readonly HardwareWidget _widget;
+
+    private static readonly SKPaint _labelPaint = new()
+    {
+        TextSize = 11f, IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+    };
+    private static readonly SKPaint _fillPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+    private static readonly SKPaint _linePaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
+
+    public HardwareDetailPage(HardwareWidget widget) { _widget = widget; }
+
+    public float MeasureWidth() => 320f;
+    public float MeasureHeight() => 130f;
+
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+    {
+        var (cpu, ram, count) = _widget.GetHistorySnapshot();
+
+        float left = rect.Left + 12f;
+        float right = rect.Right - 12f;
+        float cpuTop = rect.Top + 8f;
+        float cpuBottom = rect.Top + 60f;
+        float ramTop = rect.Top + 68f;
+        float ramBottom = rect.Top + 120f;
+
+        DrawCurve(canvas, left, right, cpuTop, cpuBottom, cpu, count, $"CPU {_widget.CpuPercent}%", new SKColor(0, 140, 240), frame);
+        DrawCurve(canvas, left, right, ramTop, ramBottom, ram, count, $"RAM {_widget.RamPercent}%", new SKColor(60, 200, 120), frame);
+    }
+
+    private void DrawCurve(SKCanvas canvas, float left, float right, float top, float bottom, float[] data, int count, string label, SKColor color, WidgetFrame frame)
+    {
+        _labelPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+        canvas.DrawText(label, left, top + 8f, _labelPaint);
+
+        float chartW = right - left;
+        float chartH = bottom - top;
+        if (count < 2) return;
+
+        float stepX = chartW / 59f;
+        var line = new SKPath();
+        var area = new SKPath();
+        for (int i = 0; i < count; i++)
+        {
+            float x = right - (count - 1 - i) * stepX;
+            float v = Math.Clamp(data[i], 0f, 100f);
+            float y = bottom - (v / 100f) * chartH;
+            if (i == 0) { line.MoveTo(x, y); area.MoveTo(x, bottom); area.LineTo(x, y); }
+            else { line.LineTo(x, y); area.LineTo(x, y); }
+        }
+        area.LineTo(right, bottom);
+        area.Close();
+
+        _fillPaint.Color = color.WithAlpha(50);
+        canvas.DrawPath(area, _fillPaint);
+        _linePaint.Color = color.WithAlpha(frame.Alpha);
+        canvas.DrawPath(line, _linePaint);
+    }
+
+    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
+    public void OnAction(string? action, float x, float y) { }
+}
+
+/// <summary>媒体组件（自包含 SMTC 读取：标题/艺术家/封面/播放状态 + 播放控制）。</summary>
 public sealed class MediaWidget : IWidget
 {
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
+    private GlobalSystemMediaTransportControlsSession? _session;
     private volatile bool _active;
+    private volatile bool _playing;
     private volatile string _title = "";
     private volatile string _artist = "";
+    private volatile SKBitmap? _thumbnail;
+    private readonly MediaDetailPage _detailPage;
 
     private static readonly SKPaint _textPaint = new()
     {
@@ -225,6 +319,7 @@ public sealed class MediaWidget : IWidget
 
     public MediaWidget(IPluginHost host)
     {
+        _detailPage = new MediaDetailPage(this);
         _ = InitAsync(host);
     }
 
@@ -244,19 +339,51 @@ public sealed class MediaWidget : IWidget
     {
         try
         {
-            var session = _manager?.GetCurrentSession();
-            if (session == null) { _active = false; _title = ""; _artist = ""; return; }
-            var props = await session.TryGetMediaPropertiesAsync();
+            _session = _manager?.GetCurrentSession();
+            if (_session == null) { _active = false; _title = ""; _artist = ""; _thumbnail = null; return; }
+            var props = await _session.TryGetMediaPropertiesAsync();
             _title = props?.Title ?? "";
             _artist = props?.Artist ?? "";
             _active = !string.IsNullOrEmpty(_title) || !string.IsNullOrEmpty(_artist);
+
+            try
+            {
+                if (props?.Thumbnail != null)
+                {
+                    using var stream = await props.Thumbnail.OpenReadAsync();
+                    using var dotNetStream = stream.AsStreamForRead();
+                    var newThumb = SKBitmap.Decode(dotNetStream);
+                    var old = _thumbnail;
+                    _thumbnail = newThumb;
+                    old?.Dispose();
+                }
+                else _thumbnail = null;
+            }
+            catch { _thumbnail = null; }
+
+            var info = _session.GetPlaybackInfo();
+            _playing = info?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
         }
         catch { _active = false; }
     }
 
+    public async void TogglePlayPause()
+    {
+        var s = _session;
+        if (s == null) return;
+        if (_playing) await s.TryPauseAsync(); else await s.TryPlayAsync();
+    }
+    public async void Next() { var s = _session; if (s != null) await s.TrySkipNextAsync(); }
+    public async void Previous() { var s = _session; if (s != null) await s.TrySkipPreviousAsync(); }
+
+    internal string Title => _title;
+    internal string Artist => _artist;
+    internal bool Playing => _playing;
+    internal SKBitmap? Thumbnail => _thumbnail;
+
     public string Id => "builtin.media";
     public string DisplayName => "媒体";
-    public IDetailPage? DetailPage => null;
+    public IDetailPage? DetailPage => _detailPage;
 
     public float MeasureWidth(float availableHeight)
     {
@@ -278,4 +405,106 @@ public sealed class MediaWidget : IWidget
     public void OnRightClick() { }
     public void OnActivate(IPluginHost host) { }
     public void OnDeactivate() { }
+}
+
+/// <summary>媒体详情页：大封面 + 标题/艺术家 + 底部播放控制。</summary>
+public sealed class MediaDetailPage : IDetailPage
+{
+    private readonly MediaWidget _widget;
+
+    private static readonly SKPaint _titlePaint = new()
+    {
+        TextSize = 14.5f, IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+    };
+    private static readonly SKPaint _bodyPaint = new()
+    {
+        TextSize = 12.5f, IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI")
+    };
+    private static readonly SKPaint _iconPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+    private static readonly SKPaint _fallbackPaint = new() { Color = new SKColor(0, 120, 212), IsAntialias = true };
+    private static readonly SKPaint _hoverPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+
+    private static readonly SKPath _playPath = CreatePlayPath();
+    private static readonly SKPath _pausePath = CreatePausePath();
+    private static readonly SKPath _prevPath = CreatePrevPath();
+    private static readonly SKPath _nextPath = CreateNextPath();
+
+    public MediaDetailPage(MediaWidget widget) { _widget = widget; }
+
+    public float MeasureWidth() => 320f;
+    public float MeasureHeight() => 130f;
+
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+    {
+        float coverSize = 50f, coverX = rect.Left + 20f, coverY = rect.Top + 20f;
+        var thumb = _widget.Thumbnail;
+        if (thumb != null)
+        {
+            var coverRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
+            canvas.DrawRoundRect(coverRect, 8f, 8f, _bodyPaint);
+            canvas.Save();
+            var clip = new SKPath();
+            clip.AddRoundRect(coverRect, 8f, 8f);
+            canvas.ClipPath(clip, SKClipOperation.Intersect, true);
+            canvas.DrawBitmap(thumb, coverRect, new SKPaint { FilterQuality = SKFilterQuality.High });
+            canvas.Restore();
+        }
+        else
+        {
+            canvas.DrawRoundRect(new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize), 8f, 8f, _fallbackPaint);
+        }
+
+        float textX = coverX + coverSize + 12f;
+        _titlePaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+        _bodyPaint.Color = frame.Theme.SubTextColor.WithAlpha(frame.Alpha);
+        canvas.DrawText(_widget.Title, textX, coverY + 18f, _titlePaint);
+        canvas.DrawText(_widget.Artist, textX, coverY + 42f, _bodyPaint);
+
+        // 底部播放控制
+        float btnY = rect.Top + rect.Height - 34f;
+        float centerX = rect.Left + rect.Width / 2f;
+        _iconPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+        DrawIcon(canvas, centerX - 60f, btnY, _prevPath, 1.6f);
+        DrawIcon(canvas, centerX - 7f, btnY - 1.6f, _widget.Playing ? _pausePath : _playPath, 1.6f);
+        DrawIcon(canvas, centerX + 45f, btnY, _nextPath, 1.6f);
+    }
+
+    private void DrawIcon(SKCanvas canvas, float x, float y, SKPath path, float scale)
+    {
+        canvas.Save();
+        canvas.Translate(x, y);
+        canvas.Scale(scale);
+        canvas.DrawPath(path, _iconPaint);
+        canvas.Restore();
+    }
+
+    public WidgetHit HitTest(float x, float y, SKRect rect)
+    {
+        float centerX = rect.Width / 2f;
+        float btnY = rect.Height - 34f;
+        if (y >= btnY - 12f && y <= btnY + 30f)
+        {
+            if (x >= centerX - 75f && x <= centerX - 34f) return new WidgetHit("prev");
+            if (x >= centerX - 20f && x <= centerX + 22f) return new WidgetHit("play");
+            if (x >= centerX + 32f && x <= centerX + 75f) return new WidgetHit("next");
+        }
+        return WidgetHit.None;
+    }
+
+    public void OnAction(string? action, float x, float y)
+    {
+        switch (action)
+        {
+            case "prev": _widget.Previous(); break;
+            case "play": _widget.TogglePlayPause(); break;
+            case "next": _widget.Next(); break;
+        }
+    }
+
+    private static SKPath CreatePlayPath() { var p = new SKPath(); p.MoveTo(0, 0); p.LineTo(10, 6); p.LineTo(0, 12); p.Close(); return p; }
+    private static SKPath CreatePausePath() { var p = new SKPath(); p.AddRect(new SKRect(0, 0, 3, 12)); p.AddRect(new SKRect(6, 0, 9, 12)); return p; }
+    private static SKPath CreatePrevPath() { var p = new SKPath(); p.AddRect(new SKRect(0, 0, 2, 10)); p.MoveTo(8, 0); p.LineTo(2, 5); p.LineTo(8, 10); p.Close(); return p; }
+    private static SKPath CreateNextPath() { var p = new SKPath(); p.MoveTo(0, 0); p.LineTo(6, 5); p.LineTo(0, 10); p.Close(); p.AddRect(new SKRect(6, 0, 8, 10)); return p; }
 }

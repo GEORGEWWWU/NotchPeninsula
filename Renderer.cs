@@ -40,6 +40,7 @@ namespace NotchPeninsula
         public static IReadOnlyList<IWidget>? WidgetRow = null; // 组件行（内置 + 插件），由 NotchWindow 每帧注入
         public static IReadOnlyList<IWidget>? PluginWidgets = null; // 仅插件组件（组合模式追加用）
         public static IWidget? ActiveDetailWidget = null; // 当前展开详情的插件组件
+        public static SKRect ActiveDetailRect; // 详情页 rect（命中检测用）
         public static IReadOnlyList<WidgetLayout.Slot>? WidgetRowSlots = null; // 命中检测 rect 快照
         public static float WidgetRowTopY = 0f; // 排列时的顶部偏移（命中检测用）
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
@@ -930,8 +931,9 @@ namespace NotchPeninsula
         {
             var detail = ActiveDetailWidget?.DetailPage;
             if (detail == null) return;
+            ActiveDetailRect = new SKRect(left, 0, right, currentHeight);
             var frame = new WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, isHovered);
-            detail.Draw(canvas, new SKRect(left, 0, right, currentHeight), frame);
+            detail.Draw(canvas, ActiveDetailRect, frame);
         }
 
         // 待机：组件行（内置 + 插件，横排）

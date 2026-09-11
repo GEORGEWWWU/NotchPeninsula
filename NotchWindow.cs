@@ -860,7 +860,20 @@ namespace NotchPeninsula
                         int cy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
 
-                        Renderer.ActiveDetailWidget = null; // 左键关闭插件详情
+                        // 详情页交互：命中则执行动作，未命中则关闭
+                        if (Renderer.ActiveDetailWidget?.DetailPage is { } detail)
+                        {
+                            var drect = Renderer.ActiveDetailRect;
+                            float dx = cx - drect.Left;
+                            float dy = cy - Renderer.WidgetRowTopY;
+                            var hit = detail.HitTest(dx, dy, drect);
+                            if (hit.IsHit)
+                            {
+                                detail.OnAction(hit.Action, dx, dy);
+                                return (IntPtr)0;
+                            }
+                        }
+                        Renderer.ActiveDetailWidget = null; // 未命中，关闭详情
 
                         // 完美对齐渲染中心点，精准拦截唤醒点击
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
