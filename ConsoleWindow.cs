@@ -28,6 +28,7 @@ namespace NotchPeninsula
         private bool _isAutoStartEnabled;
         private bool _toggleHovered = false;
         private bool _toastToggleHovered = false;
+        private bool _topmostToggleHovered = false;
         // 交互设置状态
         private bool _autoHideToggleHovered = false;
         private bool _mediaExpToggleHovered = false;
@@ -353,6 +354,7 @@ namespace NotchPeninsula
                     int newHoveredStyleIndex = -1;
                     bool newToggleHovered = false;
                     bool newToastToggleHovered = false;
+                    bool newTopmostToggleHovered = false;
                     bool newMediaToggleHovered = false;
                     bool newAutoHideToggleHovered = false;
                     bool newDropdownHovered = false;
@@ -373,6 +375,9 @@ namespace NotchPeninsula
                         // 系统消息通知开关
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                             newToastToggleHovered = true;
+                        // 窗口置顶开关
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196)
+                            newTopmostToggleHovered = true;
                     }
                     else if (_selectedTab == 1) // 显示设置
                     {
@@ -489,7 +494,7 @@ namespace NotchPeninsula
 
                     if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
                         newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
-                        newToastToggleHovered != _toastToggleHovered ||
+                        newToastToggleHovered != _toastToggleHovered || newTopmostToggleHovered != _topmostToggleHovered ||
                         newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
                         newDropdownHovered != _dropdownHovered ||
                         newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
@@ -527,6 +532,7 @@ namespace NotchPeninsula
                         _compDateTimeHovered = newCompDateTimeHover;
                         _compHardwareHovered = newCompHardwareHover;
                         _compMediaHovered = newCompMediaHover;
+                        _topmostToggleHovered = newTopmostToggleHovered;
                         Render();
                     }
                     break;
@@ -664,6 +670,14 @@ namespace NotchPeninsula
                         NotchWindow.IsToastEnabled = !NotchWindow.IsToastEnabled;
                         // 保存设置
                         Program.SaveSetting("ToastEnabled", NotchWindow.IsToastEnabled ? 1 : 0);
+                        Render();
+                    }
+                    else if (_topmostToggleHovered)
+                    {
+                        NotchWindow.IsTopmostEnabled = !NotchWindow.IsTopmostEnabled;
+                        Program.SaveSetting("TopmostEnabled", NotchWindow.IsTopmostEnabled ? 1 : 0);
+                        // 直接调用底层 API 热重载层级，无需重启和重建画布
+                        Win32.SetWindowPos(NotchWindow.InstanceHandle, NotchWindow.IsTopmostEnabled ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST, 0, 0, 0, 0, Win32.SWP_NOMOVE_NOSIZE);
                         Render();
                     }
                     else if (_mediaToggleHovered)
@@ -1011,6 +1025,7 @@ namespace NotchPeninsula
             {
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
                 DrawToggleCard(84, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
+                DrawToggleCard(156, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
             }
             else if (_selectedTab == 1)
             {

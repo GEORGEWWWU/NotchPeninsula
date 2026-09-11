@@ -24,6 +24,8 @@ namespace NotchPeninsula
         public event EventHandler<WindowClickEventArgs>? WindowClicked;
 
         public static bool IsToastEnabled = true;
+        public static bool IsTopmostEnabled = true; // 默认开启置顶
+        public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         float _currentVolume = 0f;
         private readonly IntPtr _hwnd;
         private readonly MediaController _media;
@@ -137,8 +139,12 @@ namespace NotchPeninsula
             int x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
             int y = _cachedMonitorY;
 
+            // 动态判定是否追加置顶属性
+            int exStyle = Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED;
+            if (IsTopmostEnabled) exStyle |= Win32.WS_EX_TOPMOST;
+
             _hwnd = Win32.CreateWindowEx(
-                Win32.WS_EX_TOPMOST | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
+                exStyle,
                 "NotchPeninsulaClass", "Notch",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
                 x, y, _scaledWidth, _scaledHeight, // 传入缩放后的尺寸
@@ -150,6 +156,7 @@ namespace NotchPeninsula
             if (_hwnd == IntPtr.Zero)
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
             else Info($"窗口创建成功，句柄: {_hwnd}");
+            InstanceHandle = _hwnd;
             // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
             _renderTimer = new Timer(16);
             _renderTimer.Elapsed += (s, e) => RenderLoop();
