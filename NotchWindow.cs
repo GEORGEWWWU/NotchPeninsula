@@ -483,7 +483,7 @@ namespace NotchPeninsula
                 bool currentActive = _media.IsActive;
 
                 // 状态叠化透明度计算 (0.3s 平滑过渡，将媒体展开与折叠拆分为独立状态触发叠化)
-                int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0);
+                int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : (Renderer.ActiveDetailWidget != null ? 4 : 0));
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
@@ -500,8 +500,12 @@ namespace NotchPeninsula
                     // 调用渲染器中的像素级精确动态宽度计算，拒绝任何多余空白与错位
                     expectedTargetWidth = Renderer.GetCompositeWidth(_media);
                 }
+                else if (currentActive)
+                    expectedTargetWidth = Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH;
+                else if (Renderer.ActiveDetailWidget != null)
+                    expectedTargetWidth = 320f;
                 else
-                    expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH;
+                    expectedTargetWidth = Renderer.STANDBY_WIDTH;
 
                 // 自动文本长度自适应逻辑
                 // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
@@ -517,7 +521,7 @@ namespace NotchPeninsula
                     float requiredWidth = textWidth + 115f;
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
-                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
+                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : (Renderer.ActiveDetailWidget != null ? 130f : Renderer.BASE_HEIGHT));
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
@@ -663,6 +667,27 @@ namespace NotchPeninsula
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
 
+        // 右键命中插件组件时，若有详情页则打开
+        private bool TryOpenPluginDetail(int cx, int cy)
+        {
+            var slots = Renderer.PluginWidgetSlots;
+            if (slots == null) return false;
+
+            float topY = Renderer.PluginWidgetTopY;
+            foreach (var slot in slots)
+            {
+                var rect = slot.Rect;
+                var hitRect = new SKRect(rect.Left, rect.Top + topY, rect.Right, rect.Bottom + topY);
+                if (hitRect.Contains(cx, cy) && slot.Widget.DetailPage != null)
+                {
+                    Renderer.ActiveDetailWidget = slot.Widget;
+                    Debug($"[插件] 右键打开详情: {slot.Widget.Id}");
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private void RaiseWindowClicked(int x, int y, string? hitTarget = null)
         {
             WindowClicked?.Invoke(this, new WindowClickEventArgs
@@ -776,6 +801,8 @@ namespace NotchPeninsula
                         int cy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
 
+                        Renderer.ActiveDetailWidget = null; // 左键关闭插件详情
+
                         // 完美对齐渲染中心点，精准拦截唤醒点击
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
                         {
@@ -836,6 +863,12 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
+                        int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        if (TryOpenPluginDetail(rx, ry))
+                        {
+                            return (IntPtr)0; // 已打开插件详情，短路
+                        }
                         ConsoleWindow.Toggle();
                     }
                     break;

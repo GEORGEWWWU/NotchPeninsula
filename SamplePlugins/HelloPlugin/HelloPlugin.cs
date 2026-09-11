@@ -21,7 +21,7 @@ public sealed class HelloWidget : IWidget
 {
     public string Id => "hello.text";
     public string DisplayName => "Hello";
-    public IDetailPage? DetailPage => null;
+    public IDetailPage? DetailPage { get; } = new HelloDetailPage();
 
     private static readonly SKPaint _paint = new()
     {
@@ -44,4 +44,38 @@ public sealed class HelloWidget : IWidget
     public void OnRightClick() { }
     public void OnActivate(IPluginHost host) { }
     public void OnDeactivate() { }
+}
+
+/// <summary>Hello 组件的详情页，右键组件打开。</summary>
+public sealed class HelloDetailPage : IDetailPage
+{
+    private static readonly SKPaint _titlePaint = new()
+    {
+        Color = SKColors.White,
+        TextSize = 15f,
+        IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+    };
+    private static readonly SKPaint _bodyPaint = new()
+    {
+        Color = new SKColor(200, 200, 200),
+        TextSize = 12f,
+        IsAntialias = true
+    };
+
+    public float MeasureWidth() => 320f;
+    public float MeasureHeight() => 130f;
+
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+    {
+        _titlePaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+        _bodyPaint.Color = frame.Theme.SubTextColor.WithAlpha(frame.Alpha);
+
+        canvas.DrawText("Hello 详情页", rect.Left + 20f, rect.Top + 28f, _titlePaint);
+        canvas.DrawText("这是插件详情页，由右键打开", rect.Left + 20f, rect.Top + 52f, _bodyPaint);
+        canvas.DrawText("组件 ID: hello.text", rect.Left + 20f, rect.Top + 74f, _bodyPaint);
+    }
+
+    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
+    public void OnAction(string? action, float x, float y) { }
 }

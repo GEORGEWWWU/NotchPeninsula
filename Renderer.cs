@@ -38,6 +38,9 @@ namespace NotchPeninsula
         public static bool PassthroughModeEnabled = false; // 穿透模式总开关
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
         public static IReadOnlyList<IWidget>? PluginWidgets = null; // 插件组件列表，由 NotchWindow 每帧注入
+        public static IWidget? ActiveDetailWidget = null; // 当前展开详情的插件组件
+        public static IReadOnlyList<WidgetLayout.Slot>? PluginWidgetSlots = null; // 命中检测 rect 快照
+        public static float PluginWidgetTopY = 0f; // 排列时的顶部偏移（命中检测用）
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
         private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true }; // 极简线条画笔
         private static readonly SKPaint _wakeHitPaint = new SKPaint { Style = SKPaintStyle.Fill }; // 隐形物理热区底板
@@ -324,6 +327,7 @@ namespace NotchPeninsula
 
                 // 灵动岛悬浮距离顶部的 Y 轴高度 (随过渡进度平滑变化)
                 float topY = 12f * styleProgress;
+                PluginWidgetTopY = topY;
 
                 canvas.Save();
                 // 整个画布向下平移，让内部所有元素自动完美适应居中
@@ -455,6 +459,10 @@ namespace NotchPeninsula
                     if (media.IsActive)
                     {
                         DrawMediaStandalone(canvas, media, isHovered, left, right, currentWidth, currentHeight, alpha, textOffsetY, bars, btnPrevX, btnPlayX, btnNextX);
+                    }
+                    else if (ActiveDetailWidget?.DetailPage != null)
+                    {
+                        DrawPluginDetail(canvas, left, right, currentWidth, currentHeight, alpha, textOffsetY, isHovered, bars);
                     }
                     else if (PluginWidgets is { Count: > 0 })
                     {
@@ -919,12 +927,22 @@ namespace NotchPeninsula
             }
         }
 
+        // 插件详情页（展开态）
+        private static void DrawPluginDetail(SKCanvas canvas, float left, float right, float currentWidth, float currentHeight, byte alpha, float textOffsetY, bool isHovered, float[]? bars)
+        {
+            var detail = ActiveDetailWidget?.DetailPage;
+            if (detail == null) return;
+            var frame = new WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, isHovered);
+            detail.Draw(canvas, new SKRect(left, 0, right, currentHeight), frame);
+        }
+
         // 待机：插件组件（横排）
         private static void DrawPluginWidgets(SKCanvas canvas, float left, float right, float currentHeight, byte alpha, float textOffsetY, bool isHovered, float[]? bars)
         {
             if (PluginWidgets is not { Count: > 0 }) return;
             var frame = new WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, isHovered);
             var slots = WidgetLayout.ArrangeRow(PluginWidgets, left + 16f, 0, currentHeight, 12f);
+            PluginWidgetSlots = slots; // 存快照供命中检测
             foreach (var slot in slots)
             {
                 slot.Widget.Draw(canvas, slot.Rect, frame);
