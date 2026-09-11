@@ -14,6 +14,13 @@ public sealed class HelloPlugin : INotchPlugin
     {
         host.RegisterWidget(new HelloWidget(host));
         host.RegisterSettingsPage(new HelloSettingsPage());
+
+        // 5 秒后发一条提醒，演示 PostReminder（提醒页）
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            host.PostReminder(new ReminderData { Title = "Hello 插件", Body = "插件已成功加载并运行" });
+        });
     }
 }
 
@@ -23,7 +30,7 @@ public sealed class HelloSettingsPage : ISettingsPage
     public string Title => "Hello 演示插件";
     public IReadOnlyList<SettingControl> Controls { get; } = new SettingControl[]
     {
-        new ToggleSetting("ShowCheck", "显示 ✓", true),
+        new ToggleSetting("ShowCheck", "启用", true),
     };
 }
 
@@ -62,7 +69,7 @@ public sealed class HelloWidget : IWidget
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
         _paint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
-        canvas.DrawText(_showCheck ? "插件已运行 ✓" : "插件已运行", rect.Left + 16f, rect.MidY + 5f, _paint);
+        canvas.DrawText(_showCheck ? "插件已运行" : "插件已停止", rect.Left + 16f, rect.MidY + 5f, _paint);
     }
 
     public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
@@ -86,7 +93,8 @@ public sealed class HelloDetailPage : IDetailPage
     {
         Color = new SKColor(200, 200, 200),
         TextSize = 12f,
-        IsAntialias = true
+        IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI")
     };
 
     public float MeasureWidth() => 320f;

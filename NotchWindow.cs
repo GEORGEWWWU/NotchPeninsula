@@ -31,6 +31,9 @@ namespace NotchPeninsula
         private readonly IntPtr _hwnd;
         private readonly MediaController _media;
         public static readonly PluginHost PluginHostInstance = new();
+        private readonly List<IWidget> _widgetRow = new();
+        private string _cachedWidgetOrder = "";
+        private int _cachedWidgetCount = -1;
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
         private readonly Timer _renderTimer;
@@ -219,6 +222,9 @@ namespace NotchPeninsula
                 }
             };
             aud.Start();
+
+            // 订阅插件提醒（复用现有 Toast 展示流）
+            PluginHostInstance.ReminderPosted += OnToastDetected;
 
             // 加载 plugins 目录下的插件 DLL
             try
@@ -483,7 +489,7 @@ namespace NotchPeninsula
                 bool currentActive = _media.IsActive;
 
                 // 状态叠化透明度计算 (0.3s 平滑过渡，将媒体展开与折叠拆分为独立状态触发叠化)
-                int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : (Renderer.ActiveDetailWidget != null ? 4 : 0));
+                int currentDisplayState = isToastActive ? 3 : (Renderer.ActiveDetailWidget != null ? 4 : 0);
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
@@ -495,15 +501,10 @@ namespace NotchPeninsula
                 float expectedTargetWidth;
                 if (isToastActive)
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
-                else if (Renderer.CompositeModeEnabled)
-                {
-                    // 调用渲染器中的像素级精确动态宽度计算，拒绝任何多余空白与错位
-                    expectedTargetWidth = Renderer.GetCompositeWidth(_media);
-                }
-                else if (currentActive)
-                    expectedTargetWidth = Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH;
                 else if (Renderer.ActiveDetailWidget != null)
                     expectedTargetWidth = 320f;
+                else if (Renderer.WidgetRow is { Count: > 0 })
+                    expectedTargetWidth = Math.Clamp(WidgetLayout.MeasureRowWidth(Renderer.WidgetRow, Renderer.BASE_HEIGHT, 12f) + 32f, 60f, 900f);
                 else
                     expectedTargetWidth = Renderer.STANDBY_WIDTH;
 
@@ -521,7 +522,7 @@ namespace NotchPeninsula
                     float requiredWidth = textWidth + 115f;
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
-                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : (Renderer.ActiveDetailWidget != null ? 130f : Renderer.BASE_HEIGHT));
+                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (Renderer.ActiveDetailWidget != null ? 130f : Renderer.BASE_HEIGHT);
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
@@ -626,7 +627,11 @@ namespace NotchPeninsula
                 _media.UpdateLyrics(); // 更新歌词
 
                 // 传入 currentHeight 和 _currentToast
+                // 构建组件行（按 WidgetOrder 顺序，变化时才重建）
+                BuildWidgetRowIfChanged();
+                Renderer.WidgetRow = _widgetRow;
                 Renderer.PluginWidgets = PluginHostInstance.Widgets;
+
                 Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
 
                 // 恢复原始矩阵状态
@@ -667,13 +672,68 @@ namespace NotchPeninsula
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
 
+        // 读取组件顺序配置（注册表 WidgetOrder，逗号分隔的组件 ID）
+        private static string GetWidgetOrder()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                return key?.GetValue("WidgetOrder") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        // 按 WidgetOrder 顺序重建组件行（顺序或插件数变化时才重建，避免每帧分配）
+        private void BuildWidgetRowIfChanged()
+        {
+            int count = PluginHostInstance.Widgets.Count;
+            string order = GetWidgetOrder();
+            if (string.IsNullOrWhiteSpace(order))
+                order = "builtin.clock,builtin.hardware,builtin.media"; // 默认顺序
+            if (order == _cachedWidgetOrder && count == _cachedWidgetCount && _widgetRow.Count > 0) return;
+            _cachedWidgetOrder = order;
+            _cachedWidgetCount = count;
+
+            var all = new List<IWidget>();
+            foreach (var w in PluginHostInstance.Widgets) all.Add(w);
+
+            _widgetRow.Clear();
+            if (!string.IsNullOrWhiteSpace(order))
+            {
+                foreach (var id in order.Split(','))
+                {
+                    var w = all.FirstOrDefault(x => x.Id == id.Trim());
+                    if (w != null && !_widgetRow.Contains(w)) _widgetRow.Add(w);
+                }
+            }
+            foreach (var w in all)
+            {
+                if (!_widgetRow.Contains(w)) _widgetRow.Add(w);
+            }
+        }
+
+        // 移动组件顺序（direction: -1 上移, +1 下移），保存到注册表 WidgetOrder
+        public static void MoveWidget(string id, int direction)
+        {
+            var row = Renderer.WidgetRow;
+            if (row == null) return;
+            int idx = -1;
+            for (int i = 0; i < row.Count; i++) { if (row[i].Id == id) { idx = i; break; } }
+            if (idx < 0) return;
+            int newIdx = idx + direction;
+            if (newIdx < 0 || newIdx >= row.Count) return;
+
+            var list = new List<IWidget>(row);
+            (list[idx], list[newIdx]) = (list[newIdx], list[idx]);
+            Program.SaveSetting("WidgetOrder", string.Join(",", list.Select(w => w.Id)));
+        }
+
         // 右键命中插件组件时，若有详情页则打开
         private bool TryOpenPluginDetail(int cx, int cy)
         {
-            var slots = Renderer.PluginWidgetSlots;
+            var slots = Renderer.WidgetRowSlots;
             if (slots == null) return false;
-
-            float topY = Renderer.PluginWidgetTopY;
+            float topY = Renderer.WidgetRowTopY;
             foreach (var slot in slots)
             {
                 var rect = slot.Rect;
@@ -681,7 +741,6 @@ namespace NotchPeninsula
                 if (hitRect.Contains(cx, cy) && slot.Widget.DetailPage != null)
                 {
                     Renderer.ActiveDetailWidget = slot.Widget;
-                    Debug($"[插件] 右键打开详情: {slot.Widget.Id}");
                     return true;
                 }
             }

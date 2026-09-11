@@ -31,9 +31,22 @@ public sealed class PluginHost
     public IDisposable ScheduleRefresh(TimeSpan interval, Action callback)
         => new RefreshHandle(interval, callback);
 
-    // ---- 提醒（Phase 4 接线到现有 Toast 流） ----
+    // ---- 提醒（接现有 Toast 流） ----
+    public event Action<ToastData>? ReminderPosted;
+
     public void PostReminder(ReminderData reminder)
-        => Logger.Info($"[PluginHost] 提醒(占位): {reminder.Title} — {reminder.Body}");
+    {
+        var toast = new ToastData
+        {
+            AppName = "插件提醒",
+            Title = reminder.Title,
+            Body = reminder.Body,
+            ProcessName = "PluginReminder",
+            NotificationId = (uint)Environment.TickCount
+        };
+        Logger.Info($"[PluginHost] 插件提醒已投递: {reminder.Title} — {reminder.Body}");
+        ReminderPosted?.Invoke(toast);
+    }
 
     // ---- 设置持久化 ----
     public string GetSetting(string pluginId, string key, string fallback)

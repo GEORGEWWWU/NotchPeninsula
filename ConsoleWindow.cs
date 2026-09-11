@@ -50,6 +50,8 @@ namespace NotchPeninsula
         private int _hoveredLinkIndex = -1;
         private int _hoveredPluginSetting = -1;
         private readonly List<(ToggleSetting Setting, string PluginId, SKRect Rect)> _pluginToggles = new();
+        private readonly List<(string Id, int Dir, SKRect Rect)> _widgetOrderButtons = new();
+        private int _hoveredWidgetOrderBtn = -1;
 
         // 显示设置
         private int _selectedDisplayIndex = 0;
@@ -304,6 +306,7 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 2; // 4. 媒体设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 180 && y <= TITLE_BAR_HEIGHT + 216) newHoveredTab = 3; // 5. 交互设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 4; // 6. 关于软件
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 270 && y <= TITLE_BAR_HEIGHT + 306) newHoveredTab = 6; // 7. 插件
 
                     int newHoveredTheme = -1;
                     int newHoveredOpacityIndex = -1;
@@ -500,6 +503,16 @@ namespace NotchPeninsula
                         {
                             if (_pluginToggles[i].Rect.Contains(x, y)) { newHoveredPluginSetting = i; break; }
                         }
+                        int newOrderBtn = -1;
+                        for (int i = 0; i < _widgetOrderButtons.Count; i++)
+                        {
+                            if (_widgetOrderButtons[i].Rect.Contains(x, y)) { newOrderBtn = i; break; }
+                        }
+                        if (newOrderBtn != _hoveredWidgetOrderBtn)
+                        {
+                            _hoveredWidgetOrderBtn = newOrderBtn;
+                            Render();
+                        }
                     }
 
                     bool newIsHoveringDisabledArea = false;
@@ -592,6 +605,12 @@ namespace NotchPeninsula
                         var (ptoggle, pplugin, _) = _pluginToggles[_hoveredPluginSetting];
                         bool pcurrent = NotchWindow.PluginHostInstance.GetSetting(pplugin, ptoggle.Key, ptoggle.DefaultValue ? "1" : "0") == "1";
                         NotchWindow.PluginHostInstance.SetSetting(pplugin, ptoggle.Key, pcurrent ? "0" : "1");
+                        Render();
+                    }
+                    else if (_selectedTab == 6 && _hoveredWidgetOrderBtn != -1)
+                    {
+                        var (oid, odir, _) = _widgetOrderButtons[_hoveredWidgetOrderBtn];
+                        NotchWindow.MoveWidget(oid, odir);
                         Render();
                     }
                     else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
@@ -1338,8 +1357,40 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 6)
             {
+                // ---- 组件顺序 ----
+                _widgetOrderButtons.Clear();
+                canvas.DrawText("组件顺序", 216, TITLE_BAR_HEIGHT + 28, _uiTextPaint);
+                float wy = TITLE_BAR_HEIGHT + 46;
+                var row = Renderer.WidgetRow;
+                if (row != null)
+                {
+                    for (int i = 0; i < row.Count; i++)
+                    {
+                        var w = row[i];
+                        canvas.DrawRoundRect(new SKRect(200, wy, WIDTH - 20, wy + 32), 4, 4, _cardBg);
+                        canvas.DrawText(w.DisplayName, 216, wy + 21, _uiTextPaint);
+
+                        var upRect = new SKRect(WIDTH - 88, wy + 6, WIDTH - 60, wy + 26);
+                        var downRect = new SKRect(WIDTH - 56, wy + 6, WIDTH - 28, wy + 26);
+                        _widgetOrderButtons.Add((w.Id, -1, upRect));
+                        _widgetOrderButtons.Add((w.Id, 1, downRect));
+                        int upIdx = _widgetOrderButtons.Count - 2;
+                        int downIdx = _widgetOrderButtons.Count - 1;
+
+                        _dynamicFillPaint.Color = _hoveredWidgetOrderBtn == upIdx ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 8);
+                        canvas.DrawRoundRect(upRect, 4, 4, _dynamicFillPaint);
+                        _dynamicFillPaint.Color = _hoveredWidgetOrderBtn == downIdx ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 8);
+                        canvas.DrawRoundRect(downRect, 4, 4, _dynamicFillPaint);
+                        canvas.DrawText("▲", upRect.Left + 5, upRect.Top + 16, _uiTextPaint);
+                        canvas.DrawText("▼", downRect.Left + 5, downRect.Top + 16, _uiTextPaint);
+
+                        wy += 40;
+                    }
+                }
+
+                // ---- 插件设置 ----
                 _pluginToggles.Clear();
-                float y = 12f;
+                float ty = wy + 6f - TITLE_BAR_HEIGHT;
                 foreach (var (pluginId, page) in NotchWindow.PluginHostInstance.SettingsPages)
                 {
                     foreach (var control in page.Controls)
@@ -1348,15 +1399,15 @@ namespace NotchPeninsula
                         {
                             bool state = NotchWindow.PluginHostInstance.GetSetting(pluginId, toggle.Key, toggle.DefaultValue ? "1" : "0") == "1";
                             int idx = _pluginToggles.Count;
-                            DrawToggleCard(y, toggle.Label, page.Title, state, _hoveredPluginSetting == idx);
-                            _pluginToggles.Add((toggle, pluginId, new SKRect(200, TITLE_BAR_HEIGHT + y, WIDTH - 20, TITLE_BAR_HEIGHT + y + 62)));
-                            y += 74f;
+                            DrawToggleCard(ty, toggle.Label, page.Title, state, _hoveredPluginSetting == idx);
+                            _pluginToggles.Add((toggle, pluginId, new SKRect(200, TITLE_BAR_HEIGHT + ty, WIDTH - 20, TITLE_BAR_HEIGHT + ty + 62)));
+                            ty += 74f;
                         }
                     }
                 }
                 if (_pluginToggles.Count == 0)
                 {
-                    canvas.DrawText("暂无插件设置", 216, TITLE_BAR_HEIGHT + 40, _subTextPaint);
+                    canvas.DrawText("暂无插件设置", 216, wy + 20, _subTextPaint);
                 }
             }
             else if (_selectedTab == 5)

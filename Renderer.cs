@@ -37,10 +37,11 @@ namespace NotchPeninsula
         public static bool CompShowMedia { get; set; } = true;     // 显示媒体控制器(含频谱)
         public static bool PassthroughModeEnabled = false; // 穿透模式总开关
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
-        public static IReadOnlyList<IWidget>? PluginWidgets = null; // 插件组件列表，由 NotchWindow 每帧注入
+        public static IReadOnlyList<IWidget>? WidgetRow = null; // 组件行（内置 + 插件），由 NotchWindow 每帧注入
+        public static IReadOnlyList<IWidget>? PluginWidgets = null; // 仅插件组件（组合模式追加用）
         public static IWidget? ActiveDetailWidget = null; // 当前展开详情的插件组件
-        public static IReadOnlyList<WidgetLayout.Slot>? PluginWidgetSlots = null; // 命中检测 rect 快照
-        public static float PluginWidgetTopY = 0f; // 排列时的顶部偏移（命中检测用）
+        public static IReadOnlyList<WidgetLayout.Slot>? WidgetRowSlots = null; // 命中检测 rect 快照
+        public static float WidgetRowTopY = 0f; // 排列时的顶部偏移（命中检测用）
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
         private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true }; // 极简线条画笔
         private static readonly SKPaint _wakeHitPaint = new SKPaint { Style = SKPaintStyle.Fill }; // 隐形物理热区底板
@@ -321,13 +322,10 @@ namespace NotchPeninsula
 
                 float left = (WINDOW_WIDTH - currentWidth) / 2f;
                 float right = left + currentWidth;
-                int btnPrevX = (int)right - 90;
-                int btnPlayX = (int)right - 60;
-                int btnNextX = (int)right - 30;
 
                 // 灵动岛悬浮距离顶部的 Y 轴高度 (随过渡进度平滑变化)
                 float topY = 12f * styleProgress;
-                PluginWidgetTopY = topY;
+                WidgetRowTopY = topY;
 
                 canvas.Save();
                 // 整个画布向下平移，让内部所有元素自动完美适应居中
@@ -448,35 +446,16 @@ namespace NotchPeninsula
                     }
                 }
 
-                // ---------------- [ 自定义组合模式 ] ----------------
-                if (CompositeModeEnabled)
+                // ---------------- [ 插件详情页（优先级最高） ] ----------------
+                if (ActiveDetailWidget?.DetailPage != null)
                 {
-                    DrawComposite(canvas, media, isHovered, left, right, currentHeight, alpha, textOffsetY, bars, btnPrevX, btnPlayX, btnNextX);
+                    DrawPluginDetail(canvas, left, right, currentWidth, currentHeight, alpha, textOffsetY, isHovered, bars);
                 }
-                else
+                // ---------------- [ 统一组件行 ] ----------------
+                else if (WidgetRow is { Count: > 0 })
                 {
-                    // 拆分绘制逻辑
-                    if (media.IsActive)
-                    {
-                        DrawMediaStandalone(canvas, media, isHovered, left, right, currentWidth, currentHeight, alpha, textOffsetY, bars, btnPrevX, btnPlayX, btnNextX);
-                    }
-                    else if (ActiveDetailWidget?.DetailPage != null)
-                    {
-                        DrawPluginDetail(canvas, left, right, currentWidth, currentHeight, alpha, textOffsetY, isHovered, bars);
-                    }
-                    else if (PluginWidgets is { Count: > 0 })
-                    {
-                        DrawPluginWidgets(canvas, left, right, currentHeight, alpha, textOffsetY, isHovered, bars);
-                    }
-                    else if (StandbyDisplayMode == 0)
-                    {
-                        DrawClock(canvas, left, right, currentHeight, alpha, textOffsetY);
-                    }
-                    else if (StandbyDisplayMode == 2) // 硬件占用检测渲染
-                    {
-                        DrawHardwareStandalone(canvas, left, currentWidth, currentHeight, alpha, textOffsetY);
-                    }
-                } // 硬件占用检测 if 结束的大括号
+                    DrawWidgetRow(canvas, left, right, currentHeight, alpha, textOffsetY, isHovered, bars);
+                }
 
                 // === 下方原本旧版残留的 _wakePath 绘制代码已被彻底删除 ===
 
@@ -650,6 +629,25 @@ namespace NotchPeninsula
                         canvas.DrawRoundRect(new SKRect(spectrumX + i * (barWidth + spacing), y, spectrumX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
                     }
                 }
+
+                // 推进 currentX 越过媒体文本，供插件追加定位（媒体控件/频谱右对齐，不受影响）
+                currentX += (media.Thumbnail != null ? 32f : 0f) + _textPaint.MeasureText(_cachedMediaDisplay) + 16f;
+            }
+
+            // 4. 插件组件（追加到组合模式行尾）
+            if (PluginWidgets is { Count: > 0 })
+            {
+                var frame = new WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, isHovered);
+                var pluginSlots = new List<WidgetLayout.Slot>(PluginWidgets.Count);
+                foreach (var w in PluginWidgets)
+                {
+                    float ww = w.MeasureWidth(currentHeight);
+                    var rect = new SKRect(currentX, 0, currentX + ww, currentHeight);
+                    w.Draw(canvas, rect, frame);
+                    pluginSlots.Add(new WidgetLayout.Slot(w, rect));
+                    currentX += ww + 12f;
+                }
+                WidgetRowSlots = pluginSlots; // 供右键命中检测
             }
         }
 
@@ -936,16 +934,149 @@ namespace NotchPeninsula
             detail.Draw(canvas, new SKRect(left, 0, right, currentHeight), frame);
         }
 
-        // 待机：插件组件（横排）
-        private static void DrawPluginWidgets(SKCanvas canvas, float left, float right, float currentHeight, byte alpha, float textOffsetY, bool isHovered, float[]? bars)
+        // 待机：组件行（内置 + 插件，横排）
+        private static void DrawWidgetRow(SKCanvas canvas, float left, float right, float currentHeight, byte alpha, float textOffsetY, bool isHovered, float[]? bars)
         {
-            if (PluginWidgets is not { Count: > 0 }) return;
+            if (WidgetRow is not { Count: > 0 }) return;
             var frame = new WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, isHovered);
-            var slots = WidgetLayout.ArrangeRow(PluginWidgets, left + 16f, 0, currentHeight, 12f);
-            PluginWidgetSlots = slots; // 存快照供命中检测
+            var slots = WidgetLayout.ArrangeRow(WidgetRow, left + 16f, 0, currentHeight, 12f);
+            WidgetRowSlots = slots; // 存快照供命中检测
             foreach (var slot in slots)
             {
                 slot.Widget.Draw(canvas, slot.Rect, frame);
+            }
+        }
+
+        // 时钟紧凑宽度（行内）
+        public static float MeasureClockWidth() => _cachedTimeWidth + 12f + _cachedDateWidth;
+
+        // 时钟紧凑绘制（行内，时间+日期相邻）
+        public static void DrawClockCompact(SKCanvas canvas, SKRect rect, byte alpha)
+        {
+            _timePaint.Color = _currentTextColor.WithAlpha(alpha);
+            _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
+            float baselineY = rect.MidY + 5f;
+            canvas.DrawText(_cachedTimeStr, rect.Left, baselineY, _timePaint);
+            canvas.DrawText(_cachedDateStr, rect.Left + _cachedTimeWidth + 12f, baselineY, _datePaint);
+        }
+
+        // 硬件紧凑宽度（行内）
+        public static float MeasureHardwareWidth()
+        {
+            float cpuLabelW = _tagTextPaint.MeasureText("CPU");
+            float ramLabelW = _tagTextPaint.MeasureText("RAM");
+            float pctW = _textPaint.MeasureText("90%");
+            float cpuTagW = cpuLabelW + 6f;
+            float ramTagW = ramLabelW + 6f;
+            float cpuGroupW = cpuTagW + 4f + pctW;
+            float ramGroupW = ramTagW + 4f + pctW;
+            return cpuGroupW + 16f + ramGroupW;
+        }
+
+        // 硬件紧凑绘制（行内）
+        public static void DrawHardwareCompact(SKCanvas canvas, SKRect rect, byte alpha)
+        {
+            UpdateHardwareStats();
+            _tagTextPaint.Color = _currentTextColor.WithAlpha(alpha);
+            _tagBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.12f));
+            _barPaint.Color = _currentTextColor.WithAlpha(alpha);
+            _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.20f));
+            _tagTextPaint.Typeface = _boldTypeface;
+
+            float centerY = rect.MidY;
+            float textBaseline = centerY - 1f;
+            float barTop = centerY + 9f;
+            float barH = 3.5f;
+            float tagPadX = 3f;
+            float tagPadY = 1.5f;
+            float tagRadius = 3.5f;
+            float gapLabelPct = 4f;
+            float gapCpuRam = 16f;
+
+            string cpuLabel = "CPU";
+            string ramLabel = "RAM";
+            string cpuPct = _pctStrs![_cpuUsage];
+            string ramPct = _pctStrs![_ramUsage];
+            float cpuLabelW = _tagTextPaint.MeasureText(cpuLabel);
+            float ramLabelW = _tagTextPaint.MeasureText(ramLabel);
+            float fixedPctW = _textPaint.MeasureText("90%");
+            float cpuPctW = fixedPctW;
+            float ramPctW = fixedPctW;
+            float cpuTagW = cpuLabelW + tagPadX * 2f;
+            float ramTagW = ramLabelW + tagPadX * 2f;
+            float cpuGroupW = cpuTagW + gapLabelPct + cpuPctW;
+            float ramGroupW = ramTagW + gapLabelPct + ramPctW;
+
+            float cpuX = rect.Left;
+            var cpuTagRect = new SKRect(cpuX, textBaseline - 10f - tagPadY, cpuX + cpuTagW, textBaseline + 2.5f + tagPadY);
+            canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
+            canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
+            canvas.DrawText(cpuPct, cpuTagRect.Right + gapLabelPct, textBaseline, _textPaint);
+            canvas.DrawRoundRect(new SKRect(cpuX, barTop, cpuX + cpuGroupW, barTop + barH), barH / 2f, barH / 2f, _barBgPaint);
+            float cpuFillW = cpuGroupW * (_smoothCpuUsage / 100f);
+            if (cpuFillW > 0.5f)
+                canvas.DrawRoundRect(new SKRect(cpuX, barTop, cpuX + cpuFillW, barTop + barH), barH / 2f, barH / 2f, _barPaint);
+
+            float ramX = rect.Left + cpuGroupW + gapCpuRam;
+            var ramTagRect = new SKRect(ramX, textBaseline - 10f - tagPadY, ramX + ramTagW, textBaseline + 2.5f + tagPadY);
+            canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
+            canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
+            canvas.DrawText(ramPct, ramTagRect.Right + gapLabelPct, textBaseline, _textPaint);
+            canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramGroupW, barTop + barH), barH / 2f, barH / 2f, _barBgPaint);
+            float ramFillW = ramGroupW * (_smoothRamUsage / 100f);
+            if (ramFillW > 0.5f)
+                canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH), barH / 2f, barH / 2f, _barPaint);
+        }
+
+        // 媒体紧凑宽度（行内，无媒体时 0）
+        public static float MeasureMediaWidth(MediaController media)
+        {
+            if (media == null || !media.IsActive) return 0f;
+            float thumbW = media.Thumbnail != null ? 32f : 0f;
+            float textW = _textPaint.MeasureText(_cachedMediaDisplay);
+            return thumbW + textW + 12f + 21.2f;
+        }
+
+        // 媒体紧凑绘制（行内：封面缩略图 + 文字 + 频谱）
+        public static void DrawMediaCompact(SKCanvas canvas, MediaController media, SKRect rect, byte alpha, float[]? bars)
+        {
+            float textY = (rect.Height - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f;
+            float textX = rect.Left;
+            if (media.Thumbnail != null)
+            {
+                float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (rect.Height - thumbSize) / 2f;
+                var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
+                canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
+                canvas.Save();
+                _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
+                canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                canvas.Restore();
+                textX += thumbSize + 10;
+            }
+
+            bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+            if (_lyricAnimProgress < 1f && isLyricDisplay)
+            {
+                float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
+                if (!string.IsNullOrEmpty(_prevLyric))
+                    DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                _textPaint.Color = _currentTextColor.WithAlpha(alpha);
+            }
+            else
+            {
+                DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+            }
+
+            if (bars != null)
+            {
+                float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = rect.Right - totalBarWidth;
+                for (int i = 0; i < 5; i++)
+                {
+                    float h = Math.Max(2f, bars[i] * maxH); float y = (rect.Height - h) / 2f;
+                    canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+                }
             }
         }
 
@@ -1208,6 +1339,17 @@ namespace NotchPeninsula
 
                 width += thumbW + textWidth + gapBeforeSpectrum + spectrumW;
                 hasPrev = true;
+            }
+
+            // 4. 插件组件宽度
+            if (PluginWidgets is { Count: > 0 })
+            {
+                foreach (var w in PluginWidgets)
+                {
+                    if (hasPrev) width += 16f;
+                    width += w.MeasureWidth(BASE_HEIGHT);
+                    hasPrev = true;
+                }
             }
 
             width += 10f; // 加上固定的右侧边距

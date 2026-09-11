@@ -55,7 +55,7 @@ public static class PluginLoader
                 // 4. 初始化，并绑定该插件自己的 Id（设置持久化自动加前缀）
                 plugin.Initialize(host.CreateScopedHost(plugin.Id));
                 loaded.Add(plugin);
-                Logger.Info($"[PluginLoader] 已加载插件: {plugin.Id} ({plugin.DisplayName})");
+                Logger.Info($"[PluginLoader] 已加载插件: {plugin.Id} ({plugin.DisplayName}), 设置页={host.SettingsPages.Count}");
             }
             catch (Exception ex)
             {
