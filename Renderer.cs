@@ -1,4 +1,5 @@
 using SkiaSharp;
+using NotchPeninsula.Plugins;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -36,6 +37,7 @@ namespace NotchPeninsula
         public static bool CompShowMedia { get; set; } = true;     // 显示媒体控制器(含频谱)
         public static bool PassthroughModeEnabled = false; // 穿透模式总开关
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
+        public static IReadOnlyList<IWidget>? PluginWidgets = null; // 插件组件列表，由 NotchWindow 每帧注入
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
         private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true }; // 极简线条画笔
         private static readonly SKPaint _wakeHitPaint = new SKPaint { Style = SKPaintStyle.Fill }; // 隐形物理热区底板
@@ -111,6 +113,14 @@ namespace NotchPeninsula
             _tagBgPaint.Color = _currentTextColor.WithAlpha(25);  // 浅色半透明背景标签
             _barBgPaint.Color = _currentTextColor.WithAlpha(30);   // 未填充进度条的半透明纯色底槽
         }
+
+        // 暴露当前主题快照给插件层（Phase 1 桥接）
+        public static Plugins.RenderTheme GetCurrentTheme() => new(
+            _currentTextColor,
+            _currentSubTextColor,
+            _bgPaint.Color,
+            GLOBAL_DPI,
+            NOTCH_BOTTOM_RADIUS);
 
         // 动态计算最大边界，防止因刘海变大导致出界
         // 将透明原生窗口的基础画布拓宽至 1200f，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
@@ -375,100 +385,7 @@ namespace NotchPeninsula
                 // ---------------- [ Toast 消息通知 ] ----------------
                 if (toast != null)
                 {
-                    if (_lastToastId != toast.NotificationId)
-                    {
-                        _lastToastId = toast.NotificationId;
-                        _cachedToastSender = !string.IsNullOrEmpty(toast.Title) ? toast.Title : (!string.IsNullOrEmpty(toast.AppName) ? toast.AppName : "通知");
-                        _cachedToastBody = toast.Body ?? "";
-
-                        // 只在接收到新消息时分配一次内存
-                        BuildTextRuns(_cachedToastSender, _titlePaint, _boldTypeface, _cachedToastSenderRuns, out _cachedToastTitleWidth);
-                        BuildTextRuns(_cachedToastBody, _bodyPaint, _normalTypeface, _cachedToastBodyRuns, out _cachedToastBodyWidth);
-                    }
-
-                    float iconSize = 28f;
-                    float toastIconX = left + 14f;
-                    float toastIconY = (currentHeight - iconSize) / 2f;
-                    var iconRect = new SKRect(toastIconX, toastIconY, toastIconX + iconSize, toastIconY + iconSize);
-
-                    EnsureIconsLoaded();
-                    SKBitmap? targetIcon = null;
-
-                    if (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
-                        toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase))
-                    {
-                        targetIcon = _qqIcon;
-                    }
-                    targetIcon ??= _defaultToastIcon;
-
-                    // 直接绘制位图，逻辑极其精简
-                    if (targetIcon != null)
-                    {
-                        canvas.Save();
-                        _clipPath.Rewind();
-                        _clipPath.AddRoundRect(iconRect, 4, 4);
-                        canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                        canvas.DrawBitmap(targetIcon, iconRect, _highQualitySampling);
-                        canvas.Restore();
-                    }
-                    else
-                    {
-                        var defaultAppIcon = GetDefaultAppIcon();
-                        if (defaultAppIcon != null)
-                        {
-                            canvas.Save();
-                            _clipPath.Rewind();
-                            _clipPath.AddRoundRect(iconRect, 4, 4);
-                            canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                            canvas.DrawBitmap(defaultAppIcon, iconRect, _highQualitySampling);
-                            canvas.Restore();
-                        }
-                        else
-                        {
-                            canvas.DrawRoundRect(iconRect, 4, 4, _fallbackIconPaint);
-                        }
-                    }
-
-                    float toastTextX = toastIconX + iconSize + 10f;
-                    float toastMaxTextRight = right - 16f;
-
-                    float textSpacing = 5f;
-                    float totalTextHeight = 13.5f + 11.5f + textSpacing;
-                    float toastTextY = (currentHeight - totalTextHeight) / 2f;
-
-                    float line1Y = toastTextY + 11.5f;
-                    float line2Y = line1Y + 13.5f + textSpacing;
-
-                    // 渲染标题：自动在常规字体与 Emoji 字体间热切换
-                    foreach (var run in _cachedToastSenderRuns)
-                    {
-                        _titlePaint.Typeface = run.IsEmoji ? _emojiTypeface : _boldTypeface;
-                        canvas.DrawText(run.Text, toastTextX + run.X, line1Y, _titlePaint);
-                    }
-                    _titlePaint.Typeface = _boldTypeface; // 重置
-
-                    // 渲染内容主体
-                    foreach (var run in _cachedToastBodyRuns)
-                    {
-                        _bodyPaint.Typeface = run.IsEmoji ? _emojiTypeface : _normalTypeface;
-                        canvas.DrawText(run.Text, toastTextX + run.X, line2Y, _bodyPaint);
-                    }
-                    _bodyPaint.Typeface = _normalTypeface; // 重置
-
-                    if ((toastTextX + _cachedToastTitleWidth > toastMaxTextRight) || (toastTextX + _cachedToastBodyWidth > toastMaxTextRight))
-                    {
-                        float fadeWidth = 15f;
-                        float fadeStart = toastMaxTextRight - fadeWidth;
-
-                        canvas.Save();
-                        canvas.Translate(fadeStart, 0);
-                        canvas.Scale(fadeWidth, currentHeight);
-                        canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                        canvas.Restore();
-
-                        canvas.DrawRect(toastMaxTextRight, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-                    }
-
+                    DrawToast(canvas, toast, left, right, currentHeight);
                     canvas.Restore();
                     canvas.Restore();
                     canvas.Restore();
@@ -530,412 +447,26 @@ namespace NotchPeninsula
                 // ---------------- [ 自定义组合模式 ] ----------------
                 if (CompositeModeEnabled)
                 {
-                    float currentX = left + 16f;
-                    float centerY = currentHeight / 2f + textOffsetY;
-
-                    // 1. 时间日期模块
-                    if (CompShowDateTime)
-                    {
-                        _timePaint.Color = _currentTextColor.WithAlpha(alpha);
-                        _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
-                        float timeBaselineY = centerY + 5f;
-                        canvas.DrawText(_cachedTimeStr, currentX, timeBaselineY, _timePaint);
-                        float dateX = currentX + _cachedTimeWidth + 12f;
-                        canvas.DrawText(_cachedDateStr, dateX, timeBaselineY, _datePaint);
-                        currentX = dateX + _cachedDateWidth + 16f;
-                    }
-
-                    // 2. 硬件占用模块
-                    if (CompShowHardware)
-                    {
-                        UpdateHardwareStats();
-                        _tagTextPaint.Color = _currentTextColor.WithAlpha(alpha);
-                        _tagBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.12f));
-                        _barPaint.Color = _currentTextColor.WithAlpha(alpha);
-                        _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.20f));
-                        _tagTextPaint.Typeface = _boldTypeface;
-
-                        float textBaseline = centerY - 1f;
-                        float barTop = centerY + 9f;
-                        float barH = 3.5f;
-                        float tagPadX = 3f;
-                        float tagPadY = 1.5f;
-                        float tagRadius = 3.5f;
-                        float gapLabelPct = 4f;
-                        float gapCpuRam = 16f;
-
-                        string cpuLabel = "CPU";
-                        string ramLabel = "RAM";
-                        string cpuPct = _pctStrs![_cpuUsage];
-                        string ramPct = _pctStrs![_ramUsage];
-                        // 固定资源占用文本最大宽度，防止右侧元素排版跟着抖动
-                        float cpuLabelW = _tagTextPaint.MeasureText(cpuLabel);
-                        float ramLabelW = _tagTextPaint.MeasureText(ramLabel);
-                        float fixedPctW = _textPaint.MeasureText("90%");
-                        float cpuPctW = fixedPctW;
-                        float ramPctW = fixedPctW;
-                        float cpuTagW = cpuLabelW + tagPadX * 2f;
-                        float ramTagW = ramLabelW + tagPadX * 2f;
-                        float cpuGroupW = cpuTagW + gapLabelPct + cpuPctW;
-                        float ramGroupW = ramTagW + gapLabelPct + ramPctW;
-
-                        float cpuX = currentX;
-                        var cpuTagRect = new SKRect(
-                            cpuX, textBaseline - 10f - tagPadY,
-                            cpuX + cpuTagW, textBaseline + 2.5f + tagPadY);
-                        canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
-                        canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
-                        canvas.DrawText(cpuPct, cpuTagRect.Right + gapLabelPct, textBaseline, _textPaint);
-                        canvas.DrawRoundRect(new SKRect(cpuX, barTop, cpuX + cpuGroupW, barTop + barH),
-                            barH / 2f, barH / 2f, _barBgPaint);
-                        float cpuFillW = cpuGroupW * (_smoothCpuUsage / 100f);
-                        if (cpuFillW > 0.5f)
-                            canvas.DrawRoundRect(new SKRect(cpuX, barTop, cpuX + cpuFillW, barTop + barH),
-                                barH / 2f, barH / 2f, _barPaint);
-
-                        float ramX = currentX + cpuGroupW + gapCpuRam;
-                        var ramTagRect = new SKRect(
-                            ramX, textBaseline - 10f - tagPadY,
-                            ramX + ramTagW, textBaseline + 2.5f + tagPadY);
-                        canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
-                        canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
-                        canvas.DrawText(ramPct, ramTagRect.Right + gapLabelPct, textBaseline, _textPaint);
-                        canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramGroupW, barTop + barH),
-                            barH / 2f, barH / 2f, _barBgPaint);
-                        float ramFillW = ramGroupW * (_smoothRamUsage / 100f);
-                        if (ramFillW > 0.5f)
-                            canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH),
-                                barH / 2f, barH / 2f, _barPaint);
-
-                        currentX = ramX + ramGroupW + 16f;
-                    }
-
-                    // 3. 媒体控制器模块（含频谱，媒体激活时才显示）
-                    if (CompShowMedia && media.IsActive)
-                    {
-                        float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f;
-                        float textX = currentX;
-
-                        if (media.Thumbnail != null)
-                        {
-                            float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
-                            var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
-                            canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
-                            canvas.Save();
-                            _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
-                            canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                            canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                            canvas.Restore();
-                            textX += thumbSize + 10;
-                        }
-
-                        bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
-                        if (_lyricAnimProgress < 1f && isLyricDisplay)
-                        {
-                            float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
-                            if (!string.IsNullOrEmpty(_prevLyric))
-                                DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
-                            DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
-                            _textPaint.Color = _currentTextColor.WithAlpha(alpha);
-                        }
-                        else
-                        {
-                            DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
-                        }
-
-                        // 组合模式媒体控件
-                        float rightOccupiedWidth = isHovered ? 95f : 45f;
-                        float maskEnd = right - rightOccupiedWidth + 5f;
-                        float maskStart = maskEnd - 15f;
-                        canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                        canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
-                        if (isHovered)
-                        {
-                            float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
-                            DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
-                        }
-                        else if (bars != null)
-                        {
-                            float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f;
-                            float spectrumX = right - 16f - totalBarWidth;
-                            for (int i = 0; i < 5; i++)
-                            {
-                                float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
-                                canvas.DrawRoundRect(new SKRect(spectrumX + i * (barWidth + spacing), y, spectrumX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
-                            }
-                        }
-                    }
+                    DrawComposite(canvas, media, isHovered, left, right, currentHeight, alpha, textOffsetY, bars, btnPrevX, btnPlayX, btnNextX);
                 }
                 else
                 {
                     // 拆分绘制逻辑
                     if (media.IsActive)
                     {
-                        _textPaint.Color = _currentTextColor.WithAlpha(alpha);
-
-                        if (IsMediaExpanded && currentHeight > 60f) // 展开模式布局
-                        {
-                            float coverSize = 50f; // 1. 封面缩小 10px
-                            float coverX = left + 20f;
-                            float coverY = 20f;    // 封面微调光学居中
-
-                            // 封面
-                            if (media.Thumbnail != null)
-                            {
-                                var thumbRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
-                                canvas.DrawRoundRect(thumbRect, 8f, 8f, _shadowPaint);
-                                canvas.Save();
-                                _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, 8f, 8f);
-                                canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                                canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                                canvas.Restore();
-                            }
-                            else
-                            {
-                                canvas.DrawRoundRect(new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize), 8f, 8f, _fallbackIconPaint);
-                            }
-
-                            // 双行文字
-                            float textStartX = coverX + coverSize + 12f;
-                            _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
-                            _titlePaint.TextSize = 14.5f;
-                            canvas.DrawText(_lastMediaTitle, textStartX, coverY + 18f, _titlePaint);
-
-                            _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
-                            _bodyPaint.TextSize = 12.5f;
-                            string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
-
-                            // 展开模式下的平滑叠化渲染 (带卡拉OK)
-                            bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
-                            if (_lyricAnimProgress < 1f && isLyricDisplay)
-                            {
-                                float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
-                                if (!string.IsNullOrEmpty(_prevLyric))
-                                {
-                                    // 旧歌词淡出时进度直接锁定 100% (1f)
-                                    DrawKaraoke(canvas, _prevLyric, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
-                                }
-                                // 新歌词套用当前进度
-                                DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
-                                _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
-                            }
-                            else
-                            {
-                                DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
-                            }
-
-                            // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
-                            float maskEnd = right - 55f;
-                            float maskStart = maskEnd - 20f;
-                            canvas.Save();
-                            canvas.Translate(maskStart, 0);
-                            canvas.Scale(maskEnd - maskStart, currentHeight);
-                            canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                            canvas.Restore();
-                            canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
-                            // 复用律动频谱 (放右上角)
-                            if (bars != null)
-                            {
-                                float barWidth = 2.5f, spacing = 3.5f, maxH = 18f, totalBarWidth = 26.5f;
-                                float startX = right - 20f - totalBarWidth;
-                                for (int i = 0; i < 5; i++)
-                                {
-                                    float h = Math.Max(2f, bars[i] * maxH);
-                                    float barY = coverY + 22f + (maxH - h) / 2f;
-                                    canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), barY, startX + i * (barWidth + spacing) + barWidth, barY + h), 1.5f, 1.5f, _barPaint);
-                                }
-                            }
-
-                            // 3. 底部放大媒体控件
-                            float btnY = currentHeight - 34f;
-                            float centerX = left + currentWidth / 2f;
-                            float scale = 1.6f;
-                            float playBtnY = btnY - 1.6f;
-
-                            if (HoveredExpandedButton == 0) canvas.DrawCircle(centerX - 54f, btnY + 8f, 20f, _hoverCirclePaint);
-                            if (HoveredExpandedButton == 1) canvas.DrawCircle(centerX + 1f, playBtnY + 9.6f, 20f, _hoverCirclePaint);
-                            if (HoveredExpandedButton == 2) canvas.DrawCircle(centerX + 52f, btnY + 8f, 20f, _hoverCirclePaint);
-
-                            DrawSvgPath(canvas, _mediaIconPaint, centerX - 60f, btnY, _prevPath, scale);
-                            DrawSvgPath(canvas, _mediaIconPaint, centerX - 7f, playBtnY, media.IsPlaying ? _pausePath : _playPath, scale);
-                            DrawSvgPath(canvas, _mediaIconPaint, centerX + 45f, btnY, _nextPath, scale);
-                        }
-                        else // 原版折叠模式布局
-                        {
-                            float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
-                            float textX = left + 16;
-                            if (media.Thumbnail != null)
-                            {
-                                float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
-                                var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
-                                canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
-                                canvas.Save();
-                                _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
-                                canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                                canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                                canvas.Restore();
-                                textX += thumbSize + 10;
-                            }
-
-                            // 折叠模式下的歌词叠化与位移动画 (带卡拉OK)
-                            bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
-                            if (_lyricAnimProgress < 1f && isLyricDisplay)
-                            {
-                                float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
-
-                                if (!string.IsNullOrEmpty(_prevLyric))
-                                {
-                                    DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
-                                }
-
-                                DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
-                                _textPaint.Color = _currentTextColor.WithAlpha(alpha);
-                            }
-                            else
-                            {
-                                DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
-                            }
-
-                            if (MediaInteractionMode == 0) // 直接交互模式
-                            {
-                                float rightOccupiedWidth = isHovered ? 95f : 45f;
-                                float maskEnd = right - rightOccupiedWidth + 5f;
-                                float maskStart = maskEnd - 15f;
-                                canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                                canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
-                                if (isHovered)
-                                {
-                                    float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
-                                    DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
-                                    DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
-                                    DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
-                                }
-                                else if (bars != null)
-                                {
-                                    float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
-                                    for (int i = 0; i < 5; i++)
-                                    {
-                                        float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
-                                        canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
-                                    }
-                                }
-                            }
-                            else // 展开交互模式
-                            {
-                                float rightOccupiedWidth = bars != null ? 45f : 15f;
-                                float maskEnd = right - rightOccupiedWidth + 5f;
-                                float maskStart = maskEnd - 15f;
-
-                                canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                                canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
-                                if (bars != null)
-                                {
-                                    float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
-                                    for (int i = 0; i < 5; i++)
-                                    {
-                                        float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
-                                        canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
-                                    }
-                                }
-                            }
-                        }
+                        DrawMediaStandalone(canvas, media, isHovered, left, right, currentWidth, currentHeight, alpha, textOffsetY, bars, btnPrevX, btnPlayX, btnNextX);
+                    }
+                    else if (PluginWidgets is { Count: > 0 })
+                    {
+                        DrawPluginWidgets(canvas, left, right, currentHeight, alpha, textOffsetY, isHovered, bars);
                     }
                     else if (StandbyDisplayMode == 0)
                     {
-                        _timePaint.Color = _currentTextColor.WithAlpha(alpha);
-                        _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
-                        float baselineY = currentHeight / 2f + 5f + textOffsetY;
-                        canvas.DrawText(_cachedTimeStr, left + 16f, baselineY, _timePaint);
-                        canvas.DrawText(_cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint);
+                        DrawClock(canvas, left, right, currentHeight, alpha, textOffsetY);
                     }
                     else if (StandbyDisplayMode == 2) // 硬件占用检测渲染
                     {
-                        UpdateHardwareStats();
-
-                        // 颜色同步
-                        _tagTextPaint.Color = _currentTextColor.WithAlpha(alpha);
-                        _tagBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.12f));
-                        _barPaint.Color = _currentTextColor.WithAlpha(alpha);
-                        _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.20f));
-                        _tagTextPaint.Typeface = _boldTypeface; // 防污染
-
-                        // 垂直布局
-                        float contentCenterY = currentHeight / 2f + textOffsetY;
-                        float textBaseline = contentCenterY - 1f;
-                        float barTop = contentCenterY + 9f;
-                        float barH = 3.5f;
-                        float tagPadX = 3f;
-                        float tagPadY = 1.5f;
-                        float tagRadius = 3.5f;
-                        float gapBetweenLabelAndPct = 4f;   // 标签与百分比间距
-                        float gapBetweenCpuAndRam = 16f;     // CPU组与RAM组间距
-
-                        // 预测量所有文本宽度（零GC，用预缓存字符串）
-                        string cpuLabel = "CPU";
-                        string ramLabel = "RAM";
-                        string cpuPct = _pctStrs![_cpuUsage];
-                        string ramPct = _pctStrs![_ramUsage];
-                        float cpuLabelW = _tagTextPaint.MeasureText(cpuLabel);
-                        float ramLabelW = _tagTextPaint.MeasureText(ramLabel);
-                        // 固定资源占用文本最大宽度，防止右侧元素排版跟着抖动
-                        float fixedPctW = _textPaint.MeasureText("90%");
-                        float cpuPctW = fixedPctW;
-                        float ramPctW = fixedPctW;
-                        float cpuTagW = cpuLabelW + tagPadX * 2f;
-                        float ramTagW = ramLabelW + tagPadX * 2f;
-                        float cpuGroupW = cpuTagW + gapBetweenLabelAndPct + cpuPctW;
-                        float ramGroupW = ramTagW + gapBetweenLabelAndPct + ramPctW;
-                        float totalContentW = cpuGroupW + gapBetweenCpuAndRam + ramGroupW;
-                        float centerX = left + currentWidth / 2f;
-                        float startX = centerX - totalContentW / 2f;
-                        float cpuBarW = cpuGroupW;
-                        float ramBarW = ramGroupW;
-
-                        // ================= [ CPU ] =================
-                        float cpuX = startX;
-                        var cpuTagRect = new SKRect(
-                            cpuX,
-                            textBaseline - 10f - tagPadY,
-                            cpuX + cpuTagW,
-                            textBaseline + 2.5f + tagPadY
-                        );
-                        canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
-                        canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
-                        canvas.DrawText(cpuPct, cpuTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
-                        canvas.DrawRoundRect(
-                            new SKRect(cpuX, barTop, cpuX + cpuBarW, barTop + barH),
-                            barH / 2f, barH / 2f, _barBgPaint);
-                        float cpuFillW = cpuBarW * (_smoothCpuUsage / 100f);
-                        if (cpuFillW > 0.5f)
-                            canvas.DrawRoundRect(
-                                new SKRect(cpuX, barTop, cpuX + cpuFillW, barTop + barH),
-                                barH / 2f, barH / 2f, _barPaint);
-
-                        // ================= [ RAM ] =================
-                        float ramX = startX + cpuGroupW + gapBetweenCpuAndRam;
-                        var ramTagRect = new SKRect(
-                            ramX,
-                            textBaseline - 10f - tagPadY,
-                            ramX + ramTagW,
-                            textBaseline + 2.5f + tagPadY
-                        );
-                        canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
-                        canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
-                        canvas.DrawText(ramPct, ramTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
-                        canvas.DrawRoundRect(
-                            new SKRect(ramX, barTop, ramX + ramBarW, barTop + barH),
-                            barH / 2f, barH / 2f, _barBgPaint);
-                        float ramFillW = ramBarW * (_smoothRamUsage / 100f);
-                        if (ramFillW > 0.5f)
-                            canvas.DrawRoundRect(
-                                new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH),
-                                barH / 2f, barH / 2f, _barPaint);
+                        DrawHardwareStandalone(canvas, left, currentWidth, currentHeight, alpha, textOffsetY);
                     }
                 } // 硬件占用检测 if 结束的大括号
 
@@ -969,6 +500,530 @@ namespace NotchPeninsula
             {
                 Monitor.Exit(_renderLock);
             }
+        }
+
+        // 组合模式：时间日期 + 硬件 + 媒体 一行横排
+        private static void DrawComposite(SKCanvas canvas, MediaController media, bool isHovered, float left, float right, float currentHeight, byte alpha, float textOffsetY, float[]? bars, int btnPrevX, int btnPlayX, int btnNextX)
+        {
+            float currentX = left + 16f;
+            float centerY = currentHeight / 2f + textOffsetY;
+
+            // 1. 时间日期模块
+            if (CompShowDateTime)
+            {
+                _timePaint.Color = _currentTextColor.WithAlpha(alpha);
+                _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
+                float timeBaselineY = centerY + 5f;
+                canvas.DrawText(_cachedTimeStr, currentX, timeBaselineY, _timePaint);
+                float dateX = currentX + _cachedTimeWidth + 12f;
+                canvas.DrawText(_cachedDateStr, dateX, timeBaselineY, _datePaint);
+                currentX = dateX + _cachedDateWidth + 16f;
+            }
+
+            // 2. 硬件占用模块
+            if (CompShowHardware)
+            {
+                UpdateHardwareStats();
+                _tagTextPaint.Color = _currentTextColor.WithAlpha(alpha);
+                _tagBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.12f));
+                _barPaint.Color = _currentTextColor.WithAlpha(alpha);
+                _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.20f));
+                _tagTextPaint.Typeface = _boldTypeface;
+
+                float textBaseline = centerY - 1f;
+                float barTop = centerY + 9f;
+                float barH = 3.5f;
+                float tagPadX = 3f;
+                float tagPadY = 1.5f;
+                float tagRadius = 3.5f;
+                float gapLabelPct = 4f;
+                float gapCpuRam = 16f;
+
+                string cpuLabel = "CPU";
+                string ramLabel = "RAM";
+                string cpuPct = _pctStrs![_cpuUsage];
+                string ramPct = _pctStrs![_ramUsage];
+                // 固定资源占用文本最大宽度，防止右侧元素排版跟着抖动
+                float cpuLabelW = _tagTextPaint.MeasureText(cpuLabel);
+                float ramLabelW = _tagTextPaint.MeasureText(ramLabel);
+                float fixedPctW = _textPaint.MeasureText("90%");
+                float cpuPctW = fixedPctW;
+                float ramPctW = fixedPctW;
+                float cpuTagW = cpuLabelW + tagPadX * 2f;
+                float ramTagW = ramLabelW + tagPadX * 2f;
+                float cpuGroupW = cpuTagW + gapLabelPct + cpuPctW;
+                float ramGroupW = ramTagW + gapLabelPct + ramPctW;
+
+                float cpuX = currentX;
+                var cpuTagRect = new SKRect(
+                    cpuX, textBaseline - 10f - tagPadY,
+                    cpuX + cpuTagW, textBaseline + 2.5f + tagPadY);
+                canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
+                canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
+                canvas.DrawText(cpuPct, cpuTagRect.Right + gapLabelPct, textBaseline, _textPaint);
+                canvas.DrawRoundRect(new SKRect(cpuX, barTop, cpuX + cpuGroupW, barTop + barH),
+                    barH / 2f, barH / 2f, _barBgPaint);
+                float cpuFillW = cpuGroupW * (_smoothCpuUsage / 100f);
+                if (cpuFillW > 0.5f)
+                    canvas.DrawRoundRect(new SKRect(cpuX, barTop, cpuX + cpuFillW, barTop + barH),
+                        barH / 2f, barH / 2f, _barPaint);
+
+                float ramX = currentX + cpuGroupW + gapCpuRam;
+                var ramTagRect = new SKRect(
+                    ramX, textBaseline - 10f - tagPadY,
+                    ramX + ramTagW, textBaseline + 2.5f + tagPadY);
+                canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
+                canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
+                canvas.DrawText(ramPct, ramTagRect.Right + gapLabelPct, textBaseline, _textPaint);
+                canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramGroupW, barTop + barH),
+                    barH / 2f, barH / 2f, _barBgPaint);
+                float ramFillW = ramGroupW * (_smoothRamUsage / 100f);
+                if (ramFillW > 0.5f)
+                    canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH),
+                        barH / 2f, barH / 2f, _barPaint);
+
+                currentX = ramX + ramGroupW + 16f;
+            }
+
+            // 3. 媒体控制器模块（含频谱，媒体激活时才显示）
+            if (CompShowMedia && media.IsActive)
+            {
+                float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f;
+                float textX = currentX;
+
+                if (media.Thumbnail != null)
+                {
+                    float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
+                    var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
+                    canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
+                    canvas.Save();
+                    _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
+                    canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                    canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                    canvas.Restore();
+                    textX += thumbSize + 10;
+                }
+
+                bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+                if (_lyricAnimProgress < 1f && isLyricDisplay)
+                {
+                    float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
+                    if (!string.IsNullOrEmpty(_prevLyric))
+                        DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                    DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                    _textPaint.Color = _currentTextColor.WithAlpha(alpha);
+                }
+                else
+                {
+                    DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+                }
+
+                // 组合模式媒体控件
+                float rightOccupiedWidth = isHovered ? 95f : 45f;
+                float maskEnd = right - rightOccupiedWidth + 5f;
+                float maskStart = maskEnd - 15f;
+                canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
+                canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
+                if (isHovered)
+                {
+                    float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
+                    DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
+                    DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
+                    DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
+                }
+                else if (bars != null)
+                {
+                    float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f;
+                    float spectrumX = right - 16f - totalBarWidth;
+                    for (int i = 0; i < 5; i++)
+                    {
+                        float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
+                        canvas.DrawRoundRect(new SKRect(spectrumX + i * (barWidth + spacing), y, spectrumX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+                    }
+                }
+            }
+        }
+
+        // 独立媒体（折叠 / 展开）
+        private static void DrawMediaStandalone(SKCanvas canvas, MediaController media, bool isHovered, float left, float right, float currentWidth, float currentHeight, byte alpha, float textOffsetY, float[]? bars, int btnPrevX, int btnPlayX, int btnNextX)
+        {
+            _textPaint.Color = _currentTextColor.WithAlpha(alpha);
+
+            if (IsMediaExpanded && currentHeight > 60f) // 展开模式布局
+            {
+                float coverSize = 50f; // 1. 封面缩小 10px
+                float coverX = left + 20f;
+                float coverY = 20f;    // 封面微调光学居中
+
+                // 封面
+                if (media.Thumbnail != null)
+                {
+                    var thumbRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
+                    canvas.DrawRoundRect(thumbRect, 8f, 8f, _shadowPaint);
+                    canvas.Save();
+                    _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, 8f, 8f);
+                    canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                    canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                    canvas.Restore();
+                }
+                else
+                {
+                    canvas.DrawRoundRect(new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize), 8f, 8f, _fallbackIconPaint);
+                }
+
+                // 双行文字
+                float textStartX = coverX + coverSize + 12f;
+                _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
+                _titlePaint.TextSize = 14.5f;
+                canvas.DrawText(_lastMediaTitle, textStartX, coverY + 18f, _titlePaint);
+
+                _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
+                _bodyPaint.TextSize = 12.5f;
+                string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
+
+                // 展开模式下的平滑叠化渲染 (带卡拉OK)
+                bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+                if (_lyricAnimProgress < 1f && isLyricDisplay)
+                {
+                    float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
+                    if (!string.IsNullOrEmpty(_prevLyric))
+                    {
+                        // 旧歌词淡出时进度直接锁定 100% (1f)
+                        DrawKaraoke(canvas, _prevLyric, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                    }
+                    // 新歌词套用当前进度
+                    DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                    _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
+                }
+                else
+                {
+                    DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+                }
+
+                // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
+                float maskEnd = right - 55f;
+                float maskStart = maskEnd - 20f;
+                canvas.Save();
+                canvas.Translate(maskStart, 0);
+                canvas.Scale(maskEnd - maskStart, currentHeight);
+                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                canvas.Restore();
+                canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
+                // 复用律动频谱 (放右上角)
+                if (bars != null)
+                {
+                    float barWidth = 2.5f, spacing = 3.5f, maxH = 18f, totalBarWidth = 26.5f;
+                    float startX = right - 20f - totalBarWidth;
+                    for (int i = 0; i < 5; i++)
+                    {
+                        float h = Math.Max(2f, bars[i] * maxH);
+                        float barY = coverY + 22f + (maxH - h) / 2f;
+                        canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), barY, startX + i * (barWidth + spacing) + barWidth, barY + h), 1.5f, 1.5f, _barPaint);
+                    }
+                }
+
+                // 3. 底部放大媒体控件
+                float btnY = currentHeight - 34f;
+                float centerX = left + currentWidth / 2f;
+                float scale = 1.6f;
+                float playBtnY = btnY - 1.6f;
+
+                if (HoveredExpandedButton == 0) canvas.DrawCircle(centerX - 54f, btnY + 8f, 20f, _hoverCirclePaint);
+                if (HoveredExpandedButton == 1) canvas.DrawCircle(centerX + 1f, playBtnY + 9.6f, 20f, _hoverCirclePaint);
+                if (HoveredExpandedButton == 2) canvas.DrawCircle(centerX + 52f, btnY + 8f, 20f, _hoverCirclePaint);
+
+                DrawSvgPath(canvas, _mediaIconPaint, centerX - 60f, btnY, _prevPath, scale);
+                DrawSvgPath(canvas, _mediaIconPaint, centerX - 7f, playBtnY, media.IsPlaying ? _pausePath : _playPath, scale);
+                DrawSvgPath(canvas, _mediaIconPaint, centerX + 45f, btnY, _nextPath, scale);
+            }
+            else // 原版折叠模式布局
+            {
+                float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
+                float textX = left + 16;
+                if (media.Thumbnail != null)
+                {
+                    float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
+                    var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
+                    canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
+                    canvas.Save();
+                    _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
+                    canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                    canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                    canvas.Restore();
+                    textX += thumbSize + 10;
+                }
+
+                // 折叠模式下的歌词叠化与位移动画 (带卡拉OK)
+                bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+                if (_lyricAnimProgress < 1f && isLyricDisplay)
+                {
+                    float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
+
+                    if (!string.IsNullOrEmpty(_prevLyric))
+                    {
+                        DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                    }
+
+                    DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                    _textPaint.Color = _currentTextColor.WithAlpha(alpha);
+                }
+                else
+                {
+                    DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+                }
+
+                if (MediaInteractionMode == 0) // 直接交互模式
+                {
+                    float rightOccupiedWidth = isHovered ? 95f : 45f;
+                    float maskEnd = right - rightOccupiedWidth + 5f;
+                    float maskStart = maskEnd - 15f;
+                    canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
+                    canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
+                    if (isHovered)
+                    {
+                        float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
+                        DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
+                        DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
+                        DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
+                    }
+                    else if (bars != null)
+                    {
+                        float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
+                        for (int i = 0; i < 5; i++)
+                        {
+                            float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
+                            canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+                        }
+                    }
+                }
+                else // 展开交互模式
+                {
+                    float rightOccupiedWidth = bars != null ? 45f : 15f;
+                    float maskEnd = right - rightOccupiedWidth + 5f;
+                    float maskStart = maskEnd - 15f;
+
+                    canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
+                    canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
+                    if (bars != null)
+                    {
+                        float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
+                        for (int i = 0; i < 5; i++)
+                        {
+                            float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
+                            canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Toast 消息通知（图标 + 标题 + 正文 + 淡出遮罩）
+        private static void DrawToast(SKCanvas canvas, ToastData toast, float left, float right, float currentHeight)
+        {
+            if (_lastToastId != toast.NotificationId)
+            {
+                _lastToastId = toast.NotificationId;
+                _cachedToastSender = !string.IsNullOrEmpty(toast.Title) ? toast.Title : (!string.IsNullOrEmpty(toast.AppName) ? toast.AppName : "通知");
+                _cachedToastBody = toast.Body ?? "";
+
+                // 只在接收到新消息时分配一次内存
+                BuildTextRuns(_cachedToastSender, _titlePaint, _boldTypeface, _cachedToastSenderRuns, out _cachedToastTitleWidth);
+                BuildTextRuns(_cachedToastBody, _bodyPaint, _normalTypeface, _cachedToastBodyRuns, out _cachedToastBodyWidth);
+            }
+
+            float iconSize = 28f;
+            float toastIconX = left + 14f;
+            float toastIconY = (currentHeight - iconSize) / 2f;
+            var iconRect = new SKRect(toastIconX, toastIconY, toastIconX + iconSize, toastIconY + iconSize);
+
+            EnsureIconsLoaded();
+            SKBitmap? targetIcon = null;
+
+            if (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
+                toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase))
+            {
+                targetIcon = _qqIcon;
+            }
+            targetIcon ??= _defaultToastIcon;
+
+            // 直接绘制位图，逻辑极其精简
+            if (targetIcon != null)
+            {
+                canvas.Save();
+                _clipPath.Rewind();
+                _clipPath.AddRoundRect(iconRect, 4, 4);
+                canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                canvas.DrawBitmap(targetIcon, iconRect, _highQualitySampling);
+                canvas.Restore();
+            }
+            else
+            {
+                var defaultAppIcon = GetDefaultAppIcon();
+                if (defaultAppIcon != null)
+                {
+                    canvas.Save();
+                    _clipPath.Rewind();
+                    _clipPath.AddRoundRect(iconRect, 4, 4);
+                    canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                    canvas.DrawBitmap(defaultAppIcon, iconRect, _highQualitySampling);
+                    canvas.Restore();
+                }
+                else
+                {
+                    canvas.DrawRoundRect(iconRect, 4, 4, _fallbackIconPaint);
+                }
+            }
+
+            float toastTextX = toastIconX + iconSize + 10f;
+            float toastMaxTextRight = right - 16f;
+
+            float textSpacing = 5f;
+            float totalTextHeight = 13.5f + 11.5f + textSpacing;
+            float toastTextY = (currentHeight - totalTextHeight) / 2f;
+
+            float line1Y = toastTextY + 11.5f;
+            float line2Y = line1Y + 13.5f + textSpacing;
+
+            // 渲染标题：自动在常规字体与 Emoji 字体间热切换
+            foreach (var run in _cachedToastSenderRuns)
+            {
+                _titlePaint.Typeface = run.IsEmoji ? _emojiTypeface : _boldTypeface;
+                canvas.DrawText(run.Text, toastTextX + run.X, line1Y, _titlePaint);
+            }
+            _titlePaint.Typeface = _boldTypeface; // 重置
+
+            // 渲染内容主体
+            foreach (var run in _cachedToastBodyRuns)
+            {
+                _bodyPaint.Typeface = run.IsEmoji ? _emojiTypeface : _normalTypeface;
+                canvas.DrawText(run.Text, toastTextX + run.X, line2Y, _bodyPaint);
+            }
+            _bodyPaint.Typeface = _normalTypeface; // 重置
+
+            if ((toastTextX + _cachedToastTitleWidth > toastMaxTextRight) || (toastTextX + _cachedToastBodyWidth > toastMaxTextRight))
+            {
+                float fadeWidth = 15f;
+                float fadeStart = toastMaxTextRight - fadeWidth;
+
+                canvas.Save();
+                canvas.Translate(fadeStart, 0);
+                canvas.Scale(fadeWidth, currentHeight);
+                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                canvas.Restore();
+
+                canvas.DrawRect(toastMaxTextRight, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+            }
+        }
+
+        // 待机：插件组件（横排）
+        private static void DrawPluginWidgets(SKCanvas canvas, float left, float right, float currentHeight, byte alpha, float textOffsetY, bool isHovered, float[]? bars)
+        {
+            if (PluginWidgets is not { Count: > 0 }) return;
+            var frame = new WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, isHovered);
+            var slots = WidgetLayout.ArrangeRow(PluginWidgets, left + 16f, 0, currentHeight, 12f);
+            foreach (var slot in slots)
+            {
+                slot.Widget.Draw(canvas, slot.Rect, frame);
+            }
+        }
+
+        // 待机：时间日期
+        private static void DrawClock(SKCanvas canvas, float left, float right, float currentHeight, byte alpha, float textOffsetY)
+        {
+            _timePaint.Color = _currentTextColor.WithAlpha(alpha);
+            _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
+            float baselineY = currentHeight / 2f + 5f + textOffsetY;
+            canvas.DrawText(_cachedTimeStr, left + 16f, baselineY, _timePaint);
+            canvas.DrawText(_cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint);
+        }
+
+        // 待机：硬件占用（CPU/RAM）
+        private static void DrawHardwareStandalone(SKCanvas canvas, float left, float currentWidth, float currentHeight, byte alpha, float textOffsetY)
+        {
+            UpdateHardwareStats();
+
+            // 颜色同步
+            _tagTextPaint.Color = _currentTextColor.WithAlpha(alpha);
+            _tagBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.12f));
+            _barPaint.Color = _currentTextColor.WithAlpha(alpha);
+            _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.20f));
+            _tagTextPaint.Typeface = _boldTypeface; // 防污染
+
+            // 垂直布局
+            float contentCenterY = currentHeight / 2f + textOffsetY;
+            float textBaseline = contentCenterY - 1f;
+            float barTop = contentCenterY + 9f;
+            float barH = 3.5f;
+            float tagPadX = 3f;
+            float tagPadY = 1.5f;
+            float tagRadius = 3.5f;
+            float gapBetweenLabelAndPct = 4f;   // 标签与百分比间距
+            float gapBetweenCpuAndRam = 16f;     // CPU组与RAM组间距
+
+            // 预测量所有文本宽度（零GC，用预缓存字符串）
+            string cpuLabel = "CPU";
+            string ramLabel = "RAM";
+            string cpuPct = _pctStrs![_cpuUsage];
+            string ramPct = _pctStrs![_ramUsage];
+            float cpuLabelW = _tagTextPaint.MeasureText(cpuLabel);
+            float ramLabelW = _tagTextPaint.MeasureText(ramLabel);
+            // 固定资源占用文本最大宽度，防止右侧元素排版跟着抖动
+            float fixedPctW = _textPaint.MeasureText("90%");
+            float cpuPctW = fixedPctW;
+            float ramPctW = fixedPctW;
+            float cpuTagW = cpuLabelW + tagPadX * 2f;
+            float ramTagW = ramLabelW + tagPadX * 2f;
+            float cpuGroupW = cpuTagW + gapBetweenLabelAndPct + cpuPctW;
+            float ramGroupW = ramTagW + gapBetweenLabelAndPct + ramPctW;
+            float totalContentW = cpuGroupW + gapBetweenCpuAndRam + ramGroupW;
+            float centerX = left + currentWidth / 2f;
+            float startX = centerX - totalContentW / 2f;
+            float cpuBarW = cpuGroupW;
+            float ramBarW = ramGroupW;
+
+            // ================= [ CPU ] =================
+            float cpuX = startX;
+            var cpuTagRect = new SKRect(
+                cpuX,
+                textBaseline - 10f - tagPadY,
+                cpuX + cpuTagW,
+                textBaseline + 2.5f + tagPadY
+            );
+            canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
+            canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
+            canvas.DrawText(cpuPct, cpuTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
+            canvas.DrawRoundRect(
+                new SKRect(cpuX, barTop, cpuX + cpuBarW, barTop + barH),
+                barH / 2f, barH / 2f, _barBgPaint);
+            float cpuFillW = cpuBarW * (_smoothCpuUsage / 100f);
+            if (cpuFillW > 0.5f)
+                canvas.DrawRoundRect(
+                    new SKRect(cpuX, barTop, cpuX + cpuFillW, barTop + barH),
+                    barH / 2f, barH / 2f, _barPaint);
+
+            // ================= [ RAM ] =================
+            float ramX = startX + cpuGroupW + gapBetweenCpuAndRam;
+            var ramTagRect = new SKRect(
+                ramX,
+                textBaseline - 10f - tagPadY,
+                ramX + ramTagW,
+                textBaseline + 2.5f + tagPadY
+            );
+            canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
+            canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
+            canvas.DrawText(ramPct, ramTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
+            canvas.DrawRoundRect(
+                new SKRect(ramX, barTop, ramX + ramBarW, barTop + barH),
+                barH / 2f, barH / 2f, _barBgPaint);
+            float ramFillW = ramBarW * (_smoothRamUsage / 100f);
+            if (ramFillW > 0.5f)
+                canvas.DrawRoundRect(
+                    new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH),
+                    barH / 2f, barH / 2f, _barPaint);
         }
 
         private static void DrawSvgPath(SKCanvas canvas, SKPaint paint, float x, float y, SKPath path, float scale = 1f)
