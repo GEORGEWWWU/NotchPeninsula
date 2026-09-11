@@ -238,5 +238,12 @@ namespace NotchPeninsula
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool GetSystemTimes(out FILETIME lpIdleTime, out FILETIME lpKernelTime, out FILETIME lpUserTime);
+
+        public const int WM_NCHITTEST = 0x0084;
+        public const int HTCLIENT = 1;
+        public const int HTTRANSPARENT = -1;
+
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorPos(out POINT lpPoint);
     }
 }

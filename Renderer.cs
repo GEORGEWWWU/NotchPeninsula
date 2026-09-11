@@ -34,6 +34,20 @@ namespace NotchPeninsula
         public static bool CompShowDateTime { get; set; } = true;  // 显示时间日期
         public static bool CompShowHardware { get; set; } = true;  // 显示硬件占用
         public static bool CompShowMedia { get; set; } = true;     // 显示媒体控制器(含频谱)
+        public static bool PassthroughModeEnabled = false; // 穿透模式总开关
+        public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
+        private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
+        private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true }; // 极简线条画笔
+        private static readonly SKPaint _wakeHitPaint = new SKPaint { Style = SKPaintStyle.Fill }; // 隐形物理热区底板
+        private static readonly SKPath _wakePath = CreateWakePath();
+
+        private static SKPath CreateWakePath()
+        {
+            var path = new SKPath();
+            path.AddCircle(18f, 18f, 8f); // 外圈
+            path.AddCircle(18f, 18f, 3f); // 核心唤醒点
+            return path;
+        }
 
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
@@ -302,8 +316,12 @@ namespace NotchPeninsula
                 float topY = 12f * styleProgress;
 
                 canvas.Save();
-                // 整个画布向下平移，让内部所有元素自动完美适应居中，零开销！
+                // 整个画布向下平移，让内部所有元素自动完美适应居中
                 canvas.Translate(0, topY);
+
+                // 开启一个硬件级透明图层，包裹本体所有元素，杜绝任何图层/阴影残留
+                _layerPaint.Color = SKColors.White.WithAlpha((byte)(255 * PassthroughAlpha));
+                canvas.SaveLayer(_layerPaint);
 
                 _bgPath.Rewind();
 
@@ -333,7 +351,6 @@ namespace NotchPeninsula
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
 
-                // 保留纯粹的透明度叠化，去除多余上浮
                 byte alpha = (byte)(255 * startupProgress * transitionAlpha);
                 float textOffsetY = 0f;
 
@@ -452,6 +469,7 @@ namespace NotchPeninsula
                         canvas.DrawRect(toastMaxTextRight, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
                     }
 
+                    canvas.Restore();
                     canvas.Restore();
                     canvas.Restore();
                     return;
@@ -919,10 +937,33 @@ namespace NotchPeninsula
                                 new SKRect(ramX, barTop, ramX + ramFillW, barTop + barH),
                                 barH / 2f, barH / 2f, _barPaint);
                     }
+                } // 硬件占用检测 if 结束的大括号
+
+                // === 下方原本旧版残留的 _wakePath 绘制代码已被彻底删除 ===
+
+                canvas.Restore(); // 1. 恢复 ClipPath 裁切
+                canvas.Restore(); // 2. 闭合 SaveLayer 透明层，本体内部渲染彻底完结！任何阴影、遮罩全部随之消失。
+
+                // 独立于本体之外，绘制隐形物理热区与极速渐变唤醒按钮
+                if (PassthroughModeEnabled && PassthroughAlpha < 0.99f)
+                {
+                    // 核心逻辑：2倍速急速消失。只要本体浮现到一半（Alpha>0.5），按钮立刻彻底消失，绝不拖泥带水
+                    byte wakeAlpha = (byte)(Math.Max(0f, 1f - PassthroughAlpha * 2f) * 255);
+
+                    float wakeBtnY = (currentHeight - 36f) / 2f; // 对齐内部垂直居中
+
+                    // 垫底一块 Alpha=1 的隐形纯黑热区！肉眼完全不可见，但足以 100% 截断 Windows 物理穿透事件
+                    _wakeHitPaint.Color = SKColors.Black.WithAlpha(1);
+                    canvas.DrawRect(left, wakeBtnY, 36f, 36f, _wakeHitPaint);
+
+                    if (wakeAlpha > 0)
+                    {
+                        _wakePaint.Color = SKColors.White.WithAlpha(wakeAlpha);
+                        DrawSvgPath(canvas, _wakePaint, left, wakeBtnY, _wakePath);
+                    }
                 }
 
-                canvas.Restore();
-                canvas.Restore();
+                canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
             }
             finally
             {

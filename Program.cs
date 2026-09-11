@@ -47,6 +47,7 @@ namespace NotchPeninsula
                     Renderer.CompShowDateTime = (int)key.GetValue("Composite_ShowDateTime", 1) != 0;
                     Renderer.CompShowHardware = (int)key.GetValue("Composite_ShowHardware", 1) != 0;
                     Renderer.CompShowMedia = (int)key.GetValue("Composite_ShowMedia", 1) != 0;
+                    Renderer.PassthroughModeEnabled = (int)key.GetValue("PassthroughMode", 0) != 0;
 
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }

@@ -32,6 +32,7 @@ namespace NotchPeninsula
         // 交互设置状态
         private bool _autoHideToggleHovered = false;
         private bool _mediaExpToggleHovered = false;
+        private bool _passToggleHovered = false;
 
         // 媒体设置状态
         private bool _mediaToggleHovered = false;
@@ -320,25 +321,28 @@ namespace NotchPeninsula
                         float sliderX = 216;
                         float sliderW = WIDTH - 40 - 216;
 
-                        // 放宽 Y 轴的判定区域，提升拖拽时的手感，防止手抖断触
-                        if (x >= sliderX - 20 && x <= sliderX + sliderW + 20 && y >= sliderY - 20 && y <= sliderY + 20)
+                        if (!Renderer.PassthroughModeEnabled)
                         {
-                            newHoveredOpacityIndex = (int)Math.Round((x - sliderX) / (sliderW / 4));
-                            if (newHoveredOpacityIndex < 0) newHoveredOpacityIndex = 0;
-                            if (newHoveredOpacityIndex > 4) newHoveredOpacityIndex = 4;
-
-                            // 核心滑动逻辑：判断此时鼠标左键是否处于“按住”状态 (MK_LBUTTON = 0x0001)
-                            if ((wParam.ToInt32() & 0x0001) != 0)
+                            // 放宽 Y 轴的判定区域，提升拖拽时的手感，防止手抖断触
+                            if (x >= sliderX - 20 && x <= sliderX + sliderW + 20 && y >= sliderY - 20 && y <= sliderY + 20)
                             {
-                                if (Renderer.BgOpacityLevel != newHoveredOpacityIndex)
+                                newHoveredOpacityIndex = (int)Math.Round((x - sliderX) / (sliderW / 4));
+                                if (newHoveredOpacityIndex < 0) newHoveredOpacityIndex = 0;
+                                if (newHoveredOpacityIndex > 4) newHoveredOpacityIndex = 4;
+
+                                // 核心滑动逻辑：判断此时鼠标左键是否处于“按住”状态 (MK_LBUTTON = 0x0001)
+                                if ((wParam.ToInt32() & 0x0001) != 0)
                                 {
-                                    Renderer.BgOpacityLevel = newHoveredOpacityIndex;
-                                    Renderer.ApplyThemeColors();
-                                    Program.SaveSetting("BgOpacityLevel", newHoveredOpacityIndex);
-                                    Render(); // 数据一旦跨越档位，立刻触发重绘，实现跟手滑动
+                                    if (Renderer.BgOpacityLevel != newHoveredOpacityIndex)
+                                    {
+                                        Renderer.BgOpacityLevel = newHoveredOpacityIndex;
+                                        Renderer.ApplyThemeColors();
+                                        Program.SaveSetting("BgOpacityLevel", newHoveredOpacityIndex);
+                                        Render(); // 数据一旦跨越档位，立刻触发重绘，实现跟手滑动
+                                    }
                                 }
                             }
-                        }
+                        } 
 
                         for (int i = 0; i < 8; i++)
                         {
@@ -360,6 +364,7 @@ namespace NotchPeninsula
                     bool newDropdownHovered = false;
                     int newHoveredDropdownIndex = -1;
                     bool newMediaExpToggleHovered = false;
+                    bool newPassToggleHovered = false;
                     bool newMonitorDropdownHovered = false;
                     int newHoveredMonitorDropdownIndex = -1;
                     bool newCompositeToggleHover = false;
@@ -467,6 +472,8 @@ namespace NotchPeninsula
                         // 媒体交互模式
                         if (!Renderer.CompositeModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                             newMediaExpToggleHovered = true;
+                        // 使用局部变量，防止状态死锁
+                        newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
                     }
 
                     int newHoveredLinkIndex = -1;
@@ -508,7 +515,7 @@ namespace NotchPeninsula
                         newCompositeToggleHover != _compositeToggleHovered ||
                         newCompDateTimeHover != _compDateTimeHovered ||
                         newCompHardwareHover != _compHardwareHovered ||
-                        newCompMediaHover != _compMediaHovered
+                        newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered
                         )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -533,6 +540,7 @@ namespace NotchPeninsula
                         _compHardwareHovered = newCompHardwareHover;
                         _compMediaHovered = newCompMediaHover;
                         _topmostToggleHovered = newTopmostToggleHovered;
+                        _passToggleHovered = newPassToggleHovered;
                         Render();
                     }
                     break;
@@ -725,6 +733,13 @@ namespace NotchPeninsula
                         Renderer.MediaInteractionMode = Renderer.MediaInteractionMode == 1 ? 0 : 1;
                         if (Renderer.MediaInteractionMode == 0) Renderer.IsMediaExpanded = false; // 关闭时强制收起
                         Program.SaveSetting("MediaInteractionMode", Renderer.MediaInteractionMode);
+                        Render();
+                    }
+                    else if (_passToggleHovered)
+                    {
+                        Renderer.PassthroughModeEnabled = !Renderer.PassthroughModeEnabled;
+                        Program.SaveSetting("PassthroughMode", Renderer.PassthroughModeEnabled ? 1 : 0);
+                        Renderer.ApplyThemeColors(); // 立刻刷新基底色
                         Render();
                     }
                     else if (_dropdownHovered)
@@ -1256,6 +1271,8 @@ namespace NotchPeninsula
                     isMediaExpDisabled ? false : (Renderer.MediaInteractionMode == 1),
                     !isMediaExpDisabled && _mediaExpToggleHovered,
                     isMediaExpDisabled);
+
+                DrawToggleCard(156, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
             }
             else if (_selectedTab == 4)
             {
@@ -1405,6 +1422,8 @@ namespace NotchPeninsula
                 _dynamicStrokePaint.StrokeWidth = 2f;
                 canvas.DrawLine(sliderX, sliderY, activePx, sliderY, _dynamicStrokePaint);
                 _dynamicStrokePaint.StrokeWidth = 1.5f;
+                bool isOpacityDisabled = Renderer.PassthroughModeEnabled;
+                _dynamicStrokePaint.Color = isOpacityDisabled ? new SKColor(80, 80, 80) : new SKColor(0, 120, 212);
                 for (int i = 0; i < 5; i++)
                 {
                     float px = sliderX + (sliderW / 4) * i;
@@ -1413,10 +1432,10 @@ namespace NotchPeninsula
                     // 只画当前选中的小蓝球，或者鼠标悬停时的半透明反馈，去掉丑陋的灰色固定点
                     if (isSelected || isHovered)
                     {
-                        _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212) : new SKColor(255, 255, 255, 80);
+                        _dynamicFillPaint.Color = isOpacityDisabled ? new SKColor(100, 100, 100) : (isSelected ? new SKColor(0, 120, 212) : new SKColor(255, 255, 255, 80));
                         canvas.DrawCircle(px, sliderY, isSelected ? 6 : 4, _dynamicFillPaint);
                     }
-                    _dynamicTextPaint.Color = isSelected ? SKColors.White : new SKColor(150, 150, 150);
+                    _dynamicTextPaint.Color = isOpacityDisabled ? new SKColor(100, 100, 100) : (isSelected ? SKColors.White : new SKColor(150, 150, 150));
                     _dynamicTextPaint.TextSize = 11f;
                     string pct = (i * 25) + "%";
                     float tw = _dynamicTextPaint.MeasureText(pct);

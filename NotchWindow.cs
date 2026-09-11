@@ -77,6 +77,7 @@ namespace NotchPeninsula
         private bool _isYAnimating = false;
         private DateTime _yAnimStartTime;
         private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
+        public static bool _isPassthroughAwake = false; // 本体是否已被唤醒并锁定交互
         // 用于跟踪内容状态，实现 0.3s 叠化过渡
         private int _lastDisplayState = -1;
         private DateTime _stateChangeTime;
@@ -382,6 +383,37 @@ namespace NotchPeninsula
 
                 // 判断当前 Toast 是否处于激活期
                 isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
+                // 实时穿透与 0% 透明度智能判定
+                if (Renderer.PassthroughModeEnabled)
+                {
+                    float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                    float topY = 12f * _currentStyleProgress;
+
+                    // 因为开启穿透后系统收不到鼠标消息，必须用 GetCursorPos 底层轮询
+                    Win32.GetCursorPos(out var pt);
+                    float logX = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
+                    float logY = (pt.y - _cachedMonitorY - _currentY) / _dpiScale;
+                    bool isOverNotch = logX >= left && logX <= left + _currentWidth && logY >= topY && logY <= topY + _currentHeight;
+
+                    // 如果处于唤醒状态，但鼠标点击了本体外任意地方，立刻进入睡眠
+                    if (_isPassthroughAwake && !isOverNotch && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
+                        _isPassthroughAwake = false;
+
+                    // 当处于睡眠状态且鼠标悬停时，目标透明度为 0f（0%），系统会自动让其完全物理穿透！
+                    float targetAlpha = 1.0f;
+                    if (!_isPassthroughAwake && isOverNotch) targetAlpha = 0.0f;
+
+                    Renderer.PassthroughAlpha += (targetAlpha - Renderer.PassthroughAlpha) * 0.18f;
+
+                    // 解决极小浮点数(0.001f)未彻底归零，导致 Windows 底层未将窗口判定为全透明，从而导致穿透卡顿的问题
+                    if (Renderer.PassthroughAlpha < 0.01f) Renderer.PassthroughAlpha = 0f;
+                    if (Renderer.PassthroughAlpha > 0.99f) Renderer.PassthroughAlpha = 1f;
+                }
+                else
+                {
+                    Renderer.PassthroughAlpha = 1.0f;
+                    _isPassthroughAwake = false;
+                }
                 if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
 
                 // 如果灵动岛已展开，且鼠标不在岛上(!_isHovered)，且按下了左键(0x01)
@@ -641,156 +673,151 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_MOUSEMOVE:
-                    if (!_isTrackingMouse)
                     {
-                        var tme = new Win32.TRACKMOUSEEVENT
+                        if (!_isTrackingMouse)
                         {
-                            cbSize = (uint)Marshal.SizeOf(typeof(Win32.TRACKMOUSEEVENT)),
-                            dwFlags = 2,
-                            hwndTrack = hwnd,
-                            dwHoverTime = 0
-                        };
-                        Win32.TrackMouseEvent(ref tme);
-                        _isTrackingMouse = true;
-                        _isHovered = true;
-                    }
-
-                    // 如果当前有消息弹窗且鼠标悬浮，直接全局显示手型指针
-                    if (_isHovered && _currentToast != null)
-                    {
-                        _isCursorOverIcon = true;
-                    }
-
-                    else if (_isHovered && _media.IsActive && _currentToast == null)
-                    {
-                        int _x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int _y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-
-                        float hitTopY = 12f * _currentStyleProgress;
-                        if (Renderer.IsMediaExpanded)
-                        {
-                            float btnY = (_currentHeight - 32f) + hitTopY;
-                            float center = Renderer.WINDOW_WIDTH / 2f;
-
-                            // 重新计算放大 1.6 倍后的物理热区
-                            bool inY = _y >= btnY - 12 && _y <= btnY + 30;
-                            bool hitPrev = _x >= center - 75 && _x <= center - 34;
-                            bool hitPlay = _x >= center - 20 && _x <= center + 22;
-                            bool hitNext = _x >= center + 32 && _x <= center + 75;
-
-                            Renderer.HoveredExpandedButton = inY ? (hitPrev ? 0 : (hitPlay ? 1 : (hitNext ? 2 : -1))) : -1;
-                            _isCursorOverIcon = Renderer.HoveredExpandedButton != -1;
+                            var tme = new Win32.TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf(typeof(Win32.TRACKMOUSEEVENT)), dwFlags = 2, hwndTrack = hwnd, dwHoverTime = 0 };
+                            Win32.TrackMouseEvent(ref tme);
+                            _isTrackingMouse = true;
+                            _isHovered = true;
                         }
-                        else
+
+                        // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
+                        int mx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int my = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        float hitTopY = 12f * _currentStyleProgress;
+
+                        // 1. 最高优先级拦截：精准计算唤醒按钮垂直居中热区，解决没有手型指针的问题
+                        if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
                         {
-                            if (Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
+                            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                            float wakeBtnY = hitTopY + (_currentHeight - 36f) / 2f;
+
+                            if (mx >= left && mx <= left + 36 && my >= wakeBtnY && my <= wakeBtnY + 36)
                             {
-                                float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                                float right = left + _currentWidth;
-                                _isCursorOverIcon = (_x >= left && _x <= right && _y >= hitTopY && _y <= hitTopY + _currentHeight);
+                                _isCursorOverIcon = true;
+                                break; // 击中唤醒按钮，直接切小手并短路
                             }
                             else
                             {
-                                float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
-                                int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
-                                float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
-                                _isCursorOverIcon = (_y >= btnStartY && _y <= btnEndY) && ((_x >= btnPrevX + 6 && _x <= btnPrevX + 24) || (_x >= btnPlayX + 6 && _x <= btnPlayX + 24) || (_x >= btnNextX + 6 && _x <= btnNextX + 24));
+                                _isCursorOverIcon = false;
+                                break; // 处于睡眠态时，绝对阻断底层媒体控制器的幽灵 Hover
                             }
                         }
-                    }
-                    else
-                    {
-                        _isCursorOverIcon = false;
-                    }
-                    break;
 
-                case Win32.WM_MOUSELEAVE:
-                    _isTrackingMouse = false;
-                    _isHovered = false;
-                    _isCursorOverIcon = false;
-                    Renderer.HoveredExpandedButton = -1;
-                    Renderer.IsMediaExpanded = false;
-                    break;
-
-                case Win32.WM_LBUTTONDOWN:
-                    // 先抛窗口点击事件
-                    int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                    int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                    RaiseWindowClicked(x, y, "main-window");
-
-                    // 下面是你原来的点击逻辑，保持不动
-                    if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
-                    {
-                        _isManuallyExpanded = true;
-                        return (IntPtr)0;
-                    }
-
-                    if (_isHovered && _media.IsActive && _currentToast == null)
-                    {
-                        int clickX = x;
-                        int clickY = y;
-                        float hitTopY = 12f * _currentStyleProgress;
-                        bool hitButtons = false;
-
-                        if (Renderer.IsMediaExpanded)
+                        if (_isHovered && _currentToast != null)
                         {
-                            float btnY = (_currentHeight - 32f) + hitTopY;
-                            float center = Renderer.WINDOW_WIDTH / 2f;
-                            if (clickY >= btnY - 5 && clickY <= btnY + 25)
+                            _isCursorOverIcon = true;
+                        }
+                        else if (_isHovered && _media.IsActive && _currentToast == null)
+                        {
+                            if (Renderer.IsMediaExpanded)
                             {
-                                if (clickX >= center - 65 && clickX <= center - 35)
+                                float btnY = (_currentHeight - 32f) + hitTopY;
+                                float center = Renderer.WINDOW_WIDTH / 2f;
+                                bool inY = my >= btnY - 12 && my <= btnY + 30;
+                                bool hitPrev = mx >= center - 75 && mx <= center - 34;
+                                bool hitPlay = mx >= center - 20 && mx <= center + 22;
+                                bool hitNext = mx >= center + 32 && mx <= center + 75;
+                                Renderer.HoveredExpandedButton = inY ? (hitPrev ? 0 : (hitPlay ? 1 : (hitNext ? 2 : -1))) : -1;
+                                _isCursorOverIcon = Renderer.HoveredExpandedButton != -1;
+                            }
+                            else
+                            {
+                                if (Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
                                 {
-                                    _media.Previous();
-                                    hitButtons = true;
+                                    float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                                    float right = left + _currentWidth;
+                                    _isCursorOverIcon = (mx >= left && mx <= right && my >= hitTopY && my <= hitTopY + _currentHeight);
                                 }
-                                else if (clickX >= center - 15 && clickX <= center + 15)
+                                else
                                 {
-                                    _media.TogglePlayPause();
-                                    hitButtons = true;
-                                }
-                                else if (clickX >= center + 35 && clickX <= center + 65)
-                                {
-                                    _media.Next();
-                                    hitButtons = true;
+                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                    int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
+                                    float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
+                                    _isCursorOverIcon = (my >= btnStartY && my <= btnEndY) && ((mx >= btnPrevX + 6 && mx <= btnPrevX + 24) || (mx >= btnPlayX + 6 && mx <= btnPlayX + 24) || (mx >= btnNextX + 6 && mx <= btnNextX + 24));
                                 }
                             }
                         }
                         else
                         {
-                            // 放行直接交互：开启组合模式时，强制支持直接点击切歌/暂停
-                            if (Renderer.MediaInteractionMode == 0 || Renderer.CompositeModeEnabled)
+                            _isCursorOverIcon = false;
+                        }
+                        break;
+                    }
+
+                case Win32.WM_MOUSELEAVE:
+                    {
+                        _isTrackingMouse = false;
+                        _isHovered = false;
+                        _isCursorOverIcon = false;
+                        Renderer.HoveredExpandedButton = -1;
+                        Renderer.IsMediaExpanded = false;
+                        break;
+                    }
+
+                case Win32.WM_LBUTTONDOWN:
+                    {
+                        int cx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int cy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        float hitTopY = 12f * _currentStyleProgress;
+
+                        // 完美对齐渲染中心点，精准拦截唤醒点击
+                        if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
+                        {
+                            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                            float wakeBtnY = hitTopY + (_currentHeight - 36f) / 2f;
+                            if (cx >= left && cx <= left + 36 && cy >= wakeBtnY && cy <= wakeBtnY + 36)
                             {
-                                float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
-                                float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
-                                if (clickY >= btnStartY && clickY <= btnStartY + 18f)
-                                {
-                                    if (clickX >= right - 84 && clickX <= right - 66)
-                                    {
-                                        _media.Previous();
-                                        hitButtons = true;
-                                    }
-                                    else if (clickX >= right - 54 && clickX <= right - 36)
-                                    {
-                                        _media.TogglePlayPause();
-                                        hitButtons = true;
-                                    }
-                                    else if (clickX >= right - 24 && clickX <= right - 6)
-                                    {
-                                        _media.Next();
-                                        hitButtons = true;
-                                    }
-                                }
+                                _isPassthroughAwake = true;
+                                return (IntPtr)0;
                             }
                         }
 
-                        // 如果没有点到按钮，且开启了展开交互，点击只负责触发展开
-                        // 组合模式下直接免疫任何触发展开的指令
-                        if (!hitButtons && Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
+                        RaiseWindowClicked(cx, cy, "main-window");
+
+                        if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
                         {
-                            Renderer.IsMediaExpanded = true;
+                            _isManuallyExpanded = true;
+                            return (IntPtr)0;
                         }
+
+                        if (_isHovered && _media.IsActive && _currentToast == null)
+                        {
+                            bool hitButtons = false;
+                            if (Renderer.IsMediaExpanded)
+                            {
+                                float btnY = (_currentHeight - 32f) + hitTopY;
+                                float center = Renderer.WINDOW_WIDTH / 2f;
+                                if (cy >= btnY - 5 && cy <= btnY + 25)
+                                {
+                                    if (cx >= center - 65 && cx <= center - 35) { _media.Previous(); hitButtons = true; }
+                                    else if (cx >= center - 15 && cx <= center + 15) { _media.TogglePlayPause(); hitButtons = true; }
+                                    else if (cx >= center + 35 && cx <= center + 65) { _media.Next(); hitButtons = true; }
+                                }
+                            }
+                            else
+                            {
+                                if (Renderer.MediaInteractionMode == 0 || Renderer.CompositeModeEnabled)
+                                {
+                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                    float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
+                                    if (cy >= btnStartY && cy <= btnStartY + 18f)
+                                    {
+                                        if (cx >= right - 84 && cx <= right - 66) { _media.Previous(); hitButtons = true; }
+                                        else if (cx >= right - 54 && cx <= right - 36) { _media.TogglePlayPause(); hitButtons = true; }
+                                        else if (cx >= right - 24 && cx <= right - 6) { _media.Next(); hitButtons = true; }
+                                    }
+                                }
+                            }
+
+                            if (!hitButtons && Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
+                            {
+                                Renderer.IsMediaExpanded = true;
+                            }
+                        }
+                        break;
                     }
-                    break;
 
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
