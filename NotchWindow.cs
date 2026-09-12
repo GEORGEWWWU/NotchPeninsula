@@ -64,7 +64,8 @@ namespace NotchPeninsula
         private readonly DateTime _appStartTime = DateTime.Now;
         private readonly AudioAnalyzer _audioAnalyzer;
         private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
-        private readonly float[] _spectrumBars = new float[5]; // LyricServer 12 频段压缩为 5 柱时的复用缓冲
+        private readonly float[] _spectrumBars = new float[5]; // LyricServer 12 频段压缩为 5 柱的复用缓冲（仅 RenderLoop 单线程内写入并当帧消费）
+        private bool _wasUsingSoloSpectrum; // 上一帧是否在用 LyricServer 频谱，用于感知独占播放结束
         private readonly System.Windows.Forms.NotifyIcon _notifyIcon; // 托盘与自启常量
         private const string AppName = "NotchPeninsula";
         private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
@@ -195,6 +196,7 @@ namespace NotchPeninsula
                     _notifyIcon.Dispose();
                 }
                 Info("程序退出");
+                _audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
                 Environment.Exit(0);
             };
 
@@ -585,9 +587,12 @@ namespace NotchPeninsula
 
             // 频谱优先取 Just Solo LyricServer 推送（独占音频输出时本地采集拿不到数据），
             // 不可用（未连接 / 服务端不支持 / 已暂停）时回退到原来的 WASAPI 采集
-            float[] targetBars = _media.TryGetSoloSpectrum(out float[] soloBands) && soloBands.Length >= 12
-                ? MapSoloSpectrum(soloBands)
-                : _audioAnalyzer.GetBars();
+            bool useSoloSpectrum = _media.TryGetSoloSpectrum(out float[] soloBands) && soloBands.Length >= 12;
+            if (_wasUsingSoloSpectrum && !useSoloSpectrum)
+                _audioAnalyzer.EnsureCaptureAlive(); // LyricServer 频谱刚结束，让它立即复核本地采集
+            _wasUsingSoloSpectrum = useSoloSpectrum;
+
+            float[] targetBars = useSoloSpectrum ? MapSoloSpectrum(soloBands) : _audioAnalyzer.GetBars();
             for (int i = 0; i < 5; i++)
             {
                 float target = targetBars[i];
@@ -628,7 +633,9 @@ namespace NotchPeninsula
             }
         }
 
-        // 把 LyricServer 的 12 个频段（低频→高频）按区间取峰值压缩为渲染层的 5 根柱
+        // 把 LyricServer 的 12 个频段（低频→高频）按区间取峰值压缩为渲染层的 5 根柱。
+        // 返回复用缓冲以避免每帧分配；调用方只有 RenderLoop，且它由 _isRendering 保证串行执行，
+        // 写入后当帧立即被消费，不存在跨线程/跨帧共享。
         private float[] MapSoloSpectrum(float[] bands)
         {
             _spectrumBars[0] = Math.Max(bands[0], bands[1]);
