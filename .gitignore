@@ -5,3 +5,4 @@
 *.vsidx
 bin/
 obj/
+publish/

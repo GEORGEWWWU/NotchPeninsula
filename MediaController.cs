@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.RegularExpressions;
 using Windows.Media.Control;
 using SkiaSharp;
@@ -45,6 +45,8 @@ namespace NotchPeninsula
         private bool _isBilibiliSession;  // 通用模式下当前会话是否为 bilibili，用于隐藏 Artist
         private bool _isPotPlayerSession; // 当前会话是否为 PotPlayer，无歌名/歌手时隐藏文本
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
+        private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
+        private readonly JustSoloLyricClient _justSoloLyric = new();
 
         public MediaController()
         {
@@ -120,6 +122,10 @@ namespace NotchPeninsula
             _isPotPlayerSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "PotPlayer");
             _isBrowserSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Chrome")
                              || MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Edge");
+            _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
+
+            // Just Solo 专属歌词通道：仅通用模式下检测到 justsolo 会话时才连接 LyricServer
+            UpdateJustSoloConnection();
 
             // 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
             if (_currentSession != null && newSession != null && _currentSession.SourceAppUserModelId == newSession.SourceAppUserModelId)
@@ -156,6 +162,21 @@ namespace NotchPeninsula
                 IsPlaying = false;
                 Thumbnail?.Dispose();
                 Thumbnail = null;
+            }
+        }
+
+        // 依据当前会话与平台模式，维护 Just Solo LyricServer 的连接
+        private void UpdateJustSoloConnection()
+        {
+            bool shouldConnect = TargetPlatform == "other" && _isJustSoloSession;
+
+            if (shouldConnect)
+            {
+                if (!_justSoloLyric.IsRunning) _justSoloLyric.Start();
+            }
+            else if (_justSoloLyric.IsRunning)
+            {
+                _justSoloLyric.Stop();
             }
         }
 
@@ -285,6 +306,12 @@ namespace NotchPeninsula
 
         public async void Next() => await _currentSession?.TrySkipNextAsync();
         public async void Previous() => await _currentSession?.TrySkipPreviousAsync();
+
+        /// <summary>
+        /// 获取 Just Solo LyricServer 推送的实时频谱（12 频段，低频→高频）。
+        /// 返回 false 表示不可用（未连接 / 服务端版本过低 / 无数据），调用方应回退到本地音频采集。
+        /// </summary>
+        public bool TryGetSoloSpectrum(out float[] bands) => _justSoloLyric.TryGetSpectrum(out bands);
 
         private async void OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
         {
@@ -485,6 +512,14 @@ namespace NotchPeninsula
 
             // 拦截无效会话，但不再在这里拦截空歌词
             if (_currentSession == null) { CurrentLyric = ""; return; }
+
+            // Just Solo LyricServer 直连歌词优先（仅通用模式下检测到 justsolo 会话时才会处于连接状态）
+            if (_justSoloLyric.TryGetCurrentLyric(LyricDelayOffset, out string soloText, out float soloProgress))
+            {
+                CurrentLyric = IsLyricsEnabled ? soloText : "";
+                CurrentLyricProgress = IsLyricsEnabled ? soloProgress : 0f;
+                return;
+            }
 
             try
             {
