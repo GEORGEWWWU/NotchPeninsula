@@ -23,8 +23,23 @@ namespace NotchPeninsula
         })
         { Timeout = TimeSpan.FromSeconds(4) };
 
+        // 统一的请求 UA，按请求消息设置，避免并发修改静态 HttpClient 的默认头部
+        private const string BrowserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
         // 声明一个容量为 1 的异步锁，控制网络请求只能单线进行
         private static readonly System.Threading.SemaphoreSlim _fetchLock = new(1, 1);
+
+        // 构造带独立头部的请求消息：头部挂在消息上而非静态 HttpClient 上，天然线程安全
+        private static HttpRequestMessage CreateRequest(
+            HttpMethod method, string url, string userAgent,
+            string? referer = null, string? xRealIp = null, HttpContent? content = null)
+        {
+            var request = new HttpRequestMessage(method, url) { Content = content };
+            request.Headers.UserAgent.ParseAdd(userAgent);
+            if (referer != null) request.Headers.Referrer = new Uri(referer);
+            if (xRealIp != null) request.Headers.TryAddWithoutValidation("X-Real-IP", xRealIp);
+            return request;
+        }
 
         private (TimeSpan Time, string Text)[] _lyrics = Array.Empty<(TimeSpan, string)>();
         public string CurrentLyric { get; private set; } = "";
@@ -309,10 +324,10 @@ namespace NotchPeninsula
             try
             {
                 string query = Uri.EscapeDataString($"{title} {artist}");
-                _http.DefaultRequestHeaders.Clear();
-                _http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
 
-                using var searchStream = await _http.GetStreamAsync($"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json");
+                using var searchRequest = CreateRequest(HttpMethod.Get, $"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json", BrowserUserAgent);
+                using var searchResponse = await _http.SendAsync(searchRequest, HttpCompletionOption.ResponseHeadersRead);
+                using var searchStream = await searchResponse.Content.ReadAsStreamAsync();
                 using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
                 string albumMid = "";
@@ -339,7 +354,9 @@ namespace NotchPeninsula
 
                 if (string.IsNullOrEmpty(albumMid)) return null;
 
-                using var coverStream = await _http.GetStreamAsync($"https://y.gtimg.cn/music/photo_new/T002R300x300M000{albumMid}.jpg");
+                using var coverRequest = CreateRequest(HttpMethod.Get, $"https://y.gtimg.cn/music/photo_new/T002R300x300M000{albumMid}.jpg", BrowserUserAgent);
+                using var coverResponse = await _http.SendAsync(coverRequest, HttpCompletionOption.ResponseHeadersRead);
+                using var coverStream = await coverResponse.Content.ReadAsStreamAsync();
                 return SKBitmap.Decode(coverStream);
             }
             catch (Exception ex)
@@ -457,7 +474,7 @@ namespace NotchPeninsula
         // 歌词搜索：依次尝试 QQ音乐 → 网易云 → LRCLIB，返回 LRC 文本（全部失败返回空串）
         private async Task<string> SearchLyricsAsync(string title, string artist, long durationSec)
         {
-            // 等待获取通行证（防止多首歌同时修改 HttpClient 导致程序崩溃）
+            // 等待获取通行证，让封面/歌词的网络请求单线进行，避免同一时刻并发拉取
             await _fetchLock.WaitAsync();
             try
             {
@@ -466,16 +483,14 @@ namespace NotchPeninsula
 
                 string query = Uri.EscapeDataString($"{title} {artist}");
                 string lrcText = "";
-                string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
                 // ====== 引擎 1：QQ音乐 (优先) ======
                 try
                 {
-                    _http.DefaultRequestHeaders.Clear();
-                    _http.DefaultRequestHeaders.Add("User-Agent", ua);
-
                     // 内存优化：使用 Stream 流直接解析 JSON，避免生成大字符串吃内存
-                    using var searchStream = await _http.GetStreamAsync($"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json");
+                    using var searchRequest = CreateRequest(HttpMethod.Get, $"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json", BrowserUserAgent);
+                    using var searchResponse = await _http.SendAsync(searchRequest, HttpCompletionOption.ResponseHeadersRead);
+                    using var searchStream = await searchResponse.Content.ReadAsStreamAsync();
                     using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
                     string songmid = "";
@@ -502,8 +517,9 @@ namespace NotchPeninsula
 
                     if (!string.IsNullOrEmpty(songmid))
                     {
-                        _http.DefaultRequestHeaders.Add("Referer", "https://y.qq.com/");
-                        using var lyricStream = await _http.GetStreamAsync($"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1");
+                        using var lyricRequest = CreateRequest(HttpMethod.Get, $"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1", BrowserUserAgent, referer: "https://y.qq.com/");
+                        using var lyricResponse = await _http.SendAsync(lyricRequest, HttpCompletionOption.ResponseHeadersRead);
+                        using var lyricStream = await lyricResponse.Content.ReadAsStreamAsync();
                         using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
 
                         if (lyricDoc.RootElement.TryGetProperty("lyric", out var lrcEl))
@@ -522,12 +538,9 @@ namespace NotchPeninsula
                 {
                     try
                     {
-                        _http.DefaultRequestHeaders.Clear();
-                        _http.DefaultRequestHeaders.Add("User-Agent", ua);
-                        _http.DefaultRequestHeaders.Add("Referer", "https://music.163.com");
-                        _http.DefaultRequestHeaders.Add("X-Real-IP", $"114.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}");
+                        string xRealIp = $"114.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}";
 
-                        var content = new FormUrlEncodedContent(new[]
+                        using var content = new FormUrlEncodedContent(new[]
                         {
                             new KeyValuePair<string, string>("s", $"{title} {artist}"),
                             new KeyValuePair<string, string>("type", "1"),
@@ -535,8 +548,9 @@ namespace NotchPeninsula
                             new KeyValuePair<string, string>("offset", "0")
                         });
 
-                        var response = await _http.PostAsync("https://music.163.com/api/search/get/web", content);
-                        using var searchStream = await response.Content.ReadAsStreamAsync();
+                        using var searchRequest = CreateRequest(HttpMethod.Post, "https://music.163.com/api/search/get/web", BrowserUserAgent, referer: "https://music.163.com", xRealIp: xRealIp, content: content);
+                        using var searchResponse = await _http.SendAsync(searchRequest, HttpCompletionOption.ResponseHeadersRead);
+                        using var searchStream = await searchResponse.Content.ReadAsStreamAsync();
                         using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
                         long songId = 0;
@@ -566,7 +580,9 @@ namespace NotchPeninsula
 
                         if (songId > 0)
                         {
-                            using var lyricStream = await _http.GetStreamAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1");
+                            using var lyricRequest = CreateRequest(HttpMethod.Get, $"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1", BrowserUserAgent, referer: "https://music.163.com", xRealIp: xRealIp);
+                            using var lyricResponse = await _http.SendAsync(lyricRequest, HttpCompletionOption.ResponseHeadersRead);
+                            using var lyricStream = await lyricResponse.Content.ReadAsStreamAsync();
                             using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
                             if (lyricDoc.RootElement.TryGetProperty("lrc", out var lrc) &&
                                 lrc.TryGetProperty("lyric", out var lyricStr))
@@ -583,13 +599,13 @@ namespace NotchPeninsula
                 {
                     try
                     {
-                        _http.DefaultRequestHeaders.Clear();
-                        _http.DefaultRequestHeaders.Add("User-Agent", ua);
                         string lrclibUrl = $"https://lrclib.net/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
                         if (durationSec > 0) lrclibUrl += $"&duration={durationSec}";
 
                         // 同样优化为 Stream 流解析
-                        using var lrclibStream = await _http.GetStreamAsync(lrclibUrl);
+                        using var lrclibRequest = CreateRequest(HttpMethod.Get, lrclibUrl, BrowserUserAgent);
+                        using var lrclibResponse = await _http.SendAsync(lrclibRequest, HttpCompletionOption.ResponseHeadersRead);
+                        using var lrclibStream = await lrclibResponse.Content.ReadAsStreamAsync();
                         using var lrclibDoc = await JsonDocument.ParseAsync(lrclibStream);
 
                         if (lrclibDoc.RootElement.TryGetProperty("syncedLyrics", out var syn))
