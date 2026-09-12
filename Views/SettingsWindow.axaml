@@ -1,0 +1,107 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:NotchPeninsula.ViewModels"
+        xmlns:conv="clr-namespace:NotchPeninsula.Converters"
+        x:Class="NotchPeninsula.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Width="600" Height="660"
+        MinWidth="600" MinHeight="660"
+        MaxWidth="600" MaxHeight="660"
+        CanResize="False"
+        SystemDecorations="None"
+        WindowStartupLocation="CenterScreen"
+        Background="Transparent"
+        TransparencyLevelHint="Transparent"
+        FontFamily="Microsoft YaHei UI"
+        Title="NotchPeninsula">
+
+	<Border CornerRadius="8"
+            Background="{DynamicResource NpWindowBackground}"
+            BorderBrush="{DynamicResource NpCardBorderBrush}"
+            BorderThickness="1"
+            ClipToBounds="True">
+		<Grid RowDefinitions="32,*">
+
+			<!-- ============ 标题栏 ============ -->
+			<Border Grid.Row="0"
+                    Background="{DynamicResource NpTitleBarBackground}"
+                    PointerPressed="OnTitleBarPointerPressed">
+				<Grid ColumnDefinitions="Auto,*,Auto,Auto">
+					<Image Grid.Column="0"
+                           Source="{Binding AppIcon}"
+                           Width="16" Height="16"
+                           Margin="14,0,0,0"
+                           IsVisible="{Binding HasAppIcon}"/>
+					<TextBlock Grid.Column="1"
+                               Text="{Binding TitleWithVersion}"
+                               FontSize="12.5"
+                               Foreground="#FFC8C8C8"
+                               VerticalAlignment="Center"
+                               Margin="10,0,0,0"/>
+					<Button Grid.Column="2"
+                            Theme="{StaticResource TitleBarButtonTheme}"
+                            Command="{Binding MinimizeCommand}"
+                            ToolTip.Tip="最小化">
+						<Path Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1"
+                              Width="10" Height="10"
+                              Data="M 0,5 L 10,5"/>
+					</Button>
+					<Button Grid.Column="3"
+                            Classes="close"
+                            Theme="{StaticResource TitleBarButtonTheme}"
+                            Command="{Binding CloseCommand}"
+                            ToolTip.Tip="关闭">
+						<Path Stroke="{Binding $parent[Button].Foreground}"
+                              StrokeThickness="1"
+                              Width="10" Height="10"
+                              Data="M 0,0 L 10,10 M 10,0 L 0,10"/>
+					</Button>
+				</Grid>
+			</Border>
+
+			<!-- ============ 侧边栏 + 内容区 ============ -->
+			<Grid Grid.Row="1" ColumnDefinitions="180,*">
+
+				<StackPanel Grid.Column="0" Margin="10,10,10,0">
+					<Button Theme="{StaticResource NavButtonTheme}"
+                            Content="个性化中心"
+                            Classes.selected="{Binding SelectedTabIndex, Converter={StaticResource IndexEquals}, ConverterParameter=5}"
+                            Command="{Binding SelectTabCommand}" CommandParameter="5"/>
+					<Rectangle Classes="navsep"/>
+
+					<Button Theme="{StaticResource NavButtonTheme}"
+                            Content="通用设置"
+                            Classes.selected="{Binding SelectedTabIndex, Converter={StaticResource IndexEquals}, ConverterParameter=0}"
+                            Command="{Binding SelectTabCommand}" CommandParameter="0"/>
+					<Button Theme="{StaticResource NavButtonTheme}"
+                            Content="显示设置"
+                            Classes.selected="{Binding SelectedTabIndex, Converter={StaticResource IndexEquals}, ConverterParameter=1}"
+                            Command="{Binding SelectTabCommand}" CommandParameter="1"/>
+					<Button Theme="{StaticResource NavButtonTheme}"
+                            Content="媒体设置"
+                            Classes.selected="{Binding SelectedTabIndex, Converter={StaticResource IndexEquals}, ConverterParameter=2}"
+                            Command="{Binding SelectTabCommand}" CommandParameter="2"/>
+					<Button Theme="{StaticResource NavButtonTheme}"
+                            Content="交互设置"
+                            Classes.selected="{Binding SelectedTabIndex, Converter={StaticResource IndexEquals}, ConverterParameter=3}"
+                            Command="{Binding SelectTabCommand}" CommandParameter="3"/>
+					<Rectangle Classes="navsep"/>
+
+					<Button Theme="{StaticResource NavButtonTheme}"
+                            Content="关于软件"
+                            Classes.selected="{Binding SelectedTabIndex, Converter={StaticResource IndexEquals}, ConverterParameter=4}"
+                            Command="{Binding SelectTabCommand}" CommandParameter="4"/>
+				</StackPanel>
+
+				<ScrollViewer Grid.Column="1"
+                              Margin="20,12,20,20"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+					<ContentControl Content="{Binding CurrentPage}"/>
+				</ScrollViewer>
+
+			</Grid>
+		</Grid>
+	</Border>
+</Window>

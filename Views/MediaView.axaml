@@ -1,0 +1,75 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:NotchPeninsula.ViewModels"
+             x:Class="NotchPeninsula.Views.MediaView"
+             x:DataType="vm:MediaViewModel">
+
+	<StackPanel Spacing="12">
+
+		<!-- ========== 媒体控制 ========== -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="媒体控制"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="允许在刘海中显示和控制系统媒体播放"/>
+				</StackPanel>
+				<ToggleSwitch Grid.Column="1"
+                              IsChecked="{Binding IsMediaControlEnabled, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              OnContent="" OffContent=""/>
+			</Grid>
+		</Border>
+
+		<!-- ========== 目标媒体平台 ========== -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="目标媒体平台"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="多平台共存时，优先截获并接管的平台"/>
+				</StackPanel>
+				<ComboBox Grid.Column="1"
+                          Width="110" Height="32"
+                          ItemsSource="{Binding Platforms}"
+                          SelectedIndex="{Binding SelectedPlatformIndex, Mode=TwoWay}"
+                          VerticalAlignment="Center"/>
+			</Grid>
+		</Border>
+
+		<!-- ========== 歌词设置 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="12">
+				<TextBlock Classes="cardTitle" Text="歌词设置"/>
+
+				<Grid ColumnDefinitions="*,Auto">
+					<TextBlock Classes="rowLabel" Text="在刘海中显示歌词"/>
+					<ToggleSwitch Grid.Column="1"
+                                  IsChecked="{Binding IsLyricsEnabled, Mode=TwoWay}"
+                                  OnContent="" OffContent=""/>
+				</Grid>
+
+				<Grid ColumnDefinitions="*,Auto">
+					<TextBlock Classes="rowLabel" Text="开启卡拉OK动效"/>
+					<ToggleSwitch Grid.Column="1"
+                                  IsChecked="{Binding IsKaraokeEnabled, Mode=TwoWay}"
+                                  OnContent="" OffContent=""/>
+				</Grid>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+					<TextBlock Classes="rowLabel" Text="歌词延迟补偿"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}"
+                            Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustDelayCommand}" CommandParameter="minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="60"
+                               Text="{Binding LyricDelayOffset, StringFormat='{}{0:+0.0;-0.0;0.0} s'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}"
+                            Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustDelayCommand}" CommandParameter="plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}"
+                            Content="重置"
+                            Command="{Binding AdjustDelayCommand}" CommandParameter="reset"/>
+				</Grid>
+			</StackPanel>
+		</Border>
+
+	</StackPanel>
+</UserControl>

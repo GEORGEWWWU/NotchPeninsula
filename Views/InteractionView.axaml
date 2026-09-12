@@ -1,0 +1,55 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:NotchPeninsula.ViewModels"
+             x:Class="NotchPeninsula.Views.InteractionView"
+             x:DataType="vm:InteractionViewModel">
+
+	<StackPanel Spacing="12">
+
+		<!-- 自动隐藏 -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="自动隐藏"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="当鼠标离开时自动隐藏刘海"/>
+				</StackPanel>
+				<ToggleSwitch Grid.Column="1"
+                              IsChecked="{Binding IsAutoHideEnabled, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              OnContent="" OffContent=""/>
+			</Grid>
+		</Border>
+
+		<!-- 媒体交互方式（组合模式下锁定） -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center"
+                            Opacity="{Binding MediaInteractionOpacity}">
+					<TextBlock Classes="cardTitle" Text="媒体交互方式"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0"
+                               Text="{Binding MediaInteractionDescription}"/>
+				</StackPanel>
+				<ToggleSwitch Grid.Column="1"
+                              IsChecked="{Binding IsExpandInteraction, Mode=TwoWay}"
+                              IsEnabled="{Binding !IsMediaInteractionLocked}"
+                              VerticalAlignment="Center"
+                              OnContent="" OffContent=""/>
+			</Grid>
+		</Border>
+
+		<!-- 穿透模式 -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="穿透模式"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="悬停时透明并允许鼠标穿透本体与底层窗口交互"/>
+				</StackPanel>
+				<ToggleSwitch Grid.Column="1"
+                              IsChecked="{Binding IsPassthroughEnabled, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              OnContent="" OffContent=""/>
+			</Grid>
+		</Border>
+
+	</StackPanel>
+</UserControl>

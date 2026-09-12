@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:NotchPeninsula.ViewModels"
+             x:Class="NotchPeninsula.Views.GeneralView"
+             x:DataType="vm:GeneralViewModel">
+
+	<StackPanel Spacing="12">
+
+		<!-- 开机自启 -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="开机自启"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="跟随系统启动自动运行该程序"/>
+				</StackPanel>
+				<ToggleSwitch Grid.Column="1"
+                              IsChecked="{Binding IsAutoStartEnabled, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              OnContent="" OffContent=""/>
+			</Grid>
+		</Border>
+
+		<!-- 系统消息通知 -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="系统消息通知"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="允许在刘海中显示Windows系统的Toast消息"/>
+				</StackPanel>
+				<ToggleSwitch Grid.Column="1"
+                              IsChecked="{Binding IsToastEnabled, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              OnContent="" OffContent=""/>
+			</Grid>
+		</Border>
+
+		<!-- 窗口置顶 -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="窗口置顶"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="开启后刘海将始终保持在其他窗口最上层"/>
+				</StackPanel>
+				<ToggleSwitch Grid.Column="1"
+                              IsChecked="{Binding IsTopmostEnabled, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              OnContent="" OffContent=""/>
+			</Grid>
+		</Border>
+
+	</StackPanel>
+</UserControl>

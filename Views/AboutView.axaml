@@ -1,0 +1,36 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:NotchPeninsula.ViewModels"
+             x:Class="NotchPeninsula.Views.AboutView"
+             x:DataType="vm:AboutViewModel">
+
+	<Border Classes="card" Padding="16,24,16,24">
+		<StackPanel HorizontalAlignment="Center" Spacing="8">
+
+			<Image Source="{Binding AppIcon}"
+                   Width="64" Height="64"
+                   IsVisible="{Binding HasAppIcon}"/>
+
+			<TextBlock Text="NotchPeninsula"
+                       FontSize="20"
+                       Foreground="{DynamicResource NpTextPrimary}"
+                       HorizontalAlignment="Center"/>
+
+			<TextBlock Text="{Binding VersionText}"
+                       FontSize="13"
+                       Foreground="{DynamicResource NpTextSecondary}"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,16"/>
+
+			<StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+				<Button Theme="{StaticResource LinkButtonTheme}" Content="检测更新"
+                        Command="{Binding OpenLinkCommand}" CommandParameter="0"/>
+				<Button Theme="{StaticResource LinkButtonTheme}" Content="项目仓库"
+                        Command="{Binding OpenLinkCommand}" CommandParameter="1"/>
+				<Button Theme="{StaticResource LinkButtonTheme}" Content="开发者"
+                        Command="{Binding OpenLinkCommand}" CommandParameter="2"/>
+			</StackPanel>
+
+		</StackPanel>
+	</Border>
+</UserControl>

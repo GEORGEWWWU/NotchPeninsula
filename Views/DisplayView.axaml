@@ -1,0 +1,155 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:NotchPeninsula.ViewModels"
+             x:Class="NotchPeninsula.Views.DisplayView"
+             x:DataType="vm:DisplayViewModel">
+
+	<StackPanel Spacing="12">
+
+		<!-- ========== 刘海形态 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="10">
+				<TextBlock Classes="cardTitle" Text="刘海形态"/>
+				<Grid ColumnDefinitions="150,*,150">
+					<!-- 经典刘海 -->
+					<Button Grid.Column="0"
+                            Theme="{StaticResource OptionCardTheme}"
+                            Height="90" Width="150"
+                            Classes.active="{Binding NotchStyle, Converter={StaticResource IndexEquals}, ConverterParameter=0}"
+                            Command="{Binding SelectStyleCommand}" CommandParameter="0">
+						<StackPanel Spacing="6" HorizontalAlignment="Center">
+							<Path Width="70" Height="20"
+                                  Fill="{Binding PreviewFill}"
+                                  Data="M 0,0 Q 10,0 10,5 L 10,15 Q 10,20 20,20 L 50,20 Q 60,20 60,15 L 60,5 Q 60,0 70,0 Z"/>
+							<StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+								<Grid Width="12" Height="12">
+									<Ellipse Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.5"/>
+									<Ellipse Width="6" Height="6" Fill="{DynamicResource NpAccent}"
+                                             IsVisible="{Binding NotchStyle, Converter={StaticResource IndexEquals}, ConverterParameter=0}"/>
+								</Grid>
+								<TextBlock Text="经典刘海" VerticalAlignment="Center"/>
+							</StackPanel>
+						</StackPanel>
+					</Button>
+
+					<!-- 悬浮胶囊 -->
+					<Button Grid.Column="2"
+                            Theme="{StaticResource OptionCardTheme}"
+                            Height="90" Width="150"
+                            Classes.active="{Binding NotchStyle, Converter={StaticResource IndexEquals}, ConverterParameter=1}"
+                            Command="{Binding SelectStyleCommand}" CommandParameter="1">
+						<StackPanel Spacing="6" HorizontalAlignment="Center">
+							<Rectangle Width="50" Height="20" RadiusX="10" RadiusY="10"
+                                       Fill="{Binding PreviewFill}"/>
+							<StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+								<Grid Width="12" Height="12">
+									<Ellipse Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.5"/>
+									<Ellipse Width="6" Height="6" Fill="{DynamicResource NpAccent}"
+                                             IsVisible="{Binding NotchStyle, Converter={StaticResource IndexEquals}, ConverterParameter=1}"/>
+								</Grid>
+								<TextBlock Text="悬浮胶囊" VerticalAlignment="Center"/>
+							</StackPanel>
+						</StackPanel>
+					</Button>
+				</Grid>
+			</StackPanel>
+		</Border>
+
+		<!-- ========== 目标显示器 ========== -->
+		<Border Classes="card" Height="62">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel VerticalAlignment="Center">
+					<TextBlock Classes="cardTitle" Text="目标显示器"/>
+					<TextBlock Classes="cardSub" Margin="0,4,0,0" Text="选择刘海灵动岛显示的目标屏幕"/>
+				</StackPanel>
+				<ComboBox Grid.Column="1"
+                          Width="110" Height="32"
+                          ItemsSource="{Binding MonitorNames}"
+                          SelectedIndex="{Binding TargetMonitorIndex, Mode=TwoWay}"
+                          VerticalAlignment="Center"/>
+			</Grid>
+		</Border>
+
+		<!-- ========== 待机显示内容 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="12">
+				<StackPanel Spacing="4">
+					<TextBlock Classes="cardTitle" Text="待机显示内容"/>
+					<TextBlock Classes="cardSub" Text="刘海处于待机状态时默认展示的信息"/>
+				</StackPanel>
+
+				<Grid ColumnDefinitions="110,*,110,*,110">
+					<Button Grid.Column="0" Theme="{StaticResource OptionCardTheme}"
+                            Height="40" HorizontalAlignment="Stretch"
+                            IsEnabled="{Binding !CompositeModeEnabled}"
+                            Classes.active="{Binding StandbyDisplayMode, Converter={StaticResource IndexEquals}, ConverterParameter=2}"
+                            Command="{Binding SelectStandbyModeCommand}" CommandParameter="2">
+						<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+							<Path Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.5"
+                                  Width="14" Height="12"
+                                  Data="M 0,0 L 14,0 L 14,12 L 0,12 Z M 3,3 L 11,3"/>
+							<TextBlock Text="硬件占用" VerticalAlignment="Center"/>
+						</StackPanel>
+					</Button>
+
+					<Button Grid.Column="2" Theme="{StaticResource OptionCardTheme}"
+                            Height="40" HorizontalAlignment="Stretch"
+                            IsEnabled="{Binding !CompositeModeEnabled}"
+                            Classes.active="{Binding StandbyDisplayMode, Converter={StaticResource IndexEquals}, ConverterParameter=0}"
+                            Command="{Binding SelectStandbyModeCommand}" CommandParameter="0">
+						<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+							<Ellipse Width="16" Height="16"
+                                     Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.5"/>
+							<TextBlock Text="时间日期" VerticalAlignment="Center"/>
+						</StackPanel>
+					</Button>
+
+					<Button Grid.Column="4" Theme="{StaticResource OptionCardTheme}"
+                            Height="40" HorizontalAlignment="Stretch"
+                            IsEnabled="{Binding !CompositeModeEnabled}"
+                            Classes.active="{Binding StandbyDisplayMode, Converter={StaticResource IndexEquals}, ConverterParameter=1}"
+                            Command="{Binding SelectStandbyModeCommand}" CommandParameter="1">
+						<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+							<Path Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.5"
+                                  Width="14" Height="2"
+                                  Data="M 0,0 L 14,0"/>
+							<TextBlock Text="空白" VerticalAlignment="Center"/>
+						</StackPanel>
+					</Button>
+				</Grid>
+			</StackPanel>
+		</Border>
+
+		<!-- ========== 自定义组合模式 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="10">
+				<StackPanel Spacing="4">
+					<TextBlock Classes="cardTitle" Text="自定义组合模式"/>
+					<TextBlock Classes="cardSub" Text="自由选择刘海内显示的功能模块"/>
+				</StackPanel>
+
+				<Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+					<StackPanel VerticalAlignment="Center">
+						<TextBlock Classes="cardTitle" Text="启用组合模式"/>
+						<TextBlock Classes="cardSub" Margin="0,2,0,0" Text="开启后可同时显示多个功能模块"/>
+					</StackPanel>
+					<ToggleSwitch Grid.Column="1"
+                                  IsChecked="{Binding CompositeModeEnabled, Mode=TwoWay}"
+                                  OnContent="" OffContent=""/>
+				</Grid>
+
+				<CheckBox Content="时间日期"
+                          Margin="0,4,0,0"
+                          IsEnabled="{Binding CompositeModeEnabled}"
+                          IsChecked="{Binding CompShowDateTime, Mode=TwoWay}"/>
+				<CheckBox Content="资源占用检测"
+                          IsEnabled="{Binding CompositeModeEnabled}"
+                          IsChecked="{Binding CompShowHardware, Mode=TwoWay}"/>
+				<CheckBox Content="媒体控制器(含频谱)"
+                          IsEnabled="{Binding CompositeModeEnabled}"
+                          IsChecked="{Binding CompShowMedia, Mode=TwoWay}"/>
+			</StackPanel>
+		</Border>
+
+	</StackPanel>
+</UserControl>

@@ -1,0 +1,257 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:NotchPeninsula"
+             xmlns:conv="clr-namespace:NotchPeninsula.Converters"
+             x:Class="NotchPeninsula.ConsoleApp"
+             RequestedThemeVariant="Dark">
+
+	<Application.DataTemplates>
+		<local:ViewLocator/>
+	</Application.DataTemplates>
+
+	<Application.Styles>
+		<FluentTheme />
+
+		<!-- 卡片容器（对应原 Skia 手绘卡片：x 200~580，文字起始 x=216 → 内边距 16） -->
+		<Style Selector="Border.card">
+			<Setter Property="Background" Value="{DynamicResource NpCardBackground}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource NpCardBorderBrush}"/>
+			<Setter Property="BorderThickness" Value="1"/>
+			<Setter Property="CornerRadius" Value="6"/>
+			<Setter Property="Padding" Value="16,0,16,0"/>
+		</Style>
+
+		<Style Selector="TextBlock.cardTitle">
+			<Setter Property="FontSize" Value="13.5"/>
+			<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+		</Style>
+
+		<Style Selector="TextBlock.cardSub">
+			<Setter Property="FontSize" Value="12"/>
+			<Setter Property="Foreground" Value="{DynamicResource NpTextSecondary}"/>
+		</Style>
+
+		<Style Selector="TextBlock.rowLabel">
+			<Setter Property="FontSize" Value="12"/>
+			<Setter Property="Foreground" Value="{DynamicResource NpTextSecondary}"/>
+			<Setter Property="VerticalAlignment" Value="Center"/>
+		</Style>
+
+		<Style Selector="TextBlock.readout">
+			<Setter Property="FontSize" Value="13"/>
+			<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+			<Setter Property="VerticalAlignment" Value="Center"/>
+			<Setter Property="HorizontalAlignment" Value="Center"/>
+		</Style>
+
+		<Style Selector="Rectangle.navsep">
+			<Setter Property="Height" Value="1"/>
+			<Setter Property="Fill" Value="{DynamicResource NpSeparatorBrush}"/>
+			<Setter Property="Margin" Value="10,6,10,6"/>
+		</Style>
+	</Application.Styles>
+
+	<Application.Resources>
+		<ResourceDictionary>
+			<!-- ===== 转换器 ===== -->
+			<conv:IndexEqualsConverter x:Key="IndexEquals"/>
+
+			<!-- ===== 主题色（覆盖 Fluent 强调色） ===== -->
+			<Color x:Key="SystemAccentColor">#FF0078D4</Color>
+			<Color x:Key="SystemAccentColorLight1">#FF008CF0</Color>
+			<Color x:Key="SystemAccentColorLight2">#FF1A9BF5</Color>
+			<Color x:Key="SystemAccentColorLight3">#FF3DAAF7</Color>
+			<Color x:Key="SystemAccentColorDark1">#FF006CBE</Color>
+			<Color x:Key="SystemAccentColorDark2">#FF005BA1</Color>
+			<Color x:Key="SystemAccentColorDark3">#FF004A83</Color>
+
+			<!-- ===== NotchPeninsula 配色（还原原 Skia 手绘色值） ===== -->
+			<SolidColorBrush x:Key="NpWindowBackground">#FF202020</SolidColorBrush>
+			<SolidColorBrush x:Key="NpTitleBarBackground">#FF282828</SolidColorBrush>
+			<SolidColorBrush x:Key="NpCardBackground">#14FFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpCardBorderBrush">#26FFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpSeparatorBrush">#33FFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpTextPrimary">#FFFFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpTextSecondary">#FFAAAAAA</SolidColorBrush>
+			<SolidColorBrush x:Key="NpTextDisabled">#FF646464</SolidColorBrush>
+			<SolidColorBrush x:Key="NpAccent">#FF0078D4</SolidColorBrush>
+			<SolidColorBrush x:Key="NpAccentHover">#FF008CF0</SolidColorBrush>
+			<SolidColorBrush x:Key="NpButtonBackground">#14FFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpButtonHoverBackground">#1EFFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpTabHoverBackground">#08FFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpTabSelectedBackground">#0FFFFFFF</SolidColorBrush>
+			<SolidColorBrush x:Key="NpStrokeMuted">#FF505050</SolidColorBrush>
+
+			<!-- ===== 侧边栏导航按钮 ===== -->
+			<ControlTheme x:Key="NavButtonTheme" TargetType="Button">
+				<Setter Property="Background" Value="Transparent"/>
+				<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+				<Setter Property="FontSize" Value="13.5"/>
+				<Setter Property="Height" Value="36"/>
+				<Setter Property="Padding" Value="20,0,0,0"/>
+				<Setter Property="HorizontalAlignment" Value="Stretch"/>
+				<Setter Property="HorizontalContentAlignment" Value="Left"/>
+				<Setter Property="VerticalContentAlignment" Value="Center"/>
+				<Setter Property="CornerRadius" Value="4"/>
+				<Setter Property="Template">
+					<ControlTemplate>
+						<Border Name="Root"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="{TemplateBinding CornerRadius}">
+							<ContentPresenter Name="PART_ContentPresenter"
+                                              Content="{TemplateBinding Content}"
+                                              Padding="{TemplateBinding Padding}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+						</Border>
+					</ControlTemplate>
+				</Setter>
+				<Style Selector="^:pointerover /template/ Border#Root">
+					<Setter Property="Background" Value="{DynamicResource NpTabHoverBackground}"/>
+				</Style>
+				<Style Selector="^.selected /template/ Border#Root">
+					<Setter Property="Background" Value="{DynamicResource NpTabSelectedBackground}"/>
+				</Style>
+				<Style Selector="^.selected">
+					<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+				</Style>
+			</ControlTheme>
+
+			<!-- ===== 标题栏按钮 ===== -->
+			<ControlTheme x:Key="TitleBarButtonTheme" TargetType="Button">
+				<Setter Property="Width" Value="46"/>
+				<Setter Property="Height" Value="32"/>
+				<Setter Property="Background" Value="Transparent"/>
+				<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+				<Setter Property="Template">
+					<ControlTemplate>
+						<Border Name="Root" Background="{TemplateBinding Background}">
+							<ContentPresenter Content="{TemplateBinding Content}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+						</Border>
+					</ControlTemplate>
+				</Setter>
+				<Style Selector="^:pointerover /template/ Border#Root">
+					<Setter Property="Background" Value="#14FFFFFF"/>
+				</Style>
+				<Style Selector="^.close:pointerover /template/ Border#Root">
+					<Setter Property="Background" Value="#FFE81123"/>
+				</Style>
+			</ControlTheme>
+
+			<!-- ===== 步进小按钮（- / + / 重置） ===== -->
+			<ControlTheme x:Key="StepButtonTheme" TargetType="Button">
+				<Setter Property="Background" Value="{DynamicResource NpButtonBackground}"/>
+				<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+				<Setter Property="FontSize" Value="13"/>
+				<Setter Property="Height" Value="24"/>
+				<Setter Property="MinWidth" Value="30"/>
+				<Setter Property="CornerRadius" Value="4"/>
+				<Setter Property="HorizontalContentAlignment" Value="Center"/>
+				<Setter Property="VerticalContentAlignment" Value="Center"/>
+				<Setter Property="Template">
+					<ControlTemplate>
+						<Border Name="Root"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="{TemplateBinding CornerRadius}">
+							<ContentPresenter Content="{TemplateBinding Content}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+						</Border>
+					</ControlTemplate>
+				</Setter>
+				<Style Selector="^:pointerover /template/ Border#Root">
+					<Setter Property="Background" Value="{DynamicResource NpButtonHoverBackground}"/>
+				</Style>
+				<Style Selector="^:disabled">
+					<Setter Property="Opacity" Value="0.4"/>
+				</Style>
+			</ControlTheme>
+
+			<!-- ===== 胶囊按钮（主题 黑/白/系统） ===== -->
+			<ControlTheme x:Key="PillButtonTheme" TargetType="Button">
+				<Setter Property="Background" Value="{DynamicResource NpButtonBackground}"/>
+				<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+				<Setter Property="FontSize" Value="13"/>
+				<Setter Property="Height" Value="24"/>
+				<Setter Property="CornerRadius" Value="4"/>
+				<Setter Property="HorizontalContentAlignment" Value="Center"/>
+				<Setter Property="VerticalContentAlignment" Value="Center"/>
+				<Setter Property="Template">
+					<ControlTemplate>
+						<Border Name="Root"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="{TemplateBinding CornerRadius}">
+							<ContentPresenter Content="{TemplateBinding Content}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+						</Border>
+					</ControlTemplate>
+				</Setter>
+				<Style Selector="^:pointerover /template/ Border#Root">
+					<Setter Property="Background" Value="{DynamicResource NpButtonHoverBackground}"/>
+				</Style>
+				<Style Selector="^.active">
+					<Setter Property="Foreground" Value="{DynamicResource NpAccentHover}"/>
+				</Style>
+			</ControlTheme>
+
+			<!-- ===== 选项卡片（刘海形态 / 待机显示内容） ===== -->
+			<ControlTheme x:Key="OptionCardTheme" TargetType="Button">
+				<Setter Property="Background" Value="#08FFFFFF"/>
+				<Setter Property="BorderBrush" Value="{DynamicResource NpStrokeMuted}"/>
+				<Setter Property="BorderThickness" Value="1"/>
+				<Setter Property="CornerRadius" Value="6"/>
+				<Setter Property="Foreground" Value="{DynamicResource NpTextPrimary}"/>
+				<Setter Property="FontSize" Value="13"/>
+				<Setter Property="Template">
+					<ControlTemplate>
+						<Border Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{TemplateBinding CornerRadius}">
+							<ContentPresenter Content="{TemplateBinding Content}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+						</Border>
+					</ControlTemplate>
+				</Setter>
+				<Style Selector="^:pointerover /template/ Border#Root">
+					<Setter Property="Background" Value="#0FFFFFFF"/>
+				</Style>
+				<Style Selector="^.active /template/ Border#Root">
+					<Setter Property="Background" Value="#280078D4"/>
+					<Setter Property="BorderBrush" Value="{DynamicResource NpAccent}"/>
+				</Style>
+				<Style Selector="^.active">
+					<Setter Property="Foreground" Value="{DynamicResource NpAccentHover}"/>
+				</Style>
+				<Style Selector="^:disabled">
+					<Setter Property="Opacity" Value="0.45"/>
+				</Style>
+			</ControlTheme>
+
+			<!-- ===== 关于页链接 ===== -->
+			<ControlTheme x:Key="LinkButtonTheme" TargetType="Button">
+				<Setter Property="Background" Value="Transparent"/>
+				<Setter Property="Foreground" Value="{DynamicResource NpAccent}"/>
+				<Setter Property="FontSize" Value="13"/>
+				<Setter Property="Padding" Value="0"/>
+				<Setter Property="Template">
+					<ControlTemplate>
+						<Border Name="Root" Background="{TemplateBinding Background}">
+							<ContentPresenter Content="{TemplateBinding Content}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+						</Border>
+					</ControlTemplate>
+				</Setter>
+				<Style Selector="^:pointerover">
+					<Setter Property="Foreground" Value="{DynamicResource NpAccentHover}"/>
+				</Style>
+			</ControlTheme>
+		</ResourceDictionary>
+	</Application.Resources>
+</Application>

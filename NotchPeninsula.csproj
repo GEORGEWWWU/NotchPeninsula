@@ -5,14 +5,13 @@
 		<TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<!-- 添加 WinForms 支持，仅仅为了拿一下屏幕宽度 -->
 		<UseWindowsForms>true</UseWindowsForms>
 		<UseWPF>true</UseWPF>
+ 		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 		<ApplicationIcon>NPS_NotchPeninsula-logo.ico</ApplicationIcon>
-    <PublishSingleFile>true</PublishSingleFile>
-		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-
 	<Version>1.5.0</Version>
 	</PropertyGroup>
 
@@ -30,6 +29,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	<PackageReference Include="Avalonia" Version="11.1.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.1.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.1.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.1.0" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
 		<PackageReference Include="SkiaSharp" Version="2.88.8" />
 		<PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.8" />
 		<!-- 音频采集库 -->

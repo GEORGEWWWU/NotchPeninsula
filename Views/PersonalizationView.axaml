@@ -1,0 +1,190 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:NotchPeninsula.ViewModels"
+             x:Class="NotchPeninsula.Views.PersonalizationView"
+             x:DataType="vm:PersonalizationViewModel">
+
+
+	<StackPanel Spacing="12">
+
+		<!-- ========== 主题 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="12">
+				<StackPanel Spacing="4">
+					<TextBlock Classes="cardTitle" Text="刘海 / 灵动岛主题"/>
+					<TextBlock Classes="cardSub" Text="背景与文本颜色自适应反转"/>
+				</StackPanel>
+
+				<StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+					<Button Theme="{StaticResource PillButtonTheme}" Content="黑" Width="40"
+                            Classes.active="{Binding ThemeMode, Converter={StaticResource IndexEquals}, ConverterParameter=0}"
+                            Command="{Binding SetThemeCommand}" CommandParameter="0"/>
+					<Button Theme="{StaticResource PillButtonTheme}" Content="白" Width="40"
+                            Classes.active="{Binding ThemeMode, Converter={StaticResource IndexEquals}, ConverterParameter=1}"
+                            Command="{Binding SetThemeCommand}" CommandParameter="1"/>
+					<Button Theme="{StaticResource PillButtonTheme}" Content="系统" Width="40"
+                            Classes.active="{Binding ThemeMode, Converter={StaticResource IndexEquals}, ConverterParameter=2}"
+                            Command="{Binding SetThemeCommand}" CommandParameter="2"/>
+				</StackPanel>
+
+				<StackPanel Spacing="10">
+					<TextBlock Classes="cardSub" Text="背景透明度"/>
+					<Slider Minimum="0" Maximum="4" TickFrequency="1"
+                            IsSnapToTickEnabled="True"
+                            TickPlacement="BottomRight"
+                            Value="{Binding BgOpacityLevel, Mode=TwoWay}"
+                            IsEnabled="{Binding IsOpacityEnabled}"/>
+				</StackPanel>
+			</StackPanel>
+		</Border>
+
+		<!-- ========== 待机显示 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="6">
+				<StackPanel Orientation="Horizontal">
+					<TextBlock Classes="cardTitle" Text="待机显示"/>
+					<Border Background="#230078D4" CornerRadius="3" Padding="4,1" Margin="10,0,0,0"
+                                    IsVisible="{Binding IsStandbyModified}">
+						<TextBlock Text="已生效" FontSize="10" Foreground="{DynamicResource NpAccentHover}"/>
+					</Border>
+				</StackPanel>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="水平宽度"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="0|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding StandbyWidth, StringFormat='{}{0:0} px'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="0|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="0|reset"/>
+				</Grid>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="垂直高度"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="1|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding BaseHeight, StringFormat='{}{0:0} px'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="1|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="1|reset"/>
+				</Grid>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="底部圆角"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="7|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding NotchBottomRadius, StringFormat='{}{0:0} px'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="7|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="7|reset"/>
+				</Grid>
+			</StackPanel>
+		</Border>
+
+		<!-- ========== 媒体控制 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="6">
+				<StackPanel Orientation="Horizontal">
+					<TextBlock Classes="cardTitle" Text="媒体控制"/>
+					<Border Background="#230078D4" CornerRadius="3" Padding="4,1" Margin="10,0,0,0"
+                                    IsVisible="{Binding IsMediaModified}">
+						<TextBlock Text="已生效" FontSize="10" Foreground="{DynamicResource NpAccentHover}"/>
+					</Border>
+				</StackPanel>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="激活时宽度"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="2|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding MediaWidth, StringFormat='{}{0:0} px'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="2|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="2|reset"/>
+				</Grid>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="激活时高度"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="3|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding MediaHeight, StringFormat='{}{0:0} px'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="3|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="3|reset"/>
+				</Grid>
+			</StackPanel>
+		</Border>
+
+		<!-- ========== 消息通知 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="6">
+				<StackPanel Orientation="Horizontal">
+					<TextBlock Classes="cardTitle" Text="消息通知"/>
+					<Border Background="#230078D4" CornerRadius="3" Padding="4,1" Margin="10,0,0,0"
+                                    IsVisible="{Binding IsToastModified}">
+						<TextBlock Text="已生效" FontSize="10" Foreground="{DynamicResource NpAccentHover}"/>
+					</Border>
+				</StackPanel>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="弹出的宽度"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="4|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding ToastWidth, StringFormat='{}{0:0} px'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="4|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="4|reset"/>
+				</Grid>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="弹出的高度"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="5|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding ToastHeight, StringFormat='{}{0:0} px'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="5|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="5|reset"/>
+				</Grid>
+			</StackPanel>
+		</Border>
+
+		<!-- ========== 全局 DPI 缩放 ========== -->
+		<Border Classes="card" Padding="16,12,16,14">
+			<StackPanel Spacing="6">
+				<StackPanel Orientation="Horizontal">
+					<TextBlock Classes="cardTitle" Text="全局 DPI 缩放"/>
+					<Border Background="#230078D4" CornerRadius="3" Padding="4,1" Margin="10,0,0,0"
+                                    IsVisible="{Binding IsDpiModified}">
+						<TextBlock Text="已生效" FontSize="10" Foreground="{DynamicResource NpAccentHover}"/>
+					</Border>
+				</StackPanel>
+
+				<Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Height="34">
+					<TextBlock Classes="rowLabel" Text="视觉比例"/>
+					<Button Grid.Column="1" Theme="{StaticResource StepButtonTheme}" Content="-" Margin="0,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="6|minus"/>
+					<TextBlock Grid.Column="2" Classes="readout" Width="58"
+                               Text="{Binding GlobalDpi, StringFormat='{}{0:F2} x'}"/>
+					<Button Grid.Column="3" Theme="{StaticResource StepButtonTheme}" Content="+" Margin="10,0,10,0"
+                            Command="{Binding AdjustCommand}" CommandParameter="6|plus"/>
+					<Button Grid.Column="4" Theme="{StaticResource StepButtonTheme}" Content="重置"
+                            Command="{Binding AdjustCommand}" CommandParameter="6|reset"/>
+				</Grid>
+			</StackPanel>
+		</Border>
+
+	</StackPanel>
+</UserControl>
