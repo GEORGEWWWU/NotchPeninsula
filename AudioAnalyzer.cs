@@ -65,6 +65,9 @@ namespace NotchPeninsula
             // 常驻看门狗：健康时只做极廉价的检查，失效时才重建捕获。
             // 由 Dispose()（程序退出流程）通过 CancellationToken 停止。
             _watchdogTask = Task.Factory.StartNew(WatchdogLoop, TaskCreationOptions.LongRunning);
+            _watchdogTask.ContinueWith(
+                t => Logger.Error("音频分析看门狗任务异常退出", t.Exception?.InnerException ?? t.Exception),
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         }
 
         /// <summary>
