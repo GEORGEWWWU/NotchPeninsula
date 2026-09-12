@@ -13,7 +13,7 @@ public sealed class HelloPlugin : INotchPlugin
     public void Initialize(IPluginHost host)
     {
         host.RegisterWidget(new HelloWidget(host));
-        host.RegisterSettingsPage(new HelloSettingsPage());
+        host.RegisterSettingsPage(new HelloSettingsPage(host));
 
         // 5 秒后发一条提醒，演示 PostReminder（提醒页）
         _ = Task.Run(async () =>
@@ -24,14 +24,50 @@ public sealed class HelloPlugin : INotchPlugin
     }
 }
 
-/// <summary>Hello 插件的设置页。</summary>
-public sealed class HelloSettingsPage : ISettingsPage
+/// <summary>Hello 插件的设置页（声明式控件 + 自定义 UI）。</summary>
+public sealed class HelloSettingsPage : ISettingsPage, ICustomSettingsPage
 {
+    private readonly IPluginHost _host;
+    private bool _btnHover;
+
+    public HelloSettingsPage(IPluginHost host) { _host = host; }
+
     public string Title => "Hello 演示插件";
     public IReadOnlyList<SettingControl> Controls { get; } = new SettingControl[]
     {
         new ToggleSetting("ShowCheck", "启用", true),
+        new ChoiceSetting("Greeting", "问候语", new[] { "你好", "Hello", "こんにちは" }, 0),
+        new NumberSetting("Interval", "刷新间隔(秒)", 1f, 60f, 1f, 2f),
     };
+
+    // ---- 自定义 UI：一个「打开窗口」按钮 ----
+    public float MeasureHeight() => 70f;
+
+    public void Draw(SKCanvas canvas, SKRect rect, RenderTheme theme)
+    {
+        var btn = new SKRect(rect.Left, rect.Top, rect.Left + 110, rect.Top + 32);
+        var paint = new SKPaint { Color = _btnHover ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212), IsAntialias = true };
+        canvas.DrawRoundRect(btn, 6, 6, paint);
+        var text = new SKPaint { Color = SKColors.White, TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        canvas.DrawText("打开窗口", btn.Left + 20, btn.Top + 21, text);
+    }
+
+    public void OnMouseDown(float x, float y)
+    {
+        if (x >= 0 && x <= 110 && y >= 0 && y <= 32)
+        {
+            var win = _host.CreateWindow("插件窗口", 320, 180);
+            var p = new SKPaint { Color = SKColors.White, TextSize = 15f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+            win.SetDraw((canvas, w, h) =>
+            {
+                canvas.Clear(new SKColor(30, 30, 30));
+                canvas.DrawText("这是插件创建的窗口", 24, 44, p);
+                canvas.DrawText("支持 SkiaSharp 绘制 + 鼠标输入", 24, 72, p);
+            });
+        }
+    }
+    public void OnMouseMove(float x, float y) { _btnHover = x >= 0 && x <= 110 && y >= 0 && y <= 32; }
+    public void OnMouseUp(float x, float y) { }
 }
 
 /// <summary>一个自包含文本组件：验证插件 DLL 被加载并渲染。</summary>

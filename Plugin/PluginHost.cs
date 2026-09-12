@@ -75,6 +75,14 @@ public sealed class PluginHost
     public void OpenDetailPage(string widgetId) => Logger.Info($"[PluginHost] 打开详情(占位): {widgetId}");
     public void CloseDetailPage() { }
 
+    // ---- 窗口 ----
+    public IPluginWindow CreateWindow(string title, int width, int height)
+    {
+        var win = new PluginWindow(title, width, height);
+        win.Show();
+        return win;
+    }
+
     /// <summary>周期刷新句柄：后台定时器触发回调，Dispose 即停止。</summary>
     private sealed class RefreshHandle : IDisposable
     {
@@ -135,4 +143,5 @@ public sealed class ScopedPluginHost : IPluginHost
     public void RequestRedraw() { /* 常驻 60FPS 渲染下为空操作，事件驱动化预留 */ }
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
+    public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(title, width, height);
 }

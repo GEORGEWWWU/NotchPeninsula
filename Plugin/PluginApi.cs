@@ -114,6 +114,34 @@ public interface ISettingsPage
     IReadOnlyList<SettingControl> Controls { get; }
 }
 
+/// <summary>
+/// 自定义设置页：插件自行绘制整个设置页内容并处理鼠标交互。
+/// 一个设置页可同时实现 <see cref="ISettingsPage"/>（声明式控件）与本接口（自定义 UI），两者都会渲染。
+/// </summary>
+public interface ICustomSettingsPage
+{
+    /// <summary>内容高度（用于设置页布局）。</summary>
+    float MeasureHeight();
+    /// <summary>绘制自定义 UI。rect 为可用区域（逻辑坐标）。</summary>
+    void Draw(SKCanvas canvas, SKRect rect, RenderTheme theme);
+    /// <summary>鼠标按下，x/y 相对 rect 左上角。</summary>
+    void OnMouseDown(float x, float y);
+    void OnMouseMove(float x, float y);
+    void OnMouseUp(float x, float y);
+}
+
+/// <summary>插件窗口（由 <see cref="IPluginHost.CreateWindow"/> 创建）。</summary>
+public interface IPluginWindow
+{
+    /// <summary>设置绘制回调 (canvas, width, height)。每次重绘时调用。</summary>
+    void SetDraw(Action<SKCanvas, int, int>? draw);
+    /// <summary>设置鼠标回调 (x, y)。</summary>
+    void SetMouse(Action<float, float>? down, Action<float, float>? move, Action<float, float>? up);
+    /// <summary>请求重绘。</summary>
+    void RequestRedraw();
+    void Close();
+}
+
 public abstract record SettingControl(string Key, string Label);
 
 public sealed record ToggleSetting(string Key, string Label, bool DefaultValue)
@@ -168,4 +196,8 @@ public interface IPluginHost
     void RequestRedraw();
     void OpenDetailPage(string widgetId);
     void CloseDetailPage();
+
+    // 窗口
+    /// <summary>创建一个插件自有窗口（SkiaSharp 绘制 + 鼠标输入）。</summary>
+    IPluginWindow CreateWindow(string title, int width, int height);
 }

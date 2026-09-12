@@ -54,6 +54,16 @@ namespace NotchPeninsula
         private int _hoveredWidgetOrderBtn = -1;
         private readonly List<(string Id, SKRect Rect)> _widgetEnabledChecks = new();
         private int _hoveredWidgetEnabled = -1;
+        private ICustomSettingsPage? _customSettingsPage;
+        private SKRect _customSettingsRect;
+        private readonly List<(string PluginId, ChoiceSetting Setting, SKRect Rect)> _pluginChoices = new();
+        private int _openPluginChoice = -1;
+        private int _hoveredPluginChoiceOpt = -1;
+        private readonly List<(string PluginId, NumberSetting Setting, SKRect Minus, SKRect Plus)> _pluginNumbers = new();
+        private int _hoveredPluginNumber = -1; // 0=减, 1=加
+        private int _selectedPluginIndex = 0;
+        private int _hoveredPluginIndex = -1;
+        private readonly List<(int Index, SKRect Rect)> _pluginSelectorRects = new();
 
         // 显示设置
         private int _selectedDisplayIndex = 0;
@@ -525,6 +535,50 @@ namespace NotchPeninsula
                             _hoveredWidgetEnabled = newCheck;
                             Render();
                         }
+                        // 下拉选项悬停
+                        int newChoiceOpt = -1;
+                        if (_openPluginChoice != -1)
+                        {
+                            var (cpid, cchoice, crect) = _pluginChoices[_openPluginChoice];
+                            for (int o = 0; o < cchoice.Options.Length; o++)
+                            {
+                                var optRect = new SKRect(crect.Left, crect.Bottom + o * 26, crect.Right, crect.Bottom + (o + 1) * 26);
+                                if (optRect.Contains(x, y)) { newChoiceOpt = o; break; }
+                            }
+                        }
+                        if (newChoiceOpt != _hoveredPluginChoiceOpt)
+                        {
+                            _hoveredPluginChoiceOpt = newChoiceOpt;
+                            Render();
+                        }
+                        // 步进器按钮悬停
+                        int newNumBtn = -1;
+                        for (int i = 0; i < _pluginNumbers.Count; i++)
+                        {
+                            if (_pluginNumbers[i].Minus.Contains(x, y)) { newNumBtn = 0; break; }
+                            if (_pluginNumbers[i].Plus.Contains(x, y)) { newNumBtn = 1; break; }
+                        }
+                        if (newNumBtn != _hoveredPluginNumber)
+                        {
+                            _hoveredPluginNumber = newNumBtn;
+                            Render();
+                        }
+                        // 插件选择器悬停
+                        int newPluginIndex = -1;
+                        for (int i = 0; i < _pluginSelectorRects.Count; i++)
+                        {
+                            if (_pluginSelectorRects[i].Rect.Contains(x, y)) { newPluginIndex = i; break; }
+                        }
+                        if (newPluginIndex != _hoveredPluginIndex)
+                        {
+                            _hoveredPluginIndex = newPluginIndex;
+                            Render();
+                        }
+                        // 自定义设置页鼠标移动
+                        if (_customSettingsPage != null && _customSettingsRect.Contains(x, y))
+                        {
+                            _customSettingsPage.OnMouseMove(x - _customSettingsRect.Left, y - _customSettingsRect.Top);
+                        }
                     }
 
                     bool newIsHoveringDisabledArea = false;
@@ -585,6 +639,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
+                    int clickX = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                     int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
                     if (_closeHovered) Win32.DestroyWindow(hwnd);
@@ -612,6 +667,58 @@ namespace NotchPeninsula
                     else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 6 && _selectedTab != 6) { _selectedTab = 6; _dropdownOpen = false; Render(); }
+                    else if (_selectedTab == 6 && _hoveredPluginIndex != -1)
+                    {
+                        _selectedPluginIndex = _hoveredPluginIndex;
+                        Render();
+                    }
+                    else if (_selectedTab == 6 && _customSettingsPage != null && _customSettingsRect.Contains(clickX, clickY))
+                    {
+                        _customSettingsPage.OnMouseDown(clickX - _customSettingsRect.Left, clickY - _customSettingsRect.Top);
+                        Render();
+                    }
+                    else if (_selectedTab == 6 && _openPluginChoice != -1 && _hoveredPluginChoiceOpt != -1)
+                    {
+                        var (cpid, cchoice, _) = _pluginChoices[_openPluginChoice];
+                        NotchWindow.PluginHostInstance.SetSetting(cpid, cchoice.Key, _hoveredPluginChoiceOpt.ToString());
+                        _openPluginChoice = -1;
+                        _hoveredPluginChoiceOpt = -1;
+                        Render();
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginNumber != -1)
+                    {
+                        for (int i = 0; i < _pluginNumbers.Count; i++)
+                        {
+                            var (npid, nnum, nminus, nplus) = _pluginNumbers[i];
+                            if (_hoveredPluginNumber == 0 && nminus.Contains(clickX, clickY))
+                            {
+                                float v = float.TryParse(NotchWindow.PluginHostInstance.GetSetting(npid, nnum.Key, nnum.Default.ToString()), out var nv) ? nv : nnum.Default;
+                                NotchWindow.PluginHostInstance.SetSetting(npid, nnum.Key, Math.Max(nnum.Min, v - nnum.Step).ToString());
+                                Render();
+                                break;
+                            }
+                            if (_hoveredPluginNumber == 1 && nplus.Contains(clickX, clickY))
+                            {
+                                float v = float.TryParse(NotchWindow.PluginHostInstance.GetSetting(npid, nnum.Key, nnum.Default.ToString()), out var nv) ? nv : nnum.Default;
+                                NotchWindow.PluginHostInstance.SetSetting(npid, nnum.Key, Math.Min(nnum.Max, v + nnum.Step).ToString());
+                                Render();
+                                break;
+                            }
+                        }
+                    }
+                    else if (_selectedTab == 6 && _pluginChoices.Any(p => p.Rect.Contains(clickX, clickY)))
+                    {
+                        for (int i = 0; i < _pluginChoices.Count; i++)
+                        {
+                            if (_pluginChoices[i].Rect.Contains(clickX, clickY))
+                            {
+                                _openPluginChoice = (_openPluginChoice == i) ? -1 : i;
+                                _hoveredPluginChoiceOpt = -1;
+                                Render();
+                                break;
+                            }
+                        }
+                    }
                     else if (_selectedTab == 6 && _hoveredPluginSetting != -1)
                     {
                         var (ptoggle, pplugin, _) = _pluginToggles[_hoveredPluginSetting];
@@ -1419,26 +1526,114 @@ namespace NotchPeninsula
                     wy += 40;
                 }
 
-                // ---- 插件设置 ----
+                // ---- 插件选择器 + 选中插件设置 ----
                 _pluginToggles.Clear();
-                float ty = wy + 6f - TITLE_BAR_HEIGHT;
-                foreach (var (pluginId, page) in NotchWindow.PluginHostInstance.SettingsPages)
+                _pluginChoices.Clear();
+                _pluginNumbers.Clear();
+                _customSettingsPage = null;
+                _pluginSelectorRects.Clear();
+                var pages = NotchWindow.PluginHostInstance.SettingsPages;
+                if (_selectedPluginIndex >= pages.Count) _selectedPluginIndex = 0;
+                float selY = wy + 6f;
+                float selX = 200f;
+                for (int i = 0; i < pages.Count; i++)
                 {
+                    float tw = _uiTextPaint.MeasureText(pages[i].Page.Title) + 24f;
+                    var selRect = new SKRect(selX, selY, selX + tw, selY + 30);
+                    _pluginSelectorRects.Add((i, selRect));
+                    _dynamicFillPaint.Color = _selectedPluginIndex == i ? new SKColor(0, 120, 212, 50) : new SKColor(255, 255, 255, 8);
+                    canvas.DrawRoundRect(selRect, 6, 6, _dynamicFillPaint);
+                    _uiTextPaint.Color = _selectedPluginIndex == i ? new SKColor(0, 140, 240) : SKColors.White;
+                    canvas.DrawText(pages[i].Page.Title, selX + 12, selY + 20, _uiTextPaint);
+                    selX += tw + 8f;
+                }
+
+                float ty = selY + 38f - TITLE_BAR_HEIGHT;
+                if (pages.Count > 0)
+                {
+                    var (pluginId, page) = pages[_selectedPluginIndex];
                     foreach (var control in page.Controls)
                     {
-                        if (control is ToggleSetting toggle)
+                        switch (control)
                         {
-                            bool state = NotchWindow.PluginHostInstance.GetSetting(pluginId, toggle.Key, toggle.DefaultValue ? "1" : "0") == "1";
-                            int idx = _pluginToggles.Count;
-                            DrawToggleCard(ty, toggle.Label, page.Title, state, _hoveredPluginSetting == idx);
-                            _pluginToggles.Add((toggle, pluginId, new SKRect(200, TITLE_BAR_HEIGHT + ty, WIDTH - 20, TITLE_BAR_HEIGHT + ty + 62)));
-                            ty += 74f;
+                            case ToggleSetting toggle:
+                            {
+                                bool state = NotchWindow.PluginHostInstance.GetSetting(pluginId, toggle.Key, toggle.DefaultValue ? "1" : "0") == "1";
+                                int idx = _pluginToggles.Count;
+                                DrawToggleCard(ty, toggle.Label, page.Title, state, _hoveredPluginSetting == idx);
+                                _pluginToggles.Add((toggle, pluginId, new SKRect(200, TITLE_BAR_HEIGHT + ty, WIDTH - 20, TITLE_BAR_HEIGHT + ty + 62)));
+                                ty += 74f;
+                                break;
+                            }
+                            case ChoiceSetting choice:
+                            {
+                                int cur = int.TryParse(NotchWindow.PluginHostInstance.GetSetting(pluginId, choice.Key, choice.DefaultIndex.ToString()), out var ci) ? ci : choice.DefaultIndex;
+                                int idx = _pluginChoices.Count;
+                                var rect = new SKRect(200, TITLE_BAR_HEIGHT + ty, WIDTH - 20, TITLE_BAR_HEIGHT + ty + 62);
+                                _pluginChoices.Add((pluginId, choice, rect));
+                                canvas.DrawRoundRect(rect, 6, 6, _cardBg);
+                                canvas.DrawRoundRect(rect, 6, 6, _cardBorder);
+                                canvas.DrawText(choice.Label, 216, TITLE_BAR_HEIGHT + ty + 24, _uiTextPaint);
+                                string curLabel = (cur >= 0 && cur < choice.Options.Length) ? choice.Options[cur] : "?";
+                                canvas.DrawText(curLabel, WIDTH - 160, TITLE_BAR_HEIGHT + ty + 24, _uiTextPaint);
+                                canvas.DrawLine(WIDTH - 30, TITLE_BAR_HEIGHT + ty + 24, WIDTH - 22, TITLE_BAR_HEIGHT + ty + 30, _chevronPaint);
+                                canvas.DrawLine(WIDTH - 22, TITLE_BAR_HEIGHT + ty + 30, WIDTH - 14, TITLE_BAR_HEIGHT + ty + 24, _chevronPaint);
+                                if (_openPluginChoice == idx)
+                                {
+                                    float optY = TITLE_BAR_HEIGHT + ty + 62;
+                                    for (int o = 0; o < choice.Options.Length; o++)
+                                    {
+                                        var optRect = new SKRect(200, optY, WIDTH - 20, optY + 26);
+                                        _dynamicFillPaint.Color = _hoveredPluginChoiceOpt == o ? new SKColor(255, 255, 255, 20) : new SKColor(40, 40, 40);
+                                        canvas.DrawRect(optRect, _dynamicFillPaint);
+                                        canvas.DrawText(choice.Options[o], 216, optY + 18, _uiTextPaint);
+                                        optY += 26;
+                                    }
+                                }
+                                ty += 74f;
+                                break;
+                            }
+                            case NumberSetting number:
+                            {
+                                float val = float.TryParse(NotchWindow.PluginHostInstance.GetSetting(pluginId, number.Key, number.Default.ToString()), out var nv) ? nv : number.Default;
+                                int nidx = _pluginNumbers.Count;
+                                var minus = new SKRect(WIDTH - 150, TITLE_BAR_HEIGHT + ty + 14, WIDTH - 120, TITLE_BAR_HEIGHT + ty + 40);
+                                var plus = new SKRect(WIDTH - 88, TITLE_BAR_HEIGHT + ty + 14, WIDTH - 58, TITLE_BAR_HEIGHT + ty + 40);
+                                _pluginNumbers.Add((pluginId, number, minus, plus));
+                                var rect = new SKRect(200, TITLE_BAR_HEIGHT + ty, WIDTH - 20, TITLE_BAR_HEIGHT + ty + 62);
+                                canvas.DrawRoundRect(rect, 6, 6, _cardBg);
+                                canvas.DrawRoundRect(rect, 6, 6, _cardBorder);
+                                canvas.DrawText(number.Label, 216, TITLE_BAR_HEIGHT + ty + 24, _uiTextPaint);
+                                _dynamicFillPaint.Color = _hoveredPluginNumber == 0 ? new SKColor(255,255,255,25) : new SKColor(255,255,255,8);
+                                canvas.DrawRoundRect(minus, 4, 4, _dynamicFillPaint);
+                                _dynamicFillPaint.Color = _hoveredPluginNumber == 1 ? new SKColor(255,255,255,25) : new SKColor(255,255,255,8);
+                                canvas.DrawRoundRect(plus, 4, 4, _dynamicFillPaint);
+                                canvas.DrawText("−", minus.Left + 7, minus.Top + 19, _uiTextPaint);
+                                canvas.DrawText("+", plus.Left + 7, plus.Top + 19, _uiTextPaint);
+                                canvas.DrawText(val.ToString("0.#"), WIDTH - 118, TITLE_BAR_HEIGHT + ty + 30, _uiTextPaint);
+                                ty += 74f;
+                                break;
+                            }
                         }
                     }
+
+                    // 自定义 UI
+                    if (page is ICustomSettingsPage custom)
+                    {
+                        float ch = custom.MeasureHeight();
+                        var crect = new SKRect(200, TITLE_BAR_HEIGHT + ty, WIDTH - 20, TITLE_BAR_HEIGHT + ty + ch);
+                        canvas.Save();
+                        canvas.ClipRect(crect);
+                        custom.Draw(canvas, crect, Renderer.GetCurrentTheme());
+                        canvas.Restore();
+                        _customSettingsPage = custom;
+                        _customSettingsRect = crect;
+                        ty += ch + 12f;
+                    }
                 }
-                if (_pluginToggles.Count == 0)
+                else
                 {
-                    canvas.DrawText("暂无插件设置", 216, wy + 20, _subTextPaint);
+                    canvas.DrawText("暂无插件", 216, selY + 20, _subTextPaint);
                 }
             }
             else if (_selectedTab == 5)
