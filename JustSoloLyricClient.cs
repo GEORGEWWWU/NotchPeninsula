@@ -6,7 +6,7 @@ namespace NotchPeninsula
 {
     /// <summary>
     /// Just Solo LyricServer（ws://127.0.0.1:47290）客户端。
-    /// 单向接收 init / progress / playback 推送，供本地歌词高亮使用。
+    /// 单向接收 init / progress / playback / spectrum 推送，供本地歌词高亮与频谱显示使用。
     /// 协议文档：Just-Solo-LyricServer.md
     /// </summary>
     internal sealed class JustSoloLyricClient
@@ -16,6 +16,8 @@ namespace NotchPeninsula
         private const int MaxReconnectDelayMs = 30000;
         // Just Solo 自身高亮使用的默认歌词预读偏移（client 需自行补偿才能与其同步）
         private const float DefaultLyricPreReadSeconds = 0.13f;
+        // 超过该时长未收到 spectrum 即视为无数据（服务端推送周期 100ms），回退到本地音频采集
+        private const double SpectrumStaleMs = 500d;
 
         private readonly record struct LyricLine(int Time, string Text, string Translation);
 
@@ -24,6 +26,8 @@ namespace NotchPeninsula
         private int _position;
         private DateTime _positionStamp = DateTime.UtcNow;
         private bool _isPlaying;
+        private float[] _spectrum = Array.Empty<float>();
+        private DateTime _spectrumStamp = DateTime.MinValue;
 
         private volatile bool _running;   // 是否期望保持连接
         private volatile bool _connected; // 当前是否已连接
@@ -114,6 +118,25 @@ namespace NotchPeninsula
             return true;
         }
 
+        /// <summary>
+        /// 读取 LyricServer 推送的实时频谱（协议 v1.2.0+，12 频段，0.0~1.0，低频→高频）。
+        /// 返回 false 表示未连接、服务端不支持（v1.2.0 之前）或当前无频谱数据，调用方应回退到本地音频采集。
+        /// </summary>
+        public bool TryGetSpectrum(out float[] bands)
+        {
+            bands = Array.Empty<float>();
+
+            lock (_lock)
+            {
+                if (!_connected) return false;
+                if (_spectrum.Length == 0) return false;
+                if ((DateTime.UtcNow - _spectrumStamp).TotalMilliseconds > SpectrumStaleMs) return false;
+
+                bands = _spectrum;
+                return true;
+            }
+        }
+
         private void ResetState()
         {
             lock (_lock)
@@ -122,6 +145,8 @@ namespace NotchPeninsula
                 _position = 0;
                 _positionStamp = DateTime.UtcNow;
                 _isPlaying = false;
+                _spectrum = Array.Empty<float>();
+                _spectrumStamp = DateTime.MinValue;
             }
         }
 
@@ -227,7 +252,17 @@ namespace NotchPeninsula
                         {
                             _isPlaying = playing;
                             _positionStamp = DateTime.UtcNow; // 冻结/恢复时重置插值基准，避免把暂停时长算进进度
+                            if (!playing)
+                            {
+                                // 暂停/停止后服务端不再推送频谱，直接失效以免残留最后一帧
+                                _spectrum = Array.Empty<float>();
+                                _spectrumStamp = DateTime.MinValue;
+                            }
                         }
+                        break;
+
+                    case "spectrum":
+                        ApplySpectrum(root);
                         break;
                 }
             }
@@ -257,6 +292,31 @@ namespace NotchPeninsula
             }
 
             lock (_lock) _lyrics = lines.ToArray();
+        }
+
+        private void ApplySpectrum(JsonElement root)
+        {
+            // 空数组表示刚恢复播放、缓冲未填满，按"暂无数据"处理
+            if (!root.TryGetProperty("bands", out var arr) || arr.ValueKind != JsonValueKind.Array || arr.GetArrayLength() == 0)
+            {
+                lock (_lock)
+                {
+                    _spectrum = Array.Empty<float>();
+                    _spectrumStamp = DateTime.MinValue;
+                }
+                return;
+            }
+
+            var bands = new float[arr.GetArrayLength()];
+            int i = 0;
+            foreach (var el in arr.EnumerateArray())
+                bands[i++] = el.ValueKind == JsonValueKind.Number && el.TryGetSingle(out float v) ? v : 0f;
+
+            lock (_lock)
+            {
+                _spectrum = bands;
+                _spectrumStamp = DateTime.UtcNow;
+            }
         }
     }
 }

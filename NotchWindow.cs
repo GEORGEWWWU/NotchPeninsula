@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 using Microsoft.Win32;
@@ -64,6 +64,7 @@ namespace NotchPeninsula
         private readonly DateTime _appStartTime = DateTime.Now;
         private readonly AudioAnalyzer _audioAnalyzer;
         private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
+        private readonly float[] _spectrumBars = new float[5]; // LyricServer 12 频段压缩为 5 柱时的复用缓冲
         private readonly System.Windows.Forms.NotifyIcon _notifyIcon; // 托盘与自启常量
         private const string AppName = "NotchPeninsula";
         private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
@@ -582,7 +583,11 @@ namespace NotchPeninsula
                 startupProgress = (float)(1.0 - (invT * invT * invT));
             }
 
-            var targetBars = _audioAnalyzer.GetBars();
+            // 频谱优先取 Just Solo LyricServer 推送（独占音频输出时本地采集拿不到数据），
+            // 不可用（未连接 / 服务端不支持 / 已暂停）时回退到原来的 WASAPI 采集
+            float[] targetBars = _media.TryGetSoloSpectrum(out float[] soloBands) && soloBands.Length >= 12
+                ? MapSoloSpectrum(soloBands)
+                : _audioAnalyzer.GetBars();
             for (int i = 0; i < 5; i++)
             {
                 float target = targetBars[i];
@@ -621,6 +626,17 @@ namespace NotchPeninsula
                 // 渲染安全结束，释放标记，允许下一帧进入
                 System.Threading.Interlocked.Exchange(ref _isRendering, 0);
             }
+        }
+
+        // 把 LyricServer 的 12 个频段（低频→高频）按区间取峰值压缩为渲染层的 5 根柱
+        private float[] MapSoloSpectrum(float[] bands)
+        {
+            _spectrumBars[0] = Math.Max(bands[0], bands[1]);
+            _spectrumBars[1] = Math.Max(bands[2], Math.Max(bands[3], bands[4]));
+            _spectrumBars[2] = Math.Max(bands[5], bands[6]);
+            _spectrumBars[3] = Math.Max(bands[7], Math.Max(bands[8], bands[9]));
+            _spectrumBars[4] = Math.Max(bands[10], bands[11]);
+            return _spectrumBars;
         }
 
         private void UpdateWindow()

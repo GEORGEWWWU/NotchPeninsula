@@ -307,6 +307,12 @@ namespace NotchPeninsula
         public async void Next() => await _currentSession?.TrySkipNextAsync();
         public async void Previous() => await _currentSession?.TrySkipPreviousAsync();
 
+        /// <summary>
+        /// 获取 Just Solo LyricServer 推送的实时频谱（12 频段，低频→高频）。
+        /// 返回 false 表示不可用（未连接 / 服务端版本过低 / 无数据），调用方应回退到本地音频采集。
+        /// </summary>
+        public bool TryGetSoloSpectrum(out float[] bands) => _justSoloLyric.TryGetSpectrum(out bands);
+
         private async void OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
         {
             await RefreshProperties();
