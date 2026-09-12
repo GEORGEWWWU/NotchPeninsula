@@ -502,8 +502,8 @@ namespace NotchPeninsula
                 float expectedTargetWidth;
                 if (isToastActive)
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
-                else if (Renderer.ActiveDetailWidget != null)
-                    expectedTargetWidth = 320f;
+                else if (Renderer.ActiveDetailWidget?.DetailPage is { } detailPage)
+                    expectedTargetWidth = detailPage.MeasureWidth();
                 else if (Renderer.WidgetRow is { Count: > 0 })
                     expectedTargetWidth = Math.Clamp(WidgetLayout.MeasureRowWidth(Renderer.WidgetRow, Renderer.BASE_HEIGHT, 12f) + 32f, 60f, 900f);
                 else
@@ -523,7 +523,8 @@ namespace NotchPeninsula
                     float requiredWidth = textWidth + 115f;
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
-                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (Renderer.ActiveDetailWidget != null ? 130f : Renderer.BASE_HEIGHT);
+                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT
+                    : (Renderer.ActiveDetailWidget?.DetailPage is { } activeDetail ? Math.Clamp(activeDetail.MeasureHeight(), 130f, Renderer.MAX_WINDOW_HEIGHT) : Renderer.BASE_HEIGHT);
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;

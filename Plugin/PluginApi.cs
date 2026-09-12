@@ -137,6 +137,8 @@ public interface IPluginWindow
     void SetDraw(Action<SKCanvas, int, int>? draw);
     /// <summary>设置鼠标回调 (x, y)。</summary>
     void SetMouse(Action<float, float>? down, Action<float, float>? move, Action<float, float>? up);
+    /// <summary>设置键盘输入回调（char）。</summary>
+    void SetKey(Action<char>? key);
     /// <summary>请求重绘。</summary>
     void RequestRedraw();
     void Close();

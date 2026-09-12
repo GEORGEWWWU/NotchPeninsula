@@ -10,6 +10,7 @@ namespace NotchPeninsula.Plugins;
 public sealed class PluginWindow : IPluginWindow
 {
     private const uint WM_APP_REDRAW = 0x8000 + 1;
+    private const int WM_CHAR = 0x0102;
 
     private readonly string _title;
     private readonly int _width, _height;
@@ -17,6 +18,7 @@ public sealed class PluginWindow : IPluginWindow
     private readonly Win32.WndProc _wndProc;
     private Action<SKCanvas, int, int>? _draw;
     private Action<float, float>? _mouseDown, _mouseMove, _mouseUp;
+    private Action<char>? _key;
 
     private IntPtr _memDc, _hBitmap, _oldBitmap, _pBits;
     private SKSurface? _surface;
@@ -43,6 +45,8 @@ public sealed class PluginWindow : IPluginWindow
         _mouseUp = up;
     }
 
+    public void SetKey(Action<char>? key) => _key = key;
+
     public void RequestRedraw()
     {
         if (_hwnd != IntPtr.Zero && !_closing)
@@ -68,11 +72,16 @@ public sealed class PluginWindow : IPluginWindow
         if (Win32.RegisterClass(ref wc) == 0 && Marshal.GetLastWin32Error() != 1410 /* CLASS_ALREADY_EXISTS */)
             return;
 
+        // 屏幕居中
+        var screen = System.Windows.Forms.Screen.PrimaryScreen;
+        int x = screen.WorkingArea.Left + (screen.WorkingArea.Width - _width) / 2;
+        int y = screen.WorkingArea.Top + (screen.WorkingArea.Height - _height) / 2;
+
         _hwnd = Win32.CreateWindowEx(
             Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
             "NPSPluginWindow", _title,
             Win32.WS_POPUP | Win32.WS_VISIBLE,
-            0, 0, _width, _height,
+            x, y, _width, _height,
             IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
 
         if (_hwnd == IntPtr.Zero) return;
@@ -108,6 +117,9 @@ public sealed class PluginWindow : IPluginWindow
                 return IntPtr.Zero;
             case Win32.WM_LBUTTONUP:
                 _mouseUp?.Invoke(Lo(lParam), Hi(lParam));
+                return IntPtr.Zero;
+            case WM_CHAR:
+                _key?.Invoke((char)(wParam.ToInt64() & 0xFFFF));
                 return IntPtr.Zero;
 
             case Win32.WM_CLOSE:

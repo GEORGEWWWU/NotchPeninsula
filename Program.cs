@@ -85,6 +85,16 @@ namespace NotchPeninsula
         [STAThread]
         static void Main(string[] args)
         {
+            // 全局未处理异常日志（诊断闪退）
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            {
+                try { Logger.Error("未处理异常(UnhandledException)", e.ExceptionObject as Exception); } catch { }
+            };
+            TaskScheduler.UnobservedTaskException += (s, e) =>
+            {
+                try { Logger.Error("未观察任务异常(UnobservedTaskException)", e.Exception); e.SetObserved(); } catch { }
+            };
+
             // 使用 using 包裹 Mutex，确保底层系统句柄被严格释放
             using (Mutex mutex = new Mutex(true, "Local\\NotchPeninsula_SingleInstanceMutex", out bool createdNew))
             {
