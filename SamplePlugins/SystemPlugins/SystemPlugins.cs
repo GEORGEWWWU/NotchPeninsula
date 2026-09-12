@@ -37,10 +37,11 @@ public sealed class ClockWidget : IWidget
     private int _lastMinute = -1;
     private string _timeStr = "", _dateStr = "";
     private float _timeWidth, _dateWidth;
+    private readonly ClockDetailPage _detailPage = new();
 
     public string Id => "builtin.clock";
     public string DisplayName => "时间日期";
-    public IDetailPage? DetailPage => null;
+    public IDetailPage? DetailPage => _detailPage;
 
     public float MeasureWidth(float availableHeight) { Update(); return _timeWidth + 12f + _dateWidth; }
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
@@ -69,6 +70,89 @@ public sealed class ClockWidget : IWidget
     public void OnRightClick() { }
     public void OnActivate(IPluginHost host) { }
     public void OnDeactivate() { }
+}
+
+/// <summary>时间日期详情页：模拟钟表 + 日期。</summary>
+public sealed class ClockDetailPage : IDetailPage
+{
+    private static readonly SKPaint _titlePaint = new()
+    {
+        TextSize = 13f, IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+    };
+    private static readonly SKPaint _subPaint = new()
+    {
+        TextSize = 12f, IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI")
+    };
+    private static readonly SKPaint _timePaint = new()
+    {
+        TextSize = 18f, IsAntialias = true,
+        Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+    };
+    private static readonly SKPaint _facePaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 2f };
+    private static readonly SKPaint _tickPaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
+    private static readonly SKPaint _handPaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
+    private static readonly SKPaint _secPaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
+    private static readonly string[] _weekdays = new[] { "日", "一", "二", "三", "四", "五", "六" };
+
+    public float MeasureWidth() => 320f;
+    public float MeasureHeight() => 130f;
+
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+    {
+        var now = DateTime.Now;
+        byte alpha = frame.Alpha;
+
+        // 表盘
+        float cx = rect.Left + 62f;
+        float cy = rect.Top + 62f;
+        float radius = 44f;
+        _facePaint.Color = frame.Theme.TextColor.WithAlpha(alpha);
+        canvas.DrawCircle(cx, cy, radius, _facePaint);
+        _tickPaint.Color = frame.Theme.TextColor.WithAlpha(alpha);
+        for (int i = 0; i < 12; i++)
+        {
+            double ang = i * Math.PI / 6.0;
+            float r1 = (i % 3 == 0) ? radius - 9f : radius - 6f;
+            float x1 = cx + (float)Math.Sin(ang) * r1;
+            float y1 = cy - (float)Math.Cos(ang) * r1;
+            float x2 = cx + (float)Math.Sin(ang) * radius;
+            float y2 = cy - (float)Math.Cos(ang) * radius;
+            canvas.DrawLine(x1, y1, x2, y2, _tickPaint);
+        }
+
+        // 指针
+        _handPaint.Color = frame.Theme.TextColor.WithAlpha(alpha);
+        double hourAng = ((now.Hour % 12) + now.Minute / 60.0) * Math.PI / 6.0;
+        DrawHand(canvas, cx, cy, hourAng, radius * 0.5f, 3.5f, _handPaint);
+        double minAng = now.Minute * Math.PI / 30.0;
+        DrawHand(canvas, cx, cy, minAng, radius * 0.75f, 2.5f, _handPaint);
+        _secPaint.Color = new SKColor(0, 140, 240).WithAlpha(alpha);
+        double secAng = now.Second * Math.PI / 30.0;
+        DrawHand(canvas, cx, cy, secAng, radius * 0.85f, 1.2f, _secPaint);
+        canvas.DrawCircle(cx, cy, 3f, _secPaint);
+
+        // 右侧：时间 + 日期
+        float tx = rect.Left + 122f;
+        _timePaint.Color = frame.Theme.TextColor.WithAlpha(alpha);
+        canvas.DrawText($"{now.Hour:00}:{now.Minute:00}:{now.Second:00}", tx, rect.Top + 58f, _timePaint);
+        _titlePaint.Color = frame.Theme.TextColor.WithAlpha(alpha);
+        canvas.DrawText($"{now.Year}年{now.Month}月{now.Day}日", tx, rect.Top + 82f, _titlePaint);
+        _subPaint.Color = frame.Theme.SubTextColor.WithAlpha(alpha);
+        canvas.DrawText($"星期{_weekdays[(int)now.DayOfWeek]}", tx, rect.Top + 104f, _subPaint);
+    }
+
+    private void DrawHand(SKCanvas canvas, float cx, float cy, double angle, float length, float width, SKPaint paint)
+    {
+        float x = cx + (float)Math.Sin(angle) * length;
+        float y = cy - (float)Math.Cos(angle) * length;
+        paint.StrokeWidth = width;
+        canvas.DrawLine(cx, cy, x, y, paint);
+    }
+
+    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
+    public void OnAction(string? action, float x, float y) { }
 }
 
 /// <summary>系统资源组件（CPU/RAM，自包含 Win32 读取）。</summary>

@@ -33,6 +33,7 @@ namespace NotchPeninsula
         public static readonly PluginHost PluginHostInstance = new();
         private readonly List<IWidget> _widgetRow = new();
         private string _cachedWidgetOrder = "";
+        private string _cachedDisabled = "";
         private int _cachedWidgetCount = -1;
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
@@ -690,26 +691,71 @@ namespace NotchPeninsula
             string order = GetWidgetOrder();
             if (string.IsNullOrWhiteSpace(order))
                 order = "builtin.clock,builtin.hardware,builtin.media"; // 默认顺序
-            if (order == _cachedWidgetOrder && count == _cachedWidgetCount && _widgetRow.Count > 0) return;
+            string disabledStr = GetDisabledWidgetsStr();
+            if (order == _cachedWidgetOrder && count == _cachedWidgetCount && disabledStr == _cachedDisabled && _widgetRow.Count > 0) return;
             _cachedWidgetOrder = order;
             _cachedWidgetCount = count;
+            _cachedDisabled = disabledStr;
 
+            var disabled = new HashSet<string>(disabledStr.Split(',', StringSplitOptions.RemoveEmptyEntries));
             var all = new List<IWidget>();
             foreach (var w in PluginHostInstance.Widgets) all.Add(w);
 
             _widgetRow.Clear();
-            if (!string.IsNullOrWhiteSpace(order))
+            foreach (var id in order.Split(','))
             {
-                foreach (var id in order.Split(','))
-                {
-                    var w = all.FirstOrDefault(x => x.Id == id.Trim());
-                    if (w != null && !_widgetRow.Contains(w)) _widgetRow.Add(w);
-                }
+                if (disabled.Contains(id.Trim())) continue;
+                var w = all.FirstOrDefault(x => x.Id == id.Trim());
+                if (w != null && !_widgetRow.Contains(w)) _widgetRow.Add(w);
             }
             foreach (var w in all)
             {
+                if (disabled.Contains(w.Id)) continue;
                 if (!_widgetRow.Contains(w)) _widgetRow.Add(w);
             }
+        }
+
+        private static string GetDisabledWidgetsStr()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                return key?.GetValue("DisabledWidgets") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        public static bool IsWidgetDisabled(string id)
+        {
+            var disabled = new HashSet<string>(GetDisabledWidgetsStr().Split(',', StringSplitOptions.RemoveEmptyEntries));
+            return disabled.Contains(id);
+        }
+
+        public static void ToggleWidgetEnabled(string id)
+        {
+            var disabled = new HashSet<string>(GetDisabledWidgetsStr().Split(',', StringSplitOptions.RemoveEmptyEntries));
+            if (!disabled.Add(id)) disabled.Remove(id);
+            Program.SaveSetting("DisabledWidgets", string.Join(",", disabled));
+        }
+
+        // 返回全部组件（含停用）按 WidgetOrder 排序
+        public static IReadOnlyList<IWidget> GetAllWidgetsInOrder()
+        {
+            var all = new List<IWidget>();
+            foreach (var w in PluginHostInstance.Widgets) all.Add(w);
+            string order = GetWidgetOrder();
+            if (string.IsNullOrWhiteSpace(order)) order = "builtin.clock,builtin.hardware,builtin.media";
+            var result = new List<IWidget>();
+            foreach (var id in order.Split(','))
+            {
+                var w = all.FirstOrDefault(x => x.Id == id.Trim());
+                if (w != null && !result.Contains(w)) result.Add(w);
+            }
+            foreach (var w in all)
+            {
+                if (!result.Contains(w)) result.Add(w);
+            }
+            return result;
         }
 
         // 移动组件顺序（direction: -1 上移, +1 下移），保存到注册表 WidgetOrder

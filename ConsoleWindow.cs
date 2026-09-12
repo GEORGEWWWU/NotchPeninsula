@@ -52,6 +52,8 @@ namespace NotchPeninsula
         private readonly List<(ToggleSetting Setting, string PluginId, SKRect Rect)> _pluginToggles = new();
         private readonly List<(string Id, int Dir, SKRect Rect)> _widgetOrderButtons = new();
         private int _hoveredWidgetOrderBtn = -1;
+        private readonly List<(string Id, SKRect Rect)> _widgetEnabledChecks = new();
+        private int _hoveredWidgetEnabled = -1;
 
         // 显示设置
         private int _selectedDisplayIndex = 0;
@@ -513,6 +515,16 @@ namespace NotchPeninsula
                             _hoveredWidgetOrderBtn = newOrderBtn;
                             Render();
                         }
+                        int newCheck = -1;
+                        for (int i = 0; i < _widgetEnabledChecks.Count; i++)
+                        {
+                            if (_widgetEnabledChecks[i].Rect.Contains(x, y)) { newCheck = i; break; }
+                        }
+                        if (newCheck != _hoveredWidgetEnabled)
+                        {
+                            _hoveredWidgetEnabled = newCheck;
+                            Render();
+                        }
                     }
 
                     bool newIsHoveringDisabledArea = false;
@@ -611,6 +623,12 @@ namespace NotchPeninsula
                     {
                         var (oid, odir, _) = _widgetOrderButtons[_hoveredWidgetOrderBtn];
                         NotchWindow.MoveWidget(oid, odir);
+                        Render();
+                    }
+                    else if (_selectedTab == 6 && _hoveredWidgetEnabled != -1)
+                    {
+                        var (wid, _) = _widgetEnabledChecks[_hoveredWidgetEnabled];
+                        NotchWindow.ToggleWidgetEnabled(wid);
                         Render();
                     }
                     else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
@@ -1359,33 +1377,46 @@ namespace NotchPeninsula
             {
                 // ---- 组件顺序 ----
                 _widgetOrderButtons.Clear();
+                _widgetEnabledChecks.Clear();
                 canvas.DrawText("组件顺序", 216, TITLE_BAR_HEIGHT + 28, _uiTextPaint);
                 float wy = TITLE_BAR_HEIGHT + 46;
-                var row = Renderer.WidgetRow;
-                if (row != null)
+                var row = NotchWindow.GetAllWidgetsInOrder();
+                for (int i = 0; i < row.Count; i++)
                 {
-                    for (int i = 0; i < row.Count; i++)
+                    var w = row[i];
+                    bool enabled = !NotchWindow.IsWidgetDisabled(w.Id);
+                    canvas.DrawRoundRect(new SKRect(200, wy, WIDTH - 20, wy + 32), 4, 4, _cardBg);
+
+                    // 启用开关（小方块 + 对勾）
+                    var checkRect = new SKRect(212, wy + 8, 228, wy + 24);
+                    _widgetEnabledChecks.Add((w.Id, checkRect));
+                    _dynamicFillPaint.Color = enabled ? new SKColor(0, 140, 240) : new SKColor(255, 255, 255, 10);
+                    canvas.DrawRoundRect(checkRect, 3, 3, _dynamicFillPaint);
+                    if (enabled)
                     {
-                        var w = row[i];
-                        canvas.DrawRoundRect(new SKRect(200, wy, WIDTH - 20, wy + 32), 4, 4, _cardBg);
-                        canvas.DrawText(w.DisplayName, 216, wy + 21, _uiTextPaint);
-
-                        var upRect = new SKRect(WIDTH - 88, wy + 6, WIDTH - 60, wy + 26);
-                        var downRect = new SKRect(WIDTH - 56, wy + 6, WIDTH - 28, wy + 26);
-                        _widgetOrderButtons.Add((w.Id, -1, upRect));
-                        _widgetOrderButtons.Add((w.Id, 1, downRect));
-                        int upIdx = _widgetOrderButtons.Count - 2;
-                        int downIdx = _widgetOrderButtons.Count - 1;
-
-                        _dynamicFillPaint.Color = _hoveredWidgetOrderBtn == upIdx ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 8);
-                        canvas.DrawRoundRect(upRect, 4, 4, _dynamicFillPaint);
-                        _dynamicFillPaint.Color = _hoveredWidgetOrderBtn == downIdx ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 8);
-                        canvas.DrawRoundRect(downRect, 4, 4, _dynamicFillPaint);
-                        canvas.DrawText("▲", upRect.Left + 5, upRect.Top + 16, _uiTextPaint);
-                        canvas.DrawText("▼", downRect.Left + 5, downRect.Top + 16, _uiTextPaint);
-
-                        wy += 40;
+                        canvas.DrawLine(215, wy + 16, 220, wy + 21, _uiTextPaint);
+                        canvas.DrawLine(220, wy + 21, 227, wy + 12, _uiTextPaint);
                     }
+
+                    _uiTextPaint.Color = enabled ? SKColors.White : new SKColor(120, 120, 120);
+                    canvas.DrawText(w.DisplayName, 240, wy + 21, _uiTextPaint);
+                    _uiTextPaint.Color = SKColors.White;
+
+                    var upRect = new SKRect(WIDTH - 88, wy + 6, WIDTH - 60, wy + 26);
+                    var downRect = new SKRect(WIDTH - 56, wy + 6, WIDTH - 28, wy + 26);
+                    _widgetOrderButtons.Add((w.Id, -1, upRect));
+                    _widgetOrderButtons.Add((w.Id, 1, downRect));
+                    int upIdx = _widgetOrderButtons.Count - 2;
+                    int downIdx = _widgetOrderButtons.Count - 1;
+
+                    _dynamicFillPaint.Color = _hoveredWidgetOrderBtn == upIdx ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 8);
+                    canvas.DrawRoundRect(upRect, 4, 4, _dynamicFillPaint);
+                    _dynamicFillPaint.Color = _hoveredWidgetOrderBtn == downIdx ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 8);
+                    canvas.DrawRoundRect(downRect, 4, 4, _dynamicFillPaint);
+                    canvas.DrawText("▲", upRect.Left + 5, upRect.Top + 16, _uiTextPaint);
+                    canvas.DrawText("▼", downRect.Left + 5, downRect.Top + 16, _uiTextPaint);
+
+                    wy += 40;
                 }
 
                 // ---- 插件设置 ----
