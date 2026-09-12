@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.RegularExpressions;
 using Windows.Media.Control;
+using Windows.Storage.Streams;
 using SkiaSharp;
 using System.Net.Http;
 using System.Text.Json;
@@ -44,6 +45,8 @@ namespace NotchPeninsula
         private GlobalSystemMediaTransportControlsSession? _currentSession;
         private bool _isBilibiliSession;  // 通用模式下当前会话是否为 bilibili，用于隐藏 Artist
         private bool _isPotPlayerSession; // 当前会话是否为 PotPlayer，无歌名/歌手时隐藏文本
+        private bool _isPotPlayerMusic;   // PotPlayer 是否处于音乐模式（SMTC 带歌手）：决定封面来源与是否取歌词
+        private string _appliedCoverKey = ""; // 已应用网络封面的曲目标识("歌名|歌手")，避免重复访问网络
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
@@ -120,6 +123,7 @@ namespace NotchPeninsula
             // 命中 bilibili / PotPlayer / 浏览器 会话时打标记，供刷新时应用文本显示策略
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
             _isPotPlayerSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "PotPlayer");
+            _isPotPlayerMusic = false; // 音乐/视频模式由 RefreshProperties 按 SMTC 歌手字段判定
             _isBrowserSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Chrome")
                              || MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Edge");
             _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
@@ -160,8 +164,7 @@ namespace NotchPeninsula
                 Title = "No Media";
                 Artist = "";
                 IsPlaying = false;
-                Thumbnail?.Dispose();
-                Thumbnail = null;
+                await UpdateThumbnailAsync(null, null);
             }
         }
 
@@ -198,31 +201,10 @@ namespace NotchPeninsula
                     Artist = _isBilibiliSession ? "" : (!string.IsNullOrEmpty(browserArtist) ? browserArtist
                             : (string.IsNullOrEmpty(props.Artist) ? "" : props.Artist));
 
-                    var platformLogo = MediaLogoProvider.GetLogo(_currentSession.SourceAppUserModelId, props.Thumbnail != null);
-                    if (platformLogo != null)
-                    {
-                        var oldThumb = Thumbnail;
-                        Thumbnail = platformLogo;
-                        oldThumb?.Dispose();
-                    }
-                    else if (props.Thumbnail != null)
-                    {
-                        try
-                        {
-                            using var stream = await props.Thumbnail.OpenReadAsync();
-                            using var dotNetStream = stream.AsStreamForRead();
+                    // PotPlayer 用 SMTC 是否带歌手区分：有歌手=音乐（走封面+歌词），无歌手=视频（用站标）
+                    _isPotPlayerMusic = _isPotPlayerSession && !string.IsNullOrEmpty(props.Artist);
 
-                            var oldThumb = Thumbnail;
-                            Thumbnail = SKBitmap.Decode(dotNetStream);
-                            oldThumb?.Dispose();
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Error("封面解析失败", ex);
-                            Thumbnail = null;
-                        }
-                    }
-                    else Thumbnail = null;
+                    await UpdateThumbnailAsync(_currentSession, props.Thumbnail);
                 }
             }
             catch (Exception ex)
@@ -230,7 +212,8 @@ namespace NotchPeninsula
                 Logger.Error("读取媒体属性失败，可能遇到不规范的媒体源", ex);
                 Title = _isPotPlayerSession ? "" : "Unknown";
                 Artist = (_isBilibiliSession || _isPotPlayerSession) ? "" : "Unknown";
-                Thumbnail = null;
+                _isPotPlayerMusic = false;
+                await UpdateThumbnailAsync(null, null);
             }
 
             try
@@ -251,6 +234,122 @@ namespace NotchPeninsula
                 _lastFetchedTitle = Title;
                 _lastFetchedArtist = Artist;
                 _ = FetchLyricsAsync(Title, Artist, durationSec);
+            }
+        }
+
+        // 统一封面处理入口：
+        // PotPlayer 音乐模式 → SMTC 封面优先，无封面时网络获取（不用站标）
+        // 其余情况 → 平台站标优先（Always 始终使用；Fallback 无 SMTC 封面时兜底），其次 SMTC 封面
+        private async Task UpdateThumbnailAsync(
+            GlobalSystemMediaTransportControlsSession? session,
+            IRandomAccessStreamReference? smtcThumbnail)
+        {
+            if (session == null)
+            {
+                _appliedCoverKey = "";
+                SetThumbnail(null);
+                return;
+            }
+
+            if (_isPotPlayerMusic)
+            {
+                if (smtcThumbnail != null)
+                {
+                    _appliedCoverKey = "";
+                    SetThumbnail(await DecodeSmtcThumbnailAsync(smtcThumbnail));
+                    return;
+                }
+
+                // 同一首歌只请求一次，避免属性/播放状态变化时反复访问网络
+                string coverKey = $"{Title}|{Artist}";
+                if (coverKey == _appliedCoverKey) return;
+                _appliedCoverKey = coverKey;
+
+                var cover = await SearchCoverAsync(Title, Artist);
+                if ($"{Title}|{Artist}" != coverKey) return; // 期间已切歌，丢弃过期封面
+                SetThumbnail(cover);
+                return;
+            }
+
+            _appliedCoverKey = "";
+            var platformLogo = MediaLogoProvider.GetLogo(session.SourceAppUserModelId, smtcThumbnail != null);
+            SetThumbnail(platformLogo ?? (smtcThumbnail != null ? await DecodeSmtcThumbnailAsync(smtcThumbnail) : null));
+        }
+
+        // 替换封面并释放旧封面
+        private void SetThumbnail(SKBitmap? thumbnail)
+        {
+            var oldThumbnail = Thumbnail;
+            Thumbnail = thumbnail;
+            oldThumbnail?.Dispose();
+        }
+
+        // 解码 SMTC 原始封面，失败返回 null
+        private static async Task<SKBitmap?> DecodeSmtcThumbnailAsync(IRandomAccessStreamReference smtcThumbnail)
+        {
+            try
+            {
+                using var stream = await smtcThumbnail.OpenReadAsync();
+                using var dotNetStream = stream.AsStreamForRead();
+                return SKBitmap.Decode(dotNetStream);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("封面解析失败", ex);
+                return null;
+            }
+        }
+
+        // 封面搜索：QQ音乐搜索匹配歌曲并下载专辑封面，返回解码后的封面（失败返回 null）
+        private async Task<SKBitmap?> SearchCoverAsync(string title, string artist)
+        {
+            if (string.IsNullOrEmpty(title)) return null;
+
+            await _fetchLock.WaitAsync();
+            try
+            {
+                string query = Uri.EscapeDataString($"{title} {artist}");
+                _http.DefaultRequestHeaders.Clear();
+                _http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
+
+                using var searchStream = await _http.GetStreamAsync($"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json");
+                using var searchDoc = await JsonDocument.ParseAsync(searchStream);
+
+                string albumMid = "";
+                if (searchDoc.RootElement.TryGetProperty("data", out var data) &&
+                    data.TryGetProperty("song", out var songData) &&
+                    songData.TryGetProperty("list", out var list))
+                {
+                    foreach (var song in list.EnumerateArray())
+                    {
+                        string name = song.GetProperty("songname").GetString() ?? "";
+                        string singer = "";
+                        if (song.TryGetProperty("singer", out var singers) && singers.GetArrayLength() > 0)
+                            singer = singers[0].GetProperty("name").GetString() ?? "";
+
+                        // 与歌词引擎一致：同时校验歌名与歌手，避免同名歌曲串封面
+                        if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
+                            (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            albumMid = song.TryGetProperty("albummid", out var am) ? am.GetString() ?? "" : "";
+                            break;
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(albumMid)) return null;
+
+                using var coverStream = await _http.GetStreamAsync($"https://y.gtimg.cn/music/photo_new/T002R300x300M000{albumMid}.jpg");
+                return SKBitmap.Decode(coverStream);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"网络封面获取失败: {ex.Message}");
+                return null;
+            }
+            finally
+            {
+                _fetchLock.Release();
             }
         }
 
@@ -329,14 +428,41 @@ namespace NotchPeninsula
             CurrentLyric = "";
             _currentSimulatedPosition = TimeSpan.Zero;
             _lastSmtcPosition = TimeSpan.Zero;
-            if (string.IsNullOrEmpty(title) || _isBilibiliSession || _isBrowserSession || _isPotPlayerSession) return;
+            // PotPlayer 视频模式（SMTC 无歌手）不显示歌词；音乐模式正常获取
+            if (string.IsNullOrEmpty(title) || _isBilibiliSession || _isBrowserSession || (_isPotPlayerSession && !_isPotPlayerMusic)) return;
 
+            string lrcText = await SearchLyricsAsync(title, artist, durationSec);
+            if (string.IsNullOrEmpty(lrcText)) return;
+
+            // ====== 极速解析时间轴 ======
+            var lines = new List<(TimeSpan, string)>();
+            foreach (var line in lrcText.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
+                {
+                    if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
+                    {
+                        string text = line.Substring(idx + 1).Trim();
+                        if (!string.IsNullOrEmpty(text)) lines.Add((ts, text));
+                    }
+                }
+            }
+            // 状态锁：只有当网络请求结束，且当前播放的歌曲没被切走时，才允许写入
+            if (this.Title == title && this.Artist == artist)
+            {
+                _lyrics = lines.ToArray();
+            }
+        }
+
+        // 歌词搜索：依次尝试 QQ音乐 → 网易云 → LRCLIB，返回 LRC 文本（全部失败返回空串）
+        private async Task<string> SearchLyricsAsync(string title, string artist, long durationSec)
+        {
             // 等待获取通行证（防止多首歌同时修改 HttpClient 导致程序崩溃）
             await _fetchLock.WaitAsync();
             try
             {
                 // 极速拦截：如果排队轮到自己时，发现系统已经播放别的歌了，直接丢弃任务，0 性能浪费
-                if (this.Title != title || this.Artist != artist) return;
+                if (this.Title != title || this.Artist != artist) return "";
 
                 string query = Uri.EscapeDataString($"{title} {artist}");
                 string lrcText = "";
@@ -474,27 +600,7 @@ namespace NotchPeninsula
                     catch (Exception ex) { Logger.Warn($"LRCLIB引擎失败: {ex.Message}"); }
                 }
 
-                // ====== 极速解析时间轴 ======
-                if (!string.IsNullOrEmpty(lrcText))
-                {
-                    var lines = new List<(TimeSpan, string)>();
-                    foreach (var line in lrcText.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
-                        {
-                            if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
-                            {
-                                string text = line.Substring(idx + 1).Trim();
-                                if (!string.IsNullOrEmpty(text)) lines.Add((ts, text));
-                            }
-                        }
-                    }
-                    // 状态锁：只有当网络请求结束，且当前播放的歌曲没被切走时，才允许写入
-                    if (this.Title == title && this.Artist == artist)
-                    {
-                        _lyrics = lines.ToArray();
-                    }
-                }
+                return lrcText;
             }
             finally
             {
