@@ -18,7 +18,19 @@ public sealed class SystemPluginsPlugin : INotchPlugin
         host.RegisterWidget(new ClockWidget());
         host.RegisterWidget(new HardwareWidget(host));
         host.RegisterWidget(new MediaWidget(host));
+        host.RegisterSettingsPage(new SystemSettingsPage());
     }
+}
+
+/// <summary>系统组件插件的设置页。</summary>
+public sealed class SystemSettingsPage : ISettingsPage
+{
+    public string Title => "系统组件";
+    public IReadOnlyList<SettingControl> Controls { get; } = new SettingControl[]
+    {
+        new NumberSetting("HardwareInterval", "硬件采样间隔(秒)", 1f, 10f, 1f, 1f),
+        new NumberSetting("MediaInterval", "媒体刷新间隔(秒)", 1f, 10f, 1f, 2f),
+    };
 }
 
 /// <summary>时间日期组件（自包含）。</summary>
@@ -198,8 +210,9 @@ public sealed class HardwareWidget : IWidget
     public HardwareWidget(IPluginHost host)
     {
         _detailPage = new HardwareDetailPage(this);
-        // 常驻采样：每秒读一次 Win32 并推入历史，保证详情页打开时曲线连贯
-        host.ScheduleRefresh(TimeSpan.FromSeconds(1), () => SampleOnce());
+        // 常驻采样：读 Win32 并推入历史，保证详情页打开时曲线连贯
+        double interval = double.TryParse(host.GetSetting("HardwareInterval", "1"), out var iv) ? Math.Clamp(iv, 1, 10) : 1;
+        host.ScheduleRefresh(TimeSpan.FromSeconds(interval), () => SampleOnce());
     }
 
     internal int CpuPercent => _cpu;
@@ -414,7 +427,8 @@ public sealed class MediaWidget : IWidget
             _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             _manager.SessionsChanged += (s, e) => _ = RefreshAsync();
             await RefreshAsync();
-            host.ScheduleRefresh(TimeSpan.FromSeconds(2), () => _ = RefreshAsync());
+            double interval = double.TryParse(host.GetSetting("MediaInterval", "2"), out var iv) ? Math.Clamp(iv, 1, 10) : 2;
+            host.ScheduleRefresh(TimeSpan.FromSeconds(interval), () => _ = RefreshAsync());
         }
         catch { }
     }

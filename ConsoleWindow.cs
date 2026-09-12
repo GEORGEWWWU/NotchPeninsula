@@ -1547,6 +1547,7 @@ namespace NotchPeninsula
                     canvas.DrawText(pages[i].Page.Title, selX + 12, selY + 20, _uiTextPaint);
                     selX += tw + 8f;
                 }
+                _uiTextPaint.Color = SKColors.White; // 重置，避免后续文字继承选中蓝色
 
                 float ty = selY + 38f - TITLE_BAR_HEIGHT;
                 if (pages.Count > 0)
