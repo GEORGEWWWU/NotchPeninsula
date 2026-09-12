@@ -918,8 +918,28 @@ namespace NotchPeninsula
                                 detail.OnAction(hit.Action, dx, dy);
                                 return (IntPtr)0;
                             }
+                            Renderer.ActiveDetailWidget = null; // 点击空白，关闭详情
+                            return (IntPtr)0; // 关闭详情时不处理行内点击
                         }
-                        Renderer.ActiveDetailWidget = null; // 未命中，关闭详情
+
+                        // 行内组件点击（无详情时）
+                        var wslots = Renderer.WidgetRowSlots;
+                        if (wslots != null)
+                        {
+                            foreach (var slot in wslots)
+                            {
+                                var hitRect = new SKRect(slot.Rect.Left, slot.Rect.Top + Renderer.WidgetRowTopY, slot.Rect.Right, slot.Rect.Bottom + Renderer.WidgetRowTopY);
+                                if (hitRect.Contains(cx, cy))
+                                {
+                                    var wh = slot.Widget.HitTest(cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY, slot.Rect);
+                                    if (wh.IsHit)
+                                    {
+                                        slot.Widget.OnLeftClick(wh.Action, cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY);
+                                        return (IntPtr)0;
+                                    }
+                                }
+                            }
+                        }
 
                         // 完美对齐渲染中心点，精准拦截唤醒点击
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
