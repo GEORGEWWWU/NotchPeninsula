@@ -24,6 +24,7 @@ namespace NotchPeninsula
         public event EventHandler<WindowClickEventArgs>? WindowClicked;
 
         public static bool IsToastEnabled = true;
+        public static bool IsClipboardLinkEnabled = true; // 剪贴板链接识别开关（默认开启）
         public static bool IsTopmostEnabled = true; // 默认开启置顶
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         float _currentVolume = 0f;
@@ -53,6 +54,15 @@ namespace NotchPeninsula
         private ToastData? _currentToast = new ToastData();
         public ToastData? CurrentToast => _currentToast;
         private DateTime _toastEndTime;
+
+        // 剪贴板链接状态控制
+        private string? _currentClipboardLink;
+        private DateTime _clipboardEndTime;
+        private const double ClipboardLinkDurationSeconds = 6; // 链接展示时长
+        // 提取文本中第一个 http/https 链接（沿用 RFC3986 合法字符集，天然在中文/空格处截断）
+        private static readonly System.Text.RegularExpressions.Regex ClipboardLinkRegex =
+            new(@"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+",
+                System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         private DateTime _animStartTime;
         private readonly IntPtr _hCursorArrow;
         private readonly SystemSettingsManager? audio;
@@ -160,6 +170,10 @@ namespace NotchPeninsula
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
             else Info($"窗口创建成功，句柄: {_hwnd}");
             InstanceHandle = _hwnd;
+
+            // 注册剪贴板内容变化监听，实现"每次复制即检测"
+            if (!Win32.AddClipboardFormatListener(_hwnd))
+                Warn("剪贴板监听注册失败，链接识别将不可用");
             // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
             _renderTimer = new Timer(16);
             _renderTimer.Elapsed += (s, e) => RenderLoop();
@@ -245,6 +259,82 @@ namespace NotchPeninsula
 
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
+        }
+
+        // 剪贴板内容变化回调：提取第一个 http/https 链接并展示
+        private void OnClipboardUpdate()
+        {
+            if (!IsClipboardLinkEnabled) return;
+
+            string? link = null;
+            try
+            {
+                if (!System.Windows.Forms.Clipboard.ContainsText()) return;
+                string text = System.Windows.Forms.Clipboard.GetText();
+                if (string.IsNullOrWhiteSpace(text)) return;
+
+                var match = ClipboardLinkRegex.Match(text);
+                if (!match.Success) return;
+
+                // 去掉链接尾部的常见中英文标点，避免把 "https://a.com，" 这类符号带进去
+                link = match.Value.TrimEnd('.', ',', ';', ':', '!', '?', '\'', '"', '，', '。', '；', '：', '！', '？', '、');
+                if (string.IsNullOrWhiteSpace(link)) return;
+            }
+            catch (Exception ex)
+            {
+                // 剪贴板可能被其他进程短暂占用，静默忽略即可
+                Debug($"读取剪贴板失败：{ex.Message}");
+                return;
+            }
+
+            if (!_dispatcher.CheckAccess()) { _dispatcher.Invoke(() => ApplyClipboardLink(link!)); return; }
+            ApplyClipboardLink(link);
+        }
+
+        private void ApplyClipboardLink(string link)
+        {
+            // 同一个链接若正在展示中，不重复触发动画
+            if (link == _currentClipboardLink && DateTime.Now < _clipboardEndTime) return;
+
+            _currentClipboardLink = link;
+            _clipboardEndTime = DateTime.Now.AddSeconds(ClipboardLinkDurationSeconds);
+            Info($"检测到剪贴板链接：{link}");
+        }
+
+        // 链接岛是否处于展示期
+        private bool IsClipboardLinkActive() => IsClipboardLinkEnabled && !string.IsNullOrEmpty(_currentClipboardLink) && DateTime.Now < _clipboardEndTime;
+
+        // 判断逻辑坐标是否落在链接岛右侧的跳转按钮上
+        private bool IsOverClipboardButton(int mx, int my)
+        {
+            float topY = 12f * _currentStyleProgress;
+            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+            float right = left + _currentWidth;
+            float btnX = right - Renderer.CLIPBOARD_PAD - Renderer.CLIPBOARD_BTN;
+            float btnY = topY + (_currentHeight - Renderer.CLIPBOARD_BTN) / 2f;
+            return mx >= btnX - 4 && mx <= btnX + Renderer.CLIPBOARD_BTN + 4
+                && my >= btnY - 4 && my <= btnY + Renderer.CLIPBOARD_BTN + 4;
+        }
+
+        // 用系统默认浏览器打开当前链接，并立即收起链接岛
+        private void OpenCurrentClipboardLink()
+        {
+            string? link = _currentClipboardLink;
+            if (string.IsNullOrEmpty(link)) return;
+
+            try
+            {
+                Process.Start(new ProcessStartInfo { FileName = link, UseShellExecute = true });
+                Info($"已用默认浏览器打开链接：{link}");
+            }
+            catch (Exception ex)
+            {
+                Error($"打开链接失败：{link}", ex);
+            }
+
+            _currentClipboardLink = null; // 打开后立即收起
+            Renderer.ClipboardButtonHovered = false;
+            _isCursorOverIcon = false;
         }
 
         #endregion
@@ -386,6 +476,8 @@ namespace NotchPeninsula
 
                 // 判断当前 Toast 是否处于激活期
                 isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
+                // 判断剪贴板链接是否处于激活期
+                bool isClipboardActive = IsClipboardLinkActive();
                 // 实时穿透与 0% 透明度智能判定
                 if (Renderer.PassthroughModeEnabled)
                 {
@@ -418,6 +510,7 @@ namespace NotchPeninsula
                     _isPassthroughAwake = false;
                 }
                 if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
+                if (!isClipboardActive && _currentClipboardLink != null) { _currentClipboardLink = null; Renderer.ClipboardButtonHovered = false; _isCursorOverIcon = false; } // 链接超时清理
 
                 // 如果灵动岛已展开，且鼠标不在岛上(!_isHovered)，且按下了左键(0x01)
                 if (_isManuallyExpanded && !_isHovered && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
@@ -425,8 +518,8 @@ namespace NotchPeninsula
                     _isManuallyExpanded = false; // 触发收起
                 }
 
-                // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏
-                bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive;
+                // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出或链接岛展示时绝对不允许隐藏
+                bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive && !isClipboardActive;
 
                 // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
                 // Y 轴的隐藏位移量必须加上灵动岛专属的下沉高度，否则藏不进屏幕
@@ -473,7 +566,7 @@ namespace NotchPeninsula
                 bool currentActive = _media.IsActive;
 
                 // 状态叠化透明度计算 (0.3s 平滑过渡，将媒体展开与折叠拆分为独立状态触发叠化)
-                int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0);
+                int currentDisplayState = isClipboardActive ? 4 : (isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0));
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
@@ -483,7 +576,9 @@ namespace NotchPeninsula
 
                 // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
                 float expectedTargetWidth;
-                if (isToastActive)
+                if (isClipboardActive)
+                    expectedTargetWidth = Renderer.GetClipboardAutoWidth(_currentClipboardLink);
+                else if (isToastActive)
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
                 else if (Renderer.CompositeModeEnabled)
                 {
@@ -495,7 +590,7 @@ namespace NotchPeninsula
 
                 // 自动文本长度自适应逻辑
                 // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
-                bool bypassAutoWidth = Renderer.CompositeModeEnabled;
+                bool bypassAutoWidth = Renderer.CompositeModeEnabled || isClipboardActive;
                 if (currentActive && !Renderer.IsMediaExpanded && !bypassAutoWidth)
                 {
                     float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
@@ -507,7 +602,8 @@ namespace NotchPeninsula
                     float requiredWidth = textWidth + 115f;
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
-                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
+                float expectedTargetHeight = isClipboardActive ? Renderer.CLIPBOARD_HEIGHT
+                    : (isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT));
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
@@ -619,7 +715,7 @@ namespace NotchPeninsula
                 _media.UpdateLyrics(); // 更新歌词
 
                 // 传入 currentHeight 和 _currentToast
-                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
+                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha, isClipboardActive ? _currentClipboardLink : null);
 
                 // 恢复原始矩阵状态
                 canvas.Restore();
@@ -687,6 +783,10 @@ namespace NotchPeninsula
         {
             switch (msg)
             {
+                case Win32.WM_CLIPBOARDUPDATE:
+                    OnClipboardUpdate();
+                    break;
+
                 case Win32.WM_SETCURSOR:
                     if (_isCursorOverIcon)
                     {
@@ -709,6 +809,18 @@ namespace NotchPeninsula
                         int mx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int my = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
+
+                        // 0. 链接岛展示期：仅右侧跳转按钮可交互
+                        if (IsClipboardLinkActive())
+                        {
+                            bool overBtn = IsOverClipboardButton(mx, my);
+                            if (overBtn != Renderer.ClipboardButtonHovered || overBtn != _isCursorOverIcon)
+                            {
+                                Renderer.ClipboardButtonHovered = overBtn;
+                                _isCursorOverIcon = overBtn;
+                            }
+                            break;
+                        }
 
                         // 1. 最高优先级拦截：精准计算唤醒按钮垂直居中热区，解决没有手型指针的问题
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
@@ -775,6 +887,7 @@ namespace NotchPeninsula
                         _isHovered = false;
                         _isCursorOverIcon = false;
                         Renderer.HoveredExpandedButton = -1;
+                        Renderer.ClipboardButtonHovered = false;
                         Renderer.IsMediaExpanded = false;
                         break;
                     }
@@ -784,6 +897,13 @@ namespace NotchPeninsula
                         int cx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int cy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
+
+                        // 链接岛展示期：点击右侧跳转按钮用默认浏览器打开链接
+                        if (IsClipboardLinkActive())
+                        {
+                            if (IsOverClipboardButton(cx, cy)) OpenCurrentClipboardLink();
+                            return (IntPtr)0;
+                        }
 
                         // 完美对齐渲染中心点，精准拦截唤醒点击
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)

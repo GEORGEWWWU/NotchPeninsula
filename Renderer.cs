@@ -64,6 +64,23 @@ namespace NotchPeninsula
         }
         public static bool IsMediaExpanded = false;
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
+
+        // ===== 剪贴板链接岛 =====
+        public const float CLIPBOARD_HEIGHT = 44f;   // 链接岛高度
+        public const float CLIPBOARD_ICON = 26f;     // 左侧剪贴板图标边长
+        public const float CLIPBOARD_BTN = 26f;      // 右侧跳转按钮边长
+        public const float CLIPBOARD_PAD = 12f;      // 左右外边距
+        public static bool ClipboardButtonHovered = false; // 跳转按钮是否处于悬停
+        private static SKBitmap? _clipboardIcon;
+        private static SKBitmap? _openLinkIcon;
+
+        // 链接岛自适应宽度：左图标 + 间距 + 文本 + 间距 + 跳转按钮，并限制最大宽度防止岛体过长
+        public static float GetClipboardAutoWidth(string? link)
+        {
+            float textW = string.IsNullOrEmpty(link) ? 0f : _textPaint.MeasureText(link);
+            float width = CLIPBOARD_PAD + CLIPBOARD_ICON + 10f + textW + 10f + CLIPBOARD_BTN + CLIPBOARD_PAD;
+            return Math.Min(Math.Max(width, 176f), 520f);
+        }
         private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔
         private static SKColor _currentTextColor = SKColors.White;
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
@@ -187,6 +204,8 @@ namespace NotchPeninsula
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string qqPath = Path.Combine(baseDir, "data", "image", "qq-icon.png");
                 string defaultPath = Path.Combine(baseDir, "data", "image", "wintoast-icon.png");
+                string clipboardPath = Path.Combine(baseDir, "data", "image", "Clipboard.png");
+                string openLinkPath = Path.Combine(baseDir, "data", "image", "open_the_link.png");
 
                 // 直接极速解码为位图
                 if (File.Exists(qqPath))
@@ -199,6 +218,18 @@ namespace NotchPeninsula
                 {
                     using var stream = File.OpenRead(defaultPath);
                     _defaultToastIcon = SKBitmap.Decode(stream);
+                }
+
+                if (File.Exists(clipboardPath))
+                {
+                    using var stream = File.OpenRead(clipboardPath);
+                    _clipboardIcon = SKBitmap.Decode(stream);
+                }
+
+                if (File.Exists(openLinkPath))
+                {
+                    using var stream = File.OpenRead(openLinkPath);
+                    _openLinkIcon = SKBitmap.Decode(stream);
                 }
             }
             catch (Exception ex)
@@ -299,7 +330,7 @@ namespace NotchPeninsula
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
 
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
+        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f, string? clipboardLink = null)
         {
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
@@ -371,6 +402,17 @@ namespace NotchPeninsula
                 _mediaIconPaint.Color = currentA;
                 _barPaint.Color = currentA;
                 _highQualitySampling.Color = SKColors.White.WithAlpha(alpha); // 同步作用于图片图标
+
+                // ---------------- [ 剪贴板链接 ] ----------------
+                if (!string.IsNullOrEmpty(clipboardLink))
+                {
+                    DrawClipboardLink(canvas, clipboardLink!, left, right, currentHeight, alpha);
+
+                    canvas.Restore();
+                    canvas.Restore();
+                    canvas.Restore();
+                    return;
+                }
 
                 // ---------------- [ Toast 消息通知 ] ----------------
                 if (toast != null)
@@ -969,6 +1011,58 @@ namespace NotchPeninsula
             {
                 Monitor.Exit(_renderLock);
             }
+        }
+
+        // 剪贴板链接岛布局： [剪贴板 logo] 链接文本 [跳转按钮]
+        private static void DrawClipboardLink(SKCanvas canvas, string link, float left, float right, float currentHeight, byte alpha)
+        {
+            EnsureIconsLoaded();
+
+            float centerY = currentHeight / 2f;
+
+            // 左侧：剪贴板 logo
+            float iconX = left + CLIPBOARD_PAD;
+            float iconY = centerY - CLIPBOARD_ICON / 2f;
+            var iconRect = new SKRect(iconX, iconY, iconX + CLIPBOARD_ICON, iconY + CLIPBOARD_ICON);
+            if (_clipboardIcon != null) canvas.DrawBitmap(_clipboardIcon, iconRect, _highQualitySampling);
+            else canvas.DrawRoundRect(iconRect, 4f, 4f, _fallbackIconPaint);
+
+            // 右侧：跳转按钮
+            float btnX = right - CLIPBOARD_PAD - CLIPBOARD_BTN;
+            float btnY = centerY - CLIPBOARD_BTN / 2f;
+            var btnRect = new SKRect(btnX, btnY, btnX + CLIPBOARD_BTN, btnY + CLIPBOARD_BTN);
+
+            float textStartX = iconRect.Right + 10f;
+            float textEndX = btnRect.Left - 10f;
+
+            // 中间：链接文本（单行左对齐，超出可用宽度时在按钮前渐隐收尾）
+            _textPaint.Color = _currentTextColor.WithAlpha(alpha);
+            var fm = _textPaint.FontMetrics;
+            float baselineY = centerY - (fm.Ascent + fm.Descent) / 2f;
+
+            canvas.Save();
+            canvas.ClipRect(new SKRect(textStartX, 0f, textEndX, currentHeight));
+            canvas.DrawText(link, textStartX, baselineY, _textPaint);
+
+            if (_textPaint.MeasureText(link) > textEndX - textStartX)
+            {
+                float fadeWidth = 15f;
+                float fadeStart = textEndX - fadeWidth;
+                canvas.Save();
+                canvas.Translate(fadeStart, 0f);
+                canvas.Scale(fadeWidth, currentHeight);
+                canvas.DrawRect(0f, 0f, 1f, 1f, _fadePaint);
+                canvas.Restore();
+                canvas.DrawRect(fadeStart, 0f, WINDOW_WIDTH, currentHeight, _bgPaint);
+            }
+            canvas.Restore();
+
+            // 跳转按钮：悬停高亮 + 图标
+            if (ClipboardButtonHovered)
+                canvas.DrawCircle(btnRect.MidX, btnRect.MidY, CLIPBOARD_BTN / 2f + 4f, _hoverCirclePaint);
+
+            if (_openLinkIcon != null) canvas.DrawBitmap(_openLinkIcon, btnRect, _highQualitySampling);
+            else DrawSvgPath(canvas, _mediaIconPaint, btnX + 2f, btnY + 2f, _nextPath, 1.1f);
         }
 
         private static void DrawSvgPath(SKCanvas canvas, SKPaint paint, float x, float y, SKPath path, float scale = 1f)
