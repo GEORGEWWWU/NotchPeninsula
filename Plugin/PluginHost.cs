@@ -59,6 +59,8 @@ public sealed class PluginHost
         catch { return fallback; }
     }
 
+    public event Action? SettingsChanged;
+
     public void SetSetting(string pluginId, string key, string value)
     {
         try
@@ -67,6 +69,7 @@ public sealed class PluginHost
             reg?.SetValue(PrefixedKey(pluginId, key), value);
         }
         catch (Exception ex) { Logger.Error($"保存插件设置失败: {pluginId}.{key}", ex); }
+        SettingsChanged?.Invoke();
     }
 
     private static string PrefixedKey(string pluginId, string key) => $"Plugin.{pluginId}.{key}";
@@ -139,6 +142,11 @@ public sealed class ScopedPluginHost : IPluginHost
     public void PostReminder(ReminderData reminder) => _host.PostReminder(reminder);
     public string GetSetting(string key, string fallback) => _host.GetSetting(_pluginId, key, fallback);
     public void SetSetting(string key, string value) => _host.SetSetting(_pluginId, key, value);
+    public event Action? SettingsChanged
+    {
+        add => _host.SettingsChanged += value;
+        remove => _host.SettingsChanged -= value;
+    }
     public IDisposable ScheduleRefresh(TimeSpan interval, Action callback) => _host.ScheduleRefresh(interval, callback);
     public void RequestRedraw() { /* 常驻 60FPS 渲染下为空操作，事件驱动化预留 */ }
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);

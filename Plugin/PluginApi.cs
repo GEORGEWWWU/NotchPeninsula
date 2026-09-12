@@ -182,6 +182,9 @@ public interface IPluginHost
     string GetSetting(string key, string fallback);
     void SetSetting(string key, string value);
 
+    // 设置变更事件（主机写入设置后触发，插件订阅以即时响应）
+    event Action? SettingsChanged;
+
     // 刷新调度（插件主动刷新的核心能力）
     /// <summary>
     /// 注册周期性刷新回调（如每 5 分钟拉课表、每 10 秒轮询状态）。

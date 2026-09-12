@@ -80,12 +80,11 @@ public sealed class HelloWidget : IWidget
     {
         _host = host;
         _showCheck = host.GetSetting("ShowCheck", "1") == "1";
-        // 每秒重新读取设置（演示 ScheduleRefresh；真实插件可用事件/手动触发）
-        _ = host.ScheduleRefresh(TimeSpan.FromSeconds(1), () =>
+        // 订阅设置变更事件，改设置立即生效
+        host.SettingsChanged += () =>
         {
-            bool v = host.GetSetting("ShowCheck", "1") == "1";
-            if (v != _showCheck) _showCheck = v;
-        });
+            _showCheck = host.GetSetting("ShowCheck", "1") == "1";
+        };
     }
 
     public string Id => "hello.text";
