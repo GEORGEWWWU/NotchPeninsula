@@ -21,7 +21,7 @@ public sealed class PluginWindow : IPluginWindow
 
     // 对话框外观：圆角背景 + 边框
     private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(30, 30, 30), IsAntialias = true };
-    private static readonly SKPaint _borderPaint = new SKPaint { Color = new SKColor(255, 255, 255, 38), Style = SKPaintStyle.Stroke, StrokeWidth = 1f, IsAntialias = true };
+    private static readonly SKPaint _borderPaint = new SKPaint { Color = new SKColor(255, 255, 255, 95), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
     private static readonly SKPaint _closeBtnPaint = new SKPaint { Color = new SKColor(255, 255, 255, 30), IsAntialias = true };
     private static readonly SKPaint _closeXPaint = new SKPaint { Color = new SKColor(255, 255, 255, 210), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
 
@@ -182,10 +182,11 @@ public sealed class PluginWindow : IPluginWindow
         canvas.Save();
         canvas.Scale(_dpiScale); // 让插件按逻辑坐标绘制
 
-        // 圆角背景 + 边框
+        // 圆角背景 + 边框（边框内缩半线宽，避免被窗口边缘裁掉一半）
         var bg = new SKRoundRect(new SKRect(0, 0, _width, _height), 14f);
         canvas.DrawRoundRect(bg, _bgPaint);
-        canvas.DrawRoundRect(bg, _borderPaint);
+        var border = new SKRoundRect(new SKRect(0.75f, 0.75f, _width - 0.75f, _height - 0.75f), 13f);
+        canvas.DrawRoundRect(border, _borderPaint);
 
         // 插件内容裁剪到圆角内，避免四角溢出
         canvas.Save();
