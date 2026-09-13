@@ -4,18 +4,32 @@ using SkiaSharp;
 namespace NotchPeninsula.Plugins;
 
 /// <summary>
-/// 插件自有窗口：Win32 分层窗口 + SkiaSharp 绘制 + 鼠标输入路由。
-/// 在独立线程运行自己的消息循环。
+/// 插件自有窗口：Win32 分层窗口 + SkiaSharp 绘制 + 鼠标/键盘输入路由。
+/// DPI 感知居中显示，右上角带关闭按钮，Esc 可关闭，置顶以阻止下方交互。
+/// 消息通过静态 WndProc + 字典按 hwnd 路由到对应实例，支持多窗口、可重复开关。
 /// </summary>
 public sealed class PluginWindow : IPluginWindow
 {
     private const uint WM_APP_REDRAW = 0x8000 + 1;
     private const int WM_CHAR = 0x0102;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int VK_ESCAPE = 0x1B;
+
+    // WndProc 必须是静态方法（避免委托被 GC 后回调悬空），用字典按 hwnd 找回实例
+    private static readonly Dictionary<IntPtr, PluginWindow> _windows = new();
+    private static readonly Win32.WndProc _wndProc = WndProc;
+
+    // 对话框外观：圆角背景 + 边框
+    private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(30, 30, 30), IsAntialias = true };
+    private static readonly SKPaint _borderPaint = new SKPaint { Color = new SKColor(255, 255, 255, 95), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
+    private static readonly SKPaint _closeBtnPaint = new SKPaint { Color = new SKColor(255, 255, 255, 30), IsAntialias = true };
+    private static readonly SKPaint _closeXPaint = new SKPaint { Color = new SKColor(255, 255, 255, 210), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
 
     private readonly string _title;
     private readonly int _width, _height;
+    private float _dpiScale = 1f;
+    private int _scaledWidth, _scaledHeight;
     private IntPtr _hwnd;
-    private readonly Win32.WndProc _wndProc;
     private Action<SKCanvas, int, int>? _draw;
     private Action<float, float>? _mouseDown, _mouseMove, _mouseUp;
     private Action<char>? _key;
@@ -23,13 +37,13 @@ public sealed class PluginWindow : IPluginWindow
     private IntPtr _memDc, _hBitmap, _oldBitmap, _pBits;
     private SKSurface? _surface;
     private bool _closing;
+    private int _posX, _posY;
 
     public PluginWindow(string title, int width, int height)
     {
         _title = title;
         _width = width;
         _height = height;
-        _wndProc = WndProc;
     }
 
     public void SetDraw(Action<SKCanvas, int, int>? draw)
@@ -59,7 +73,7 @@ public sealed class PluginWindow : IPluginWindow
             Win32.PostMessage(_hwnd, Win32.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
     }
 
-    /// <summary>创建窗口并启动消息循环线程。</summary>
+    /// <summary>创建窗口并注册到消息路由表。</summary>
     public void Show()
     {
         var wc = new Win32.WNDCLASS
@@ -72,37 +86,43 @@ public sealed class PluginWindow : IPluginWindow
         if (Win32.RegisterClass(ref wc) == 0 && Marshal.GetLastWin32Error() != 1410 /* CLASS_ALREADY_EXISTS */)
             return;
 
-        // 屏幕居中
+        // DPI 感知：尺寸按系统 DPI 缩放，居中于主屏工作区（物理像素），并兼容无主屏场景
+        _dpiScale = Win32.GetDpiForSystem() / 96f;
+        _scaledWidth = (int)(_width * _dpiScale);
+        _scaledHeight = (int)(_height * _dpiScale);
         var area = System.Windows.Forms.Screen.PrimaryScreen?.WorkingArea
-            ?? new System.Drawing.Rectangle(0, 0, _width, _height);
-        int x = area.Left + (area.Width - _width) / 2;
-        int y = area.Top + (area.Height - _height) / 2;
+            ?? new System.Drawing.Rectangle(0, 0, _scaledWidth, _scaledHeight);
+        int x = area.Left + (area.Width - _scaledWidth) / 2;
+        int y = area.Top + (area.Height - _scaledHeight) / 2;
 
+        // 置顶（阻止下方交互）+ 工具窗口（不进任务栏）+ 分层（透明绘制）
         _hwnd = Win32.CreateWindowEx(
-            Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
+            Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED | Win32.WS_EX_TOPMOST,
             "NPSPluginWindow", _title,
             Win32.WS_POPUP | Win32.WS_VISIBLE,
-            x, y, _width, _height,
+            x, y, _scaledWidth, _scaledHeight,
             IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
 
         if (_hwnd == IntPtr.Zero) return;
+        lock (_windows) _windows[_hwnd] = this;
+        _posX = x;
+        _posY = y;
+        Win32.SetForegroundWindow(_hwnd); // 激活窗口，让 Esc/键盘输入立即生效
         InitBuffer();
         Redraw();
-
-        var thread = new System.Threading.Thread(MessageLoop) { IsBackground = true };
-        thread.Start();
     }
 
-    private void MessageLoop()
+    private static IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        while (!_closing && Win32.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
+        lock (_windows)
         {
-            Win32.TranslateMessage(ref msg);
-            Win32.DispatchMessage(ref msg);
+            if (_windows.TryGetValue(hwnd, out var self))
+                return self.HandleMessage(hwnd, msg, wParam, lParam);
         }
+        return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
-    private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    private IntPtr HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         switch (msg)
         {
@@ -111,17 +131,24 @@ public sealed class PluginWindow : IPluginWindow
                 return IntPtr.Zero;
 
             case Win32.WM_MOUSEMOVE:
-                _mouseMove?.Invoke(Lo(lParam), Hi(lParam));
+                _mouseMove?.Invoke(LogicalX(lParam), LogicalY(lParam));
                 return IntPtr.Zero;
             case Win32.WM_LBUTTONDOWN:
-                _mouseDown?.Invoke(Lo(lParam), Hi(lParam));
+            {
+                float lx = LogicalX(lParam), ly = LogicalY(lParam);
+                if (IsCloseButtonHit(lx, ly)) { Close(); return IntPtr.Zero; }
+                _mouseDown?.Invoke(lx, ly);
                 return IntPtr.Zero;
+            }
             case Win32.WM_LBUTTONUP:
-                _mouseUp?.Invoke(Lo(lParam), Hi(lParam));
+                _mouseUp?.Invoke(LogicalX(lParam), LogicalY(lParam));
                 return IntPtr.Zero;
             case WM_CHAR:
                 _key?.Invoke((char)(wParam.ToInt64() & 0xFFFF));
                 return IntPtr.Zero;
+            case WM_KEYDOWN:
+                if (wParam.ToInt64() == VK_ESCAPE) { Close(); return IntPtr.Zero; }
+                break;
 
             case Win32.WM_CLOSE:
                 _closing = true;
@@ -130,10 +157,18 @@ public sealed class PluginWindow : IPluginWindow
                 return IntPtr.Zero;
 
             case Win32.WM_DESTROY:
-                Win32.PostQuitMessage(0);
+                lock (_windows) _windows.Remove(hwnd);
                 return IntPtr.Zero;
         }
         return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    private float LogicalX(IntPtr lParam) => Lo(lParam) / _dpiScale;
+    private float LogicalY(IntPtr lParam) => Hi(lParam) / _dpiScale;
+    private bool IsCloseButtonHit(float x, float y)
+    {
+        float dx = x - (_width - 18), dy = y - 16;
+        return dx * dx + dy * dy <= 12f * 12f; // 圆形命中区域
     }
 
     private static int Lo(IntPtr lParam) => (short)(lParam.ToInt64() & 0xFFFF);
@@ -144,12 +179,30 @@ public sealed class PluginWindow : IPluginWindow
         if (_surface == null || _draw == null) return;
         var canvas = _surface.Canvas;
         canvas.Clear(SKColors.Transparent);
+        canvas.Save();
+        canvas.Scale(_dpiScale); // 让插件按逻辑坐标绘制
+
+        // 圆角背景
+        var bg = new SKRoundRect(new SKRect(0, 0, _width, _height), 14f);
+        canvas.DrawRoundRect(bg, _bgPaint);
+
+        // 插件内容裁剪到圆角内，避免四角溢出
+        canvas.Save();
+        canvas.ClipRoundRect(bg, antialias: true);
         _draw(canvas, _width, _height);
+        canvas.Restore();
+
+        // 边框绘制在内容之上，始终可见（内缩半线宽避免被窗口边缘裁掉）
+        var border = new SKRoundRect(new SKRect(0.75f, 0.75f, _width - 0.75f, _height - 0.75f), 13f);
+        canvas.DrawRoundRect(border, _borderPaint);
+
+        DrawCloseButton(canvas);
+        canvas.Restore();
 
         var screenDc = Win32.GetDC(IntPtr.Zero);
         var ptSrc = new Win32.POINT(0, 0);
-        var ptDst = new Win32.POINT { x = 0, y = 0 };
-        var size = new Win32.SIZE(_width, _height);
+        var ptDst = new Win32.POINT { x = _posX, y = _posY };
+        var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
         var blend = new Win32.BLENDFUNCTION
         {
             BlendOp = Win32.AC_SRC_OVER,
@@ -161,6 +214,14 @@ public sealed class PluginWindow : IPluginWindow
         Win32.ReleaseDC(IntPtr.Zero, screenDc);
     }
 
+    private void DrawCloseButton(SKCanvas canvas)
+    {
+        float cx = _width - 18, cy = 16, r = 10;
+        canvas.DrawCircle(cx, cy, r, _closeBtnPaint);
+        canvas.DrawLine(cx - 4, cy - 4, cx + 4, cy + 4, _closeXPaint);
+        canvas.DrawLine(cx + 4, cy - 4, cx - 4, cy + 4, _closeXPaint);
+    }
+
     private void InitBuffer()
     {
         var screenDc = Win32.GetDC(IntPtr.Zero);
@@ -170,8 +231,8 @@ public sealed class PluginWindow : IPluginWindow
             bmiHeader = new Win32.BITMAPINFOHEADER
             {
                 biSize = (uint)Marshal.SizeOf(typeof(Win32.BITMAPINFOHEADER)),
-                biWidth = _width,
-                biHeight = -_height,
+                biWidth = _scaledWidth,
+                biHeight = -_scaledHeight,
                 biPlanes = 1,
                 biBitCount = 32,
                 biCompression = 0
@@ -179,8 +240,8 @@ public sealed class PluginWindow : IPluginWindow
         };
         _hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out _pBits, IntPtr.Zero, 0);
         _oldBitmap = Win32.SelectObject(_memDc, _hBitmap);
-        var info = new SKImageInfo(_width, _height, SKColorType.Bgra8888, SKAlphaType.Premul);
-        _surface = SKSurface.Create(info, _pBits, _width * 4);
+        var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+        _surface = SKSurface.Create(info, _pBits, _scaledWidth * 4);
         Win32.ReleaseDC(IntPtr.Zero, screenDc);
     }
 

@@ -107,7 +107,6 @@ public sealed class LoginWindow
 
     private void Draw(SKCanvas canvas, int w, int h)
     {
-        canvas.Clear(new SKColor(30, 30, 30));
         var label = new SKPaint { Color = SKColors.White, TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
         var text = new SKPaint { Color = SKColors.Black, TextSize = 14f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
         var boxFill = new SKPaint { Color = SKColors.White, IsAntialias = true };
