@@ -453,6 +453,8 @@ public sealed class MediaWidget : IWidget
     internal string Artist => Ctl?.Artist ?? "";
     internal bool Playing => Ctl?.IsPlaying ?? false;
     internal SKBitmap? Thumbnail => Ctl?.Thumbnail;
+    internal string Lyric => Ctl?.CurrentLyric ?? "";
+    internal float LyricProgress => Ctl?.CurrentLyricProgress ?? 0f;
 
     internal void TogglePlayPause() => Ctl?.TogglePlayPause();
     internal void Next() => Ctl?.Next();
@@ -473,8 +475,10 @@ public sealed class MediaWidget : IWidget
         if (Ctl?.IsActive != true) return;
         NotchPeninsula.Renderer.MediaActive = true;
         Ctl.UpdateBars(); // 每帧刷新频谱，保证平滑
-        _textPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
-        canvas.DrawText(DisplayText(), rect.Left + 16f, rect.MidY + 5f, _textPaint);
+        SKColor textColor = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+        bool showLyric = MediaController.IsLyricsEnabled && !string.IsNullOrEmpty(Lyric);
+        string text = showLyric ? LyricPainter.Truncate(Lyric, 40) : DisplayText();
+        LyricPainter.DrawKaraoke(canvas, text, rect.Left + 16f, rect.MidY + 5f, _textPaint, textColor, showLyric ? LyricProgress : 0f, showLyric && MediaController.IsKaraokeEnabled);
 
         // 频谱柱（右对齐）
         var bars = Ctl?.Bars;
@@ -512,8 +516,10 @@ public sealed class MediaWidget : IWidget
 
     private string DisplayText()
     {
+        if (MediaController.IsLyricsEnabled && !string.IsNullOrEmpty(Lyric))
+            return LyricPainter.Truncate(Lyric, 40);
         string t = string.IsNullOrEmpty(Artist) ? Title : $"{Artist} - {Title}";
-        return t.Length > 32 ? t[..32] + "…" : t;
+        return LyricPainter.Truncate(t, 32);
     }
 
     public WidgetHit HitTest(float x, float y, SKRect rect)
@@ -540,7 +546,33 @@ public sealed class MediaWidget : IWidget
     public void OnDeactivate() { }
 }
 
-/// <summary>媒体详情页：大封面 + 标题/艺术家 + 底部播放控制。</summary>
+/// <summary>歌词绘制工具：卡拉OK进度高亮 + 文本截断。</summary>
+internal static class LyricPainter
+{
+    public static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, SKColor color, float progress, bool karaoke)
+    {
+        if (!karaoke || progress <= 0f)
+        {
+            paint.Color = color;
+            canvas.DrawText(text, x, y, paint);
+            return;
+        }
+        // 先画 40% 亮度的底板
+        paint.Color = color.WithAlpha((byte)(color.Alpha * 0.4f));
+        canvas.DrawText(text, x, y, paint);
+        // 按进度裁剪并覆盖高亮部分
+        float scanWidth = paint.MeasureText(text) * progress;
+        canvas.Save();
+        canvas.ClipRect(new SKRect(x, y - 30f, x + scanWidth, y + 10f), SKClipOperation.Intersect, true);
+        paint.Color = color;
+        canvas.DrawText(text, x, y, paint);
+        canvas.Restore();
+    }
+
+    public static string Truncate(string text, int max) => text.Length > max ? text[..max] + "…" : text;
+}
+
+/// <summary>媒体详情页：大封面 + 标题/艺术家 + 歌词 + 底部播放控制。</summary>
 public sealed class MediaDetailPage : IDetailPage
 {
     private readonly MediaWidget _widget;
@@ -594,6 +626,14 @@ public sealed class MediaDetailPage : IDetailPage
         _bodyPaint.Color = frame.Theme.SubTextColor.WithAlpha(frame.Alpha);
         canvas.DrawText(_widget.Title, textX, coverY + 18f, _titlePaint);
         canvas.DrawText(_widget.Artist, textX, coverY + 42f, _bodyPaint);
+
+        // 歌词（卡拉OK高亮）
+        if (MediaController.IsLyricsEnabled && !string.IsNullOrEmpty(_widget.Lyric))
+        {
+            string lyric = LyricPainter.Truncate(_widget.Lyric, 26);
+            SKColor lyricColor = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+            LyricPainter.DrawKaraoke(canvas, lyric, textX, coverY + 62f, _bodyPaint, lyricColor, _widget.LyricProgress, MediaController.IsKaraokeEnabled);
+        }
 
         // 底部播放控制
         float btnY = rect.Top + rect.Height - 34f;

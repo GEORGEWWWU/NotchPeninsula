@@ -17,11 +17,11 @@ namespace SystemPlugins
         public static MediaController? Instance { get; private set; }
         // 平台 ID 列表（与 MediaSettingsPage 的 ChoiceSetting 选项顺序一致）
         private static readonly string[] PlatformIds = ["other", "netease", "qqmusic", "kugou", "spotify", "applemusic", "echomusic", "lxmusic"];
-        private static string TargetPlatform = "other";
-        private static bool IsMediaControlEnabled = true;
-        private static bool IsLyricsEnabled = true;
-        private static bool IsKaraokeEnabled = true;
-        private static float LyricDelayOffset = 0f;
+        internal static string TargetPlatform = "other";
+        internal static bool IsMediaControlEnabled = true;
+        internal static bool IsLyricsEnabled = true;
+        internal static bool IsKaraokeEnabled = true;
+        internal static float LyricDelayOffset = 0f;
         private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
         {
             ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
