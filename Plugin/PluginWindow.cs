@@ -6,6 +6,7 @@ namespace NotchPeninsula.Plugins;
 /// <summary>
 /// 插件自有窗口：Win32 分层窗口 + SkiaSharp 绘制 + 鼠标/键盘输入路由。
 /// DPI 感知居中显示，右上角带关闭按钮，Esc 可关闭，置顶以阻止下方交互。
+/// 消息通过静态 WndProc + 字典按 hwnd 路由到对应实例，支持多窗口、可重复开关。
 /// </summary>
 public sealed class PluginWindow : IPluginWindow
 {
@@ -14,12 +15,15 @@ public sealed class PluginWindow : IPluginWindow
     private const int WM_KEYDOWN = 0x0100;
     private const int VK_ESCAPE = 0x1B;
 
+    // WndProc 必须是静态方法（避免委托被 GC 后回调悬空），用字典按 hwnd 找回实例
+    private static readonly Dictionary<IntPtr, PluginWindow> _windows = new();
+    private static readonly Win32.WndProc _wndProc = WndProc;
+
     private readonly string _title;
     private readonly int _width, _height;
     private float _dpiScale = 1f;
     private int _scaledWidth, _scaledHeight;
     private IntPtr _hwnd;
-    private readonly Win32.WndProc _wndProc;
     private Action<SKCanvas, int, int>? _draw;
     private Action<float, float>? _mouseDown, _mouseMove, _mouseUp;
     private Action<char>? _key;
@@ -34,7 +38,6 @@ public sealed class PluginWindow : IPluginWindow
         _title = title;
         _width = width;
         _height = height;
-        _wndProc = WndProc;
     }
 
     public void SetDraw(Action<SKCanvas, int, int>? draw)
@@ -64,7 +67,7 @@ public sealed class PluginWindow : IPluginWindow
             Win32.PostMessage(_hwnd, Win32.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
     }
 
-    /// <summary>创建窗口并启动消息循环线程。</summary>
+    /// <summary>创建窗口并注册到消息路由表。</summary>
     public void Show()
     {
         var wc = new Win32.WNDCLASS
@@ -95,6 +98,7 @@ public sealed class PluginWindow : IPluginWindow
             IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
 
         if (_hwnd == IntPtr.Zero) return;
+        lock (_windows) _windows[_hwnd] = this;
         _posX = x;
         _posY = y;
         Win32.SetForegroundWindow(_hwnd); // 激活窗口，让 Esc/键盘输入立即生效
@@ -102,7 +106,17 @@ public sealed class PluginWindow : IPluginWindow
         Redraw();
     }
 
-    private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    private static IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        lock (_windows)
+        {
+            if (_windows.TryGetValue(hwnd, out var self))
+                return self.HandleMessage(hwnd, msg, wParam, lParam);
+        }
+        return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    private IntPtr HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         switch (msg)
         {
@@ -137,6 +151,7 @@ public sealed class PluginWindow : IPluginWindow
                 return IntPtr.Zero;
 
             case Win32.WM_DESTROY:
+                lock (_windows) _windows.Remove(hwnd);
                 return IntPtr.Zero;
         }
         return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
