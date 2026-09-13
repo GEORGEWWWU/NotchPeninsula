@@ -11,7 +11,7 @@ public static class PluginLoader
     public static List<INotchPlugin> LoadAll(PluginHost host, string? pluginsRoot = null)
     {
         var loaded = new List<INotchPlugin>();
-        pluginsRoot ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "plugins");
+        pluginsRoot ??= Path.Combine(GetAppDirectory(), "plugins");
         if (!Directory.Exists(pluginsRoot))
         {
             Logger.Info($"[PluginLoader] 插件目录不存在: {pluginsRoot}");
@@ -69,6 +69,20 @@ public static class PluginLoader
         }
 
         return loaded;
+    }
+
+    /// <summary>exe 所在目录：单文件发布时 AppContext.BaseDirectory 是临时解压目录，插件必须放 exe 同级，故优先取进程自身路径。</summary>
+    private static string GetAppDirectory()
+    {
+        var exe = Environment.ProcessPath;
+        // 通过 dotnet NotchPeninsula.dll 启动时，进程路径是 dotnet.exe，此时回退到程序集目录
+        if (!string.IsNullOrEmpty(exe) &&
+            !Path.GetFileNameWithoutExtension(exe).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            var dir = Path.GetDirectoryName(exe);
+            if (!string.IsNullOrEmpty(dir)) return dir;
+        }
+        return AppContext.BaseDirectory;
     }
 
     /// <summary>插件加载上下文：优先从插件目录加载依赖，否则回退默认解析。</summary>
