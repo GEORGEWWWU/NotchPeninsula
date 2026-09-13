@@ -20,10 +20,11 @@ public sealed class SystemPluginsPlugin : INotchPlugin
         host.RegisterWidget(new HardwareWidget(host));
         host.RegisterWidget(new MediaWidget(host));
         host.RegisterSettingsPage(new SystemSettingsPage());
+        host.RegisterSettingsPage(new MediaSettingsPage());
     }
 }
 
-/// <summary>系统组件插件的设置页（含媒体设置，全部走声明式控件）。</summary>
+/// <summary>系统组件设置页：采样间隔。</summary>
 public sealed class SystemSettingsPage : ISettingsPage
 {
     public string Title => "系统组件";
@@ -31,6 +32,15 @@ public sealed class SystemSettingsPage : ISettingsPage
     {
         new NumberSetting("HardwareInterval", "硬件采样间隔(秒)", 1f, 10f, 1f, 1f),
         new NumberSetting("MediaInterval", "媒体刷新间隔(秒)", 1f, 10f, 1f, 2f),
+    };
+}
+
+/// <summary>媒体设置页：开关 / 目标平台 / 歌词。</summary>
+public sealed class MediaSettingsPage : ISettingsPage
+{
+    public string Title => "媒体";
+    public IReadOnlyList<SettingControl> Controls { get; } = new SettingControl[]
+    {
         new ToggleSetting("MediaControlEnabled", "媒体控制", true),
         new ChoiceSetting("TargetPlatform", "目标媒体平台", new[] { "通用媒体", "网易云音乐", "QQ音乐", "酷狗音乐", "Spotify", "Apple Music", "Echo Music", "LX Music" }, 0),
         new ToggleSetting("LyricsEnabled", "在刘海中显示歌词", true),
@@ -433,7 +443,6 @@ public sealed class MediaWidget : IWidget
             var c = MediaController.Instance;
             if (c == null) return;
             c.UpdateLyrics();
-            c.UpdateBars();
             NotchPeninsula.Renderer.MediaActive = c.IsActive;
         });
     }
@@ -463,6 +472,7 @@ public sealed class MediaWidget : IWidget
     {
         if (Ctl?.IsActive != true) return;
         NotchPeninsula.Renderer.MediaActive = true;
+        Ctl.UpdateBars(); // 每帧刷新频谱，保证平滑
         _textPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
         canvas.DrawText(DisplayText(), rect.Left + 16f, rect.MidY + 5f, _textPaint);
 
