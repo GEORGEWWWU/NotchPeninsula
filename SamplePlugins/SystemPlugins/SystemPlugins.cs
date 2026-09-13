@@ -423,6 +423,36 @@ public sealed class MediaWidget : IWidget
         Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
     };
     private static readonly SKPaint _barPaint = new() { IsAntialias = true };
+    private static readonly SKPaint _iconPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+    private static readonly SKPaint _coverPaint = new() { IsAntialias = true, FilterQuality = SKFilterQuality.High };
+    private static readonly SKPaint _bgPaint = new() { IsAntialias = true };
+    private static readonly SKPaint _fadePaint = new();
+    private static SKColor _fadeColor = SKColors.Empty;
+    private static readonly SKPath _coverClipPath = new();
+    private static readonly SKPath _playPath = CreatePlayPath();
+    private static readonly SKPath _pausePath = CreatePausePath();
+    private static readonly SKPath _prevPath = CreatePrevPath();
+    private static readonly SKPath _nextPath = CreateNextPath();
+
+    /// <summary>文字尾部渐隐遮罩（按背景色缓存着色器，避免每帧重建）。</summary>
+    private static SKPaint GetFadePaint(SKColor bg)
+    {
+        if (_fadeColor != bg)
+        {
+            _fadePaint.Shader?.Dispose();
+            _fadePaint.Shader = SKShader.CreateLinearGradient(
+                new SKPoint(0, 0), new SKPoint(1, 0),
+                new[] { bg.WithAlpha(0), bg },
+                null, SKShaderTileMode.Clamp);
+            _fadeColor = bg;
+        }
+        return _fadePaint;
+    }
+
+    private static SKPath CreatePlayPath() { var p = new SKPath(); p.MoveTo(0, 0); p.LineTo(10, 6); p.LineTo(0, 12); p.Close(); return p; }
+    private static SKPath CreatePausePath() { var p = new SKPath(); p.AddRect(new SKRect(0, 0, 3, 12)); p.AddRect(new SKRect(6, 0, 9, 12)); return p; }
+    private static SKPath CreatePrevPath() { var p = new SKPath(); p.AddRect(new SKRect(0, 0, 2, 10)); p.MoveTo(8, 0); p.LineTo(2, 5); p.LineTo(8, 10); p.Close(); return p; }
+    private static SKPath CreateNextPath() { var p = new SKPath(); p.MoveTo(0, 0); p.LineTo(6, 5); p.LineTo(0, 10); p.Close(); p.AddRect(new SKRect(6, 0, 8, 10)); return p; }
 
     public MediaWidget(IPluginHost host)
     {
@@ -459,7 +489,8 @@ public sealed class MediaWidget : IWidget
     public float MeasureWidth(float availableHeight)
     {
         if (Ctl?.IsActive != true) return 0f;
-        return Math.Min(_textPaint.MeasureText(DisplayText()) + 32f + 40f, 480f); // 上限 480，右侧预留频谱
+        float coverWidth = Thumbnail != null ? 32f : 0f; // 封面缩略图 22 + 间距 10
+        return Math.Min(_textPaint.MeasureText(DisplayText()) + coverWidth + 32f + 40f, 480f); // 上限 480，右侧预留频谱区
     }
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
@@ -471,23 +502,71 @@ public sealed class MediaWidget : IWidget
         SKColor textColor = frame.Theme.TextColor.WithAlpha(frame.Alpha);
         bool showLyric = MediaController.IsLyricsEnabled && !string.IsNullOrEmpty(Lyric);
         string text = showLyric ? LyricPainter.Truncate(Lyric, 40) : DisplayText();
-        LyricPainter.DrawKaraoke(canvas, text, rect.Left + 16f, rect.MidY + 5f, _textPaint, textColor, showLyric ? LyricProgress : 0f, showLyric && MediaController.IsKaraokeEnabled);
 
-        // 频谱柱（右对齐）
-        var bars = Ctl?.Bars;
-        if (bars != null)
+        // 折叠态封面缩略图（有封面时右移文本，行宽已在 MeasureWidth 中预留）
+        float textX = rect.Left + 16f;
+        var cover = Thumbnail;
+        if (cover != null)
         {
-            float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f;
-            float startX = rect.Right - totalBarWidth - 4f;
-            _barPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
-            for (int i = 0; i < 5; i++)
-            {
-                float h = Math.Max(2f, bars[i] * maxH);
-                float y = rect.MidY - h / 2f;
-                canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
-            }
+            const float coverSize = 22f, coverRadius = 4f;
+            float coverY = rect.MidY - coverSize / 2f;
+            var coverRect = new SKRect(textX, coverY, textX + coverSize, coverY + coverSize);
+            canvas.Save();
+            _coverClipPath.Rewind();
+            _coverClipPath.AddRoundRect(coverRect, coverRadius, coverRadius);
+            canvas.ClipPath(_coverClipPath, SKClipOperation.Intersect, true);
+            canvas.DrawBitmap(cover, coverRect, _coverPaint);
+            canvas.Restore();
+            textX += coverSize + 10f;
         }
 
+        LyricPainter.DrawKaraoke(canvas, text, textX, rect.MidY + 5f, _textPaint, textColor, showLyric ? LyricProgress : 0f, showLyric && MediaController.IsKaraokeEnabled);
+
+        // 右侧占用区（悬停 95 / 常态 45）：文字尾部渐隐，避免与播放控制或频谱重叠
+        float rightOccupiedWidth = frame.IsHovered ? 95f : 45f;
+        float maskEnd = rect.Right - rightOccupiedWidth + 5f;
+        float maskStart = maskEnd - 15f;
+        canvas.Save();
+        canvas.Translate(maskStart, rect.Top);
+        canvas.Scale(maskEnd - maskStart, rect.Height);
+        canvas.DrawRect(0, 0, 1, 1, GetFadePaint(frame.Theme.BackgroundColor));
+        canvas.Restore();
+        _bgPaint.Color = frame.Theme.BackgroundColor;
+        canvas.DrawRect(maskEnd, rect.Top, rect.Right, rect.Bottom, _bgPaint);
+
+        if (frame.IsHovered)
+        {
+            // 悬停：播放控制顶替频谱（位置对齐右侧热区）
+            DrawIcon(canvas, rect.Right - 79f, rect.MidY - 5f, _prevPath, frame);
+            DrawIcon(canvas, rect.Right - (Playing ? 50f : 49f), rect.MidY - 6f, Playing ? _pausePath : _playPath, frame);
+            DrawIcon(canvas, rect.Right - 19f, rect.MidY - 5f, _nextPath, frame);
+        }
+        else
+        {
+            // 常态：右侧律动频谱
+            var bars = Ctl?.Bars;
+            if (bars != null)
+            {
+                float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f;
+                float startX = rect.Right - totalBarWidth - 4f;
+                _barPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+                for (int i = 0; i < 5; i++)
+                {
+                    float h = Math.Max(2f, bars[i] * maxH);
+                    float y = rect.MidY - h / 2f;
+                    canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+                }
+            }
+        }
+    }
+
+    private void DrawIcon(SKCanvas canvas, float x, float y, SKPath path, WidgetFrame frame)
+    {
+        _iconPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+        canvas.Save();
+        canvas.Translate(x, y);
+        canvas.DrawPath(path, _iconPaint);
+        canvas.Restore();
     }
 
     private string DisplayText()
@@ -498,8 +577,27 @@ public sealed class MediaWidget : IWidget
         return LyricPainter.Truncate(t, 32);
     }
 
-    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
-    public void OnLeftClick(string? action, float x, float y) { }
+    public WidgetHit HitTest(float x, float y, SKRect rect)
+    {
+        if (Ctl?.IsActive != true) return WidgetHit.None;
+        float right = rect.Width; // x/y 为相对 rect 左上角的坐标，右边界取宽度
+        float bandTop = (rect.Height - 18f) / 2f;
+        if (y < bandTop || y > bandTop + 18f) return WidgetHit.None;
+        if (x >= right - 84f && x <= right - 66f) return new WidgetHit("prev");
+        if (x >= right - 54f && x <= right - 36f) return new WidgetHit("play");
+        if (x >= right - 24f && x <= right - 6f) return new WidgetHit("next");
+        return WidgetHit.None;
+    }
+
+    public void OnLeftClick(string? action, float x, float y)
+    {
+        switch (action)
+        {
+            case "prev": Ctl?.Previous(); break;
+            case "play": Ctl?.TogglePlayPause(); break;
+            case "next": Ctl?.Next(); break;
+        }
+    }
     public void OnRightClick() { }
     public void OnActivate(IPluginHost host) { }
     public void OnDeactivate() { }
