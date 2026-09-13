@@ -86,7 +86,19 @@ Remove-Path (Join-Path $root 'obj')
 $exe = Join-Path $outDir 'NotchPeninsula.exe'
 if (-not (Test-Path $exe)) { throw "未找到发布产物：$exe" }
 
+# 插件不参与单文件打包（PluginLoader 从 exe 同级的 plugins\ 目录加载），需随发布产物一起部署
+$pluginsSrc = Join-Path $root 'plugins'
+$pluginsDst = Join-Path $outDir 'plugins'
+if (Test-Path $pluginsSrc) {
+    Remove-Path $pluginsDst
+    Copy-Item -Recurse -Force $pluginsSrc $pluginsDst
+    Write-Host "已复制插件目录：$pluginsDst" -ForegroundColor Cyan
+} else {
+    Write-Host '未找到 plugins 目录，发布产物将不含任何插件。' -ForegroundColor Yellow
+}
+
 $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
 Write-Host ''
 Write-Host "打包完成：$exe（$sizeMb MB）" -ForegroundColor Green
 Write-Host '提示：未打包 .NET 运行时，目标机需已安装 .NET 10 Desktop Runtime。' -ForegroundColor Yellow
+Write-Host "提示：分发时需把 $outDir\plugins 与 exe 放在同一目录，否则插件不会加载。" -ForegroundColor Yellow
