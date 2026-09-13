@@ -107,7 +107,6 @@ public sealed class LoginWindow
 
     private void Draw(SKCanvas canvas, int w, int h)
     {
-        canvas.Clear(SKColors.Transparent); // 背景由 PluginWindow 的圆角背景提供
         var label = new SKPaint { Color = SKColors.White, TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
         var text = new SKPaint { Color = SKColors.Black, TextSize = 14f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
         var boxFill = new SKPaint { Color = SKColors.White, IsAntialias = true };

@@ -182,17 +182,19 @@ public sealed class PluginWindow : IPluginWindow
         canvas.Save();
         canvas.Scale(_dpiScale); // 让插件按逻辑坐标绘制
 
-        // 圆角背景 + 边框（边框内缩半线宽，避免被窗口边缘裁掉一半）
+        // 圆角背景
         var bg = new SKRoundRect(new SKRect(0, 0, _width, _height), 14f);
         canvas.DrawRoundRect(bg, _bgPaint);
-        var border = new SKRoundRect(new SKRect(0.75f, 0.75f, _width - 0.75f, _height - 0.75f), 13f);
-        canvas.DrawRoundRect(border, _borderPaint);
 
         // 插件内容裁剪到圆角内，避免四角溢出
         canvas.Save();
         canvas.ClipRoundRect(bg, antialias: true);
         _draw(canvas, _width, _height);
         canvas.Restore();
+
+        // 边框绘制在内容之上，始终可见（内缩半线宽避免被窗口边缘裁掉）
+        var border = new SKRoundRect(new SKRect(0.75f, 0.75f, _width - 0.75f, _height - 0.75f), 13f);
+        canvas.DrawRoundRect(border, _borderPaint);
 
         DrawCloseButton(canvas);
         canvas.Restore();
