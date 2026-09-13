@@ -57,8 +57,9 @@ namespace NotchPeninsula
 
         // 剪贴板链接状态控制
         private string? _currentClipboardLink;
+        private string? _pendingClipboardLink; // 通知优先时的单槽等待位（仅存引用，不额外分配队列内存）
         private DateTime _clipboardEndTime;
-        private const double ClipboardLinkDurationSeconds = 6; // 链接展示时长
+        private const double ClipboardLinkDurationSeconds = 3; // 链接展示时长
         // 提取文本中第一个 http/https 链接（沿用 RFC3986 合法字符集，天然在中文/空格处截断）
         private static readonly System.Text.RegularExpressions.Regex ClipboardLinkRegex =
             new(@"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+",
@@ -257,6 +258,15 @@ namespace NotchPeninsula
             clicked_info = false;
             if (!_dispatcher.CheckAccess()) { _dispatcher.Invoke(() => OnToastDetected(toast)); return; }
 
+            // 通知优先级高于剪贴板：若链接岛正在展示，先让位给通知，等通知结束后再补展示
+            if (!string.IsNullOrEmpty(_currentClipboardLink))
+            {
+                _pendingClipboardLink = _currentClipboardLink;
+                _currentClipboardLink = null;
+                Renderer.ClipboardButtonHovered = false;
+                _isCursorOverIcon = false;
+            }
+
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
         }
@@ -295,14 +305,23 @@ namespace NotchPeninsula
         {
             // 同一个链接若正在展示中，不重复触发动画
             if (link == _currentClipboardLink && DateTime.Now < _clipboardEndTime) return;
+            if (link == _pendingClipboardLink) return;
+
+            // 通知优先级更高：通知展示期间先放入等待位，待通知结束后再展示
+            if (_currentToast != null && DateTime.Now < _toastEndTime)
+            {
+                _pendingClipboardLink = link;
+                Info($"检测到剪贴板链接，等待通知结束后展示：{link}");
+                return;
+            }
 
             _currentClipboardLink = link;
             _clipboardEndTime = DateTime.Now.AddSeconds(ClipboardLinkDurationSeconds);
             Info($"检测到剪贴板链接：{link}");
         }
 
-        // 链接岛是否处于展示期
-        private bool IsClipboardLinkActive() => IsClipboardLinkEnabled && !string.IsNullOrEmpty(_currentClipboardLink) && DateTime.Now < _clipboardEndTime;
+        // 链接岛是否处于展示期（通知优先，通知展示期间链接岛让位）
+        private bool IsClipboardLinkActive() => IsClipboardLinkEnabled && !isToastActive && !string.IsNullOrEmpty(_currentClipboardLink) && DateTime.Now < _clipboardEndTime;
 
         // 判断逻辑坐标是否落在链接岛右侧的跳转按钮上
         private bool IsOverClipboardButton(int mx, int my)
@@ -476,6 +495,13 @@ namespace NotchPeninsula
 
                 // 判断当前 Toast 是否处于激活期
                 isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
+                // 消息队列：通知优先级最高，通知结束后把等待位中的链接提升为展示（3s 计时从此刻开始）
+                if (!isToastActive && _pendingClipboardLink != null)
+                {
+                    _currentClipboardLink = _pendingClipboardLink;
+                    _pendingClipboardLink = null;
+                    _clipboardEndTime = DateTime.Now.AddSeconds(ClipboardLinkDurationSeconds);
+                }
                 // 判断剪贴板链接是否处于激活期
                 bool isClipboardActive = IsClipboardLinkActive();
                 // 实时穿透与 0% 透明度智能判定
@@ -602,7 +628,7 @@ namespace NotchPeninsula
                     float requiredWidth = textWidth + 115f;
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
-                float expectedTargetHeight = isClipboardActive ? Renderer.CLIPBOARD_HEIGHT
+                float expectedTargetHeight = isClipboardActive ? Renderer.MEDIA_HEIGHT
                     : (isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT));
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎

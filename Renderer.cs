@@ -56,30 +56,31 @@ namespace NotchPeninsula
             if (string.IsNullOrEmpty(text)) return 0;
             return _textPaint.MeasureText(text);
         }
-        // 计算Toast消息自适应宽度，限制最大500px
+        // 消息类弹窗（通知/剪贴板）统一的最大宽度，保证两者最长时一致
+        private const float MESSAGE_MAX_WIDTH = 800f;
+        // 计算Toast消息自适应宽度
         public static float GetToastAutoWidth()
         {
             float maxTextW = Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
-            return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), 800f);
+            return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), MESSAGE_MAX_WIDTH);
         }
         public static bool IsMediaExpanded = false;
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
 
-        // ===== 剪贴板链接岛 =====
-        public const float CLIPBOARD_HEIGHT = 44f;   // 链接岛高度
-        public const float CLIPBOARD_ICON = 26f;     // 左侧剪贴板图标边长
-        public const float CLIPBOARD_BTN = 26f;      // 右侧跳转按钮边长
+        // ===== 剪贴板链接岛（高度与媒体控制器同款 MEDIA_HEIGHT，宽度随内容自适应）=====
+        public const float CLIPBOARD_ICON = 20f;     // 左侧通知图标边长
+        public const float CLIPBOARD_BTN = 20f;      // 右侧跳转按钮边长
         public const float CLIPBOARD_PAD = 12f;      // 左右外边距
         public static bool ClipboardButtonHovered = false; // 跳转按钮是否处于悬停
         private static SKBitmap? _clipboardIcon;
         private static SKBitmap? _openLinkIcon;
 
-        // 链接岛自适应宽度：左图标 + 间距 + 文本 + 间距 + 跳转按钮，并限制最大宽度防止岛体过长
+        // 链接岛宽度随链接内容自适应：左图标 + 间距 + 文本 + 间距 + 跳转按钮，最长与消息显示的最长宽度一致
         public static float GetClipboardAutoWidth(string? link)
         {
             float textW = string.IsNullOrEmpty(link) ? 0f : _textPaint.MeasureText(link);
             float width = CLIPBOARD_PAD + CLIPBOARD_ICON + 10f + textW + 10f + CLIPBOARD_BTN + CLIPBOARD_PAD;
-            return Math.Min(Math.Max(width, 176f), 520f);
+            return Math.Min(Math.Max(width, 176f), MESSAGE_MAX_WIDTH);
         }
         private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔
         private static SKColor _currentTextColor = SKColors.White;
