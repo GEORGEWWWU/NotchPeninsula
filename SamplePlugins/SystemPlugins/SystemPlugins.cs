@@ -427,12 +427,11 @@ public sealed class MediaWidget : IWidget
     public MediaWidget(IPluginHost host)
     {
         _detailPage = new MediaDetailPage(this);
-        // 每秒同步一次媒体状态 + 歌词进度，并回写平台层的 MediaActive 标志
+        // 低频回写平台层媒体激活标志（歌词进度改由渲染循环每帧推进，见 TickLyrics）
         host.ScheduleRefresh(TimeSpan.FromSeconds(1), () =>
         {
             var c = MediaController.Instance;
             if (c == null) return;
-            c.UpdateLyrics();
             NotchPeninsula.Renderer.MediaActive = c.IsActive;
         });
     }
@@ -445,6 +444,9 @@ public sealed class MediaWidget : IWidget
     internal SKBitmap? Thumbnail => Ctl?.Thumbnail;
     internal string Lyric => Ctl?.CurrentLyric ?? "";
     internal float LyricProgress => Ctl?.CurrentLyricProgress ?? 0f;
+
+    /// <summary>每帧推进歌词与卡拉OK高亮进度（由渲染线程调用）。</summary>
+    internal void TickLyrics() => Ctl?.UpdateLyrics();
 
     internal void TogglePlayPause() => Ctl?.TogglePlayPause();
     internal void Next() => Ctl?.Next();
@@ -464,6 +466,7 @@ public sealed class MediaWidget : IWidget
     {
         if (Ctl?.IsActive != true) return;
         NotchPeninsula.Renderer.MediaActive = true;
+        Ctl.UpdateLyrics(); // 每帧推进歌词进度，保证卡拉OK高亮平滑
         Ctl.UpdateBars(); // 每帧刷新频谱，保证平滑
         SKColor textColor = frame.Theme.TextColor.WithAlpha(frame.Alpha);
         bool showLyric = MediaController.IsLyricsEnabled && !string.IsNullOrEmpty(Lyric);
@@ -559,6 +562,7 @@ public sealed class MediaDetailPage : IDetailPage
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
+        _widget.TickLyrics(); // 详情页展示期间同样需要每帧推进歌词进度
         float coverSize = 50f, coverX = rect.Left + 20f, coverY = rect.Top + 20f;
         var thumb = _widget.Thumbnail;
         if (thumb != null)

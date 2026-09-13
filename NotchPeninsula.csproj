@@ -47,4 +47,69 @@
 		<PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
 	</ItemGroup>
 
+	<!-- ================= 示例插件：随主工程编译并部署 ================= -->
+	<!-- dotnet run / dotnet build 时自动执行：
+	     1) 编译 SamplePlugins 下的插件工程；
+	     2) 把插件产物刷新到仓库根目录 plugins\<插件名>\（源目录，plugin.json 可手工维护）；
+	     3) 把根目录 plugins\ 整体复制到输出目录 plugins\，供 PluginLoader 加载。 -->
+	<PropertyGroup>
+		<PluginsStagingDir>$(MSBuildProjectDirectory)\plugins</PluginsStagingDir>
+		<!-- 属于主工程/共享运行时的程序集，禁止随插件部署：否则会被插件 ALC 重复加载，导致类型标识不一致 -->
+		<PluginSystemPluginsBin>SamplePlugins\SystemPlugins\bin\$(Configuration)\$(TargetFramework)\</PluginSystemPluginsBin>
+		<PluginHelloPluginBin>SamplePlugins\HelloPlugin\bin\$(Configuration)\$(TargetFramework)\</PluginHelloPluginBin>
+		<PluginThuCourseBin>SamplePlugins\ThuCourse\bin\$(Configuration)\$(TargetFramework)\</PluginThuCourseBin>
+		<PluginThuCourseDep>$(MSBuildProjectDirectory)\..\thu-info-cs\ThuInfoLib\ThuInfoLib.csproj</PluginThuCourseDep>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Remove="plugins\**" />
+		<Content Remove="plugins\**" />
+	</ItemGroup>
+
+	<Target Name="BuildAndDeployPlugins" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+		<!-- 1) 编译插件。BuildProjectReferences=false：主工程已编译完毕，避免递归回主工程 -->
+		<MSBuild Projects="SamplePlugins\SystemPlugins\SystemPlugins.csproj;SamplePlugins\HelloPlugin\HelloPlugin.csproj"
+				 Targets="Restore;Build" BuildInParallel="false"
+				 Properties="Configuration=$(Configuration);BuildProjectReferences=false" />
+		<MSBuild Projects="SamplePlugins\ThuCourse\ThuCourse.csproj"
+				 Targets="Restore;Build" BuildInParallel="false"
+				 Properties="Configuration=$(Configuration);BuildProjectReferences=false"
+				 Condition="Exists('$(PluginThuCourseDep)')" />
+		<Warning Text="ThuCourse 依赖的 ..\thu-info-cs\ThuInfoLib\ThuInfoLib.csproj 不存在，已跳过其编译（沿用 plugins\ThuCourse 现有产物）。"
+				 Condition="!Exists('$(PluginThuCourseDep)')" />
+
+		<!-- 2) 刷新插件产物到根目录 plugins\（排除主工程/共享运行时程序集） -->
+		<!-- 注意：每个插件用独立的 item 名，MSBuild 的 item 在 target 内会累加而非重置 -->
+		<ItemGroup>
+			<_SystemPluginsDll Include="$(PluginSystemPluginsBin)*.dll"
+						Exclude="$(PluginSystemPluginsBin)NotchPeninsula.dll;$(PluginSystemPluginsBin)msvcp140.dll;$(PluginSystemPluginsBin)vcruntime140.dll;$(PluginSystemPluginsBin)SkiaSharp.dll" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_SystemPluginsDll)" DestinationFolder="$(PluginsStagingDir)\SystemPlugins" SkipUnchangedFiles="true" />
+
+		<ItemGroup>
+			<_HelloPluginDll Include="$(PluginHelloPluginBin)*.dll"
+						Exclude="$(PluginHelloPluginBin)NotchPeninsula.dll;$(PluginHelloPluginBin)msvcp140.dll;$(PluginHelloPluginBin)vcruntime140.dll;$(PluginHelloPluginBin)SkiaSharp.dll" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_HelloPluginDll)" DestinationFolder="$(PluginsStagingDir)\HelloPlugin" SkipUnchangedFiles="true" />
+
+		<ItemGroup>
+			<_ThuCourseDll Include="$(PluginThuCourseBin)*.dll"
+						Exclude="$(PluginThuCourseBin)NotchPeninsula.dll;$(PluginThuCourseBin)msvcp140.dll;$(PluginThuCourseBin)vcruntime140.dll;$(PluginThuCourseBin)SkiaSharp.dll" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_ThuCourseDll)" DestinationFolder="$(PluginsStagingDir)\ThuCourse" SkipUnchangedFiles="true" />
+
+		<!-- plugin.json 由插件源码目录同步到根目录 -->
+		<Copy SourceFiles="SamplePlugins\SystemPlugins\plugin.json" DestinationFolder="$(PluginsStagingDir)\SystemPlugins" SkipUnchangedFiles="true" Condition="Exists('SamplePlugins\SystemPlugins\plugin.json')" />
+		<Copy SourceFiles="SamplePlugins\HelloPlugin\plugin.json" DestinationFolder="$(PluginsStagingDir)\HelloPlugin" SkipUnchangedFiles="true" Condition="Exists('SamplePlugins\HelloPlugin\plugin.json')" />
+		<Copy SourceFiles="SamplePlugins\ThuCourse\plugin.json" DestinationFolder="$(PluginsStagingDir)\ThuCourse" SkipUnchangedFiles="true" Condition="Exists('SamplePlugins\ThuCourse\plugin.json')" />
+
+		<!-- 3) 把根目录 plugins\ 整体部署到输出目录 plugins\（TargetDir 需在 target 内求值） -->
+		<ItemGroup>
+			<_StagedPluginFile Include="$(PluginsStagingDir)\**\*.*" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_StagedPluginFile)"
+			  DestinationFiles="@(_StagedPluginFile->'$(TargetDir)plugins\%(RecursiveDir)%(Filename)%(Extension)')"
+			  SkipUnchangedFiles="true" />
+	</Target>
+
 </Project>
