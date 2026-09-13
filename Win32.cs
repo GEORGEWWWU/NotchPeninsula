@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
 namespace NotchPeninsula
 {
@@ -250,5 +250,11 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
+
+        // 剪贴板内容变化监听：由系统在任意复制操作后主动投递 WM_CLIPBOARDUPDATE
+        public const int WM_CLIPBOARDUPDATE = 0x031D;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool AddClipboardFormatListener(IntPtr hwnd);
     }
 }

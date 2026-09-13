@@ -1,4 +1,4 @@
-﻿using System.Drawing.Imaging;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
@@ -34,6 +34,7 @@ namespace NotchPeninsula
         private bool _autoHideToggleHovered = false;
         private bool _mediaExpToggleHovered = false;
         private bool _passToggleHovered = false;
+        private bool _clipboardToggleHovered = false;
 
         // 媒体设置状态
         private bool _mediaToggleHovered = false;
@@ -383,6 +384,7 @@ namespace NotchPeninsula
                     int newHoveredDropdownIndex = -1;
                     bool newMediaExpToggleHovered = false;
                     bool newPassToggleHovered = false;
+                    bool newClipboardToggleHovered = false;
                     bool newMonitorDropdownHovered = false;
                     int newHoveredMonitorDropdownIndex = -1;
                     bool newCompositeToggleHover = false;
@@ -492,6 +494,8 @@ namespace NotchPeninsula
                             newMediaExpToggleHovered = true;
                         // 使用局部变量，防止状态死锁
                         newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
+                        // 剪贴板链接识别
+                        newClipboardToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 268;
                     }
 
                     int newHoveredLinkIndex = -1;
@@ -607,7 +611,8 @@ namespace NotchPeninsula
                         newCompDateTimeHover != _compDateTimeHovered ||
                         newCompHardwareHover != _compHardwareHovered ||
                         newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered ||
-                        newHoveredPluginSetting != _hoveredPluginSetting
+                        newHoveredPluginSetting != _hoveredPluginSetting ||
+                        newClipboardToggleHovered != _clipboardToggleHovered
                         )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -634,6 +639,7 @@ namespace NotchPeninsula
                         _topmostToggleHovered = newTopmostToggleHovered;
                         _passToggleHovered = newPassToggleHovered;
                         _hoveredPluginSetting = newHoveredPluginSetting;
+                        _clipboardToggleHovered = newClipboardToggleHovered;
                         Render();
                     }
                     break;
@@ -906,6 +912,12 @@ namespace NotchPeninsula
                         Renderer.PassthroughModeEnabled = !Renderer.PassthroughModeEnabled;
                         Program.SaveSetting("PassthroughMode", Renderer.PassthroughModeEnabled ? 1 : 0);
                         Renderer.ApplyThemeColors(); // 立刻刷新基底色
+                        Render();
+                    }
+                    else if (_clipboardToggleHovered)
+                    {
+                        NotchWindow.IsClipboardLinkEnabled = !NotchWindow.IsClipboardLinkEnabled;
+                        Program.SaveSetting("ClipboardLinkEnabled", NotchWindow.IsClipboardLinkEnabled ? 1 : 0);
                         Render();
                     }
                     else if (_dropdownHovered)
@@ -1440,6 +1452,8 @@ namespace NotchPeninsula
                     isMediaExpDisabled);
 
                 DrawToggleCard(156, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+
+                DrawToggleCard(228, "剪贴板链接识别", "复制链接后在刘海中显示，可一键打开", NotchWindow.IsClipboardLinkEnabled, _clipboardToggleHovered);
             }
             else if (_selectedTab == 4)
             {

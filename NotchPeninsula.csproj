@@ -35,6 +35,8 @@
 		<Content Include="data\image\potplayer-logo.jpg" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\qq-icon.png" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\wintoast-icon.png" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\image\Clipboard.png" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\image\open_the_link.png" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 	<ItemGroup>
