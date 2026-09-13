@@ -27,6 +27,7 @@ public sealed class PluginWindow : IPluginWindow
     private IntPtr _memDc, _hBitmap, _oldBitmap, _pBits;
     private SKSurface? _surface;
     private bool _closing;
+    private int _posX, _posY;
 
     public PluginWindow(string title, int width, int height)
     {
@@ -94,21 +95,11 @@ public sealed class PluginWindow : IPluginWindow
             IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
 
         if (_hwnd == IntPtr.Zero) return;
+        _posX = x;
+        _posY = y;
         Win32.SetForegroundWindow(_hwnd); // 激活窗口，让 Esc/键盘输入立即生效
         InitBuffer();
         Redraw();
-
-        var thread = new System.Threading.Thread(MessageLoop) { IsBackground = true };
-        thread.Start();
-    }
-
-    private void MessageLoop()
-    {
-        while (!_closing && Win32.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
-        {
-            Win32.TranslateMessage(ref msg);
-            Win32.DispatchMessage(ref msg);
-        }
     }
 
     private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -146,7 +137,6 @@ public sealed class PluginWindow : IPluginWindow
                 return IntPtr.Zero;
 
             case Win32.WM_DESTROY:
-                Win32.PostQuitMessage(0);
                 return IntPtr.Zero;
         }
         return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
@@ -172,7 +162,7 @@ public sealed class PluginWindow : IPluginWindow
 
         var screenDc = Win32.GetDC(IntPtr.Zero);
         var ptSrc = new Win32.POINT(0, 0);
-        var ptDst = new Win32.POINT { x = 0, y = 0 };
+        var ptDst = new Win32.POINT { x = _posX, y = _posY };
         var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
         var blend = new Win32.BLENDFUNCTION
         {
