@@ -2,7 +2,9 @@ using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 using NAudio.Wave;
 
-namespace NotchPeninsula
+using NotchPeninsula;
+
+namespace SystemPlugins
 {
     /// <summary>
     /// 系统输出（WASAPI Loopback）实时频谱分析。

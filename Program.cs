@@ -20,11 +20,6 @@ namespace NotchPeninsula
                 if (key != null)
                 {
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
-                    MediaSettings.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
-                    MediaSettings.IsKaraokeEnabled = (int)key.GetValue("KaraokeEnabled", 1) != 0;
-                    MediaSettings.TargetPlatform = (string)key.GetValue("TargetPlatform", "other") ?? "other";
-                    MediaSettings.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
-                    MediaSettings.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsTopmostEnabled = (int)key.GetValue("TopmostEnabled", 1) != 0;
                     NotchWindow.IsClipboardLinkEnabled = (int)key.GetValue("ClipboardLinkEnabled", 1) != 0;

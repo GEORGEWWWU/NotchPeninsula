@@ -5,9 +5,9 @@ using Windows.Storage.Streams;
 using SkiaSharp;
 using System.Net.Http;
 using System.Text.Json;
-using static NotchPeninsula.MediaSettings;
 
 using NotchPeninsula;
+using NotchPeninsula.Plugins;
 
 namespace SystemPlugins
 {
@@ -15,6 +15,13 @@ namespace SystemPlugins
     {
         // 暴露给 UI 的单例，方便极速调用
         public static MediaController? Instance { get; private set; }
+        // 平台 ID 列表（与 MediaSettingsPage 的 ChoiceSetting 选项顺序一致）
+        private static readonly string[] PlatformIds = ["other", "netease", "qqmusic", "kugou", "spotify", "applemusic", "echomusic", "lxmusic"];
+        private static string TargetPlatform = "other";
+        private static bool IsMediaControlEnabled = true;
+        private static bool IsLyricsEnabled = true;
+        private static bool IsKaraokeEnabled = true;
+        private static float LyricDelayOffset = 0f;
         private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
         {
             ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
@@ -93,11 +100,22 @@ namespace SystemPlugins
             return _soloMapBuf;
         }
 
-        public MediaController()
+        public MediaController(IPluginHost host)
         {
             Instance = this;
-            Changed += async () => await ForceRefresh();
+            SyncSettings(host);
+            host.SettingsChanged += () => { SyncSettings(host); _ = ForceRefresh(); };
             _ = InitializeAsync();
+        }
+
+        private static void SyncSettings(IPluginHost host)
+        {
+            IsMediaControlEnabled = host.GetSetting("MediaControlEnabled", "1") != "0";
+            IsLyricsEnabled = host.GetSetting("LyricsEnabled", "1") != "0";
+            IsKaraokeEnabled = host.GetSetting("KaraokeEnabled", "1") != "0";
+            LyricDelayOffset = float.TryParse(host.GetSetting("LyricDelayOffset", "0"), out var d) ? d : 0f;
+            int plat = int.TryParse(host.GetSetting("TargetPlatform", "0"), out var p) ? p : 0;
+            TargetPlatform = plat >= 0 && plat < PlatformIds.Length ? PlatformIds[plat] : "other";
         }
 
         private async Task InitializeAsync()

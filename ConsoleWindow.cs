@@ -114,16 +114,6 @@ namespace NotchPeninsula
         private int _scaledWidth;
         private int _scaledHeight;
         // 预设媒体平台数组
-        private static readonly (string Id, string Name)[] _platforms = [
-            ("other", "通用媒体"),
-            ("netease", "网易云音乐"),
-            ("qqmusic", "QQ音乐"),
-            ("kugou", "酷狗音乐"),
-            ("spotify", "Spotify"),
-            ("applemusic", "Apple Music"),
-            ("echomusic", "Echo Music"),
-            ("lxmusic", "LX Music")
-        ];
         // 极致内存优化：全局复用画笔缓存
         private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(32, 32, 32), IsAntialias = true };
         private static readonly SKPaint _titleBarPaint = new SKPaint { Color = new SKColor(40, 40, 40) };
@@ -181,15 +171,6 @@ namespace NotchPeninsula
             _customValues[5] = Renderer.TOAST_HEIGHT;
             _customValues[6] = Renderer.GLOBAL_DPI;
             _customValues[7] = Renderer.NOTCH_BOTTOM_RADIUS;
-
-            // 匹配目前加载的媒体平台索引
-            for (int i = 0; i < _platforms.Length; i++)
-            {
-                if (_platforms[i].Id == MediaSettings.TargetPlatform)
-                {
-                    _selectedPlatformIndex = i; break;
-                }
-            }
 
             if (!_classRegistered)
             {
@@ -446,43 +427,6 @@ namespace NotchPeninsula
                         if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2;
                         if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0;
                         if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1;
-                    }
-                    else if (_selectedTab == 2) // 媒体设置
-                    {
-                        // 媒体控制
-                        if (!_dropdownOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
-                            newMediaToggleHovered = true;
-
-                        // 下拉菜单
-                        if (!_dropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
-                            newDropdownHovered = true;
-
-                        if (_dropdownOpen)
-                        {
-                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 130 && y < TITLE_BAR_HEIGHT + 130 + _platforms.Length * 26)
-                                newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
-                        }
-
-                        float lyricY = TITLE_BAR_HEIGHT + 160;
-                        bool newLyricToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
-                        bool newKaraokeToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 77 && y <= lyricY + 97);
-
-                        // 按钮整体下移 40px 给新开关让位
-                        float btnY = lyricY + 107;
-                        float cardRightX = WIDTH - 36;
-                        bool newLyricMinusHovered = !_dropdownOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
-                        bool newLyricPlusHovered = !_dropdownOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
-                        bool newLyricResetHovered = !_dropdownOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
-
-                        if (newLyricToggleHovered != _lyricToggleHovered || newKaraokeToggleHovered != _karaokeToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
-                        {
-                            _lyricToggleHovered = newLyricToggleHovered;
-                            _karaokeToggleHovered = newKaraokeToggleHovered;
-                            _lyricMinusHovered = newLyricMinusHovered;
-                            _lyricPlusHovered = newLyricPlusHovered;
-                            _lyricResetHovered = newLyricResetHovered;
-                            Render();
-                        }
                     }
                     else if (_selectedTab == 3) // 交互设置
                     {
@@ -860,38 +804,6 @@ namespace NotchPeninsula
                         Win32.SetWindowPos(NotchWindow.InstanceHandle, NotchWindow.IsTopmostEnabled ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST, 0, 0, 0, 0, Win32.SWP_NOMOVE_NOSIZE);
                         Render();
                     }
-                    else if (_mediaToggleHovered)
-                    {
-                        MediaSettings.IsMediaControlEnabled = !MediaSettings.IsMediaControlEnabled;
-                        // 保存媒体控制开关 (转换为0/1)
-                        Program.SaveSetting("MediaControl", MediaSettings.IsMediaControlEnabled ? 1 : 0);
-
-                        MediaSettings.NotifyChanged();
-                        Render();
-                    }
-                    else if (_selectedTab == 2 && _lyricToggleHovered)
-                    {
-                        MediaSettings.IsLyricsEnabled = !MediaSettings.IsLyricsEnabled;
-                        Program.SaveSetting("LyricsEnabled", MediaSettings.IsLyricsEnabled ? 1 : 0);
-                        Render();
-                    }
-                    else if (_selectedTab == 2 && _karaokeToggleHovered)
-                    {
-                        MediaSettings.IsKaraokeEnabled = !MediaSettings.IsKaraokeEnabled;
-                        Program.SaveSetting("KaraokeEnabled", MediaSettings.IsKaraokeEnabled ? 1 : 0);
-                        Render();
-                    }
-                    else if (_selectedTab == 2 && (_lyricMinusHovered || _lyricPlusHovered || _lyricResetHovered))
-                    {
-                        if (_lyricResetHovered) MediaSettings.LyricDelayOffset = 0f;
-                        else if (_lyricMinusHovered) MediaSettings.LyricDelayOffset -= 0.1f;
-                        else if (_lyricPlusHovered) MediaSettings.LyricDelayOffset += 0.1f;
-
-                        // 避免浮点数精度爆炸，固定为 1 位小数
-                        MediaSettings.LyricDelayOffset = (float)Math.Round(MediaSettings.LyricDelayOffset, 1);
-                        Program.SaveSetting("LyricDelayOffset", MediaSettings.LyricDelayOffset);
-                        Render();
-                    }
                     else if (_autoHideToggleHovered)
                     {
                         NotchWindow.IsAutoHideEnabled = !NotchWindow.IsAutoHideEnabled;
@@ -918,22 +830,6 @@ namespace NotchPeninsula
                     {
                         NotchWindow.IsClipboardLinkEnabled = !NotchWindow.IsClipboardLinkEnabled;
                         Program.SaveSetting("ClipboardLinkEnabled", NotchWindow.IsClipboardLinkEnabled ? 1 : 0);
-                        Render();
-                    }
-                    else if (_dropdownHovered)
-                    {
-                        _dropdownOpen = true; Render();
-                    }
-                    else if (_dropdownOpen && _hoveredDropdownIndex != -1)
-                    {
-                        _selectedPlatformIndex = _hoveredDropdownIndex;
-                        MediaSettings.TargetPlatform = _platforms[_selectedPlatformIndex].Id;
-
-                        // 保存目标媒体平台字符串
-                        Program.SaveSetting("TargetPlatform", MediaSettings.TargetPlatform);
-
-                        MediaSettings.NotifyChanged();
-                        _dropdownOpen = false;
                         Render();
                     }
                     else if (_selectedTab == 1 && _hoveredDisplayOptionIndex != -1)
@@ -1357,89 +1253,9 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 2)
             {
-                DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaSettings.IsMediaControlEnabled, _mediaToggleHovered);
-
-                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 84, WIDTH - 20, TITLE_BAR_HEIGHT + 146);
-                canvas.DrawRoundRect(cardRect, 6, 6, _cardBg); canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
-                canvas.DrawText("目标媒体平台", 216, TITLE_BAR_HEIGHT + 110, _uiTextPaint);
-                canvas.DrawText("多平台共存时，优先截获并接管的平台", 216, TITLE_BAR_HEIGHT + 130, _subTextPaint);
-
-                float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 96; float dH = 32;
-                var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
-                _dynamicFillPaint.Color = _dropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8);
-                canvas.DrawRoundRect(dRect, 4, 4, _dynamicFillPaint);
-                canvas.DrawText(_platforms[_selectedPlatformIndex].Name, dX + 10, dY + 21, _uiTextPaint);
-
-                canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, _chevronPaint);
-                canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, _chevronPaint);
-
-                // 歌词设置卡片
-                float lyricY = TITLE_BAR_HEIGHT + 160;
-                var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 140);
-                canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
-                canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
-                canvas.DrawText("歌词设置", 216, lyricY + 26, _uiTextPaint);
-
-                // 歌词开关
-                canvas.DrawText("在刘海中显示歌词", 216, lyricY + 52, _subTextPaint);
-                float tW = 42, tH = 20;
-                float tX = WIDTH - 20 - 16 - tW, tY = lyricY + 37;
-                var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-                if (MediaSettings.IsLyricsEnabled)
-                {
-                    _dynamicFillPaint.Color = _lyricToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                    canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                }
-                else
-                {
-                    _dynamicStrokePaint.Color = _lyricToggleHovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
-                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                    _toggleCirclePaint.Color = _lyricToggleHovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
-                    canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                    _toggleCirclePaint.Color = SKColors.White;
-                }
-
-                // 卡拉OK效果开关
-                canvas.DrawText("开启卡拉OK动效", 216, lyricY + 92, _subTextPaint);
-                float kY = lyricY + 77;
-                var kRect = new SKRect(tX, kY, tX + tW, kY + tH);
-                if (MediaSettings.IsKaraokeEnabled)
-                {
-                    _dynamicFillPaint.Color = _karaokeToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                    canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicFillPaint);
-                    canvas.DrawCircle(tX + tW - tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                }
-                else
-                {
-                    _dynamicStrokePaint.Color = _karaokeToggleHovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
-                    canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                    _toggleCirclePaint.Color = _karaokeToggleHovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
-                    canvas.DrawCircle(tX + tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                    _toggleCirclePaint.Color = SKColors.White;
-                }
-
-                // 延迟调整
-                canvas.DrawText("歌词延迟补偿", 216, lyricY + 124, _subTextPaint);
-                float cardRightX = WIDTH - 36;
-                float btnY = lyricY + 107;
-
-                _dynamicFillPaint.Color = _lyricMinusHovered ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
-                canvas.DrawRoundRect(new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), 4, 4, _dynamicFillPaint);
-                canvas.DrawText("-", cardRightX - 164, btnY + 17, _uiTextPaint);
-
-                string valStr = $"{MediaSettings.LyricDelayOffset:F1} s";
-                if (MediaSettings.LyricDelayOffset > 0) valStr = "+" + valStr;
-                float textW = _uiTextPaint.MeasureText(valStr);
-                canvas.DrawText(valStr, cardRightX - 90 - textW, btnY + 17, _uiTextPaint);
-
-                _dynamicFillPaint.Color = _lyricPlusHovered ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
-                canvas.DrawRoundRect(new SKRect(cardRightX - 80, btnY, cardRightX - 50, btnY + 24), 4, 4, _dynamicFillPaint);
-                canvas.DrawText("+", cardRightX - 69, btnY + 17, _uiTextPaint);
-
-                _dynamicFillPaint.Color = _lyricResetHovered ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
-                canvas.DrawRoundRect(new SKRect(cardRightX - 40, btnY, cardRightX, btnY + 24), 4, 4, _dynamicFillPaint);
-                canvas.DrawText("重置", cardRightX - 33, btnY + 17, _subTextPaint);
+                // 媒体设置已迁移到「插件」→「系统组件」页（声明式控件）
+                canvas.DrawText("媒体设置已迁移到「插件」→「系统组件」页", 216, TITLE_BAR_HEIGHT + 80, _uiTextPaint);
+                canvas.DrawText("请切换到插件页进行配置", 216, TITLE_BAR_HEIGHT + 110, _subTextPaint);
             }
             else if (_selectedTab == 3)
             {
@@ -1787,26 +1603,6 @@ namespace NotchPeninsula
             }
 
             canvas.Restore();
-
-            if (_selectedTab == 2 && _dropdownOpen)
-            {
-                float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 130; float mW = 110; float mH = _platforms.Length * 26;
-                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
-
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBorder);
-
-                for (int i = 0; i < _platforms.Length; i++)
-                {
-                    float itemY = mY + i * 26;
-                    if (_hoveredDropdownIndex == i)
-                    {
-                        canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, _tabBgSelected);
-                    }
-                    _dynamicTextPaint.Color = i == _selectedPlatformIndex ? new SKColor(0, 120, 212) : SKColors.White;
-                    canvas.DrawText(_platforms[i].Name, mX + 12, itemY + 18, _dynamicTextPaint);
-                }
-            }
 
             // 目标显示器
             if (_selectedTab == 1 && _monitorDropdownOpen)

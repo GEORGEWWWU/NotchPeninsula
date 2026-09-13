@@ -1,7 +1,9 @@
 using System.IO;
 using SkiaSharp;
 
-namespace NotchPeninsula
+using NotchPeninsula;
+
+namespace SystemPlugins
 {
     // 封面策略：Always = 始终使用站标；Fallback = 仅当无 SMTC 封面时用站标兜底
     public enum CoverStrategy

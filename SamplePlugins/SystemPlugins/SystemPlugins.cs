@@ -15,7 +15,7 @@ public sealed class SystemPluginsPlugin : INotchPlugin
 
     public void Initialize(IPluginHost host)
     {
-        _ = new MediaController(); // 启动媒体引擎单例（SMTC + 歌词 + 频谱）
+        _ = new MediaController(host); // 启动媒体引擎单例（SMTC + 歌词 + 频谱）
         host.RegisterWidget(new ClockWidget());
         host.RegisterWidget(new HardwareWidget(host));
         host.RegisterWidget(new MediaWidget(host));
@@ -23,7 +23,7 @@ public sealed class SystemPluginsPlugin : INotchPlugin
     }
 }
 
-/// <summary>系统组件插件的设置页。</summary>
+/// <summary>系统组件插件的设置页（含媒体设置，全部走声明式控件）。</summary>
 public sealed class SystemSettingsPage : ISettingsPage
 {
     public string Title => "系统组件";
@@ -31,6 +31,11 @@ public sealed class SystemSettingsPage : ISettingsPage
     {
         new NumberSetting("HardwareInterval", "硬件采样间隔(秒)", 1f, 10f, 1f, 1f),
         new NumberSetting("MediaInterval", "媒体刷新间隔(秒)", 1f, 10f, 1f, 2f),
+        new ToggleSetting("MediaControlEnabled", "媒体控制", true),
+        new ChoiceSetting("TargetPlatform", "目标媒体平台", new[] { "通用媒体", "网易云音乐", "QQ音乐", "酷狗音乐", "Spotify", "Apple Music", "Echo Music", "LX Music" }, 0),
+        new ToggleSetting("LyricsEnabled", "在刘海中显示歌词", true),
+        new ToggleSetting("KaraokeEnabled", "开启卡拉OK动效", true),
+        new NumberSetting("LyricDelayOffset", "歌词延迟补偿(秒)", -5f, 5f, 0.1f, 0f),
     };
 }
 
@@ -451,7 +456,7 @@ public sealed class MediaWidget : IWidget
     public float MeasureWidth(float availableHeight)
     {
         if (Ctl?.IsActive != true) return 0f;
-        return _textPaint.MeasureText(DisplayText()) + 32f + 124f; // 右侧预留频谱 + 播放控制区
+        return Math.Min(_textPaint.MeasureText(DisplayText()) + 32f + 124f, 480f); // 上限 480，防止超长标题撑爆
     }
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
@@ -495,7 +500,11 @@ public sealed class MediaWidget : IWidget
         canvas.Restore();
     }
 
-    private string DisplayText() => string.IsNullOrEmpty(Artist) ? Title : $"{Artist} - {Title}";
+    private string DisplayText()
+    {
+        string t = string.IsNullOrEmpty(Artist) ? Title : $"{Artist} - {Title}";
+        return t.Length > 32 ? t[..32] + "…" : t;
+    }
 
     public WidgetHit HitTest(float x, float y, SKRect rect)
     {
