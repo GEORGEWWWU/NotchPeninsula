@@ -53,6 +53,7 @@ public static class PluginLoader
                 if (plugin == null) { Logger.Warn($"[PluginLoader] {dllName} 未找到 INotchPlugin 实现"); continue; }
 
                 // 4. 初始化，并绑定该插件自己的 Id（设置持久化自动加前缀）
+                host.RegisterPlugin(plugin.Id, plugin.DisplayName);
                 plugin.Initialize(host.CreateScopedHost(plugin.Id));
                 loaded.Add(plugin);
                 Logger.Info($"[PluginLoader] 已加载插件: {plugin.Id} ({plugin.DisplayName}), 设置页={host.SettingsPages.Count}");

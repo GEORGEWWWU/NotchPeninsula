@@ -13,12 +13,19 @@ public sealed class PluginHost
     private readonly List<IWidget> _widgets = new();
     private readonly List<ISecondaryWidget> _secondaryWidgets = new();
     private readonly List<(string PluginId, ISettingsPage Page)> _settingsPages = new();
+    private readonly Dictionary<string, string> _widgetPluginMap = new();
+    private readonly List<(string Id, string DisplayName)> _plugins = new();
 
     public IReadOnlyList<IWidget> Widgets => _widgets;
     public IReadOnlyList<ISecondaryWidget> SecondaryWidgets => _secondaryWidgets;
     public IReadOnlyList<(string PluginId, ISettingsPage Page)> SettingsPages => _settingsPages;
+    public IReadOnlyList<(string Id, string DisplayName)> Plugins => _plugins;
+
+    public void RegisterPlugin(string id, string displayName) { if (_plugins.All(p => p.Id != id)) _plugins.Add((id, displayName)); }
 
     public void RegisterWidget(IWidget widget) => _widgets.Add(widget);
+    public void RegisterWidget(string pluginId, IWidget widget) { _widgets.Add(widget); _widgetPluginMap[widget.Id] = pluginId; }
+    public string? GetWidgetPluginId(string widgetId) => _widgetPluginMap.TryGetValue(widgetId, out var p) ? p : null;
     public void RegisterSecondaryWidget(ISecondaryWidget widget) => _secondaryWidgets.Add(widget);
     public void RegisterSettingsPage(string pluginId, ISettingsPage page) => _settingsPages.Add((pluginId, page));
 
@@ -134,7 +141,7 @@ public sealed class ScopedPluginHost : IPluginHost
         _pluginId = pluginId;
     }
 
-    public void RegisterWidget(IWidget widget) => _host.RegisterWidget(widget);
+    public void RegisterWidget(IWidget widget) => _host.RegisterWidget(_pluginId, widget);
     public void RegisterSecondaryWidget(ISecondaryWidget widget) => _host.RegisterSecondaryWidget(widget);
     public void RegisterSettingsPage(ISettingsPage page) => _host.RegisterSettingsPage(_pluginId, page);
 

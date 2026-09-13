@@ -32,9 +32,7 @@ namespace NotchPeninsula
         private readonly IntPtr _hwnd;
         public static readonly PluginHost PluginHostInstance = new();
         private readonly List<IWidget> _widgetRow = new();
-        private string _cachedWidgetOrder = "";
-        private string _cachedDisabled = "";
-        private int _cachedWidgetCount = -1;
+        private string _cachedWidgetState = "";
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
         private readonly Timer _renderTimer;
@@ -753,28 +751,35 @@ namespace NotchPeninsula
             string order = GetWidgetOrder();
             if (string.IsNullOrWhiteSpace(order))
                 order = "builtin.clock,builtin.hardware,builtin.media"; // 默认顺序
-            string disabledStr = GetDisabledWidgetsStr();
-            if (order == _cachedWidgetOrder && count == _cachedWidgetCount && disabledStr == _cachedDisabled && _widgetRow.Count > 0) return;
-            _cachedWidgetOrder = order;
-            _cachedWidgetCount = count;
-            _cachedDisabled = disabledStr;
+            string state = $"{count}|{order}|{GetDisabledWidgetsStr()}|{IsPluginsEnabled()}|{GetDisabledPluginsStr()}";
+            if (state == _cachedWidgetState && _widgetRow.Count > 0) return;
+            _cachedWidgetState = state;
 
-            var disabled = new HashSet<string>(disabledStr.Split(',', StringSplitOptions.RemoveEmptyEntries));
             var all = new List<IWidget>();
             foreach (var w in PluginHostInstance.Widgets) all.Add(w);
 
             _widgetRow.Clear();
             foreach (var id in order.Split(','))
             {
-                if (disabled.Contains(id.Trim())) continue;
                 var w = all.FirstOrDefault(x => x.Id == id.Trim());
-                if (w != null && !_widgetRow.Contains(w)) _widgetRow.Add(w);
+                if (w != null && IsWidgetActive(w) && !_widgetRow.Contains(w)) _widgetRow.Add(w);
             }
             foreach (var w in all)
             {
-                if (disabled.Contains(w.Id)) continue;
+                if (!IsWidgetActive(w)) continue;
                 if (!_widgetRow.Contains(w)) _widgetRow.Add(w);
             }
+        }
+
+        // 组件是否应显示：单个组件开关 + 所属插件开关 + 全局插件开关
+        private static bool IsWidgetActive(IWidget w)
+        {
+            if (IsWidgetDisabled(w.Id)) return false;
+            string? pluginId = PluginHostInstance.GetWidgetPluginId(w.Id);
+            if (pluginId == null) return true;
+            if (!IsPluginsEnabled()) return false;
+            if (IsPluginDisabled(pluginId)) return false;
+            return true;
         }
 
         private static string GetDisabledWidgetsStr()
@@ -798,6 +803,46 @@ namespace NotchPeninsula
             var disabled = new HashSet<string>(GetDisabledWidgetsStr().Split(',', StringSplitOptions.RemoveEmptyEntries));
             if (!disabled.Add(id)) disabled.Remove(id);
             Program.SaveSetting("DisabledWidgets", string.Join(",", disabled));
+        }
+
+        // ---- 插件级开关 ----
+        public static bool IsPluginsEnabled()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                return (int)(key?.GetValue("PluginsEnabled", 1) ?? 1) != 0;
+            }
+            catch { return true; }
+        }
+
+        public static void TogglePluginsEnabled()
+        {
+            bool enabled = IsPluginsEnabled();
+            Program.SaveSetting("PluginsEnabled", enabled ? 0 : 1);
+        }
+
+        private static string GetDisabledPluginsStr()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                return key?.GetValue("DisabledPlugins") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        public static bool IsPluginDisabled(string pluginId)
+        {
+            var disabled = new HashSet<string>(GetDisabledPluginsStr().Split(',', StringSplitOptions.RemoveEmptyEntries));
+            return disabled.Contains(pluginId);
+        }
+
+        public static void TogglePluginEnabled(string pluginId)
+        {
+            var disabled = new HashSet<string>(GetDisabledPluginsStr().Split(',', StringSplitOptions.RemoveEmptyEntries));
+            if (!disabled.Add(pluginId)) disabled.Remove(pluginId);
+            Program.SaveSetting("DisabledPlugins", string.Join(",", disabled));
         }
 
         // 返回全部组件（含停用）按 WidgetOrder 排序
