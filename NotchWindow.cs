@@ -496,7 +496,7 @@ namespace NotchPeninsula
 
                     // 当处于睡眠状态且鼠标悬停时，目标透明度为 0f（0%），系统会自动让其完全物理穿透！
                     float targetAlpha = 1.0f;
-                    if (!_isPassthroughAwake && isOverNotch) targetAlpha = 0.0f;
+                    if (!_isPassthroughAwake && isOverNotch && !isClipboardActive) targetAlpha = 0.0f;
 
                     Renderer.PassthroughAlpha += (targetAlpha - Renderer.PassthroughAlpha) * 0.18f;
 
