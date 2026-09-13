@@ -408,6 +408,7 @@ public sealed class MediaWidget : IWidget
         Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
     };
     private static readonly SKPaint _iconPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
+    private static readonly SKPaint _barPaint = new() { IsAntialias = true };
     private static readonly SKPath _playPath = CreatePlayPath();
     private static readonly SKPath _pausePath = CreatePausePath();
     private static readonly SKPath _prevPath = CreatePrevPath();
@@ -427,6 +428,7 @@ public sealed class MediaWidget : IWidget
             var c = MediaController.Instance;
             if (c == null) return;
             c.UpdateLyrics();
+            c.UpdateBars();
             NotchPeninsula.Renderer.MediaActive = c.IsActive;
         });
     }
@@ -449,7 +451,7 @@ public sealed class MediaWidget : IWidget
     public float MeasureWidth(float availableHeight)
     {
         if (Ctl?.IsActive != true) return 0f;
-        return _textPaint.MeasureText(DisplayText()) + 32f + 100f; // 右侧预留播放控制区
+        return _textPaint.MeasureText(DisplayText()) + 32f + 124f; // 右侧预留频谱 + 播放控制区
     }
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
@@ -458,6 +460,21 @@ public sealed class MediaWidget : IWidget
         NotchPeninsula.Renderer.MediaActive = true;
         _textPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
         canvas.DrawText(DisplayText(), rect.Left + 16f, rect.MidY + 5f, _textPaint);
+
+        // 频谱柱（右对齐）
+        var bars = Ctl?.Bars;
+        if (bars != null)
+        {
+            float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f;
+            float startX = rect.Right - totalBarWidth - 4f;
+            _barPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+            for (int i = 0; i < 5; i++)
+            {
+                float h = Math.Max(2f, bars[i] * maxH);
+                float y = rect.MidY - h / 2f;
+                canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
+            }
+        }
 
         if (frame.IsHovered)
         {

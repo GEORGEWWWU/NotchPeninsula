@@ -5,18 +5,16 @@ using Windows.Storage.Streams;
 using SkiaSharp;
 using System.Net.Http;
 using System.Text.Json;
+using static NotchPeninsula.MediaSettings;
 
-namespace NotchPeninsula
+using NotchPeninsula;
+
+namespace SystemPlugins
 {
     public partial class MediaController
     {
-        // 暴露给 UI 的静态配置和单例，方便极速调用
+        // 暴露给 UI 的单例，方便极速调用
         public static MediaController? Instance { get; private set; }
-        internal static string TargetPlatform = "other"; // 默认通用媒体
-        internal static bool IsMediaControlEnabled = true; // 媒体开关
-        internal static bool IsLyricsEnabled = true;
-        internal static bool IsKaraokeEnabled = true;
-        internal static float LyricDelayOffset = 0f;
         private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
         {
             ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
@@ -65,10 +63,40 @@ namespace NotchPeninsula
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
+        private readonly AudioAnalyzer _audioAnalyzer = new();
+        private readonly float[] _bars = new float[5];
+        private readonly float[] _soloMapBuf = new float[5];
+
+        /// <summary>平滑后的 5 根频谱柱（0~1），供媒体组件绘制。</summary>
+        public float[] Bars => _bars;
+
+        /// <summary>刷新频谱柱：优先 Just Solo LyricServer，回退 WASAPI 采集。</summary>
+        public void UpdateBars()
+        {
+            float[] source = _justSoloLyric.TryGetSpectrum(out var bands) && bands.Length >= 12
+                ? MapSoloSpectrum(bands)
+                : _audioAnalyzer.GetBars();
+            for (int i = 0; i < 5; i++)
+            {
+                float target = source[i];
+                _bars[i] += (target - _bars[i]) * (target > _bars[i] ? 0.75f : 0.12f);
+            }
+        }
+
+        private float[] MapSoloSpectrum(float[] bands)
+        {
+            _soloMapBuf[0] = Math.Max(bands[0], bands[1]);
+            _soloMapBuf[1] = Math.Max(bands[2], Math.Max(bands[3], bands[4]));
+            _soloMapBuf[2] = Math.Max(bands[5], bands[6]);
+            _soloMapBuf[3] = Math.Max(bands[7], Math.Max(bands[8], bands[9]));
+            _soloMapBuf[4] = Math.Max(bands[10], bands[11]);
+            return _soloMapBuf;
+        }
 
         public MediaController()
         {
             Instance = this;
+            Changed += async () => await ForceRefresh();
             _ = InitializeAsync();
         }
 
