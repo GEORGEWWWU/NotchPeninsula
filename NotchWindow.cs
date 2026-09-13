@@ -867,8 +867,8 @@ namespace NotchPeninsula
             Program.SaveSetting("WidgetOrder", string.Join(",", list.Select(w => w.Id)));
         }
 
-        // 右键命中插件组件时，若有详情页则打开
-        private bool TryOpenPluginDetail(int cx, int cy)
+        // 行内组件内部热区命中（用于手型指针）
+        private static bool IsOverWidgetHotzone(int cx, int cy)
         {
             var slots = Renderer.WidgetRowSlots;
             if (slots == null) return false;
@@ -876,12 +876,8 @@ namespace NotchPeninsula
             foreach (var slot in slots)
             {
                 var rect = slot.Rect;
-                var hitRect = new SKRect(rect.Left, rect.Top + topY, rect.Right, rect.Bottom + topY);
-                if (hitRect.Contains(cx, cy) && slot.Widget.DetailPage != null)
-                {
-                    Renderer.ActiveDetailWidget = slot.Widget;
-                    return true;
-                }
+                if (cx < rect.Left || cx > rect.Right) continue;
+                if (slot.Widget.HitTest(cx - rect.Left, cy - topY, rect).IsHit) return true;
             }
             return false;
         }
@@ -964,7 +960,8 @@ namespace NotchPeninsula
                         }
                         else
                         {
-                            _isCursorOverIcon = false;
+                            // 行内组件内部热区（如媒体播放控制）显示手型
+                            _isCursorOverIcon = IsOverWidgetHotzone(mx, my);
                         }
                         break;
                     }
@@ -1016,15 +1013,22 @@ namespace NotchPeninsula
                             foreach (var slot in wslots)
                             {
                                 var hitRect = new SKRect(slot.Rect.Left, slot.Rect.Top + Renderer.WidgetRowTopY, slot.Rect.Right, slot.Rect.Bottom + Renderer.WidgetRowTopY);
-                                if (hitRect.Contains(cx, cy))
+                                if (!hitRect.Contains(cx, cy)) continue;
+
+                                var wh = slot.Widget.HitTest(cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY, slot.Rect);
+                                if (wh.IsHit)
                                 {
-                                    var wh = slot.Widget.HitTest(cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY, slot.Rect);
-                                    if (wh.IsHit)
-                                    {
-                                        slot.Widget.OnLeftClick(wh.Action, cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY);
-                                        return (IntPtr)0;
-                                    }
+                                    slot.Widget.OnLeftClick(wh.Action, cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY);
+                                    return (IntPtr)0;
                                 }
+
+                                // 未命中组件内部热区：有详情页则左键展开该插件
+                                if (slot.Widget.DetailPage != null)
+                                {
+                                    Renderer.ActiveDetailWidget = slot.Widget;
+                                    return (IntPtr)0;
+                                }
+                                break;
                             }
                         }
 
@@ -1052,16 +1056,8 @@ namespace NotchPeninsula
                     }
 
                 case Win32.WM_RBUTTONDOWN:
-                    if (_isHovered)
-                    {
-                        int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                        if (TryOpenPluginDetail(rx, ry))
-                        {
-                            return (IntPtr)0; // 已打开插件详情，短路
-                        }
-                        ConsoleWindow.Toggle();
-                    }
+                    // 右键固定打开设置窗口（插件详情改由左键展开）
+                    if (_isHovered) ConsoleWindow.Toggle();
                     break;
             }
 
