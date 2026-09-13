@@ -1555,7 +1555,7 @@ namespace NotchPeninsula
 
                 // ---- 插件开关（全局 + 单个） ----
                 _pluginSwitchRects.Clear();
-                canvas.DrawText("插件启用", 216, wy + 18, _uiTextPaint);
+                canvas.DrawText("启用插件", 216, wy + 18, _uiTextPaint);
                 float sy = wy + 30f;
 
                 bool pluginsEnabled = NotchWindow.IsPluginsEnabled();
