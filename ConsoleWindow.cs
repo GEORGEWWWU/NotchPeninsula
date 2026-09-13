@@ -41,12 +41,6 @@ namespace NotchPeninsula
         private bool _dropdownOpen = false;
         private bool _dropdownHovered = false;
         private int _hoveredDropdownIndex = -1;
-        private int _selectedPlatformIndex = 0;
-        private bool _lyricToggleHovered = false;
-        private bool _karaokeToggleHovered = false;
-        private bool _lyricMinusHovered = false;
-        private bool _lyricPlusHovered = false;
-        private bool _lyricResetHovered = false;
         // 插件平台页垂直滚动偏移
         private float _pluginScrollY = 0f;
         // 关于页交互状态
