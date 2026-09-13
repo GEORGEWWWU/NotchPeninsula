@@ -422,17 +422,7 @@ public sealed class MediaWidget : IWidget
         TextSize = 12.5f, IsAntialias = true,
         Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
     };
-    private static readonly SKPaint _iconPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
     private static readonly SKPaint _barPaint = new() { IsAntialias = true };
-    private static readonly SKPath _playPath = CreatePlayPath();
-    private static readonly SKPath _pausePath = CreatePausePath();
-    private static readonly SKPath _prevPath = CreatePrevPath();
-    private static readonly SKPath _nextPath = CreateNextPath();
-
-    private static SKPath CreatePlayPath() { var p = new SKPath(); p.MoveTo(0, 0); p.LineTo(10, 6); p.LineTo(0, 12); p.Close(); return p; }
-    private static SKPath CreatePausePath() { var p = new SKPath(); p.AddRect(new SKRect(0, 0, 3, 12)); p.AddRect(new SKRect(6, 0, 9, 12)); return p; }
-    private static SKPath CreatePrevPath() { var p = new SKPath(); p.AddRect(new SKRect(0, 0, 2, 10)); p.MoveTo(8, 0); p.LineTo(2, 5); p.LineTo(8, 10); p.Close(); return p; }
-    private static SKPath CreateNextPath() { var p = new SKPath(); p.MoveTo(0, 0); p.LineTo(6, 5); p.LineTo(0, 10); p.Close(); p.AddRect(new SKRect(6, 0, 8, 10)); return p; }
 
     public MediaWidget(IPluginHost host)
     {
@@ -467,7 +457,7 @@ public sealed class MediaWidget : IWidget
     public float MeasureWidth(float availableHeight)
     {
         if (Ctl?.IsActive != true) return 0f;
-        return Math.Min(_textPaint.MeasureText(DisplayText()) + 32f + 124f, 480f); // 上限 480，防止超长标题撑爆
+        return Math.Min(_textPaint.MeasureText(DisplayText()) + 32f + 40f, 480f); // 上限 480，右侧预留频谱
     }
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
@@ -495,23 +485,6 @@ public sealed class MediaWidget : IWidget
             }
         }
 
-        if (frame.IsHovered)
-        {
-            float right = rect.Right;
-            float cy = rect.MidY - 6f;
-            DrawIcon(canvas, right - 84f, cy, _prevPath, frame);
-            DrawIcon(canvas, right - 54f, cy, Playing ? _pausePath : _playPath, frame);
-            DrawIcon(canvas, right - 24f, cy, _nextPath, frame);
-        }
-    }
-
-    private void DrawIcon(SKCanvas canvas, float x, float y, SKPath path, WidgetFrame frame)
-    {
-        _iconPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
-        canvas.Save();
-        canvas.Translate(x, y);
-        canvas.DrawPath(path, _iconPaint);
-        canvas.Restore();
     }
 
     private string DisplayText()
@@ -522,25 +495,8 @@ public sealed class MediaWidget : IWidget
         return LyricPainter.Truncate(t, 32);
     }
 
-    public WidgetHit HitTest(float x, float y, SKRect rect)
-    {
-        if (Ctl?.IsActive != true) return WidgetHit.None;
-        float right = rect.Right;
-        if (x >= right - 90f && x <= right - 78f) return new WidgetHit("prev");
-        if (x >= right - 60f && x <= right - 48f) return new WidgetHit("play");
-        if (x >= right - 30f && x <= right - 18f) return new WidgetHit("next");
-        return WidgetHit.None;
-    }
-
-    public void OnLeftClick(string? action, float x, float y)
-    {
-        switch (action)
-        {
-            case "prev": Ctl?.Previous(); break;
-            case "play": Ctl?.TogglePlayPause(); break;
-            case "next": Ctl?.Next(); break;
-        }
-    }
+    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
+    public void OnLeftClick(string? action, float x, float y) { }
     public void OnRightClick() { }
     public void OnActivate(IPluginHost host) { }
     public void OnDeactivate() { }

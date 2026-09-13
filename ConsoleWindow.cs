@@ -1430,18 +1430,6 @@ namespace NotchPeninsula
                                 canvas.DrawText(curLabel, WIDTH - 160, TITLE_BAR_HEIGHT + ty + 24, _uiTextPaint);
                                 canvas.DrawLine(WIDTH - 30, TITLE_BAR_HEIGHT + ty + 24, WIDTH - 22, TITLE_BAR_HEIGHT + ty + 30, _chevronPaint);
                                 canvas.DrawLine(WIDTH - 22, TITLE_BAR_HEIGHT + ty + 30, WIDTH - 14, TITLE_BAR_HEIGHT + ty + 24, _chevronPaint);
-                                if (_openPluginChoice == idx)
-                                {
-                                    float optY = TITLE_BAR_HEIGHT + ty + 62;
-                                    for (int o = 0; o < choice.Options.Length; o++)
-                                    {
-                                        var optRect = new SKRect(200, optY, WIDTH - 20, optY + 26);
-                                        _dynamicFillPaint.Color = _hoveredPluginChoiceOpt == o ? new SKColor(255, 255, 255, 20) : new SKColor(40, 40, 40);
-                                        canvas.DrawRect(optRect, _dynamicFillPaint);
-                                        canvas.DrawText(choice.Options[o], 216, optY + 18, _uiTextPaint);
-                                        optY += 26;
-                                    }
-                                }
                                 ty += 74f;
                                 break;
                             }
@@ -1481,6 +1469,21 @@ namespace NotchPeninsula
                         _customSettingsPage = custom;
                         _customSettingsRect = crect;
                         ty += ch + 12f;
+                    }
+
+                    // 下拉选项（绘制在所有控件之上，避免被后续控件遮挡）
+                    if (_openPluginChoice != -1 && _openPluginChoice < _pluginChoices.Count)
+                    {
+                        var (cpid, cchoice, crect) = _pluginChoices[_openPluginChoice];
+                        float optY = crect.Bottom;
+                        for (int o = 0; o < cchoice.Options.Length; o++)
+                        {
+                            var optRect = new SKRect(crect.Left, optY, crect.Right, optY + 26);
+                            _dynamicFillPaint.Color = _hoveredPluginChoiceOpt == o ? new SKColor(255, 255, 255, 20) : new SKColor(40, 40, 40);
+                            canvas.DrawRect(optRect, _dynamicFillPaint);
+                            canvas.DrawText(cchoice.Options[o], crect.Left + 16, optY + 18, _uiTextPaint);
+                            optY += 26;
+                        }
                     }
                 }
                 else
