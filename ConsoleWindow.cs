@@ -1024,7 +1024,7 @@ namespace NotchPeninsula
             DrawTab(3, "交互设置", 140);
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + 182, 160, TITLE_BAR_HEIGHT + 182, _separatorPaint);
             DrawTab(4, "关于软件", 190);
-            DrawTab(6, "插件平台", 230);
+            DrawTab(6, "插件管理", 230);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
