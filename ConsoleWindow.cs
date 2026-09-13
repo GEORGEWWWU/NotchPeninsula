@@ -297,10 +297,9 @@ namespace NotchPeninsula
                     if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 5;      // 1. 个性化中心
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 60 && y <= TITLE_BAR_HEIGHT + 96) newHoveredTab = 0; // 2. 通用设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 1; // 3. 显示设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 2; // 4. 媒体设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 180 && y <= TITLE_BAR_HEIGHT + 216) newHoveredTab = 3; // 5. 交互设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 4; // 6. 关于软件
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 270 && y <= TITLE_BAR_HEIGHT + 306) newHoveredTab = 6; // 7. 插件
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 3; // 4. 交互设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 190 && y <= TITLE_BAR_HEIGHT + 226) newHoveredTab = 4; // 5. 关于软件
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 6; // 6. 插件
 
                     int newHoveredTheme = -1;
                     int newHoveredOpacityIndex = -1;
@@ -995,11 +994,10 @@ namespace NotchPeninsula
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + 52, 160, TITLE_BAR_HEIGHT + 52, _separatorPaint);
             DrawTab(0, "通用设置", 60);
             DrawTab(1, "显示设置", 100);
-            DrawTab(2, "媒体设置", 140);
-            DrawTab(3, "交互设置", 180);
-            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 222, 160, TITLE_BAR_HEIGHT + 222, _separatorPaint);
-            DrawTab(4, "关于软件", 230);
-            DrawTab(6, "插件", 270);
+            DrawTab(3, "交互设置", 140);
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 182, 160, TITLE_BAR_HEIGHT + 182, _separatorPaint);
+            DrawTab(4, "关于软件", 190);
+            DrawTab(6, "插件", 230);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
@@ -1250,12 +1248,6 @@ namespace NotchPeninsula
                 DrawCheckItem(compositeCardY + 140, "资源占用检测", Renderer.CompShowHardware, _compHardwareHovered, !Renderer.CompositeModeEnabled);
                 DrawCheckItem(compositeCardY + 175, "媒体控制器(含频谱)", Renderer.CompShowMedia, _compMediaHovered, !Renderer.CompositeModeEnabled);
 
-            }
-            else if (_selectedTab == 2)
-            {
-                // 媒体设置已迁移到「插件」→「系统组件」页（声明式控件）
-                canvas.DrawText("媒体设置已迁移到「插件」→「系统组件」页", 216, TITLE_BAR_HEIGHT + 80, _uiTextPaint);
-                canvas.DrawText("请切换到插件页进行配置", 216, TITLE_BAR_HEIGHT + 110, _subTextPaint);
             }
             else if (_selectedTab == 3)
             {
