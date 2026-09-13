@@ -1,7 +1,8 @@
 # NPS 插件化平台实现计划
 
 > 对应 Issue #9：「一切皆小组件」开放插件平台。
-> 状态：草案（待社区对齐后进入 Phase 1）。
+> 状态：**Phase 0–3 已全部实现**（Phase 4 中「提醒页」已落地，「副显示区」未做）。
+> 实现结果与完整能力清单见 [`PLUGIN_PLATFORM_REPORT.md`](./PLUGIN_PLATFORM_REPORT.md)，本文档保留作为阶段划分与决策记录。
 
 ## 总原则
 
@@ -78,7 +79,7 @@
 
 **改动文件**：
 
-- 新增 `Plugin/PluginLoader.cs`：`AssemblyLoadContext` 从 `%AppData%\NotchPeninsula\plugins\<id>\` 加载 DLL + 读 manifest，反射找 `INotchPlugin`，实例化 + `Initialize(host)`。
+- 新增 `Plugin/PluginLoader.cs`：`AssemblyLoadContext` 从主程序输出目录下的 `plugins/<id>/` 加载 DLL + 读 manifest，反射找 `INotchPlugin`，实例化 + `Initialize(host)`。
 - 新增 `Plugin/SettingsRenderer.cs`：把 `ConsoleWindow` 写死的开关/下拉/步进器抽成「声明式控件渲染器」，从 `ISettingsPage.Controls` 驱动，命中 + 持久化走 `Program.SaveSetting`（加 `Plugin.<id>.` 前缀）。
 - `ConsoleWindow.cs`：加「插件」tab，列出已注册 `ISettingsPage`。
 
@@ -88,10 +89,10 @@
 
 ---
 
-## Phase 4 — 提醒页抽象 + 副显示区（延后）
+## Phase 4 — 提醒页抽象 + 副显示区
 
-- **提醒页**：把现有 Toast「4 秒消失 + 点击唤醒」抽象成 `PostReminder`。低成本，可提前到 Phase 2 后做。
-- **副显示区**：全新第二个窗口 + 独立布局 + 独立交互，长期延后。
+- **提醒页**：✅ 已实现。现有 Toast「4 秒消失 + 点击唤醒」已抽象为 `PostReminder`。
+- **副显示区**：⏳ 未实现。全新第二个窗口 + 独立布局 + 独立交互，长期延后。
 
 ---
 

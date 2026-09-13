@@ -171,19 +171,28 @@ Content-Type: application/json
 NotchPeninsula/
 ├── Program.cs                 # 程序入口：单实例、DPI 感知、CPU 节流、配置加载、更新检查
 ├── NotchWindow.cs             # 主窗口：分层窗口、渲染定时器、动画、托盘、剪贴板与通知轮询
-├── Renderer.cs                # SkiaSharp 绘制层：待机/媒体/通知/链接/组合模式/卡拉OK/主题
-├── MediaController.cs         # SMTC 媒体会话识别、封面、歌词引擎与播放控制
-├── ConsoleWindow.cs           # 全自绘设置窗口（6 个页签）
+├── Renderer.cs                # SkiaSharp 绘制层：待机/媒体/通知/链接/组合模式/主题
+├── ConsoleWindow.cs           # 全自绘设置窗口
 ├── AudioAnalyzer.cs           # WASAPI Loopback 采集 + Goertzel 频谱分析
 ├── Audio.cs                   # NAudio 系统音量读写适配层
-├── JustSoloLyricClient.cs     # Just Solo LyricServer 客户端（歌词/进度/频谱）
+├── SystemSettingManager.cs    # 系统音量控制封装
 ├── toast.cs                   # Toast 通知监听 + 本地 HTTP 消息接口
-├── MediaLogoProvider.cs       # 媒体平台站标与 LOGO 管理
 ├── appactivator.cs            # 按 AUMID 唤醒 / 置前应用
 ├── UpdateManager.cs           # 静默检查更新与更新提示窗口
-├── SystemSettingManager.cs    # 系统音量控制封装
 ├── Win32.cs                   # Win32 API 封装
 ├── Logger.cs                  # 日志
+├── Plugin/                    # 插件平台（宿主侧）
+│   ├── PluginApi.cs           # INotchPlugin / IPluginHost / Widget / Page 等契约
+│   ├── PluginHost.cs          # 插件主机：刷新调度、提醒、持久化、设置页收集
+│   ├── PluginLoader.cs        # 从 plugins 目录发现并加载插件 DLL（独立 ALC）
+│   ├── PluginWindow.cs        # 插件自绘窗口
+│   └── WidgetLayout.cs        # 组件行布局与宽度测量
+├── SamplePlugins/             # 示例/内置插件源码（独立工程，随主工程编译并部署）
+│   ├── HelloPlugin/           # 最小示例插件
+│   ├── SystemPlugins/         # 系统组件：媒体控制、歌词、频谱、封面、Just Solo 客户端
+│   └── ThuCourse/             # 清华课程表插件（依赖仓库外的 thu-info-cs）
+├── plugins/                   # 插件源目录：构建时自动刷新并整体部署到输出目录
+├── docs/                      # 插件平台设计与路线文档
 ├── build.ps1                  # 打包脚本（单文件发布）
 ├── data/image/                # 平台 logo / 图标资源
 ├── NPS_NotchPeninsula-logo.ico # 应用图标
@@ -207,6 +216,14 @@ NotchPeninsula/
 dotnet restore
 dotnet build -c Release
 ```
+
+本地调试直接运行：
+
+```bash
+dotnet run
+```
+
+> `dotnet build` / `dotnet run` 会同时编译 `SamplePlugins` 下的插件工程，并把产物部署到输出目录 `plugins/`，无需手动拷贝 DLL（详见「插件系统」）。
 
 ### 打包发布
 
@@ -240,6 +257,57 @@ bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\
 ### 运行说明
 
 运行发布产物中的可执行文件即可。该程序默认在后台托盘运行，右键托盘图标即可打开设置窗口。
+
+## 插件系统
+
+NotchPeninsula 的功能组件（媒体控制、歌词、频谱、硬件占用等）均以插件形式挂载。插件是独立的 .NET 类库工程，由宿主在运行时反射加载，彼此通过独立 `AssemblyLoadContext` 隔离。
+
+### 目录约定
+
+| 目录 | 角色 |
+| --- | --- |
+| `SamplePlugins/<名称>/` | 插件源码工程，包含实现代码与 `plugin.json` 清单 |
+| `plugins/<名称>/` | **插件源目录**（仓库根目录），存放待部署的 DLL 与 `plugin.json`，可手工增删 |
+| `bin/.../plugins/` | **运行时加载目录**，`PluginLoader` 从 `AppDomain.CurrentDomain.BaseDirectory/plugins` 逐个子目录扫描 |
+
+### 插件清单 plugin.json
+
+每个插件目录下需有一个 `plugin.json`：
+
+```json
+{ "id": "system", "name": "系统组件", "dll": "SystemPlugins.dll" }
+```
+
+- `id`：插件唯一标识，同时作为设置持久化的前缀；
+- `name`：显示名称；
+- `dll`：入口程序集文件名，省略时默认取「目录名 + `.dll`」。
+
+插件需实现 `INotchPlugin`（见 `Plugin/PluginApi.cs`），宿主反射实例化后调用 `Initialize(IPluginHost host)`。主机提供刷新调度、重绘、提醒与持久化能力，不提供数据源，数据由插件自行获取。
+
+### 自动构建与部署
+
+`NotchPeninsula.csproj` 中的 `BuildAndDeployPlugins` 目标会在**每次 `dotnet build` / `dotnet run` 时自动执行**：
+
+1. 编译 `SamplePlugins` 下的插件工程（自动 `Restore`，且不会递归回主工程）；
+2. 把插件产物 DLL 刷新到根目录 `plugins/<名称>/`；
+3. 把根目录 `plugins/` 整体复制到输出目录 `plugins/`，供运行时加载。
+
+因此，**修改插件源码后直接 `dotnet run` 即可生效**，无需手动编译插件或拷贝 DLL。
+
+> 部署前请先从托盘退出正在运行的实例，否则输出目录下的 DLL 被占用会导致复制失败。
+
+### 新增一个插件
+
+1. 在 `SamplePlugins/` 下新建类库工程（`net10.0-windows10.0.19041.0`，`OutputType=Library`），引用 `NotchPeninsula.csproj`；
+2. 实现 `INotchPlugin`，并在工程目录下添加 `plugin.json`；
+3. 在 `NotchPeninsula.csproj` 的 `BuildAndDeployPlugins` 目标中，为该插件补一条编译与复制规则（参照现有三个插件），并在根目录 `plugins/` 下建立同名子目录。
+
+### 注意事项
+
+- **不要把主程序及其共享依赖复制进插件目录**（如 `NotchPeninsula.dll`、`SkiaSharp.dll`）：插件优先从自身目录加载程序集，重复加载会造成类型标识不一致，导致插件加载失败。构建目标已自动排除这些程序集。
+- `ThuCourse` 插件依赖仓库外的 `thu-info-cs/ThuInfoLib` 工程。该路径不存在时，构建会打印一条 Warning 并跳过其编译，沿用 `plugins/ThuCourse` 中的现有产物。
+
+插件平台的详细设计与演进取向见 [`docs/PLUGIN_PLATFORM_REPORT.md`](./docs/PLUGIN_PLATFORM_REPORT.md) 与 [`docs/PLUGIN_ROADMAP.md`](./docs/PLUGIN_ROADMAP.md)。
 
 ## 兼容性与说明
 
