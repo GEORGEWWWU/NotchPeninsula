@@ -12,6 +12,8 @@ namespace NotchPeninsula
 
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
+        public const int WM_MOUSEWHEEL = 0x020A;
+        public const int WM_LBUTTONUP = 0x0202;
         public const int WM_MOUSELEAVE = 0x02A3;
         public const int WM_SETCURSOR = 0x0020;
         public const int IDC_HAND = 32649; // Windows 原生手型指针常量
@@ -26,6 +28,7 @@ namespace NotchPeninsula
         public const int SW_MINIMIZE = 6;
         public const int SW_RESTORE = 9;
         public const int WM_DESTROY = 0x0002;
+        public const int WM_CLOSE = 0x0010;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT
@@ -210,6 +213,9 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern void PostQuitMessage(int nExitCode);
+
+        [DllImport("user32.dll")]
+        public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
         // 硬件监控原生 API
         [StructLayout(LayoutKind.Sequential)]

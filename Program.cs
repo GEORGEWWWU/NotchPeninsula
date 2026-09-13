@@ -38,11 +38,6 @@ namespace NotchPeninsula
                 if (key != null)
                 {
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
-                    MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
-                    MediaController.IsKaraokeEnabled = (int)key.GetValue("KaraokeEnabled", 1) != 0;
-                    MediaController.TargetPlatform = (string)key.GetValue("TargetPlatform", "other") ?? "other";
-                    MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
-                    MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsTopmostEnabled = (int)key.GetValue("TopmostEnabled", 1) != 0;
                     NotchWindow.IsClipboardLinkEnabled = (int)key.GetValue("ClipboardLinkEnabled", 1) != 0;
@@ -104,6 +99,16 @@ namespace NotchPeninsula
         [STAThread]
         static void Main(string[] args)
         {
+            // 全局未处理异常日志（诊断闪退）
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            {
+                try { Logger.Error("未处理异常(UnhandledException)", e.ExceptionObject as Exception); } catch { }
+            };
+            TaskScheduler.UnobservedTaskException += (s, e) =>
+            {
+                try { Logger.Error("未观察任务异常(UnobservedTaskException)", e.Exception); e.SetObserved(); } catch { }
+            };
+
             // 使用 using 包裹 Mutex，确保底层系统句柄被严格释放
             using (Mutex mutex = new Mutex(true, "Local\\NotchPeninsula_SingleInstanceMutex", out bool createdNew))
             {

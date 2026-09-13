@@ -1,0 +1,1 @@
+{ "id": "hello", "name": "Hello 演示插件", "dll": "HelloPlugin.dll" }

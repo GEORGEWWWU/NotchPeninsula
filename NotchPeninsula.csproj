@@ -17,6 +17,14 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- 示例插件是独立工程，排除出主程序编译与资源 -->
+		<Compile Remove="SamplePlugins\**" />
+		<EmbeddedResource Remove="SamplePlugins\**" />
+		<None Remove="SamplePlugins\**" />
+		<Content Remove="SamplePlugins\**" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- 新增的资源在这里引入 -->
     <Content Include="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />

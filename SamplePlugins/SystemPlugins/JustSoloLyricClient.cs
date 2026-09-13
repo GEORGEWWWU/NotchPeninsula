@@ -2,7 +2,9 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
-namespace NotchPeninsula
+using NotchPeninsula;
+
+namespace SystemPlugins
 {
     /// <summary>
     /// Just Solo LyricServer（ws://127.0.0.1:47290）客户端。

@@ -6,3 +6,6 @@
 bin/
 obj/
 publish/
+
+share/
+*.zip

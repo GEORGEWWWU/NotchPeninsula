@@ -6,14 +6,19 @@ using SkiaSharp;
 using System.Net.Http;
 using System.Text.Json;
 
-namespace NotchPeninsula
+using NotchPeninsula;
+using NotchPeninsula.Plugins;
+
+namespace SystemPlugins
 {
     public partial class MediaController
     {
-        // 暴露给 UI 的静态配置和单例，方便极速调用
+        // 暴露给 UI 的单例，方便极速调用
         public static MediaController? Instance { get; private set; }
-        internal static string TargetPlatform = "other"; // 默认通用媒体
-        internal static bool IsMediaControlEnabled = true; // 媒体开关
+        // 平台 ID 列表（与 MediaSettingsPage 的 ChoiceSetting 选项顺序一致）
+        private static readonly string[] PlatformIds = ["other", "netease", "qqmusic", "kugou", "spotify", "applemusic", "echomusic", "lxmusic"];
+        internal static string TargetPlatform = "other";
+        internal static bool IsMediaControlEnabled = true;
         internal static bool IsLyricsEnabled = true;
         internal static bool IsKaraokeEnabled = true;
         internal static float LyricDelayOffset = 0f;
@@ -65,11 +70,52 @@ namespace NotchPeninsula
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
+        private readonly AudioAnalyzer _audioAnalyzer = new();
+        private readonly float[] _bars = new float[5];
+        private readonly float[] _soloMapBuf = new float[5];
 
-        public MediaController()
+        /// <summary>平滑后的 5 根频谱柱（0~1），供媒体组件绘制。</summary>
+        public float[] Bars => _bars;
+
+        /// <summary>刷新频谱柱：优先 Just Solo LyricServer，回退 WASAPI 采集。</summary>
+        public void UpdateBars()
+        {
+            float[] source = _justSoloLyric.TryGetSpectrum(out var bands) && bands.Length >= 12
+                ? MapSoloSpectrum(bands)
+                : _audioAnalyzer.GetBars();
+            for (int i = 0; i < 5; i++)
+            {
+                float target = source[i];
+                _bars[i] += (target - _bars[i]) * (target > _bars[i] ? 0.75f : 0.12f);
+            }
+        }
+
+        private float[] MapSoloSpectrum(float[] bands)
+        {
+            _soloMapBuf[0] = Math.Max(bands[0], bands[1]);
+            _soloMapBuf[1] = Math.Max(bands[2], Math.Max(bands[3], bands[4]));
+            _soloMapBuf[2] = Math.Max(bands[5], bands[6]);
+            _soloMapBuf[3] = Math.Max(bands[7], Math.Max(bands[8], bands[9]));
+            _soloMapBuf[4] = Math.Max(bands[10], bands[11]);
+            return _soloMapBuf;
+        }
+
+        public MediaController(IPluginHost host)
         {
             Instance = this;
+            SyncSettings(host);
+            host.SettingsChanged += () => { SyncSettings(host); _ = ForceRefresh(); };
             _ = InitializeAsync();
+        }
+
+        private static void SyncSettings(IPluginHost host)
+        {
+            IsMediaControlEnabled = host.GetSetting("MediaControlEnabled", "1") != "0";
+            IsLyricsEnabled = host.GetSetting("LyricsEnabled", "1") != "0";
+            IsKaraokeEnabled = host.GetSetting("KaraokeEnabled", "1") != "0";
+            LyricDelayOffset = float.TryParse(host.GetSetting("LyricDelayOffset", "0"), out var d) ? d : 0f;
+            int plat = int.TryParse(host.GetSetting("TargetPlatform", "0"), out var p) ? p : 0;
+            TargetPlatform = plat >= 0 && plat < PlatformIds.Length ? PlatformIds[plat] : "other";
         }
 
         private async Task InitializeAsync()

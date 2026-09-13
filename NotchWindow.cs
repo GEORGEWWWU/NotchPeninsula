@@ -5,6 +5,7 @@ using Microsoft.Win32;
 using Timer = System.Timers.Timer;
 using static NotchPeninsula.Logger;
 using System.Windows.Threading;
+using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -29,7 +30,11 @@ namespace NotchPeninsula
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         float _currentVolume = 0f;
         private readonly IntPtr _hwnd;
-        private readonly MediaController _media;
+        public static readonly PluginHost PluginHostInstance = new();
+        private readonly List<IWidget> _widgetRow = new();
+        private string _cachedWidgetOrder = "";
+        private string _cachedDisabled = "";
+        private int _cachedWidgetCount = -1;
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
         private readonly Timer _renderTimer;
@@ -73,10 +78,7 @@ namespace NotchPeninsula
         private DispatcherTimer? _pollingTimer;
         private readonly Dispatcher _dispatcher;
         private readonly DateTime _appStartTime = DateTime.Now;
-        private readonly AudioAnalyzer _audioAnalyzer;
-        private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
-        private readonly float[] _spectrumBars = new float[5]; // LyricServer 12 频段压缩为 5 柱的复用缓冲（仅 RenderLoop 单线程内写入并当帧消费）
-        private bool _wasUsingSoloSpectrum; // 上一帧是否在用 LyricServer 频谱，用于感知独占播放结束
+        private readonly float[] _currentBars = new float[5]; // 平滑过渡（暂不采集，未来由媒体插件提供频谱）
         private readonly System.Windows.Forms.NotifyIcon _notifyIcon; // 托盘与自启常量
         private const string AppName = "NotchPeninsula";
         private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
@@ -126,8 +128,6 @@ namespace NotchPeninsula
         {
             audio = new SystemSettingsManager();
             _dispatcher = Dispatcher.CurrentDispatcher;
-            _media = new MediaController();
-            _audioAnalyzer = new AudioAnalyzer();
             _wndProcDelegate = WndProc;
 
             var wc = new Win32.WNDCLASS
@@ -211,7 +211,6 @@ namespace NotchPeninsula
                     _notifyIcon.Dispose();
                 }
                 Info("程序退出");
-                _audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
                 Environment.Exit(0);
             };
 
@@ -235,6 +234,20 @@ namespace NotchPeninsula
                 }
             };
             aud.Start();
+
+            // 订阅插件提醒（复用现有 Toast 展示流）
+            PluginHostInstance.ReminderPosted += OnToastDetected;
+
+            // 加载 plugins 目录下的插件 DLL
+            try
+            {
+                var plugins = PluginLoader.LoadAll(PluginHostInstance);
+                Info($"[插件] 共加载 {plugins.Count} 个插件");
+            }
+            catch (Exception ex)
+            {
+                Error("插件加载失败", ex);
+            }
         }
         private void audioVolumeChanged() => Debug($"音量改变{_currentVolume:F2}");
         #region 监听
@@ -545,7 +558,7 @@ namespace NotchPeninsula
                 }
 
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出或链接岛展示时绝对不允许隐藏
-                bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive && !isClipboardActive;
+                bool shouldHide = IsAutoHideEnabled && !Renderer.MediaActive && !_isManuallyExpanded && !isToastActive && !isClipboardActive;
 
                 // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
                 // Y 轴的隐藏位移量必须加上灵动岛专属的下沉高度，否则藏不进屏幕
@@ -589,10 +602,9 @@ namespace NotchPeninsula
                 // ========================================================
                 // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
                 // ========================================================
-                bool currentActive = _media.IsActive;
 
                 // 状态叠化透明度计算 (0.3s 平滑过渡，将媒体展开与折叠拆分为独立状态触发叠化)
-                int currentDisplayState = isClipboardActive ? 4 : (isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0));
+                int currentDisplayState = isClipboardActive ? 5 : (isToastActive ? 3 : (Renderer.ActiveDetailWidget != null ? 4 : 0));
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
@@ -606,14 +618,16 @@ namespace NotchPeninsula
                     expectedTargetWidth = Renderer.GetClipboardAutoWidth(_currentClipboardLink);
                 else if (isToastActive)
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
-                else if (Renderer.CompositeModeEnabled)
-                {
-                    // 调用渲染器中的像素级精确动态宽度计算，拒绝任何多余空白与错位
-                    expectedTargetWidth = Renderer.GetCompositeWidth(_media);
-                }
+                else if (Renderer.ActiveDetailWidget?.DetailPage is { } detailPage)
+                    expectedTargetWidth = detailPage.MeasureWidth();
+                else if (Renderer.WidgetRow is { Count: > 0 })
+                    expectedTargetWidth = Math.Clamp(WidgetLayout.MeasureRowWidth(Renderer.WidgetRow, Renderer.BASE_HEIGHT, 12f) + 32f, 60f, 900f);
                 else
-                    expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH;
+                    expectedTargetWidth = Renderer.STANDBY_WIDTH;
 
+                float expectedTargetHeight = isClipboardActive ? Renderer.CLIPBOARD_HEIGHT
+                    : (isToastActive ? Renderer.TOAST_HEIGHT
+                    : (Renderer.ActiveDetailWidget?.DetailPage is { } activeDetail ? Math.Clamp(activeDetail.MeasureHeight(), 130f, Renderer.MAX_WINDOW_HEIGHT) : Renderer.BASE_HEIGHT));
                 // 自动文本长度自适应逻辑
                 // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
                 bool bypassAutoWidth = Renderer.CompositeModeEnabled || isClipboardActive;
@@ -707,27 +721,6 @@ namespace NotchPeninsula
                 startupProgress = (float)(1.0 - (invT * invT * invT));
             }
 
-            // 频谱优先取 Just Solo LyricServer 推送（独占音频输出时本地采集拿不到数据），
-            // 不可用（未连接 / 服务端不支持 / 已暂停）时回退到原来的 WASAPI 采集
-            bool useSoloSpectrum = _media.TryGetSoloSpectrum(out float[] soloBands) && soloBands.Length >= 12;
-            if (_wasUsingSoloSpectrum && !useSoloSpectrum)
-                _audioAnalyzer.EnsureCaptureAlive(); // LyricServer 频谱刚结束，让它立即复核本地采集
-            _wasUsingSoloSpectrum = useSoloSpectrum;
-
-            float[] targetBars = useSoloSpectrum ? MapSoloSpectrum(soloBands) : _audioAnalyzer.GetBars();
-            for (int i = 0; i < 5; i++)
-            {
-                float target = targetBars[i];
-                if (target > _currentBars[i])
-                {
-                    _currentBars[i] += (target - _currentBars[i]) * 0.75f;
-                }
-                else
-                {
-                    _currentBars[i] += (target - _currentBars[i]) * 0.12f;
-                }
-            }
-
             // ================= 4. 渲染调用更新 =================
             var canvas = _renderSurface!.Canvas;
             canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
@@ -738,10 +731,13 @@ namespace NotchPeninsula
                 // 让底层 C++ 引擎接管坐标放大
                 canvas.Scale(_dpiScale);
 
-                _media.UpdateLyrics(); // 更新歌词
-
                 // 传入 currentHeight 和 _currentToast
-                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha, isClipboardActive ? _currentClipboardLink : null);
+                // 构建组件行（按 WidgetOrder 顺序，变化时才重建）
+                BuildWidgetRowIfChanged();
+                Renderer.WidgetRow = _widgetRow;
+                Renderer.PluginWidgets = PluginHostInstance.Widgets;
+
+                Renderer.Draw(canvas, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha, isClipboardActive ? _currentClipboardLink : null);
 
                 // 恢复原始矩阵状态
                 canvas.Restore();
@@ -753,19 +749,6 @@ namespace NotchPeninsula
                 // 渲染安全结束，释放标记，允许下一帧进入
                 System.Threading.Interlocked.Exchange(ref _isRendering, 0);
             }
-        }
-
-        // 把 LyricServer 的 12 个频段（低频→高频）按区间取峰值压缩为渲染层的 5 根柱。
-        // 返回复用缓冲以避免每帧分配；调用方只有 RenderLoop，且它由 _isRendering 保证串行执行，
-        // 写入后当帧立即被消费，不存在跨线程/跨帧共享。
-        private float[] MapSoloSpectrum(float[] bands)
-        {
-            _spectrumBars[0] = Math.Max(bands[0], bands[1]);
-            _spectrumBars[1] = Math.Max(bands[2], Math.Max(bands[3], bands[4]));
-            _spectrumBars[2] = Math.Max(bands[5], bands[6]);
-            _spectrumBars[3] = Math.Max(bands[7], Math.Max(bands[8], bands[9]));
-            _spectrumBars[4] = Math.Max(bands[10], bands[11]);
-            return _spectrumBars;
         }
 
         private void UpdateWindow()
@@ -792,6 +775,126 @@ namespace NotchPeninsula
             Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
 
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
+        }
+
+        // 读取组件顺序配置（注册表 WidgetOrder，逗号分隔的组件 ID）
+        private static string GetWidgetOrder()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                return key?.GetValue("WidgetOrder") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        // 按 WidgetOrder 顺序重建组件行（顺序或插件数变化时才重建，避免每帧分配）
+        private void BuildWidgetRowIfChanged()
+        {
+            int count = PluginHostInstance.Widgets.Count;
+            string order = GetWidgetOrder();
+            if (string.IsNullOrWhiteSpace(order))
+                order = "builtin.clock,builtin.hardware,builtin.media"; // 默认顺序
+            string disabledStr = GetDisabledWidgetsStr();
+            if (order == _cachedWidgetOrder && count == _cachedWidgetCount && disabledStr == _cachedDisabled && _widgetRow.Count > 0) return;
+            _cachedWidgetOrder = order;
+            _cachedWidgetCount = count;
+            _cachedDisabled = disabledStr;
+
+            var disabled = new HashSet<string>(disabledStr.Split(',', StringSplitOptions.RemoveEmptyEntries));
+            var all = new List<IWidget>();
+            foreach (var w in PluginHostInstance.Widgets) all.Add(w);
+
+            _widgetRow.Clear();
+            foreach (var id in order.Split(','))
+            {
+                if (disabled.Contains(id.Trim())) continue;
+                var w = all.FirstOrDefault(x => x.Id == id.Trim());
+                if (w != null && !_widgetRow.Contains(w)) _widgetRow.Add(w);
+            }
+            foreach (var w in all)
+            {
+                if (disabled.Contains(w.Id)) continue;
+                if (!_widgetRow.Contains(w)) _widgetRow.Add(w);
+            }
+        }
+
+        private static string GetDisabledWidgetsStr()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                return key?.GetValue("DisabledWidgets") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        public static bool IsWidgetDisabled(string id)
+        {
+            var disabled = new HashSet<string>(GetDisabledWidgetsStr().Split(',', StringSplitOptions.RemoveEmptyEntries));
+            return disabled.Contains(id);
+        }
+
+        public static void ToggleWidgetEnabled(string id)
+        {
+            var disabled = new HashSet<string>(GetDisabledWidgetsStr().Split(',', StringSplitOptions.RemoveEmptyEntries));
+            if (!disabled.Add(id)) disabled.Remove(id);
+            Program.SaveSetting("DisabledWidgets", string.Join(",", disabled));
+        }
+
+        // 返回全部组件（含停用）按 WidgetOrder 排序
+        public static IReadOnlyList<IWidget> GetAllWidgetsInOrder()
+        {
+            var all = new List<IWidget>();
+            foreach (var w in PluginHostInstance.Widgets) all.Add(w);
+            string order = GetWidgetOrder();
+            if (string.IsNullOrWhiteSpace(order)) order = "builtin.clock,builtin.hardware,builtin.media";
+            var result = new List<IWidget>();
+            foreach (var id in order.Split(','))
+            {
+                var w = all.FirstOrDefault(x => x.Id == id.Trim());
+                if (w != null && !result.Contains(w)) result.Add(w);
+            }
+            foreach (var w in all)
+            {
+                if (!result.Contains(w)) result.Add(w);
+            }
+            return result;
+        }
+
+        // 移动组件顺序（direction: -1 上移, +1 下移），保存到注册表 WidgetOrder
+        public static void MoveWidget(string id, int direction)
+        {
+            var row = Renderer.WidgetRow;
+            if (row == null) return;
+            int idx = -1;
+            for (int i = 0; i < row.Count; i++) { if (row[i].Id == id) { idx = i; break; } }
+            if (idx < 0) return;
+            int newIdx = idx + direction;
+            if (newIdx < 0 || newIdx >= row.Count) return;
+
+            var list = new List<IWidget>(row);
+            (list[idx], list[newIdx]) = (list[newIdx], list[idx]);
+            Program.SaveSetting("WidgetOrder", string.Join(",", list.Select(w => w.Id)));
+        }
+
+        // 右键命中插件组件时，若有详情页则打开
+        private bool TryOpenPluginDetail(int cx, int cy)
+        {
+            var slots = Renderer.WidgetRowSlots;
+            if (slots == null) return false;
+            float topY = Renderer.WidgetRowTopY;
+            foreach (var slot in slots)
+            {
+                var rect = slot.Rect;
+                var hitRect = new SKRect(rect.Left, rect.Top + topY, rect.Right, rect.Bottom + topY);
+                if (hitRect.Contains(cx, cy) && slot.Widget.DetailPage != null)
+                {
+                    Renderer.ActiveDetailWidget = slot.Widget;
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void RaiseWindowClicked(int x, int y, string? hitTarget = null)
@@ -870,36 +973,6 @@ namespace NotchPeninsula
                         {
                             _isCursorOverIcon = true;
                         }
-                        else if (_isHovered && _media.IsActive && _currentToast == null)
-                        {
-                            if (Renderer.IsMediaExpanded)
-                            {
-                                float btnY = (_currentHeight - 32f) + hitTopY;
-                                float center = Renderer.WINDOW_WIDTH / 2f;
-                                bool inY = my >= btnY - 12 && my <= btnY + 30;
-                                bool hitPrev = mx >= center - 75 && mx <= center - 34;
-                                bool hitPlay = mx >= center - 20 && mx <= center + 22;
-                                bool hitNext = mx >= center + 32 && mx <= center + 75;
-                                Renderer.HoveredExpandedButton = inY ? (hitPrev ? 0 : (hitPlay ? 1 : (hitNext ? 2 : -1))) : -1;
-                                _isCursorOverIcon = Renderer.HoveredExpandedButton != -1;
-                            }
-                            else
-                            {
-                                if (Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
-                                {
-                                    float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                                    float right = left + _currentWidth;
-                                    _isCursorOverIcon = (mx >= left && mx <= right && my >= hitTopY && my <= hitTopY + _currentHeight);
-                                }
-                                else
-                                {
-                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
-                                    int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
-                                    float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
-                                    _isCursorOverIcon = (my >= btnStartY && my <= btnEndY) && ((mx >= btnPrevX + 6 && mx <= btnPrevX + 24) || (mx >= btnPlayX + 6 && mx <= btnPlayX + 24) || (mx >= btnNextX + 6 && mx <= btnNextX + 24));
-                                }
-                            }
-                        }
                         else
                         {
                             _isCursorOverIcon = false;
@@ -931,6 +1004,41 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
+                        // 详情页交互：命中则执行动作，未命中则关闭
+                        if (Renderer.ActiveDetailWidget?.DetailPage is { } detail)
+                        {
+                            var drect = Renderer.ActiveDetailRect;
+                            float dx = cx - drect.Left;
+                            float dy = cy - Renderer.WidgetRowTopY;
+                            var hit = detail.HitTest(dx, dy, drect);
+                            if (hit.IsHit)
+                            {
+                                detail.OnAction(hit.Action, dx, dy);
+                                return (IntPtr)0;
+                            }
+                            Renderer.ActiveDetailWidget = null; // 点击空白，关闭详情
+                            return (IntPtr)0; // 关闭详情时不处理行内点击
+                        }
+
+                        // 行内组件点击（无详情时）
+                        var wslots = Renderer.WidgetRowSlots;
+                        if (wslots != null)
+                        {
+                            foreach (var slot in wslots)
+                            {
+                                var hitRect = new SKRect(slot.Rect.Left, slot.Rect.Top + Renderer.WidgetRowTopY, slot.Rect.Right, slot.Rect.Bottom + Renderer.WidgetRowTopY);
+                                if (hitRect.Contains(cx, cy))
+                                {
+                                    var wh = slot.Widget.HitTest(cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY, slot.Rect);
+                                    if (wh.IsHit)
+                                    {
+                                        slot.Widget.OnLeftClick(wh.Action, cx - slot.Rect.Left, cy - Renderer.WidgetRowTopY);
+                                        return (IntPtr)0;
+                                    }
+                                }
+                            }
+                        }
+
                         // 完美对齐渲染中心点，精准拦截唤醒点击
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
                         {
@@ -945,52 +1053,24 @@ namespace NotchPeninsula
 
                         RaiseWindowClicked(cx, cy, "main-window");
 
-                        if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
+                        if (IsAutoHideEnabled && !Renderer.MediaActive && _currentY < -5f)
                         {
                             _isManuallyExpanded = true;
                             return (IntPtr)0;
                         }
 
-                        if (_isHovered && _media.IsActive && _currentToast == null)
-                        {
-                            bool hitButtons = false;
-                            if (Renderer.IsMediaExpanded)
-                            {
-                                float btnY = (_currentHeight - 32f) + hitTopY;
-                                float center = Renderer.WINDOW_WIDTH / 2f;
-                                if (cy >= btnY - 5 && cy <= btnY + 25)
-                                {
-                                    if (cx >= center - 65 && cx <= center - 35) { _media.Previous(); hitButtons = true; }
-                                    else if (cx >= center - 15 && cx <= center + 15) { _media.TogglePlayPause(); hitButtons = true; }
-                                    else if (cx >= center + 35 && cx <= center + 65) { _media.Next(); hitButtons = true; }
-                                }
-                            }
-                            else
-                            {
-                                if (Renderer.MediaInteractionMode == 0 || Renderer.CompositeModeEnabled)
-                                {
-                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
-                                    float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
-                                    if (cy >= btnStartY && cy <= btnStartY + 18f)
-                                    {
-                                        if (cx >= right - 84 && cx <= right - 66) { _media.Previous(); hitButtons = true; }
-                                        else if (cx >= right - 54 && cx <= right - 36) { _media.TogglePlayPause(); hitButtons = true; }
-                                        else if (cx >= right - 24 && cx <= right - 6) { _media.Next(); hitButtons = true; }
-                                    }
-                                }
-                            }
-
-                            if (!hitButtons && Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
-                            {
-                                Renderer.IsMediaExpanded = true;
-                            }
-                        }
                         break;
                     }
 
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
+                        int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        if (TryOpenPluginDetail(rx, ry))
+                        {
+                            return (IntPtr)0; // 已打开插件详情，短路
+                        }
                         ConsoleWindow.Toggle();
                     }
                     break;
