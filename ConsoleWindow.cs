@@ -185,7 +185,7 @@ namespace NotchPeninsula
             // 匹配目前加载的媒体平台索引
             for (int i = 0; i < _platforms.Length; i++)
             {
-                if (_platforms[i].Id == MediaController.TargetPlatform)
+                if (_platforms[i].Id == MediaSettings.TargetPlatform)
                 {
                     _selectedPlatformIndex = i; break;
                 }
@@ -862,34 +862,34 @@ namespace NotchPeninsula
                     }
                     else if (_mediaToggleHovered)
                     {
-                        MediaController.IsMediaControlEnabled = !MediaController.IsMediaControlEnabled;
+                        MediaSettings.IsMediaControlEnabled = !MediaSettings.IsMediaControlEnabled;
                         // 保存媒体控制开关 (转换为0/1)
-                        Program.SaveSetting("MediaControl", MediaController.IsMediaControlEnabled ? 1 : 0);
+                        Program.SaveSetting("MediaControl", MediaSettings.IsMediaControlEnabled ? 1 : 0);
 
-                        _ = MediaController.Instance?.ForceRefresh();
+                        MediaSettings.NotifyChanged();
                         Render();
                     }
                     else if (_selectedTab == 2 && _lyricToggleHovered)
                     {
-                        MediaController.IsLyricsEnabled = !MediaController.IsLyricsEnabled;
-                        Program.SaveSetting("LyricsEnabled", MediaController.IsLyricsEnabled ? 1 : 0);
+                        MediaSettings.IsLyricsEnabled = !MediaSettings.IsLyricsEnabled;
+                        Program.SaveSetting("LyricsEnabled", MediaSettings.IsLyricsEnabled ? 1 : 0);
                         Render();
                     }
                     else if (_selectedTab == 2 && _karaokeToggleHovered)
                     {
-                        MediaController.IsKaraokeEnabled = !MediaController.IsKaraokeEnabled;
-                        Program.SaveSetting("KaraokeEnabled", MediaController.IsKaraokeEnabled ? 1 : 0);
+                        MediaSettings.IsKaraokeEnabled = !MediaSettings.IsKaraokeEnabled;
+                        Program.SaveSetting("KaraokeEnabled", MediaSettings.IsKaraokeEnabled ? 1 : 0);
                         Render();
                     }
                     else if (_selectedTab == 2 && (_lyricMinusHovered || _lyricPlusHovered || _lyricResetHovered))
                     {
-                        if (_lyricResetHovered) MediaController.LyricDelayOffset = 0f;
-                        else if (_lyricMinusHovered) MediaController.LyricDelayOffset -= 0.1f;
-                        else if (_lyricPlusHovered) MediaController.LyricDelayOffset += 0.1f;
+                        if (_lyricResetHovered) MediaSettings.LyricDelayOffset = 0f;
+                        else if (_lyricMinusHovered) MediaSettings.LyricDelayOffset -= 0.1f;
+                        else if (_lyricPlusHovered) MediaSettings.LyricDelayOffset += 0.1f;
 
                         // 避免浮点数精度爆炸，固定为 1 位小数
-                        MediaController.LyricDelayOffset = (float)Math.Round(MediaController.LyricDelayOffset, 1);
-                        Program.SaveSetting("LyricDelayOffset", MediaController.LyricDelayOffset);
+                        MediaSettings.LyricDelayOffset = (float)Math.Round(MediaSettings.LyricDelayOffset, 1);
+                        Program.SaveSetting("LyricDelayOffset", MediaSettings.LyricDelayOffset);
                         Render();
                     }
                     else if (_autoHideToggleHovered)
@@ -927,12 +927,12 @@ namespace NotchPeninsula
                     else if (_dropdownOpen && _hoveredDropdownIndex != -1)
                     {
                         _selectedPlatformIndex = _hoveredDropdownIndex;
-                        MediaController.TargetPlatform = _platforms[_selectedPlatformIndex].Id;
+                        MediaSettings.TargetPlatform = _platforms[_selectedPlatformIndex].Id;
 
                         // 保存目标媒体平台字符串
-                        Program.SaveSetting("TargetPlatform", MediaController.TargetPlatform);
+                        Program.SaveSetting("TargetPlatform", MediaSettings.TargetPlatform);
 
-                        _ = MediaController.Instance?.ForceRefresh();
+                        MediaSettings.NotifyChanged();
                         _dropdownOpen = false;
                         Render();
                     }
@@ -1357,7 +1357,7 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 2)
             {
-                DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
+                DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaSettings.IsMediaControlEnabled, _mediaToggleHovered);
 
                 var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 84, WIDTH - 20, TITLE_BAR_HEIGHT + 146);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBg); canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
@@ -1385,7 +1385,7 @@ namespace NotchPeninsula
                 float tW = 42, tH = 20;
                 float tX = WIDTH - 20 - 16 - tW, tY = lyricY + 37;
                 var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-                if (MediaController.IsLyricsEnabled)
+                if (MediaSettings.IsLyricsEnabled)
                 {
                     _dynamicFillPaint.Color = _lyricToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                     canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
@@ -1404,7 +1404,7 @@ namespace NotchPeninsula
                 canvas.DrawText("开启卡拉OK动效", 216, lyricY + 92, _subTextPaint);
                 float kY = lyricY + 77;
                 var kRect = new SKRect(tX, kY, tX + tW, kY + tH);
-                if (MediaController.IsKaraokeEnabled)
+                if (MediaSettings.IsKaraokeEnabled)
                 {
                     _dynamicFillPaint.Color = _karaokeToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                     canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicFillPaint);
@@ -1428,8 +1428,8 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), 4, 4, _dynamicFillPaint);
                 canvas.DrawText("-", cardRightX - 164, btnY + 17, _uiTextPaint);
 
-                string valStr = $"{MediaController.LyricDelayOffset:F1} s";
-                if (MediaController.LyricDelayOffset > 0) valStr = "+" + valStr;
+                string valStr = $"{MediaSettings.LyricDelayOffset:F1} s";
+                if (MediaSettings.LyricDelayOffset > 0) valStr = "+" + valStr;
                 float textW = _uiTextPaint.MeasureText(valStr);
                 canvas.DrawText(valStr, cardRightX - 90 - textW, btnY + 17, _uiTextPaint);
 

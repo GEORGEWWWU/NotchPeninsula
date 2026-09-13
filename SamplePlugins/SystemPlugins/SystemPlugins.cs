@@ -15,6 +15,7 @@ public sealed class SystemPluginsPlugin : INotchPlugin
 
     public void Initialize(IPluginHost host)
     {
+        _ = new MediaController(); // 启动媒体引擎单例（SMTC + 歌词 + 频谱）
         host.RegisterWidget(new ClockWidget());
         host.RegisterWidget(new HardwareWidget(host));
         host.RegisterWidget(new MediaWidget(host));
@@ -396,16 +397,9 @@ public sealed class HardwareDetailPage : IDetailPage
     public void OnAction(string? action, float x, float y) { }
 }
 
-/// <summary>媒体组件（自包含 SMTC 读取：标题/艺术家/封面/播放状态 + 播放控制）。</summary>
+/// <summary>媒体组件（委托给 MediaController 引擎：标题/艺术家/封面/播放状态 + 播放控制）。</summary>
 public sealed class MediaWidget : IWidget
 {
-    private GlobalSystemMediaTransportControlsSessionManager? _manager;
-    private GlobalSystemMediaTransportControlsSession? _session;
-    private volatile bool _active;
-    private volatile bool _playing;
-    private volatile string _title = "";
-    private volatile string _artist = "";
-    private volatile SKBitmap? _thumbnail;
     private readonly MediaDetailPage _detailPage;
 
     private static readonly SKPaint _textPaint = new()
@@ -427,67 +421,26 @@ public sealed class MediaWidget : IWidget
     public MediaWidget(IPluginHost host)
     {
         _detailPage = new MediaDetailPage(this);
-        _ = InitAsync(host);
-    }
-
-    private async Task InitAsync(IPluginHost host)
-    {
-        try
+        // 每秒同步一次媒体状态 + 歌词进度，并回写平台层的 MediaActive 标志
+        host.ScheduleRefresh(TimeSpan.FromSeconds(1), () =>
         {
-            _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-            _manager.SessionsChanged += (s, e) => _ = RefreshAsync();
-            await RefreshAsync();
-            double interval = double.TryParse(host.GetSetting("MediaInterval", "2"), out var iv) ? Math.Clamp(iv, 1, 10) : 2;
-            host.ScheduleRefresh(TimeSpan.FromSeconds(interval), () => _ = RefreshAsync());
-        }
-        catch { }
+            var c = MediaController.Instance;
+            if (c == null) return;
+            c.UpdateLyrics();
+            NotchPeninsula.Renderer.MediaActive = c.IsActive;
+        });
     }
 
-    private async Task RefreshAsync()
-    {
-        try
-        {
-            _session = _manager?.GetCurrentSession();
-            if (_session == null) { _active = false; _title = ""; _artist = ""; _thumbnail = null; return; }
-            var props = await _session.TryGetMediaPropertiesAsync();
-            _title = props?.Title ?? "";
-            _artist = props?.Artist ?? "";
-            _active = !string.IsNullOrEmpty(_title) || !string.IsNullOrEmpty(_artist);
+    private static MediaController? Ctl => MediaController.Instance;
 
-            try
-            {
-                if (props?.Thumbnail != null)
-                {
-                    using var stream = await props.Thumbnail.OpenReadAsync();
-                    using var dotNetStream = stream.AsStreamForRead();
-                    var newThumb = SKBitmap.Decode(dotNetStream);
-                    var old = _thumbnail;
-                    _thumbnail = newThumb;
-                    old?.Dispose();
-                }
-                else _thumbnail = null;
-            }
-            catch { _thumbnail = null; }
+    internal string Title => Ctl?.Title ?? "";
+    internal string Artist => Ctl?.Artist ?? "";
+    internal bool Playing => Ctl?.IsPlaying ?? false;
+    internal SKBitmap? Thumbnail => Ctl?.Thumbnail;
 
-            var info = _session.GetPlaybackInfo();
-            _playing = info?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
-        }
-        catch { _active = false; }
-    }
-
-    public async void TogglePlayPause()
-    {
-        var s = _session;
-        if (s == null) return;
-        if (_playing) await s.TryPauseAsync(); else await s.TryPlayAsync();
-    }
-    public async void Next() { var s = _session; if (s != null) await s.TrySkipNextAsync(); }
-    public async void Previous() { var s = _session; if (s != null) await s.TrySkipPreviousAsync(); }
-
-    internal string Title => _title;
-    internal string Artist => _artist;
-    internal bool Playing => _playing;
-    internal SKBitmap? Thumbnail => _thumbnail;
+    internal void TogglePlayPause() => Ctl?.TogglePlayPause();
+    internal void Next() => Ctl?.Next();
+    internal void Previous() => Ctl?.Previous();
 
     public string Id => "builtin.media";
     public string DisplayName => "媒体";
@@ -495,13 +448,14 @@ public sealed class MediaWidget : IWidget
 
     public float MeasureWidth(float availableHeight)
     {
-        if (!_active) return 0f;
+        if (Ctl?.IsActive != true) return 0f;
         return _textPaint.MeasureText(DisplayText()) + 32f + 100f; // 右侧预留播放控制区
     }
 
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
-        if (!_active) return;
+        if (Ctl?.IsActive != true) return;
+        NotchPeninsula.Renderer.MediaActive = true;
         _textPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
         canvas.DrawText(DisplayText(), rect.Left + 16f, rect.MidY + 5f, _textPaint);
 
@@ -510,7 +464,7 @@ public sealed class MediaWidget : IWidget
             float right = rect.Right;
             float cy = rect.MidY - 6f;
             DrawIcon(canvas, right - 84f, cy, _prevPath, frame);
-            DrawIcon(canvas, right - 54f, cy, _playing ? _pausePath : _playPath, frame);
+            DrawIcon(canvas, right - 54f, cy, Playing ? _pausePath : _playPath, frame);
             DrawIcon(canvas, right - 24f, cy, _nextPath, frame);
         }
     }
@@ -524,11 +478,11 @@ public sealed class MediaWidget : IWidget
         canvas.Restore();
     }
 
-    private string DisplayText() => string.IsNullOrEmpty(_artist) ? _title : $"{_artist} - {_title}";
+    private string DisplayText() => string.IsNullOrEmpty(Artist) ? Title : $"{Artist} - {Title}";
 
     public WidgetHit HitTest(float x, float y, SKRect rect)
     {
-        if (!_active) return WidgetHit.None;
+        if (Ctl?.IsActive != true) return WidgetHit.None;
         float right = rect.Right;
         if (x >= right - 90f && x <= right - 78f) return new WidgetHit("prev");
         if (x >= right - 60f && x <= right - 48f) return new WidgetHit("play");
@@ -540,9 +494,9 @@ public sealed class MediaWidget : IWidget
     {
         switch (action)
         {
-            case "prev": Previous(); break;
-            case "play": TogglePlayPause(); break;
-            case "next": Next(); break;
+            case "prev": Ctl?.Previous(); break;
+            case "play": Ctl?.TogglePlayPause(); break;
+            case "next": Ctl?.Next(); break;
         }
     }
     public void OnRightClick() { }

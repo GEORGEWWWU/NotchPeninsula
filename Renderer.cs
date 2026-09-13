@@ -70,6 +70,7 @@ namespace NotchPeninsula
             return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), 800f);
         }
         public static bool IsMediaExpanded = false;
+        public static bool MediaActive = false; // 是否有正在播放的媒体（由媒体插件写入，供自动隐藏/启动动画判断）
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
         // ===== 剪贴板链接岛 =====
         public const float CLIPBOARD_HEIGHT = 44f;   // 链接岛高度
@@ -253,7 +254,7 @@ namespace NotchPeninsula
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
 
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f, string? clipboardLink = null)
+        public static void Draw(SKCanvas canvas, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f, string? clipboardLink = null)
         {
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
@@ -307,7 +308,7 @@ namespace NotchPeninsula
                 float textOffsetY = 0f;
 
                 // 仅恢复原版代码中软件刚启动时的位移，不影响状态切换
-                if (!media.IsActive && startupProgress < 1f)
+                if (!MediaActive && startupProgress < 1f)
                 {
                     textOffsetY = (1f - startupProgress) * 15f;
                 }
