@@ -625,25 +625,14 @@ namespace NotchPeninsula
                 else
                     expectedTargetWidth = Renderer.STANDBY_WIDTH;
 
+                // 高度优先级：剪贴板 → 通知 → 详情页 → 媒体态（展开 / 折叠） → 兜底
                 float expectedTargetHeight = isClipboardActive ? Renderer.CLIPBOARD_HEIGHT
                     : (isToastActive ? Renderer.TOAST_HEIGHT
-                    : (Renderer.ActiveDetailWidget?.DetailPage is { } activeDetail ? Math.Clamp(activeDetail.MeasureHeight(), 130f, Renderer.MAX_WINDOW_HEIGHT) : Renderer.BASE_HEIGHT));
-                // 自动文本长度自适应逻辑
-                // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
-                bool bypassAutoWidth = Renderer.CompositeModeEnabled || isClipboardActive;
-                if (currentActive && !Renderer.IsMediaExpanded && !bypassAutoWidth)
-                {
-                    float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
-                        ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
-                        : (string.IsNullOrEmpty(_media.Artist)
-                            ? Renderer.MeasureCurrentLyricWidth(_media.Title)
-                            : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
-
-                    float requiredWidth = textWidth + 115f;
-                    if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
-                }
-                float expectedTargetHeight = isClipboardActive ? Renderer.MEDIA_HEIGHT
-                    : (isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT));
+                    : (Renderer.ActiveDetailWidget?.DetailPage is { } activeDetail
+                        ? Math.Clamp(activeDetail.MeasureHeight(), 130f, Renderer.MAX_WINDOW_HEIGHT)
+                        : (Renderer.MediaActive
+                            ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT)
+                            : Renderer.BASE_HEIGHT)));
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
