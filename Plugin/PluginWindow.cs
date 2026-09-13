@@ -73,9 +73,10 @@ public sealed class PluginWindow : IPluginWindow
             return;
 
         // 屏幕居中
-        var screen = System.Windows.Forms.Screen.PrimaryScreen;
-        int x = screen.WorkingArea.Left + (screen.WorkingArea.Width - _width) / 2;
-        int y = screen.WorkingArea.Top + (screen.WorkingArea.Height - _height) / 2;
+        var area = System.Windows.Forms.Screen.PrimaryScreen?.WorkingArea
+            ?? new System.Drawing.Rectangle(0, 0, _width, _height);
+        int x = area.Left + (area.Width - _width) / 2;
+        int y = area.Top + (area.Height - _height) / 2;
 
         _hwnd = Win32.CreateWindowEx(
             Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED,
