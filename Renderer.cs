@@ -63,11 +63,13 @@ namespace NotchPeninsula
             if (string.IsNullOrEmpty(text)) return 0;
             return _textPaint.MeasureText(text);
         }
-        // 计算Toast消息自适应宽度，限制最大500px
+        // 消息类弹窗（通知/剪贴板）统一的最大宽度，保证两者最长时一致
+        private const float MESSAGE_MAX_WIDTH = 800f;
+        // 计算Toast消息自适应宽度
         public static float GetToastAutoWidth()
         {
             float maxTextW = Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
-            return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), 800f);
+            return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), MESSAGE_MAX_WIDTH);
         }
         public static bool IsMediaExpanded = false;
         public static bool MediaActive = false; // 是否有正在播放的媒体（由媒体插件写入，供自动隐藏/启动动画判断）
@@ -81,12 +83,12 @@ namespace NotchPeninsula
         private static SKBitmap? _clipboardIcon;
         private static SKBitmap? _openLinkIcon;
 
-        // 链接岛自适应宽度：左图标 + 间距 + 文本 + 间距 + 跳转按钮，并限制最大宽度防止岛体过长
+        // 链接岛宽度随链接内容自适应：左图标 + 间距 + 文本 + 间距 + 跳转按钮，最长与消息显示的最长宽度一致
         public static float GetClipboardAutoWidth(string? link)
         {
             float textW = string.IsNullOrEmpty(link) ? 0f : _textPaint.MeasureText(link);
             float width = CLIPBOARD_PAD + CLIPBOARD_ICON + 10f + textW + 10f + CLIPBOARD_BTN + CLIPBOARD_PAD;
-            return Math.Min(Math.Max(width, 176f), 520f);
+            return Math.Min(Math.Max(width, 176f), MESSAGE_MAX_WIDTH);
         }
         private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔
         private static SKColor _currentTextColor = SKColors.White;

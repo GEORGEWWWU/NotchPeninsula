@@ -129,9 +129,15 @@ namespace NotchPeninsula
                         ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
                         StateMask = 0
                     };
-                    SetProcessInformation(System.Diagnostics.Process.GetCurrentProcess().Handle, ProcessPowerThrottling, ref throttling, (uint)Marshal.SizeOf(throttling));
+                    if (!SetProcessInformation(System.Diagnostics.Process.GetCurrentProcess().Handle, ProcessPowerThrottling, ref throttling, (uint)Marshal.SizeOf(throttling)))
+                    {
+                        Logger.Error($"禁用CPU节流失败 | Win32Error={Marshal.GetLastWin32Error()}");
+                    }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Logger.Error("禁用CPU节流异常", ex);
+                }
                 TimeBeginPeriod(1);
 
                 if (args.Length > 0 && args[0] == "-debug")
