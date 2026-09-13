@@ -337,6 +337,16 @@ namespace NotchPeninsula
             {
                 canvas.Clear(SKColors.Transparent);
 
+                var now = DateTime.Now;
+                if (_lastMinute != now.Minute)
+                {
+                    _lastMinute = now.Minute;
+                    _cachedTimeStr = now.ToString("HH:mm");
+                    _cachedDateStr = now.ToString("MM/dd");
+                    _cachedTimeWidth = _timePaint.MeasureText(_cachedTimeStr);
+                    _cachedDateWidth = _datePaint.MeasureText(_cachedDateStr);
+                }
+
                 float left = (WINDOW_WIDTH - currentWidth) / 2f;
                 float right = left + currentWidth;
                 int btnPrevX = (int)right - 90;
@@ -553,19 +563,6 @@ namespace NotchPeninsula
                     {
                         _lyricAnimProgress = (float)(DateTime.Now - _lyricChangeTime).TotalSeconds / 0.35f;
                         if (_lyricAnimProgress > 1f) _lyricAnimProgress = 1f;
-                    }
-                }
-                else
-                {
-                    // 零 GC 性能优化：每帧只读取值类型结构体，仅当分钟变化时分配字符串
-                    var now = DateTime.Now;
-                    if (_lastMinute != now.Minute)
-                    {
-                        _lastMinute = now.Minute;
-                        _cachedTimeStr = now.ToString("HH:mm"); // 00:00 24小时制
-                        _cachedDateStr = now.ToString("MM/dd"); // 月/日 格式
-                        _cachedTimeWidth = _timePaint.MeasureText(_cachedTimeStr);
-                        _cachedDateWidth = _datePaint.MeasureText(_cachedDateStr);
                     }
                 }
 

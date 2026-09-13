@@ -11,6 +11,24 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_POWER_THROTTLING_STATE
+        {
+            public uint Version;
+            public uint ControlMask;
+            public uint StateMask;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetProcessInformation(IntPtr hProcess, int processInformationClass, ref PROCESS_POWER_THROTTLING_STATE processInformation, uint processInformationSize);
+
+        [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+        private static extern uint TimeBeginPeriod(uint uMilliseconds);
+
+        private const int ProcessPowerThrottling = 4;
+        private const uint PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1;
+        private const uint PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1;
+
         // 启动时极速加载配置，只在栈上操作，不产生多余GC
         public static void LoadSettings()
         {
@@ -97,6 +115,19 @@ namespace NotchPeninsula
 
                 // 支持多屏幕不同缩放自动适应
                 SetProcessDpiAwarenessContext(new IntPtr(-4));
+
+                try
+                {
+                    var throttling = new PROCESS_POWER_THROTTLING_STATE
+                    {
+                        Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                        ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                        StateMask = 0
+                    };
+                    SetProcessInformation(System.Diagnostics.Process.GetCurrentProcess().Handle, ProcessPowerThrottling, ref throttling, (uint)Marshal.SizeOf(throttling));
+                }
+                catch { }
+                TimeBeginPeriod(1);
 
                 if (args.Length > 0 && args[0] == "-debug")
                 {
