@@ -305,9 +305,9 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 60 && y <= TITLE_BAR_HEIGHT + 96) newHoveredTab = 0; // 2. 通用设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 1; // 3. 显示设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 3; // 4. 交互设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 190 && y <= TITLE_BAR_HEIGHT + 226) newHoveredTab = 4; // 5. 关于软件
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 6; // 6. 插件管理
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 270 && y <= TITLE_BAR_HEIGHT + 306) newHoveredTab = 2; // 7. 插件设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 190 && y <= TITLE_BAR_HEIGHT + 226) newHoveredTab = 6; // 5. 插件管理
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 2; // 6. 插件设置
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 280 && y <= TITLE_BAR_HEIGHT + 316) newHoveredTab = 4; // 7. 关于软件
 
                     int newHoveredTheme = -1;
                     int newHoveredOpacityIndex = -1;
@@ -1060,9 +1060,10 @@ namespace NotchPeninsula
             DrawTab(1, "显示设置", 100);
             DrawTab(3, "交互设置", 140);
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + 182, 160, TITLE_BAR_HEIGHT + 182, _separatorPaint);
-            DrawTab(4, "关于软件", 190);
-            DrawTab(6, "插件管理", 230);
-            DrawTab(2, "插件设置", 270);
+            DrawTab(6, "插件管理", 190);
+            DrawTab(2, "插件设置", 230);
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 270, 160, TITLE_BAR_HEIGHT + 270, _separatorPaint);
+            DrawTab(4, "关于软件", 280);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
