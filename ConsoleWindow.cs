@@ -47,6 +47,8 @@ namespace NotchPeninsula
         private bool _lyricMinusHovered = false;
         private bool _lyricPlusHovered = false;
         private bool _lyricResetHovered = false;
+        // 插件平台页垂直滚动偏移
+        private float _pluginScrollY = 0f;
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
         private int _hoveredPluginSetting = -1;
@@ -902,6 +904,15 @@ namespace NotchPeninsula
                     }
                     break;
 
+                case Win32.WM_MOUSEWHEEL:
+                    if (_selectedTab == 6)
+                    {
+                        int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                        _pluginScrollY = Math.Clamp(_pluginScrollY - delta / 120f * 40f, 0f, PluginContentScrollMax());
+                        Render();
+                    }
+                    break;
+
                 case Win32.WM_DESTROY:
                     _instance = null;
                     break;
@@ -932,6 +943,22 @@ namespace NotchPeninsula
                 6 => TITLE_BAR_HEIGHT + 535 + 40,
                 _ => 0
             };
+        }
+
+        // 插件平台页内容可滚动的最大偏移（组件顺序 + 选择器 + 选中页控件）
+        private float PluginContentScrollMax()
+        {
+            int widgets = NotchWindow.GetAllWidgetsInOrder().Count;
+            float content = TITLE_BAR_HEIGHT + 46 + widgets * 40 + 38;
+            var pages = NotchWindow.PluginHostInstance.SettingsPages;
+            if (pages.Count > 0)
+            {
+                int idx = Math.Clamp(_selectedPluginIndex, 0, pages.Count - 1);
+                content += pages[idx].Page.Controls.Count * 74f;
+                if (pages[idx].Page is ICustomSettingsPage custom)
+                    content += custom.MeasureHeight() + 12f;
+            }
+            return Math.Max(0f, content - (HEIGHT - TITLE_BAR_HEIGHT));
         }
 
         private unsafe void Render()
@@ -1307,8 +1334,10 @@ namespace NotchPeninsula
                 // ---- 组件顺序 ----
                 _widgetOrderButtons.Clear();
                 _widgetEnabledChecks.Clear();
-                canvas.DrawText("组件顺序", 216, TITLE_BAR_HEIGHT + 28, _uiTextPaint);
-                float wy = TITLE_BAR_HEIGHT + 46;
+                canvas.Save();
+                canvas.ClipRect(new SKRect(200, TITLE_BAR_HEIGHT, WIDTH, HEIGHT));
+                canvas.DrawText("组件顺序", 216, TITLE_BAR_HEIGHT + 28 - _pluginScrollY, _uiTextPaint);
+                float wy = TITLE_BAR_HEIGHT + 46 - _pluginScrollY;
                 var row = NotchWindow.GetAllWidgetsInOrder();
                 for (int i = 0; i < row.Count; i++)
                 {
@@ -1458,6 +1487,7 @@ namespace NotchPeninsula
                 {
                     canvas.DrawText("暂无插件", 216, selY + 20, _subTextPaint);
                 }
+                canvas.Restore();
             }
             else if (_selectedTab == 5)
             {
