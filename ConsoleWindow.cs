@@ -1512,7 +1512,7 @@ namespace NotchPeninsula
                 _widgetEnabledChecks.Clear();
                 canvas.Save();
                 canvas.ClipRect(new SKRect(200, TITLE_BAR_HEIGHT, WIDTH, HEIGHT));
-                canvas.DrawText("组件顺序", 216, TITLE_BAR_HEIGHT + 28 - _pluginScrollY, _uiTextPaint);
+                canvas.DrawText("插件显示", 216, TITLE_BAR_HEIGHT + 28 - _pluginScrollY, _uiTextPaint);
                 float wy = TITLE_BAR_HEIGHT + 46 - _pluginScrollY;
                 var row = NotchWindow.GetAllWidgetsInOrder();
                 for (int i = 0; i < row.Count; i++)
