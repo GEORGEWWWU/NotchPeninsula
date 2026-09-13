@@ -19,6 +19,12 @@ public sealed class PluginWindow : IPluginWindow
     private static readonly Dictionary<IntPtr, PluginWindow> _windows = new();
     private static readonly Win32.WndProc _wndProc = WndProc;
 
+    // 对话框外观：圆角背景 + 边框
+    private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(30, 30, 30), IsAntialias = true };
+    private static readonly SKPaint _borderPaint = new SKPaint { Color = new SKColor(255, 255, 255, 38), Style = SKPaintStyle.Stroke, StrokeWidth = 1f, IsAntialias = true };
+    private static readonly SKPaint _closeBtnPaint = new SKPaint { Color = new SKColor(255, 255, 255, 30), IsAntialias = true };
+    private static readonly SKPaint _closeXPaint = new SKPaint { Color = new SKColor(255, 255, 255, 210), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
+
     private readonly string _title;
     private readonly int _width, _height;
     private float _dpiScale = 1f;
@@ -159,7 +165,11 @@ public sealed class PluginWindow : IPluginWindow
 
     private float LogicalX(IntPtr lParam) => Lo(lParam) / _dpiScale;
     private float LogicalY(IntPtr lParam) => Hi(lParam) / _dpiScale;
-    private bool IsCloseButtonHit(float x, float y) => x >= _width - 28 && x <= _width - 8 && y >= 8 && y <= 28;
+    private bool IsCloseButtonHit(float x, float y)
+    {
+        float dx = x - (_width - 18), dy = y - 16;
+        return dx * dx + dy * dy <= 12f * 12f; // 圆形命中区域
+    }
 
     private static int Lo(IntPtr lParam) => (short)(lParam.ToInt64() & 0xFFFF);
     private static int Hi(IntPtr lParam) => (short)((lParam.ToInt64() >> 16) & 0xFFFF);
@@ -171,7 +181,18 @@ public sealed class PluginWindow : IPluginWindow
         canvas.Clear(SKColors.Transparent);
         canvas.Save();
         canvas.Scale(_dpiScale); // 让插件按逻辑坐标绘制
+
+        // 圆角背景 + 边框
+        var bg = new SKRoundRect(new SKRect(0, 0, _width, _height), 14f);
+        canvas.DrawRoundRect(bg, _bgPaint);
+        canvas.DrawRoundRect(bg, _borderPaint);
+
+        // 插件内容裁剪到圆角内，避免四角溢出
+        canvas.Save();
+        canvas.ClipRoundRect(bg, antialias: true);
         _draw(canvas, _width, _height);
+        canvas.Restore();
+
         DrawCloseButton(canvas);
         canvas.Restore();
 
@@ -192,9 +213,10 @@ public sealed class PluginWindow : IPluginWindow
 
     private void DrawCloseButton(SKCanvas canvas)
     {
-        var paint = new SKPaint { Color = new SKColor(255, 255, 255, 190), IsAntialias = true, StrokeWidth = 2f };
-        canvas.DrawLine(_width - 24, 12, _width - 12, 24, paint);
-        canvas.DrawLine(_width - 12, 12, _width - 24, 24, paint);
+        float cx = _width - 18, cy = 16, r = 10;
+        canvas.DrawCircle(cx, cy, r, _closeBtnPaint);
+        canvas.DrawLine(cx - 4, cy - 4, cx + 4, cy + 4, _closeXPaint);
+        canvas.DrawLine(cx + 4, cy - 4, cx - 4, cy + 4, _closeXPaint);
     }
 
     private void InitBuffer()
