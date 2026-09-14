@@ -72,21 +72,20 @@ internal sealed class TestWidget : IWidget, IDisposable
     private readonly TestPlugin _plugin;
     private volatile bool _on = true;
 
-    // 画笔只创建一次并复用：Draw 每帧被调用，绝不在 Draw 里 new 对象（零 GC）。
-    private readonly SKTypeface _typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI");
-    private readonly SKPaint _dotPaint = new() { IsAntialias = true };
-    private readonly SKPaint _textPaint = new() { IsAntialias = true, TextSize = 12.5f };
+    // 重要设计取舍：这里「绝不缓存」任何 SKPaint / SKTypeface 原生对象。
+    //  1) 插件运行在可回收的独立 AssemblyLoadContext，开关插件时会 Dispose 旧组件并卸载上下文；
+    //  2) 渲染线程可能仍在一帧内引用旧组件（卸载与重绘存在竞态），复用已被释放的画笔会直接
+    //     触发原生访问冲突 0xC0000005 崩溃（原实现即因此崩溃）；
+    //  3) 画笔改为「绘制线程上临时创建、用后即弃」，既避免跨线程共享原生对象，
+    //     也保证卸载瞬间绝无残留引用 —— 是测试插件「稳定性优先」的正确取舍。
+    // 组件文字全为 ASCII/半角符号（"TEST · 12s"），直接用 SkiaSharp 默认字体即可，无需显式微软雅黑。
 
     private string _lastText = "";
     private float _lastTextWidth;
     private bool _lastOn;
     private int _lastSeconds = -1;
 
-    public TestWidget(TestPlugin plugin)
-    {
-        _plugin = plugin;
-        _textPaint.Typeface = _typeface;
-    }
+    public TestWidget(TestPlugin plugin) => _plugin = plugin;
 
     public string Id => "com.test.notch-plugin.widget";
     public string DisplayName => "TEST";
@@ -104,13 +103,22 @@ internal sealed class TestWidget : IWidget, IDisposable
         RefreshText();
         float cy = rect.MidY + frame.TextOffsetY;
 
-        // 圆点：开启=绿，关闭=灰；Alpha 跟随主机的淡入/叠化。
-        _dotPaint.Color = (_on ? new SKColor(76, 175, 80) : new SKColor(130, 130, 130)).WithAlpha(frame.Alpha);
-        canvas.DrawCircle(rect.Left + 6f, cy, 4f, _dotPaint);
+        // 圆点：开启=绿，关闭=灰；Alpha 跟随主机的淡入/叠化。画笔本帧临时创建、用完即释放。
+        using var dot = new SKPaint
+        {
+            IsAntialias = true,
+            Color = (_on ? new SKColor(76, 175, 80) : new SKColor(130, 130, 130)).WithAlpha(frame.Alpha),
+        };
+        canvas.DrawCircle(rect.Left + 6f, cy, 4f, dot);
 
         // 文字用主机当前主题色（自适应黑/白主题）。
-        _textPaint.Color = frame.Theme.TextColor.WithAlpha(frame.Alpha);
-        canvas.DrawText(_lastText, rect.Left + 18f, cy + 4.5f, _textPaint);
+        using var textPaint = new SKPaint
+        {
+            IsAntialias = true,
+            TextSize = 12.5f,
+            Color = frame.Theme.TextColor.WithAlpha(frame.Alpha),
+        };
+        canvas.DrawText(_lastText, rect.Left + 18f, cy + 4.5f, textPaint);
     }
 
     public WidgetHit HitTest(float x, float y, SKRect rect)
@@ -142,13 +150,9 @@ internal sealed class TestWidget : IWidget, IDisposable
         _lastText = _on
             ? (sec <= 0 ? "TEST" : $"TEST · {sec}s")
             : $"OFF · {sec}s";
-        _lastTextWidth = _textPaint.MeasureText(_lastText);
+        using var measure = new SKPaint { IsAntialias = true, TextSize = 12.5f };
+        _lastTextWidth = measure.MeasureText(_lastText);
     }
 
-    public void Dispose()
-    {
-        _dotPaint.Dispose();
-        _textPaint.Dispose();
-        _typeface.Dispose();
-    }
+    public void Dispose() { } // 已无缓存原生对象需要释放
 }
