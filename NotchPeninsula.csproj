@@ -13,8 +13,22 @@
     <PublishSingleFile>true</PublishSingleFile>
 		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 
-	<Version>1.5.0</Version>
+	<Version>1.6.0</Version>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- PluginSample / TestPlugin 是独立插件工程，不能被主程序一起编译（否则接口类型会重复定义） -->
+		<Compile Remove="PluginSample\**" />
+		<EmbeddedResource Remove="PluginSample\**" />
+		<Page Remove="PluginSample\**" />
+		<None Remove="PluginSample\**" />
+		<Content Remove="PluginSample\**" />
+		<Compile Remove="TestPlugin\**" />
+		<EmbeddedResource Remove="TestPlugin\**" />
+		<Page Remove="TestPlugin\**" />
+		<None Remove="TestPlugin\**" />
+		<Content Remove="TestPlugin\**" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<!-- 新增的资源在这里引入 -->

@@ -12,8 +12,10 @@ namespace NotchPeninsula
 
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
+        public const int WM_LBUTTONUP = 0x0202;
         public const int WM_MOUSELEAVE = 0x02A3;
         public const int WM_SETCURSOR = 0x0020;
+        public const int WM_CLOSE = 0x0010;
         public const int IDC_HAND = 32649; // Windows 原生手型指针常量
 
         public const byte AC_SRC_OVER = 0x00;
@@ -190,6 +192,8 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool DestroyWindow(IntPtr hWnd);
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
         public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);

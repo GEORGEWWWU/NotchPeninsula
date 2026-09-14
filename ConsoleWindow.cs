@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 using System.Diagnostics;
+using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -16,6 +17,15 @@ namespace NotchPeninsula
         private const int WIDTH = 600;
         private const int HEIGHT = 660;
         private const int TITLE_BAR_HEIGHT = 32;
+
+        // 🧩 插件行排序小三角（渲染与鼠标命中必须使用同一组坐标）
+        //    所有按钮均在下行（名称独占上行），按钮从左到右：← → [重载] [移除] [开关]
+        private const float SORT_TRI_W = 16f;
+        private const float PLUGIN_SORT_LEFT_X = 364f;   // ← 左移
+        private const float PLUGIN_SORT_RIGHT_X = 382f;  // → 右移
+        private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
+        private const float PLUGIN_BTN_REMOVE_X = 460f;  // 移除按钮
+        private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
         private bool _minHovered = false;
         private bool _closeHovered = false;
@@ -47,6 +57,15 @@ namespace NotchPeninsula
         private bool _lyricResetHovered = false;
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
+
+        // 插件中心交互状态
+        private int _hoveredPluginAction = -1;  // 0=导入 DLL, 1=打开目录, 2=插件市场
+        private int _hoveredPluginToggle = -1;  // 行索引：启用/禁用开关
+        private int _hoveredPluginReload = -1;  // 行索引：热重载
+        private int _hoveredPluginRemove = -1;  // 行索引：移除
+        private int _hoveredPluginMoveLeft = -1;   // 行索引：左移（调整灵动岛显示顺序）
+        private int _hoveredPluginMoveRight = -1;  // 行索引：右移
+        private List<PluginEntry> _pluginView = new();
 
         // 显示设置
         private int _selectedDisplayIndex = 0;
@@ -300,7 +319,8 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 1; // 3. 显示设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 2; // 4. 媒体设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 180 && y <= TITLE_BAR_HEIGHT + 216) newHoveredTab = 3; // 5. 交互设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 4; // 6. 关于软件
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 6; // 6. 插件中心
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 280 && y <= TITLE_BAR_HEIGHT + 316) newHoveredTab = 4; // 7. 关于软件
 
                     int newHoveredTheme = -1;
                     int newHoveredOpacityIndex = -1;
@@ -371,6 +391,12 @@ namespace NotchPeninsula
                     bool newCompDateTimeHover = false;
                     bool newCompHardwareHover = false;
                     bool newCompMediaHover = false;
+                    int newHoveredPluginAction = -1;
+                    int newHoveredPluginToggle = -1;
+                    int newHoveredPluginReload = -1;
+                    int newHoveredPluginRemove = -1;
+                    int newHoveredPluginMoveLeft = -1;
+                    int newHoveredPluginMoveRight = -1;
 
                     if (_selectedTab == 0) // 通用设置
                     {
@@ -475,6 +501,40 @@ namespace NotchPeninsula
                         // 使用局部变量，防止状态死锁
                         newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
                     }
+                    else if (_selectedTab == 6) // 插件中心
+                    {
+                        float topY = TITLE_BAR_HEIGHT + 12;
+                        // 三个操作按钮
+                        if (y >= topY + 60 && y <= topY + 84)
+                        {
+                            if (x >= 216 && x <= 312) newHoveredPluginAction = 0;       // 导入 DLL
+                            else if (x >= 320 && x <= 416) newHoveredPluginAction = 1;  // 打开目录
+                            else if (x >= 424 && x <= 520) newHoveredPluginAction = 2;  // 插件市场
+                        }
+
+                        // 列表行内按钮（全部在下行：← → 排序 | 重载 | 移除 | 开关）
+                        // 上行（名称）无交互目标，仅下行按钮可点击
+                        float listY = topY + 110;
+                        int rows = Math.Min(_pluginView.Count, 7);
+                        if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
+                        {
+                            int idx = (int)((y - (listY + 44)) / 56);
+                            if (idx >= 0 && idx < rows)
+                            {
+                                float rowY = listY + 44 + idx * 56;
+                                // 下行按钮区（rowY+22 .. rowY+48）
+                                if (y >= rowY + 22 && y <= rowY + 48)
+                                {
+                                    // 从左到右：排序 ← → | 重载 | 移除 | 开关
+                                    if (x >= PLUGIN_SORT_LEFT_X && x <= PLUGIN_SORT_LEFT_X + SORT_TRI_W) newHoveredPluginMoveLeft = idx;
+                                    else if (x >= PLUGIN_SORT_RIGHT_X && x <= PLUGIN_SORT_RIGHT_X + SORT_TRI_W) newHoveredPluginMoveRight = idx;
+                                    else if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
+                                    else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
+                                    else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
+                                }
+                            }
+                        }
+                    }
 
                     int newHoveredLinkIndex = -1;
                     if (_selectedTab == 4) // 关于页
@@ -515,7 +575,13 @@ namespace NotchPeninsula
                         newCompositeToggleHover != _compositeToggleHovered ||
                         newCompDateTimeHover != _compDateTimeHovered ||
                         newCompHardwareHover != _compHardwareHovered ||
-                        newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered
+                        newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered ||
+                        newHoveredPluginAction != _hoveredPluginAction ||
+                        newHoveredPluginToggle != _hoveredPluginToggle ||
+                        newHoveredPluginReload != _hoveredPluginReload ||
+                        newHoveredPluginRemove != _hoveredPluginRemove ||
+                        newHoveredPluginMoveLeft != _hoveredPluginMoveLeft ||
+                        newHoveredPluginMoveRight != _hoveredPluginMoveRight
                         )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -541,6 +607,12 @@ namespace NotchPeninsula
                         _compMediaHovered = newCompMediaHover;
                         _topmostToggleHovered = newTopmostToggleHovered;
                         _passToggleHovered = newPassToggleHovered;
+                        _hoveredPluginAction = newHoveredPluginAction;
+                        _hoveredPluginToggle = newHoveredPluginToggle;
+                        _hoveredPluginReload = newHoveredPluginReload;
+                        _hoveredPluginRemove = newHoveredPluginRemove;
+                        _hoveredPluginMoveLeft = newHoveredPluginMoveLeft;
+                        _hoveredPluginMoveRight = newHoveredPluginMoveRight;
                         Render();
                     }
                     break;
@@ -572,6 +644,7 @@ namespace NotchPeninsula
                     else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 6 && _selectedTab != 6) { _selectedTab = 6; _dropdownOpen = false; RefreshPluginView(); Render(); }
                     else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
                     else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
                     {
@@ -827,6 +900,42 @@ namespace NotchPeninsula
                         Program.SaveSetting("Composite_ShowMedia", Renderer.CompShowMedia ? 1 : 0);
                         Render();
                     }
+                    // ===== 插件中心交互 =====
+                    else if (_selectedTab == 6 && _hoveredPluginAction != -1)
+                    {
+                        switch (_hoveredPluginAction)
+                        {
+                            case 0: ImportPluginDll(); break;
+                            case 1: PluginManager.Instance.OpenPluginsFolder(); break;
+                            case 2: PluginManager.Instance.OpenMarketplace(); break;
+                        }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginToggle != -1)
+                    {
+                        var pe = GetPluginAt(_hoveredPluginToggle);
+                        if (pe != null) { PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginReload != -1)
+                    {
+                        var pe = GetPluginAt(_hoveredPluginReload);
+                        if (pe != null) { PluginManager.Instance.Reload(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginRemove != -1)
+                    {
+                        var pe = GetPluginAt(_hoveredPluginRemove);
+                        if (pe != null) { PluginManager.Instance.Remove(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginMoveLeft != -1)
+                    {
+                        // 🧩 左移：调整该插件在灵动岛上的显示顺序（持久化，立即生效）
+                        var pe = GetPluginAt(_hoveredPluginMoveLeft);
+                        if (pe != null && PluginManager.Instance.MoveOrder(pe, -1)) { RefreshPluginView(); Render(); }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginMoveRight != -1)
+                    {
+                        var pe = GetPluginAt(_hoveredPluginMoveRight);
+                        if (pe != null && PluginManager.Instance.MoveOrder(pe, 1)) { RefreshPluginView(); Render(); }
+                    }
                     break;
 
                 case Win32.WM_DESTROY:
@@ -859,6 +968,93 @@ namespace NotchPeninsula
                 6 => TITLE_BAR_HEIGHT + 535 + 40,
                 _ => 0
             };
+        }
+
+        // ================= 插件中心辅助逻辑 =================
+        private void RefreshPluginView()
+        {
+            _pluginView = PluginManager.Instance.Entries.ToList();
+        }
+
+        /// <summary>
+        /// 把「内容显示顺序表」渲染成一行可读文本（原生模块用中文名、插件用友好名）。
+        /// 让用户一眼看到 ← / → 调整后，插件与原生功能在灵动岛上的真实左右次序。
+        /// </summary>
+        private string DescribeContentOrder()
+        {
+            var mgr = PluginManager.Instance;
+            var order = mgr.Order;
+            if (order.Count == 0) return "（暂无内容）";
+
+            var sb = new System.Text.StringBuilder(96);
+            for (int i = 0; i < order.Count; i++)
+            {
+                string item = order[i];
+                string name;
+                if (string.Equals(item, Plugins.BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) name = "时间日期";
+                else if (string.Equals(item, Plugins.BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) name = "硬件占用";
+                else if (string.Equals(item, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase)) name = "媒体控制器";
+                else
+                {
+                    var pe = mgr.Find(item);
+                    name = pe != null ? pe.FriendlyName : item;
+                }
+                if (sb.Length > 0) sb.Append("  ·  ");
+                sb.Append(i + 1).Append('.').Append(name);
+            }
+            return sb.ToString();
+        }
+
+        private PluginEntry? GetPluginAt(int index)
+            => index >= 0 && index < _pluginView.Count ? _pluginView[index] : null;
+
+        /// <summary>列表变化后清空行内悬停索引，避免指向错行。</summary>
+        private void ResetPluginHover()
+        {
+            _hoveredPluginToggle = -1;
+            _hoveredPluginReload = -1;
+            _hoveredPluginMoveLeft = -1;
+            _hoveredPluginMoveRight = -1;
+            _hoveredPluginRemove = -1;
+        }
+
+        /// <summary>弹出文件选择框导入插件 DLL。</summary>
+        private void ImportPluginDll()
+        {
+            try
+            {
+                using var dlg = new System.Windows.Forms.OpenFileDialog
+                {
+                    Title = "选择 NotchPeninsula 插件 DLL",
+                    Filter = "插件动态库 (*.dll)|*.dll|所有文件 (*.*)|*.*",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+
+                var (ok, msg) = PluginManager.Instance.Import(dlg.FileName);
+                Logger.Info($"[PluginCenter] 导入结果: {(ok ? "成功" : "失败")} — {msg}");
+                ResetPluginHover();
+                RefreshPluginView();
+                Render();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("[PluginCenter] 导入插件异常", ex);
+            }
+        }
+
+        /// <summary>按像素宽度截断文本并追加省略号（零 GC 不敏感，交互时才调用）。</summary>
+        private static string TruncateText(string? text, SKPaint paint, float maxWidth)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (paint.MeasureText(text) <= maxWidth) return text;
+            for (int len = text.Length - 1; len > 0; len--)
+            {
+                var candidate = text[..len] + "…";
+                if (paint.MeasureText(candidate) <= maxWidth) return candidate;
+            }
+            return "…";
         }
 
         private unsafe void Render()
@@ -924,7 +1120,9 @@ namespace NotchPeninsula
             DrawTab(2, "媒体设置", 140);
             DrawTab(3, "交互设置", 180);
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + 222, 160, TITLE_BAR_HEIGHT + 222, _separatorPaint);
-            DrawTab(4, "关于软件", 230);
+            DrawTab(6, "插件中心", 230);
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 272, 160, TITLE_BAR_HEIGHT + 272, _separatorPaint);
+            DrawTab(4, "关于软件", 280);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
@@ -1446,6 +1644,156 @@ namespace NotchPeninsula
                 DrawMultiCard(299, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
                 DrawMultiCard(417, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
                 DrawMultiCard(535, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+            }
+            else if (_selectedTab == 6)
+            {
+                RefreshPluginView();
+
+                // ── 顶部操作卡片 ──
+                float topY = TITLE_BAR_HEIGHT + 12;
+                var topRect = new SKRect(200, topY, WIDTH - 20, topY + 96);
+                canvas.DrawRoundRect(topRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(topRect, 6, 6, _cardBorder);
+                canvas.DrawText("插件中心", 216, topY + 26, _uiTextPaint);
+                canvas.DrawText("导入第三方 DLL 扩展灵动岛能力，支持热重载", 216, topY + 46, _subTextPaint);
+
+                void DrawPluginButton(int index, string label, float bx, float by, float bw)
+                {
+                    bool hovered = _hoveredPluginAction == index;
+                    var btn = new SKRect(bx, by, bx + bw, by + 24);
+                    _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
+                    float tw = _uiTextPaint.MeasureText(label);
+                    canvas.DrawText(label, bx + (bw - tw) / 2f, by + 17, _uiTextPaint);
+                }
+
+                DrawPluginButton(0, "导入 DLL", 216, topY + 60, 96);
+                DrawPluginButton(1, "打开目录", 320, topY + 60, 96);
+                DrawPluginButton(2, "插件市场", 424, topY + 60, 96);
+
+                // ── 插件列表卡片 ──
+                float listY = topY + 110;
+                var listRect = new SKRect(200, listY, WIDTH - 20, HEIGHT - 20);
+                canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
+                canvas.DrawText($"已安装插件 ({_pluginView.Count})", 216, listY + 26, _uiTextPaint);
+
+                const int maxRows = 7;
+                // 上行：名称独占整行，可延展至卡片右边界外侧
+                // 下行：信息（左）+ 全部操作按钮（右，从左到右：← → 排序 | 重载 | 移除 | 开关）
+                float nameTextMax = (WIDTH - 36) - 216;                // 名称几乎全宽
+                float infoTextMax = PLUGIN_SORT_LEFT_X - 216 - 8;     // 信息止于排序三角之前
+
+                if (_pluginView.Count == 0)
+                    canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 66, _subTextPaint);
+
+                for (int i = 0; i < Math.Min(_pluginView.Count, maxRows); i++)
+                {
+                    var entry = _pluginView[i];
+                    float rowY = listY + 44 + i * 56;      // 行高 56，不上行名称独占，下行按钮全部一行排列
+                    if (i > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
+
+                    // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
+                    canvas.DrawText(TruncateText(entry.FriendlyName, _uiTextPaint, nameTextMax), 216, rowY + 18, _uiTextPaint);
+
+                    // ═══ 下行：信息 + 全部操作按钮（同一行从左到右排列） ═══
+                    string sub;
+                    SKColor subColor = new SKColor(170, 170, 170);
+                    if (entry.State == PluginState.Failed)
+                    {
+                        sub = "加载失败：" + (entry.Error ?? "未知错误");
+                        subColor = new SKColor(232, 100, 100);
+                    }
+                    else if (entry.State == PluginState.Loaded)
+                    {
+                        sub = string.IsNullOrEmpty(entry.Version) ? "运行中" : $"运行中 · v{entry.Version}";
+                    }
+                    else
+                    {
+                        sub = "已禁用 · " + entry.Key;
+                    }
+                    int pos = PluginManager.Instance.GetOrderIndex(entry);
+                    if (pos > 0) sub += $" · #{pos}";
+                    _subTextPaint.Color = subColor;
+                    float infoBaseline = rowY + 40;
+                    canvas.DrawText(TruncateText(sub, _subTextPaint, infoTextMax), 216, infoBaseline, _subTextPaint);
+                    _subTextPaint.Color = new SKColor(170, 170, 170);
+
+                    // ── 下行按钮（全部在同一行，y 中心 ≈ rowY+38） ──
+                    const float btnTop = 25f, btnH = 20f;       // 操作按钮矩形（上移 2px，远离底部分割线）
+
+                    // 排序箭头 < >（用 SKPath 描边绘制，相对下行按钮区垂直居中）
+                    void DrawSortArrow(float bx, bool hovered, bool enabled, bool left)
+                    {
+                        using var stroke = new SKPaint
+                        {
+                            Color = !enabled ? new SKColor(130, 130, 130)
+                                : hovered ? SKColors.White
+                                : new SKColor(210, 210, 210),
+                            Style = SKPaintStyle.Stroke,
+                            StrokeWidth = 1.6f,
+                            StrokeCap = SKStrokeCap.Round,
+                            StrokeJoin = SKStrokeJoin.Round,
+                            IsAntialias = true
+                        };
+                        float cx = bx + SORT_TRI_W / 2f;   // 水平居中于 16px 槽
+                        float cy = rowY + 35f;            // 相对下行按钮区（rowY+22..rowY+48）垂直居中
+                        float s = 3f, h = 5f;
+                        using var path = new SKPath();
+                        if (left)
+                        {
+                            path.MoveTo(cx + s, cy - h);
+                            path.LineTo(cx - s, cy);
+                            path.LineTo(cx + s, cy + h);
+                        }
+                        else
+                        {
+                            path.MoveTo(cx - s, cy - h);
+                            path.LineTo(cx + s, cy);
+                            path.LineTo(cx - s, cy + h);
+                        }
+                        canvas.DrawPath(path, stroke);
+                    }
+                    DrawSortArrow(PLUGIN_SORT_LEFT_X, _hoveredPluginMoveLeft == i,
+                        PluginManager.Instance.CanMoveOrder(entry, -1), true);
+                    DrawSortArrow(PLUGIN_SORT_RIGHT_X, _hoveredPluginMoveRight == i,
+                        PluginManager.Instance.CanMoveOrder(entry, 1), false);
+
+                    // 操作按钮（重载 / 移除）+ 开关
+                    void DrawRowButton(float bx, bool hovered, string label, bool danger)
+                    {
+                        var r = new SKRect(bx, rowY + btnTop, bx + 50, rowY + btnTop + btnH);
+                        _dynamicFillPaint.Color = hovered
+                            ? (danger ? new SKColor(180, 50, 50) : new SKColor(255, 255, 255, 30))
+                            : new SKColor(255, 255, 255, 15);
+                        canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
+                        float tw = _subTextPaint.MeasureText(label);
+                        canvas.DrawText(label, bx + (50 - tw) / 2f, rowY + btnTop + 14, _uiTextPaint);
+                    }
+                    DrawRowButton(PLUGIN_BTN_RELOAD_X, _hoveredPluginReload == i, "重载", false);
+                    DrawRowButton(PLUGIN_BTN_REMOVE_X, _hoveredPluginRemove == i, "移除", true);
+
+                    float tW = 42, tH = 20;
+                    float tX = PLUGIN_BTN_TOGGLE_X, tY = rowY + 26;
+                    var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+                    if (entry.IsEnabled)
+                    {
+                        _dynamicFillPaint.Color = _hoveredPluginToggle == i ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                        canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                        canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                    }
+                    else
+                    {
+                        _dynamicStrokePaint.Color = _hoveredPluginToggle == i ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
+                        canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                        _toggleCirclePaint.Color = _hoveredPluginToggle == i ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
+                        canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                        _toggleCirclePaint.Color = SKColors.White;
+                    }
+                }
+
+                if (_pluginView.Count > maxRows)
+                    canvas.DrawText($"还有 {_pluginView.Count - maxRows} 个插件未显示，可在“打开目录”中管理", 216, HEIGHT - 32, _subTextPaint);
             }
 
             canvas.Restore();

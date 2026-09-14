@@ -5,6 +5,7 @@ using Microsoft.Win32;
 using Timer = System.Timers.Timer;
 using static NotchPeninsula.Logger;
 using System.Windows.Threading;
+using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -206,6 +207,9 @@ namespace NotchPeninsula
             _notifyIcon.Visible = true;
             _currentVolume = audio.GetSystemVolume();
             Debug($"初始音量读取完成，当前音量：{_currentVolume:F2}");
+            // 🧩 插件系统：先把插件提醒接入 Toast 流，再初始化运行时自动加载已启用插件
+            PluginManager.Instance.Host.ReminderPosted += OnPluginReminder;
+            PluginManager.Instance.Initialize();
             _ = InitializeListenerAsync();
             Timer aud = new Timer(500);
             aud.Elapsed += (s, e) => {
@@ -242,6 +246,19 @@ namespace NotchPeninsula
 
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
+        }
+
+        /// <summary>插件通过 IPluginHost.PostReminder 投递的提醒，复用现有 Toast 展示通道。</summary>
+        private void OnPluginReminder(ToastData toast)
+        {
+            if (toast == null) return;
+            // 插件提醒来自后台线程，切回 UI 线程更新共享的 Toast 状态
+            if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnPluginReminder(toast)); return; }
+            if (!IsToastEnabled) return;
+
+            _currentToast = toast;
+            _toastEndTime = DateTime.Now.AddSeconds(4);
+            clicked_info = false;
         }
 
         #endregion
@@ -479,6 +496,11 @@ namespace NotchPeninsula
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
                 // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
+                // 🧩 插件行独立占据岛体最右侧：非组合模式下恒定追加其预留宽度，
+                //    因此不论待机显示什么内容、媒体是否开启，插件都会稳定显示在原生内容之后。
+                // 🧩 组合模式下插件已并入「内容顺序表」与原生模块混排，宽度由 GetCompositeWidth 一并算出，
+                //    因此不再额外追加插件预留宽度；其余模式仍按整行贴在右侧预留。
+                float pluginReserve = isToastActive || Renderer.CompositeModeEnabled ? 0f : Renderer.GetPluginRowReserve();
                 float expectedTargetWidth;
                 if (isToastActive)
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
@@ -488,7 +510,9 @@ namespace NotchPeninsula
                     expectedTargetWidth = Renderer.GetCompositeWidth(_media);
                 }
                 else
-                    expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH;
+                    expectedTargetWidth = currentActive
+                        ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) + pluginReserve
+                        : Renderer.STANDBY_WIDTH + pluginReserve;
 
                 // 自动文本长度自适应逻辑
                 // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
@@ -501,7 +525,7 @@ namespace NotchPeninsula
                             ? Renderer.MeasureCurrentLyricWidth(_media.Title)
                             : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
 
-                    float requiredWidth = textWidth + 115f;
+                    float requiredWidth = textWidth + 115f + pluginReserve; // 长歌词自适应时同样要给插件行留位
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
                 float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
@@ -685,6 +709,8 @@ namespace NotchPeninsula
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
                         int mx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int my = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        // 🧩 记录鼠标逻辑坐标，供插件组件的悬停判定使用
+                        Renderer.UpdatePluginMouse(mx, my);
                         float hitTopY = 12f * _currentStyleProgress;
 
                         // 1. 最高优先级拦截：精准计算唤醒按钮垂直居中热区，解决没有手型指针的问题
@@ -732,7 +758,9 @@ namespace NotchPeninsula
                                 }
                                 else
                                 {
-                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                    // 媒体按钮锚定「媒体模块右边界」，与 Renderer.Draw 保持一致
+                                    // （组合模式下插件可能被排到媒体右边，因此由渲染器给出真实边界）
+                                    float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
                                     int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
                                     float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
                                     _isCursorOverIcon = (my >= btnStartY && my <= btnEndY) && ((mx >= btnPrevX + 6 && mx <= btnPrevX + 24) || (mx >= btnPlayX + 6 && mx <= btnPlayX + 24) || (mx >= btnNextX + 6 && mx <= btnNextX + 24));
@@ -753,6 +781,8 @@ namespace NotchPeninsula
                         _isCursorOverIcon = false;
                         Renderer.HoveredExpandedButton = -1;
                         Renderer.IsMediaExpanded = false;
+                        // 🧩 鼠标离开灵动岛，清空插件组件悬停状态
+                        Renderer.UpdatePluginMouse(-1f, -1f);
                         break;
                     }
 
@@ -782,6 +812,12 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
+                        // 🧩 插件组件左键交互：命中插件绘制区则交给插件决定做什么，不再走媒体控制逻辑
+                        if (_isHovered && _currentToast == null && Renderer.DispatchPluginLeftClick(cx, cy - hitTopY))
+                        {
+                            return (IntPtr)0;
+                        }
+
                         if (_isHovered && _media.IsActive && _currentToast == null)
                         {
                             bool hitButtons = false;
@@ -800,7 +836,8 @@ namespace NotchPeninsula
                             {
                                 if (Renderer.MediaInteractionMode == 0 || Renderer.CompositeModeEnabled)
                                 {
-                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                    // 与 Renderer.Draw 的媒体按钮位置保持一致（组合模式下取渲染器给出的模块右边界）
+                                    float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
                                     float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
                                     if (cy >= btnStartY && cy <= btnStartY + 18f)
                                     {
@@ -822,6 +859,13 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
+                        // 🧩 先把右键广播给坐标命中的插件组件（插件可借此实现自定义行为），默认动作仍是打开设置
+                        if (_currentToast == null)
+                        {
+                            int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                            int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                            Renderer.DispatchPluginRightClick(rx, ry - 12f * _currentStyleProgress);
+                        }
                         ConsoleWindow.Toggle();
                     }
                     break;
