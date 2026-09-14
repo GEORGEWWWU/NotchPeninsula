@@ -18,10 +18,14 @@ namespace NotchPeninsula
         private const int HEIGHT = 660;
         private const int TITLE_BAR_HEIGHT = 32;
 
-        // 🧩 插件中心行内「排序」按钮（渲染与鼠标命中必须使用同一组坐标）
-        private const float PLUGIN_ROW_MOVE_W = 28f;
-        private const float PLUGIN_ROW_MOVE_LEFT_X = WIDTH - 256f;   // ← 左移（生效于灵动岛上的插件顺序）
-        private const float PLUGIN_ROW_MOVE_RIGHT_X = WIDTH - 224f;  // → 右移
+        // 🧩 插件行排序小三角（渲染与鼠标命中必须使用同一组坐标）
+        //    所有按钮均在下行（名称独占上行），按钮从左到右：← → [重载] [移除] [开关]
+        private const float SORT_TRI_W = 16f;
+        private const float PLUGIN_SORT_LEFT_X = 364f;   // ← 左移
+        private const float PLUGIN_SORT_RIGHT_X = 382f;  // → 右移
+        private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
+        private const float PLUGIN_BTN_REMOVE_X = 460f;  // 移除按钮
+        private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
         private bool _minHovered = false;
         private bool _closeHovered = false;
@@ -508,23 +512,25 @@ namespace NotchPeninsula
                             else if (x >= 424 && x <= 520) newHoveredPluginAction = 2;  // 插件市场
                         }
 
-                        // 列表行内的开关 / 重载 / 移除
+                        // 列表行内按钮（全部在下行：← → 排序 | 重载 | 移除 | 开关）
+                        // 上行（名称）无交互目标，仅下行按钮可点击
                         float listY = topY + 110;
                         int rows = Math.Min(_pluginView.Count, 7);
                         if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
                         {
-                            int idx = (int)((y - (listY + 44)) / 58);
+                            int idx = (int)((y - (listY + 44)) / 56);
                             if (idx >= 0 && idx < rows)
                             {
-                                float rowY = listY + 44 + idx * 58;
-                                if (y >= rowY + 17 && y <= rowY + 41)
+                                float rowY = listY + 44 + idx * 56;
+                                // 下行按钮区（rowY+22 .. rowY+48）
+                                if (y >= rowY + 22 && y <= rowY + 48)
                                 {
-                                    if (x >= WIDTH - 78 && x <= WIDTH - 36) newHoveredPluginToggle = idx;
-                                    else if (x >= WIDTH - 134 && x <= WIDTH - 84) newHoveredPluginReload = idx;
-                                    else if (x >= WIDTH - 188 && x <= WIDTH - 140) newHoveredPluginRemove = idx;
-                                    // 🧩 排序按钮（← 左移 / → 右移）
-                                    else if (x >= PLUGIN_ROW_MOVE_LEFT_X && x <= PLUGIN_ROW_MOVE_LEFT_X + PLUGIN_ROW_MOVE_W) newHoveredPluginMoveLeft = idx;
-                                    else if (x >= PLUGIN_ROW_MOVE_RIGHT_X && x <= PLUGIN_ROW_MOVE_RIGHT_X + PLUGIN_ROW_MOVE_W) newHoveredPluginMoveRight = idx;
+                                    // 从左到右：排序 ← → | 重载 | 移除 | 开关
+                                    if (x >= PLUGIN_SORT_LEFT_X && x <= PLUGIN_SORT_LEFT_X + SORT_TRI_W) newHoveredPluginMoveLeft = idx;
+                                    else if (x >= PLUGIN_SORT_RIGHT_X && x <= PLUGIN_SORT_RIGHT_X + SORT_TRI_W) newHoveredPluginMoveRight = idx;
+                                    else if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
+                                    else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
+                                    else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
                                 }
                             }
                         }
@@ -1671,14 +1677,12 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
                 canvas.DrawText($"已安装插件 ({_pluginView.Count})", 216, listY + 26, _uiTextPaint);
-                {
-                    const string hint = "用 ← → 调整顺序（原生功能与插件可任意穿插）";
-                    float hintW = _subTextPaint.MeasureText(hint);
-                    canvas.DrawText(hint, WIDTH - 36 - hintW, listY + 26, _subTextPaint);
-                }
 
                 const int maxRows = 7;
-                float textMax = PLUGIN_ROW_MOVE_LEFT_X - 216 - 8; // 文本可用宽度（到"←"排序按钮为止）
+                // 上行：名称独占整行，可延展至卡片右边界外侧
+                // 下行：信息（左）+ 全部操作按钮（右，从左到右：← → 排序 | 重载 | 移除 | 开关）
+                float nameTextMax = (WIDTH - 36) - 216;                // 名称几乎全宽
+                float infoTextMax = PLUGIN_SORT_LEFT_X - 216 - 8;     // 信息止于排序三角之前
 
                 if (_pluginView.Count == 0)
                     canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 66, _subTextPaint);
@@ -1686,12 +1690,13 @@ namespace NotchPeninsula
                 for (int i = 0; i < Math.Min(_pluginView.Count, maxRows); i++)
                 {
                     var entry = _pluginView[i];
-                    float rowY = listY + 44 + i * 58;
+                    float rowY = listY + 44 + i * 56;      // 行高 56，不上行名称独占，下行按钮全部一行排列
                     if (i > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
 
-                    // 名称与状态
-                    canvas.DrawText(TruncateText(entry.FriendlyName, _uiTextPaint, textMax), 216, rowY + 20, _uiTextPaint);
+                    // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
+                    canvas.DrawText(TruncateText(entry.FriendlyName, _uiTextPaint, nameTextMax), 216, rowY + 18, _uiTextPaint);
 
+                    // ═══ 下行：信息 + 全部操作按钮（同一行从左到右排列） ═══
                     string sub;
                     SKColor subColor = new SKColor(170, 170, 170);
                     if (entry.State == PluginState.Failed)
@@ -1707,51 +1712,47 @@ namespace NotchPeninsula
                     {
                         sub = "已禁用 · " + entry.Key;
                     }
-                    // 🧩 顺序位：该插件在灵动岛上的排列位置（用 ← → 调整）。
-                    //    禁用状态也会显示 —— 顺序与运行状态无关，位置一直保留着，启用后即回到原位。
                     int pos = PluginManager.Instance.GetOrderIndex(entry);
                     if (pos > 0) sub += $" · #{pos}";
                     _subTextPaint.Color = subColor;
-                    canvas.DrawText(TruncateText(sub, _subTextPaint, textMax), 216, rowY + 40, _subTextPaint);
+                    float infoBaseline = rowY + 40;
+                    canvas.DrawText(TruncateText(sub, _subTextPaint, infoTextMax), 216, infoBaseline, _subTextPaint);
                     _subTextPaint.Color = new SKColor(170, 170, 170);
 
-                    // 行内小按钮（重载 / 移除）
+                    // ── 下行按钮（全部在同一行，y 中心 ≈ rowY+38） ──
+                    const float btnTop = 25f, btnH = 20f;       // 操作按钮矩形（上移 2px，远离底部分割线）
+
+                    // 排序箭头 < >（文字，简洁不突兀）
+                    void DrawSortArrow(float bx, bool hovered, bool enabled, string arrow)
+                    {
+                        _subTextPaint.Color = !enabled ? new SKColor(130, 130, 130)
+                            : hovered ? SKColors.White
+                            : new SKColor(210, 210, 210);
+                        float tw = _subTextPaint.MeasureText(arrow);
+                        canvas.DrawText(arrow, bx + (SORT_TRI_W - tw) / 2f, rowY + 36, _subTextPaint);
+                        _subTextPaint.Color = new SKColor(170, 170, 170);
+                    }
+                    DrawSortArrow(PLUGIN_SORT_LEFT_X, _hoveredPluginMoveLeft == i,
+                        PluginManager.Instance.CanMoveOrder(entry, -1), "<");
+                    DrawSortArrow(PLUGIN_SORT_RIGHT_X, _hoveredPluginMoveRight == i,
+                        PluginManager.Instance.CanMoveOrder(entry, 1), ">");
+
+                    // 操作按钮（重载 / 移除）+ 开关
                     void DrawRowButton(float bx, bool hovered, string label, bool danger)
                     {
-                        var r = new SKRect(bx, rowY + 17, bx + 50, rowY + 41);
+                        var r = new SKRect(bx, rowY + btnTop, bx + 50, rowY + btnTop + btnH);
                         _dynamicFillPaint.Color = hovered
                             ? (danger ? new SKColor(180, 50, 50) : new SKColor(255, 255, 255, 30))
                             : new SKColor(255, 255, 255, 15);
                         canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
                         float tw = _subTextPaint.MeasureText(label);
-                        canvas.DrawText(label, bx + (50 - tw) / 2f, rowY + 34, _uiTextPaint);
+                        canvas.DrawText(label, bx + (50 - tw) / 2f, rowY + btnTop + 14, _uiTextPaint);
                     }
+                    DrawRowButton(PLUGIN_BTN_RELOAD_X, _hoveredPluginReload == i, "重载", false);
+                    DrawRowButton(PLUGIN_BTN_REMOVE_X, _hoveredPluginRemove == i, "移除", true);
 
-                    DrawRowButton(WIDTH - 134, _hoveredPluginReload == i, "重载", false);
-                    DrawRowButton(WIDTH - 188, _hoveredPluginRemove == i, "移除", true);
-
-                    // 🧩 排序按钮（← 左移 / → 右移）：调整该插件在灵动岛上的显示位置，立即生效并持久化
-                    void DrawMoveButton(float bx, bool hovered, bool enabled, string arrow)
-                    {
-                        var r = new SKRect(bx, rowY + 17, bx + PLUGIN_ROW_MOVE_W, rowY + 41);
-                        _dynamicFillPaint.Color = (hovered && enabled) ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
-                        canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                        float aw = _uiTextPaint.MeasureText(arrow);
-                        var savedColor = _uiTextPaint.Color;
-                        _uiTextPaint.Color = enabled ? new SKColor(225, 225, 225) : new SKColor(105, 105, 105);
-                        canvas.DrawText(arrow, bx + (PLUGIN_ROW_MOVE_W - aw) / 2f, rowY + 34, _uiTextPaint);
-                        _uiTextPaint.Color = savedColor;
-                    }
-
-                    // 顺序与启用状态无关：禁用中的插件同样可以调位置（位置先留着，启用后即生效）
-                    DrawMoveButton(PLUGIN_ROW_MOVE_LEFT_X, _hoveredPluginMoveLeft == i,
-                        PluginManager.Instance.CanMoveOrder(entry, -1), "←");
-                    DrawMoveButton(PLUGIN_ROW_MOVE_RIGHT_X, _hoveredPluginMoveRight == i,
-                        PluginManager.Instance.CanMoveOrder(entry, 1), "→");
-
-                    // 启用 / 禁用开关
                     float tW = 42, tH = 20;
-                    float tX = WIDTH - 36 - tW, tY = rowY + 19;
+                    float tX = PLUGIN_BTN_TOGGLE_X, tY = rowY + 26;
                     var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
                     if (entry.IsEnabled)
                     {
@@ -1771,8 +1772,6 @@ namespace NotchPeninsula
 
                 if (_pluginView.Count > maxRows)
                     canvas.DrawText($"还有 {_pluginView.Count - maxRows} 个插件未显示，可在“打开目录”中管理", 216, HEIGHT - 32, _subTextPaint);
-                else
-                    canvas.DrawText("当前顺序：" + DescribeContentOrder(), 216, HEIGHT - 32, _subTextPaint);
             }
 
             canvas.Restore();
