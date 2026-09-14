@@ -286,6 +286,32 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 兜底累加「不在内容顺序表里」的插件宽度，与 Draw 底部按 drawn 标记只补未绘制组件的行为一一对应。
+        /// 已在顺序表里的插件主循环已累计过一次，这里绝不重复累加 —— 否则组合模式右侧会多一整版插件宽度的死空白。
+        /// </summary>
+        private static float SumPluginRowWidthNotIn(HashSet<string> orderSet)
+        {
+            var widgets = _pluginWidgets;
+            var widths = _pluginWidths;
+            var broken = _pluginBroken;
+            if (widgets == null || widths == null || broken == null) return 0f;
+            if (widths.Length != widgets.Length || broken.Length != widgets.Length) return 0f;
+
+            var host = Plugins.PluginManager.Instance.Host;
+            float total = 0f;
+            for (int i = 0; i < widgets.Length; i++)
+            {
+                if (broken[i] || widths[i] <= 0f) continue;
+                bool inOrder = false;
+                if (host.TryGetWidgetPlugin(widgets[i].Id, out var pid) && pid != null)
+                    inOrder = orderSet.Contains(pid);
+                if (inOrder) continue; // 已在顺序表 → 主循环已累计，跳过，防重复计宽
+                total = total > 0f ? total + 16f + widths[i] : widths[i];
+            }
+            return total;
+        }
+
+        /// <summary>
         /// 绘制插件组件并缓存命中矩形（供鼠标分发复用）。
         /// pluginIdFilter 为 null 表示绘制「本帧尚未画过」的全部组件（非组合模式的整行绘制）；
         /// 不为 null 时只画属于该插件的组件 —— 组合模式据此把插件摆到顺序表指定的位置。
@@ -1452,6 +1478,8 @@ namespace NotchPeninsula
             }
 
             var order = Plugins.PluginManager.Instance.Host.ContentOrder;
+            // 顺序表的插件 ID 集合，供结尾兜底去重（只补「没进表」的插件，已入表的绝不重复计宽）
+            var orderSet = new HashSet<string>(order, StringComparer.OrdinalIgnoreCase);
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;
 
             for (int i = 0; i < order.Count; i++)
@@ -1482,9 +1510,10 @@ namespace NotchPeninsula
             if (!clockHandled && CompShowDateTime) AddModule(_cachedTimeWidth + 12f + _cachedDateWidth);
             if (!hardwareHandled && CompShowHardware) AddModule(MeasureHardwareBlockWidth());
             if (!mediaHandled && CompShowMedia && media != null && media.IsActive) AddModule(MeasureMediaBlockWidth(media));
-            AddModule(SumPluginRowWidth(null));
+            // 插件兜底：只补「不在顺序表里」的插件宽度（与 Draw 的未绘制兜底一致），已入表的已被主循环累计，绝不重复
+            AddModule(SumPluginRowWidthNotIn(orderSet));
 
-            width += 10f; // 加上固定的右侧边距
+            width += 16f; // 右侧边距与 Draw 中每模块尾距(16px)对齐，避免最后一个模块被裁切 6px
 
             return Math.Clamp(width, 60f, 900f);
         }

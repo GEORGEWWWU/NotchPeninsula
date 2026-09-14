@@ -1,3 +1,5 @@
 <Solution>
   <Project Path="NotchPeninsula.csproj" />
+  <Project Path="PluginSample\HelloPlugin.csproj" />
+  <Project Path="TestPlugin\TestPlugin.csproj" />
 </Solution>
