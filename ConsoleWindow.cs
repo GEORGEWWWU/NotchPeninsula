@@ -1722,20 +1722,42 @@ namespace NotchPeninsula
                     // ── 下行按钮（全部在同一行，y 中心 ≈ rowY+38） ──
                     const float btnTop = 25f, btnH = 20f;       // 操作按钮矩形（上移 2px，远离底部分割线）
 
-                    // 排序箭头 < >（文字，简洁不突兀）
-                    void DrawSortArrow(float bx, bool hovered, bool enabled, string arrow)
+                    // 排序箭头 < >（用 SKPath 描边绘制，相对下行按钮区垂直居中）
+                    void DrawSortArrow(float bx, bool hovered, bool enabled, bool left)
                     {
-                        _subTextPaint.Color = !enabled ? new SKColor(130, 130, 130)
-                            : hovered ? SKColors.White
-                            : new SKColor(210, 210, 210);
-                        float tw = _subTextPaint.MeasureText(arrow);
-                        canvas.DrawText(arrow, bx + (SORT_TRI_W - tw) / 2f, rowY + 36, _subTextPaint);
-                        _subTextPaint.Color = new SKColor(170, 170, 170);
+                        using var stroke = new SKPaint
+                        {
+                            Color = !enabled ? new SKColor(130, 130, 130)
+                                : hovered ? SKColors.White
+                                : new SKColor(210, 210, 210),
+                            Style = SKPaintStyle.Stroke,
+                            StrokeWidth = 1.6f,
+                            StrokeCap = SKStrokeCap.Round,
+                            StrokeJoin = SKStrokeJoin.Round,
+                            IsAntialias = true
+                        };
+                        float cx = bx + SORT_TRI_W / 2f;   // 水平居中于 16px 槽
+                        float cy = rowY + 35f;            // 相对下行按钮区（rowY+22..rowY+48）垂直居中
+                        float s = 3f, h = 5f;
+                        using var path = new SKPath();
+                        if (left)
+                        {
+                            path.MoveTo(cx + s, cy - h);
+                            path.LineTo(cx - s, cy);
+                            path.LineTo(cx + s, cy + h);
+                        }
+                        else
+                        {
+                            path.MoveTo(cx - s, cy - h);
+                            path.LineTo(cx + s, cy);
+                            path.LineTo(cx - s, cy + h);
+                        }
+                        canvas.DrawPath(path, stroke);
                     }
                     DrawSortArrow(PLUGIN_SORT_LEFT_X, _hoveredPluginMoveLeft == i,
-                        PluginManager.Instance.CanMoveOrder(entry, -1), "<");
+                        PluginManager.Instance.CanMoveOrder(entry, -1), true);
                     DrawSortArrow(PLUGIN_SORT_RIGHT_X, _hoveredPluginMoveRight == i,
-                        PluginManager.Instance.CanMoveOrder(entry, 1), ">");
+                        PluginManager.Instance.CanMoveOrder(entry, 1), false);
 
                     // 操作按钮（重载 / 移除）+ 开关
                     void DrawRowButton(float bx, bool hovered, string label, bool danger)
