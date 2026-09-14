@@ -496,6 +496,11 @@ namespace NotchPeninsula
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
                 // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
+                // 🧩 插件行独立占据岛体最右侧：非组合模式下恒定追加其预留宽度，
+                //    因此不论待机显示什么内容、媒体是否开启，插件都会稳定显示在原生内容之后。
+                // 🧩 组合模式下插件已并入「内容顺序表」与原生模块混排，宽度由 GetCompositeWidth 一并算出，
+                //    因此不再额外追加插件预留宽度；其余模式仍按整行贴在右侧预留。
+                float pluginReserve = isToastActive || Renderer.CompositeModeEnabled ? 0f : Renderer.GetPluginRowReserve();
                 float expectedTargetWidth;
                 if (isToastActive)
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
@@ -505,7 +510,9 @@ namespace NotchPeninsula
                     expectedTargetWidth = Renderer.GetCompositeWidth(_media);
                 }
                 else
-                    expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH + Renderer.GetStandbyPluginWidth();
+                    expectedTargetWidth = currentActive
+                        ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) + pluginReserve
+                        : Renderer.STANDBY_WIDTH + pluginReserve;
 
                 // 自动文本长度自适应逻辑
                 // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
@@ -518,7 +525,7 @@ namespace NotchPeninsula
                             ? Renderer.MeasureCurrentLyricWidth(_media.Title)
                             : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
 
-                    float requiredWidth = textWidth + 115f;
+                    float requiredWidth = textWidth + 115f + pluginReserve; // 长歌词自适应时同样要给插件行留位
                     if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                 }
                 float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
@@ -751,7 +758,9 @@ namespace NotchPeninsula
                                 }
                                 else
                                 {
-                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                    // 媒体按钮锚定「媒体模块右边界」，与 Renderer.Draw 保持一致
+                                    // （组合模式下插件可能被排到媒体右边，因此由渲染器给出真实边界）
+                                    float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
                                     int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
                                     float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
                                     _isCursorOverIcon = (my >= btnStartY && my <= btnEndY) && ((mx >= btnPrevX + 6 && mx <= btnPrevX + 24) || (mx >= btnPlayX + 6 && mx <= btnPlayX + 24) || (mx >= btnNextX + 6 && mx <= btnNextX + 24));
@@ -827,7 +836,8 @@ namespace NotchPeninsula
                             {
                                 if (Renderer.MediaInteractionMode == 0 || Renderer.CompositeModeEnabled)
                                 {
-                                    float right = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                                    // 与 Renderer.Draw 的媒体按钮位置保持一致（组合模式下取渲染器给出的模块右边界）
+                                    float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
                                     float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
                                     if (cy >= btnStartY && cy <= btnStartY + 18f)
                                     {

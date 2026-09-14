@@ -3,6 +3,25 @@ using Microsoft.Win32;
 namespace NotchPeninsula.Plugins;
 
 /// <summary>
+/// 原生（内置）内容模块的伪 Id，与插件组件共处同一张「内容显示顺序表」。
+/// 有了它们，用户就能在「插件中心」用 ← / → 把插件挪到时间日期 / 硬件占用 / 媒体控制器之间或之前。
+/// </summary>
+public static class BuiltinWidgets
+{
+    public const string Clock = "builtin.clock";        // 时间日期
+    public const string Hardware = "builtin.hardware";  // CPU / RAM 占用
+    public const string Media = "builtin.media";        // 媒体控制器
+
+    /// <summary>默认排列：原生模块在左，插件跟在其后（与引入顺序表之前的行为完全一致）。</summary>
+    public static readonly string[] Default = { Clock, Hardware, Media };
+
+    public static bool IsBuiltin(string id)
+        => string.Equals(id, Clock, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(id, Hardware, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(id, Media, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
 /// 插件宿主：注册中心 + 服务入口。
 /// 由 NotchWindow 持有单例。外部插件通过 <see cref="CreateScopedHost"/> 获得绑定自身 Id 的视图。
 ///
@@ -29,12 +48,91 @@ public sealed class PluginHost
     private readonly Dictionary<string, List<IDisposable>> _refreshes = new();
     private readonly Dictionary<string, Action?> _settingsHandlers = new();
 
-    // 组件注册表版本号：任何 Register/Unregister 都会自增。
+    // 组件注册表版本号：任何 Register/Unregister/排序 都会自增。
     // 渲染侧（Renderer）用它做快照缓存 —— 只有版本变化时才重新拷贝组件数组，
     // 稳态 60FPS 下读取零分配，插件禁用/卸载后渲染侧下一帧自动感知。
     private int _widgetsVersion;
 
-    public IReadOnlyList<IWidget> Widgets { get { lock (_lock) return _widgets.ToArray(); } }
+    // 内容显示顺序（builtin.* 原生模块 + 插件 pluginId 混排）：决定灵动岛上各内容的排列次序。
+    // 由 PluginManager 从注册表读回后通过 SetPluginOrder 注入，宿主只按它输出组件，不做持久化。
+    private readonly List<string> _pluginOrder = new();
+    // _pluginOrder 的只读快照：渲染侧每帧读取，避免每帧 ToArray 分配
+    private string[] _contentOrderArr = Array.Empty<string>();
+
+    /// <summary>
+    /// 内容显示顺序（含 builtin.* 原生模块与插件 pluginId）。渲染侧据此把原生模块与插件组件混排。
+    /// 返回内部快照数组，读取零分配。
+    /// </summary>
+    public IReadOnlyList<string> ContentOrder { get { lock (_lock) return _contentOrderArr; } }
+
+    /// <summary>查询某个组件属于哪个插件（渲染侧按插件分组绘制用）。</summary>
+    public bool TryGetWidgetPlugin(string widgetId, out string pluginId)
+    {
+        lock (_lock) return _widgetPluginMap.TryGetValue(widgetId, out pluginId!);
+    }
+
+    /// <summary>
+    /// 主显示区组件（已按插件显示顺序排列）。
+    /// 顺序由 <see cref="SetPluginOrder"/> 注入；未登记顺序的组件保持注册顺序追加在末尾。
+    /// </summary>
+    public IReadOnlyList<IWidget> Widgets
+    {
+        get
+        {
+            lock (_lock)
+            {
+                if (_widgets.Count == 0) return Array.Empty<IWidget>();
+                if (_pluginOrder.Count == 0) return _widgets.ToArray();
+
+                // 按插件顺序输出，同一插件内部保持其注册顺序
+                var ordered = new IWidget[_widgets.Count];
+                int n = 0;
+                foreach (var pid in _pluginOrder)
+                    foreach (var w in _widgets)
+                        if (_widgetPluginMap.TryGetValue(w.Id, out var p) && string.Equals(p, pid, StringComparison.OrdinalIgnoreCase))
+                            ordered[n++] = w;
+
+                // 追加未登记顺序的组件（例如直接 RegisterWidget(IWidget) 注册的测试组件）
+                foreach (var w in _widgets)
+                {
+                    if (_widgetPluginMap.TryGetValue(w.Id, out var p) && ContainsIgnoreCase(_pluginOrder, p)) continue;
+                    ordered[n++] = w;
+                }
+
+                if (n == ordered.Length) return ordered;
+                var trimmed = new IWidget[n];
+                Array.Copy(ordered, trimmed, n);
+                return trimmed;
+            }
+        }
+    }
+
+    private static bool ContainsIgnoreCase(List<string> list, string value)
+    {
+        for (int i = 0; i < list.Count; i++)
+            if (string.Equals(list[i], value, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// 注入内容显示顺序（builtin.* 原生模块 + 插件 pluginId）。只影响内容的输出/排布次序，不触发任何加载/卸载。
+    /// </summary>
+    public void SetPluginOrder(IReadOnlyList<string> order)
+    {
+        lock (_lock)
+        {
+            _pluginOrder.Clear();
+            for (int i = 0; i < order.Count; i++)
+            {
+                var id = order[i];
+                if (string.IsNullOrEmpty(id) || ContainsIgnoreCase(_pluginOrder, id)) continue;
+                _pluginOrder.Add(id);
+            }
+            _contentOrderArr = _pluginOrder.ToArray(); // 渲染侧读取的零分配快照
+            _widgetsVersion++; // 让渲染侧下一帧重建排序快照（仍然零稳态分配）
+        }
+    }
+
     public IReadOnlyList<ISecondaryWidget> SecondaryWidgets { get { lock (_lock) return _secondaryWidgets.ToArray(); } }
     public IReadOnlyList<(string PluginId, ISettingsPage Page)> SettingsPages { get { lock (_lock) return _settingsPages.ToArray(); } }
     public IReadOnlyList<(string Id, string DisplayName, string Version)> Plugins { get { lock (_lock) return _plugins.ToArray(); } }

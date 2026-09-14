@@ -106,10 +106,14 @@ dotnet build PluginSample/HelloPlugin.csproj
 | 读写设置 | `GetSetting` / `SetSetting` | key 自动加 `Plugin.<id>.` 前缀，互不干扰 |
 | 监听设置变化 | `event SettingsChanged` | 主机写入设置后触发 |
 | 当前主题 | `CurrentTheme` | 含 `TextColor` / `SubTextColor` / `BackgroundColor` / `GlobalDpi` |
-| 注册组件 | `RegisterWidget(IWidget)` | ✅ 已接线：灵动岛主显示区渲染。待机模式插在「时间」与「日期」之间；组合模式插在「硬件占用」与「媒体控制器」之间。主机每帧调 `MeasureWidth` / `Draw`，宽度由插件决定（灵动岛自动做宽度弹簧动画）。左键命中后回调 `OnLeftClick`，右键回调 `OnRightClick`（默认仍打开设置）。插件 `Draw` 抛异常会被自动熔断，不影响渲染循环 |
+| 注册组件 | `RegisterWidget(IWidget)` | ✅ 已接线：灵动岛主显示区渲染。**插件行是独立区域**，不参与也不受任何原生功能（时间日期/硬件占用/媒体控制器）的布局影响：原生内容（无论待机显示什么、媒体是否开启、是否组合模式）先按原样排完，插件一律跟在最后，恒定渲染在岛体最右侧的预留区。主机每帧调 `MeasureWidth` / `Draw`，宽度由插件决定（灵动岛自动做宽度弹簧动画）。左键命中后回调 `OnLeftClick`，右键回调 `OnRightClick`（默认仍打开设置）。插件 `Draw` 抛异常会被自动熔断，不影响渲染循环 |
 | 注册副组件 | `RegisterSecondaryWidget` | 副显示区只读信息（渲染接线规划中） |
 | 注册设置页 | `RegisterSettingsPage(ISettingsPage)` | 声明式控件（渲染接线规划中）；每个插件的总开关在「插件中心」的启用/禁用里，禁用即卸载并回收内存 |
 | 自有窗口 | `CreateWindow(title, w, h)` | 创建一个 SkiaSharp 绘制的独立窗口 |
+
+**插件显示顺序**：在「插件中心」每个插件的操作行里有 `←` `→` 两个按钮（插件名下方会显示当前顺序位 `#n`），
+点一下就能调整它在灵动岛上的排列位置，顺序会持久化到注册表、立即生效（无需重载插件）。
+排序只影响插件之间的先后；插件整体位置由主体决定（见上表）。
 
 **线程模型（很重要）**：`Draw` / `MeasureWidth` 跑在渲染线程，`ScheduleRefresh` 回调跑在后台线程。
 两者共享的字段请用 `lock` / `Interlocked` / `volatile` 保护，否则可能读到半更新的数据。

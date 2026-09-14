@@ -68,6 +68,7 @@ public sealed class PluginManager
 
     private const string RegistryBase = @"SOFTWARE\NotchPeninsula";
     private const string DisabledListValue = "Plugins_Disabled";
+    private const string OrderListValue = "Plugins_Order";
     private const string NoPluginError = "DLL 中未找到 INotchPlugin 的实现";
 
     private static readonly Lazy<PluginManager> _lazy = new(() => new PluginManager());
@@ -76,6 +77,13 @@ public sealed class PluginManager
     private readonly PluginHost _host = new();
     private readonly List<PluginEntry> _entries = new();
     private readonly HashSet<string> _disabled = new(StringComparer.OrdinalIgnoreCase);
+    // 插件显示顺序（存 Key，即相对 plugins 根的稳定标识）：持久化在注册表，决定灵动岛上的排列位置。
+    // 为什么不用 pluginId：pluginId 只有「加载成功」后才知道，插件一旦被禁用/加载失败就查不到，
+    // 会导致顺序位丢失、甚至只剩一个启用插件时排序按钮全部失效。Key 是磁盘上的稳定标识，与运行状态无关。
+    private readonly List<string> _order = new();
+    // 构造时从注册表读回的原始条目（可能是早期版本写入的 pluginId 格式），首次 EnsureOrder 时迁移成 Key
+    private readonly List<string> _rawOrder = new();
+    private bool _orderMigrated;
     private readonly object _lock = new();
 
     public PluginHost Host => _host;
@@ -85,10 +93,14 @@ public sealed class PluginManager
     /// <summary>插件列表 / 状态发生变化时触发（UI 订阅后刷新即可）。</summary>
     public event Action? Changed;
 
+    /// <summary>插件显示顺序（Key 列表），持久化在注册表。</summary>
+    public IReadOnlyList<string> Order { get { lock (_lock) return _order.ToArray(); } }
+
     private PluginManager()
     {
         PluginsRoot = Path.Combine(GetAppDirectory(), "plugins");
         LoadDisabledList();
+        LoadOrderList();
     }
 
     // ====================================================================
@@ -106,6 +118,11 @@ public sealed class PluginManager
             foreach (var e in Entries)
                 if (!_disabled.Contains(e.Key) && e.State != PluginState.Loaded)
                     Load(e);
+
+            // 把本次加载出来的插件补进顺序表并注入宿主，灵动岛据此排列插件位置
+            EnsureOrder();
+            PushOrderToHost();
+
             Logger.Info($"[PluginManager] 初始化完成，共发现 {Entries.Count} 个插件，已加载 {Entries.Count(x => x.State == PluginState.Loaded)} 个");
             RaiseChanged();
         }
@@ -154,6 +171,183 @@ public sealed class PluginManager
     }
 
     // ====================================================================
+    // 插件显示顺序（决定插件内容在灵动岛上的排列位置）
+    // ====================================================================
+
+    /// <summary>顺序位（从 1 开始）；0 表示该插件尚未登记顺序。</summary>
+    public int GetOrderIndex(PluginEntry e)
+    {
+        if (string.IsNullOrEmpty(e.Key)) return 0;
+        lock (_lock)
+        {
+            int i = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
+            return i < 0 ? 0 : i + 1;
+        }
+    }
+
+    /// <summary>该插件能否朝指定方向移动（delta = -1 左移 / +1 右移）。与插件当前启用状态无关。</summary>
+    public bool CanMoveOrder(PluginEntry e, int delta)
+    {
+        if (string.IsNullOrEmpty(e.Key)) return false;
+        lock (_lock)
+        {
+            int idx = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) return false;
+            int target = idx + delta;
+            return target >= 0 && target < _order.Count;
+        }
+    }
+
+    /// <summary>调整插件在灵动岛上的显示顺序并持久化；返回是否真的发生了变化。</summary>
+    public bool MoveOrder(PluginEntry e, int delta)
+    {
+        if (string.IsNullOrEmpty(e.Key)) return false;
+        lock (_lock)
+        {
+            int idx = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) { _order.Add(e.Key); idx = _order.Count - 1; }
+            int target = Math.Clamp(idx + delta, 0, _order.Count - 1);
+            if (target == idx) return false;
+            _order.RemoveAt(idx);
+            _order.Insert(target, e.Key);
+        }
+
+        SaveOrderList();
+        PushOrderToHost(); // 顺序变化 → 重新按新顺序输出组件，灵动岛下一帧即生效
+        Logger.Info($"[PluginManager] 插件显示顺序调整: {e.FriendlyName} → #{GetOrderIndex(e)}");
+        RaiseChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// 把发现到的插件补进顺序表：首次调用时先把注册表里的历史顺序迁移成 Key，
+    /// 之后把尚未登记顺序的插件按发现顺序追加到末尾。
+    /// </summary>
+    private void EnsureOrder()
+    {
+        bool changed = false;
+        lock (_lock)
+        {
+            // ① 迁移历史数据：早期版本写的是 pluginId，这里按「Key 优先、Id 兜底」还原成 Key
+            if (!_orderMigrated)
+            {
+                _orderMigrated = true;
+                foreach (var raw in _rawOrder)
+                {
+                    var matched = FindEntryByKeyOrId(raw);
+                    if (matched == null || string.IsNullOrEmpty(matched.Key)) continue;
+                    if (ContainsOrder(matched.Key)) continue;
+                    _order.Add(matched.Key);
+                    changed = true;
+                }
+                _rawOrder.Clear();
+            }
+
+            // ② 原生模块（时间日期 / 硬件 / 媒体）默认排在所有插件之前 —— 与引入顺序表之前的表现一致。
+            //    只有顺序表里完全找不到它们时才补，避免覆盖用户已经调过的位置。
+            var missingBuiltin = new List<string>(Plugins.BuiltinWidgets.Default.Length);
+            foreach (var b in Plugins.BuiltinWidgets.Default)
+                if (!ContainsOrder(b)) missingBuiltin.Add(b);
+            if (missingBuiltin.Count > 0)
+            {
+                _order.InsertRange(0, missingBuiltin);
+                changed = true;
+            }
+
+            // ③ 新发现的插件追加到末尾
+            foreach (var e in _entries)
+            {
+                if (string.IsNullOrEmpty(e.Key)) continue;
+                if (ContainsOrder(e.Key)) continue;
+                _order.Add(e.Key);
+                changed = true;
+            }
+        }
+        if (changed) SaveOrderList();
+    }
+
+    /// <summary>按 Key 查找；找不到再按已加载插件的 pluginId 查找（兼容旧顺序数据）。调用方需持有 _lock。</summary>
+    private PluginEntry? FindEntryByKeyOrId(string value)
+    {
+        foreach (var e in _entries)
+            if (string.Equals(e.Key, value, StringComparison.OrdinalIgnoreCase)) return e;
+        foreach (var e in _entries)
+            if (!string.IsNullOrEmpty(e.Id) && string.Equals(e.Id, value, StringComparison.OrdinalIgnoreCase)) return e;
+        return null;
+    }
+
+    /// <summary>
+    /// 把顺序表注入宿主：原生模块（builtin.*）原样传递，插件则把 Key 换成 pluginId。
+    /// 未加载（禁用 / 失败）的插件不输出，但其顺序位在表里保留，启用后自动回到原位。
+    /// </summary>
+    private void PushOrderToHost()
+    {
+        string[] ids;
+        lock (_lock)
+        {
+            var list = new List<string>(_order.Count);
+            foreach (var item in _order)
+            {
+                if (Plugins.BuiltinWidgets.IsBuiltin(item)) { list.Add(item); continue; }
+                var e = FindEntryByKeyOrId(item);
+                if (e != null && !string.IsNullOrEmpty(e.Id)) list.Add(e.Id);
+            }
+            ids = list.ToArray();
+        }
+        _host.SetPluginOrder(ids);
+    }
+
+    private void LoadOrderList()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RegistryBase);
+            if (key?.GetValue(OrderListValue) is not string raw || string.IsNullOrWhiteSpace(raw)) return;
+            lock (_lock)
+            {
+                foreach (var item in raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (ContainsRawOrder(item)) continue;
+                    _rawOrder.Add(item);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("[PluginManager] 读取插件显示顺序失败", ex);
+        }
+    }
+
+    private bool ContainsRawOrder(string value)
+    {
+        for (int i = 0; i < _rawOrder.Count; i++)
+            if (string.Equals(_rawOrder[i], value, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private bool ContainsOrder(string key)
+    {
+        for (int i = 0; i < _order.Count; i++)
+            if (string.Equals(_order[i], key, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private void SaveOrderList()
+    {
+        try
+        {
+            string raw;
+            lock (_lock) raw = string.Join(";", _order);
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RegistryBase);
+            key?.SetValue(OrderListValue, raw);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("[PluginManager] 保存插件显示顺序失败", ex);
+        }
+    }
+
+    // ====================================================================
     // 加载 / 卸载 / 热重载
     // ====================================================================
 
@@ -195,6 +389,9 @@ public sealed class PluginManager
             plugin.Initialize(_host.CreateScopedHost(e.Id));
 
             e.State = PluginState.Loaded;
+            // 新加载的插件若还没有顺序位置，追加到末尾并同步给宿主
+            EnsureOrder();
+            PushOrderToHost();
             Logger.Info($"[PluginManager] 已加载 {plugin.Id} v{plugin.Version} ({plugin.DisplayName})");
             RaiseChanged();
             return true;
@@ -362,6 +559,15 @@ public sealed class PluginManager
     public void Remove(PluginEntry e)
     {
         Unload(e);
+
+        // 插件已移出 plugins 目录 → 从显示顺序表里彻底摘掉，避免残留顺序位占位
+        lock (_lock)
+        {
+            _order.RemoveAll(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
+            _rawOrder.RemoveAll(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
+        }
+        SaveOrderList();
+
         try
         {
             var recycle = Path.Combine(PluginsRoot, "_recycle", DateTime.Now.ToString("yyyyMMdd_HHmmss_fff"));
@@ -379,6 +585,7 @@ public sealed class PluginManager
             Logger.Error("[PluginManager] 移除插件文件失败", ex);
         }
         Refresh();
+        PushOrderToHost();
         RaiseChanged();
     }
 
