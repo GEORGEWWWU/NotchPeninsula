@@ -106,9 +106,9 @@ dotnet build PluginSample/HelloPlugin.csproj
 | 读写设置 | `GetSetting` / `SetSetting` | key 自动加 `Plugin.<id>.` 前缀，互不干扰 |
 | 监听设置变化 | `event SettingsChanged` | 主机写入设置后触发 |
 | 当前主题 | `CurrentTheme` | 含 `TextColor` / `SubTextColor` / `BackgroundColor` / `GlobalDpi` |
-| 注册组件 | `RegisterWidget(IWidget)` | 主显示区小组件，主机每帧调 `MeasureWidth` / `Draw` |
-| 注册副组件 | `RegisterSecondaryWidget` | 副显示区只读信息 |
-| 注册设置页 | `RegisterSettingsPage(ISettingsPage)` | 声明式控件，主机负责绘制与持久化 |
+| 注册组件 | `RegisterWidget(IWidget)` | ✅ 已接线：灵动岛主显示区渲染。待机模式插在「时间」与「日期」之间；组合模式插在「硬件占用」与「媒体控制器」之间。主机每帧调 `MeasureWidth` / `Draw`，宽度由插件决定（灵动岛自动做宽度弹簧动画）。左键命中后回调 `OnLeftClick`，右键回调 `OnRightClick`（默认仍打开设置）。插件 `Draw` 抛异常会被自动熔断，不影响渲染循环 |
+| 注册副组件 | `RegisterSecondaryWidget` | 副显示区只读信息（渲染接线规划中） |
+| 注册设置页 | `RegisterSettingsPage(ISettingsPage)` | 声明式控件（渲染接线规划中）；每个插件的总开关在「插件中心」的启用/禁用里，禁用即卸载并回收内存 |
 | 自有窗口 | `CreateWindow(title, w, h)` | 创建一个 SkiaSharp 绘制的独立窗口 |
 
 **线程模型（很重要）**：`Draw` / `MeasureWidth` 跑在渲染线程，`ScheduleRefresh` 回调跑在后台线程。
@@ -130,6 +130,9 @@ dotnet build PluginSample/HelloPlugin.csproj
 ## 5. 进阶建议
 
 - `Id` 一旦发布就不要改，否则用户那边的「启用/禁用」状态会丢失。
+- **`Draw` / `MeasureWidth` 每帧被调用，绝不能在里面 `new` 画笔/字符串等对象**：
+  画笔与字体在构造函数创建一次并复用（参考本示例），文字只在内变化时重建；
+  持续抛异常的组件会被主机熔断（停用绘制并记一次日志）。
 - 需要长期后台任务（轮询、WebSocket）时，务必用 `ScheduleRefresh` 或自己起线程，
   **绝不要在 `Initialize` 里写死循环**，那会卡住加载。
 - 宿主会自动回收它交给插件的资源（刷新句柄 / 组件 / 设置页）。

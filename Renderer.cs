@@ -119,6 +119,163 @@ namespace NotchPeninsula
         public static Plugins.RenderTheme GetCurrentTheme()
             => new Plugins.RenderTheme(_currentTextColor, _currentSubTextColor, _bgPaint.Color, GLOBAL_DPI, NOTCH_BOTTOM_RADIUS);
 
+        // ================= 🧩 插件组件渲染接线 =================
+        // 设计目标：稳态 60FPS 零 GC 分配。
+        //   · 组件数组只在注册表版本变化时拷贝一次（_pluginWidgets）；
+        //   · 每帧的宽度写入复用数组（_pluginWidths）；
+        //   · 命中矩形复用同一个 List（_pluginSlots），绘制与鼠标分发共用；
+        //   · 帧上下文 WidgetFrame / RenderTheme 均为 struct，栈上传递不进堆。
+        // 插件 Draw / MeasureWidth 抛异常会被熔断（_pluginBroken），只记一次日志，绝不拖死渲染循环。
+        private static Plugins.IWidget[]? _pluginWidgets;
+        private static int _pluginWidgetsVersion = -1;
+        private static float[]? _pluginWidths;
+        private static bool[]? _pluginBroken;
+        private static readonly List<Plugins.WidgetLayout.Slot> _pluginSlots = new(8);
+        private static readonly object _pluginSlotLock = new();
+        // 鼠标逻辑坐标（相对窗口左上角），-1 表示鼠标不在灵动岛上
+        private static float _pluginMouseX = -1f;
+        private static float _pluginMouseY = -1f;
+
+        /// <summary>NotchWindow 在 WM_MOUSEMOVE 中记录鼠标逻辑坐标；鼠标离开时传 (-1,-1)。</summary>
+        public static void UpdatePluginMouse(float x, float y)
+        {
+            _pluginMouseX = x;
+            _pluginMouseY = y;
+        }
+
+        /// <summary>待机(非媒体)状态下插件组件行额外占用的宽度；0 表示当前没有可显示的插件组件。</summary>
+        public static float GetStandbyPluginWidth()
+        {
+            if (StandbyDisplayMode == 2) return 0f; // 硬件占用为居中布局，暂不插入插件行，保持原视觉
+            if (!RefreshPluginWidgets()) return 0f;
+            float rowW = MeasurePluginRow(BASE_HEIGHT);
+            return rowW > 0f ? 16f + rowW : 0f;
+        }
+
+        /// <summary>把岛内逻辑坐标 (x,y) 的左键事件分发给插件组件；命中并处理返回 true。</summary>
+        public static bool DispatchPluginLeftClick(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                for (int i = 0; i < _pluginSlots.Count; i++)
+                {
+                    var slot = _pluginSlots[i];
+                    var r = slot.Rect;
+                    if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) continue;
+
+                    Plugins.WidgetHit hit;
+                    try { hit = slot.Widget.HitTest(x - r.Left, y - r.Top, r); }
+                    catch (Exception ex) { Logger.Error("[Renderer] 插件组件命中检测异常", ex); continue; }
+                    if (!hit.IsHit) continue;
+
+                    try { slot.Widget.OnLeftClick(hit.Action, x - r.Left, y - r.Top); }
+                    catch (Exception ex) { Logger.Error("[Renderer] 插件组件点击回调异常", ex); }
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>把岛内逻辑坐标 (x,y) 的右键事件广播给命中的插件组件（具体行为由插件决定）。</summary>
+        public static void DispatchPluginRightClick(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                for (int i = 0; i < _pluginSlots.Count; i++)
+                {
+                    var slot = _pluginSlots[i];
+                    var r = slot.Rect;
+                    if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) continue;
+                    try { slot.Widget.OnRightClick(); }
+                    catch (Exception ex) { Logger.Error("[Renderer] 插件组件右键回调异常", ex); }
+                }
+            }
+        }
+
+        /// <summary>每帧绘制前清空插件命中区；只有本帧实际绘制了插件行才会重新填充。</summary>
+        private static void InvalidatePluginHitAreas()
+        {
+            lock (_pluginSlotLock) _pluginSlots.Clear();
+        }
+
+        /// <summary>刷新插件组件快照（版本变化时才分配一次），返回是否存在可渲染组件。</summary>
+        private static bool RefreshPluginWidgets()
+        {
+            var host = Plugins.PluginManager.Instance.Host;
+            int version = host.WidgetsVersion;
+            if (_pluginWidgetsVersion == version && _pluginWidths != null)
+                return _pluginWidgets!.Length > 0;
+
+            _pluginWidgetsVersion = version;
+            // Widgets getter 返回的是加锁下的全新数组，as 转换零拷贝直接持有
+            _pluginWidgets = host.Widgets as Plugins.IWidget[] ?? Array.Empty<Plugins.IWidget>();
+            _pluginWidths = _pluginWidgets.Length > 0 ? new float[_pluginWidgets.Length] : Array.Empty<float>();
+            _pluginBroken = _pluginWidgets.Length > 0 ? new bool[_pluginWidgets.Length] : Array.Empty<bool>();
+            return _pluginWidgets.Length > 0;
+        }
+
+        /// <summary>测量插件组件行总宽（组件间 16px 间距），并把每个组件宽度写入复用缓存。</summary>
+        private static float MeasurePluginRow(float availableHeight)
+        {
+            var widgets = _pluginWidgets!;
+            var widths = _pluginWidths!;
+            float total = 0f;
+            for (int i = 0; i < widgets.Length; i++)
+            {
+                float w = 0f;
+                if (!_pluginBroken![i])
+                {
+                    try { w = Math.Max(widgets[i].MeasureWidth(availableHeight), 0f); }
+                    catch (Exception ex) { MarkPluginBroken(i, ex); }
+                }
+                widths[i] = w;
+                if (w > 0f) total = total > 0f ? total + 16f + w : w;
+            }
+            return total;
+        }
+
+        /// <summary>绘制插件组件行并缓存命中矩形（供鼠标分发复用）。mouseX/mouseY 为扣除 topY 平移后的岛内逻辑坐标。</summary>
+        private static void DrawPluginRow(SKCanvas canvas, float startX, float currentHeight,
+            byte alpha, float textOffsetY, float[]? bars, float mouseX, float mouseY)
+        {
+            var widgets = _pluginWidgets!;
+            var widths = _pluginWidths!;
+            var theme = GetCurrentTheme();
+
+            lock (_pluginSlotLock)
+            {
+                _pluginSlots.Clear();
+                float x = startX;
+                for (int i = 0; i < widgets.Length; i++)
+                {
+                    float w = widths[i];
+                    if (_pluginBroken![i] || w <= 0f) continue;
+                    _pluginSlots.Add(new Plugins.WidgetLayout.Slot(widgets[i], new SKRect(x, 0f, x + w, currentHeight)));
+                    x += w + 16f;
+                }
+
+                for (int i = 0; i < _pluginSlots.Count; i++)
+                {
+                    var slot = _pluginSlots[i];
+                    var r = slot.Rect;
+                    bool hovered = mouseX >= r.Left && mouseX <= r.Right && mouseY >= r.Top && mouseY <= r.Bottom;
+                    var frame = new Plugins.WidgetFrame(theme, alpha, textOffsetY, bars, hovered);
+                    canvas.Save();
+                    try { slot.Widget.Draw(canvas, r, frame); }
+                    catch (Exception ex) { MarkPluginBroken(Array.IndexOf(widgets, slot.Widget), ex); }
+                    finally { canvas.Restore(); }
+                }
+            }
+        }
+
+        /// <summary>熔断持续抛异常的插件组件：停用其绘制/命中，整个生命周期只记一次日志防刷屏。</summary>
+        private static void MarkPluginBroken(int index, Exception ex)
+        {
+            if (index < 0 || _pluginBroken == null || _pluginBroken[index]) return;
+            _pluginBroken[index] = true;
+            Logger.Error($"[Renderer] 插件组件 {(_pluginWidgets != null && index < _pluginWidgets.Length ? _pluginWidgets[index].Id : "?")} 渲染异常，已停用其绘制", ex);
+        }
+
         // 动态计算最大边界，防止因刘海变大导致出界
         // 将透明原生窗口的基础画布拓宽至 1200f，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
         public static float WINDOW_WIDTH => Math.Max(1200f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);
@@ -312,6 +469,10 @@ namespace NotchPeninsula
             try
             {
                 canvas.Clear(SKColors.Transparent);
+
+                // 🧩 每帧清空插件命中区，仅当本帧实际绘制插件行时才重新填充
+                // （防止 Toast / 媒体激活等不绘制插件的状态下残留上一帧的过期命中矩形）
+                InvalidatePluginHitAreas();
 
                 float left = (WINDOW_WIDTH - currentWidth) / 2f;
                 float right = left + currentWidth;
@@ -617,6 +778,17 @@ namespace NotchPeninsula
                         currentX = ramX + ramGroupW + 16f;
                     }
 
+                    // 2.5 🧩 插件组件模块（外部插件的主显示区小组件，位于硬件占用与媒体控制器之间）
+                    if (RefreshPluginWidgets())
+                    {
+                        float rowW = MeasurePluginRow(currentHeight);
+                        if (rowW > 0f)
+                        {
+                            DrawPluginRow(canvas, currentX, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
+                            currentX += rowW + 16f;
+                        }
+                    }
+
                     // 3. 媒体控制器模块（含频谱，媒体激活时才显示）
                     if (CompShowMedia && media.IsActive)
                     {
@@ -860,6 +1032,23 @@ namespace NotchPeninsula
                         float baselineY = currentHeight / 2f + 5f + textOffsetY;
                         canvas.DrawText(_cachedTimeStr, left + 16f, baselineY, _timePaint);
                         canvas.DrawText(_cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint);
+
+                        // 🧩 插件组件行：紧跟时间之后，日期保持右对齐（间距与组合模式一致 16px）
+                        if (RefreshPluginWidgets())
+                        {
+                            float rowW = MeasurePluginRow(currentHeight);
+                            if (rowW > 0f)
+                                DrawPluginRow(canvas, left + 32f + _cachedTimeWidth, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
+                        }
+                    }
+                    else if (StandbyDisplayMode == 1) // 空白模式：只渲染插件组件行
+                    {
+                        if (RefreshPluginWidgets())
+                        {
+                            float rowW = MeasurePluginRow(currentHeight);
+                            if (rowW > 0f)
+                                DrawPluginRow(canvas, left + 16f, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
+                        }
                     }
                     else if (StandbyDisplayMode == 2) // 硬件占用检测渲染
                     {
@@ -1121,6 +1310,18 @@ namespace NotchPeninsula
                 float ramGroupW = ramTagW + 4f + pctW;
                 width += cpuGroupW + 16f + ramGroupW;
                 hasPrev = true;
+            }
+
+            // 2.5 🧩 插件组件行实际宽度（与 Draw 中的绘制顺序一致：硬件占用之后、媒体控制器之前）
+            if (RefreshPluginWidgets())
+            {
+                float rowW = MeasurePluginRow(media != null && media.IsActive ? MEDIA_HEIGHT : BASE_HEIGHT);
+                if (rowW > 0f)
+                {
+                    if (hasPrev) width += 16f;
+                    width += rowW;
+                    hasPrev = true;
+                }
             }
 
             // 3. 媒体控制器组件实际宽度

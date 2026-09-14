@@ -505,7 +505,7 @@ namespace NotchPeninsula
                     expectedTargetWidth = Renderer.GetCompositeWidth(_media);
                 }
                 else
-                    expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH;
+                    expectedTargetWidth = currentActive ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) : Renderer.STANDBY_WIDTH + Renderer.GetStandbyPluginWidth();
 
                 // 自动文本长度自适应逻辑
                 // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
@@ -702,6 +702,8 @@ namespace NotchPeninsula
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
                         int mx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int my = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        // 🧩 记录鼠标逻辑坐标，供插件组件的悬停判定使用
+                        Renderer.UpdatePluginMouse(mx, my);
                         float hitTopY = 12f * _currentStyleProgress;
 
                         // 1. 最高优先级拦截：精准计算唤醒按钮垂直居中热区，解决没有手型指针的问题
@@ -770,6 +772,8 @@ namespace NotchPeninsula
                         _isCursorOverIcon = false;
                         Renderer.HoveredExpandedButton = -1;
                         Renderer.IsMediaExpanded = false;
+                        // 🧩 鼠标离开灵动岛，清空插件组件悬停状态
+                        Renderer.UpdatePluginMouse(-1f, -1f);
                         break;
                     }
 
@@ -796,6 +800,12 @@ namespace NotchPeninsula
                         if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
                         {
                             _isManuallyExpanded = true;
+                            return (IntPtr)0;
+                        }
+
+                        // 🧩 插件组件左键交互：命中插件绘制区则交给插件决定做什么，不再走媒体控制逻辑
+                        if (_isHovered && _currentToast == null && Renderer.DispatchPluginLeftClick(cx, cy - hitTopY))
+                        {
                             return (IntPtr)0;
                         }
 
@@ -839,6 +849,13 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
+                        // 🧩 先把右键广播给坐标命中的插件组件（插件可借此实现自定义行为），默认动作仍是打开设置
+                        if (_currentToast == null)
+                        {
+                            int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                            int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                            Renderer.DispatchPluginRightClick(rx, ry - 12f * _currentStyleProgress);
+                        }
                         ConsoleWindow.Toggle();
                     }
                     break;

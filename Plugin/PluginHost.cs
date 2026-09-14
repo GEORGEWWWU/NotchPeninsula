@@ -29,10 +29,18 @@ public sealed class PluginHost
     private readonly Dictionary<string, List<IDisposable>> _refreshes = new();
     private readonly Dictionary<string, Action?> _settingsHandlers = new();
 
+    // 组件注册表版本号：任何 Register/Unregister 都会自增。
+    // 渲染侧（Renderer）用它做快照缓存 —— 只有版本变化时才重新拷贝组件数组，
+    // 稳态 60FPS 下读取零分配，插件禁用/卸载后渲染侧下一帧自动感知。
+    private int _widgetsVersion;
+
     public IReadOnlyList<IWidget> Widgets { get { lock (_lock) return _widgets.ToArray(); } }
     public IReadOnlyList<ISecondaryWidget> SecondaryWidgets { get { lock (_lock) return _secondaryWidgets.ToArray(); } }
     public IReadOnlyList<(string PluginId, ISettingsPage Page)> SettingsPages { get { lock (_lock) return _settingsPages.ToArray(); } }
     public IReadOnlyList<(string Id, string DisplayName, string Version)> Plugins { get { lock (_lock) return _plugins.ToArray(); } }
+
+    /// <summary>组件注册表版本号，随任何注册/注销自增（渲染侧快照缓存依据）。</summary>
+    public int WidgetsVersion { get { lock (_lock) return _widgetsVersion; } }
 
     public void RegisterPlugin(string id, string displayName, string version = "")
     {
@@ -46,7 +54,7 @@ public sealed class PluginHost
 
     public void RegisterWidget(IWidget widget)
     {
-        lock (_lock) _widgets.Add(widget);
+        lock (_lock) { _widgets.Add(widget); _widgetsVersion++; }
     }
 
     public void RegisterWidget(string pluginId, IWidget widget)
@@ -55,6 +63,7 @@ public sealed class PluginHost
         {
             _widgets.Add(widget);
             _widgetPluginMap[widget.Id] = pluginId;
+            _widgetsVersion++;
         }
     }
 
@@ -65,7 +74,7 @@ public sealed class PluginHost
 
     public void RegisterSecondaryWidget(ISecondaryWidget widget)
     {
-        lock (_lock) _secondaryWidgets.Add(widget);
+        lock (_lock) { _secondaryWidgets.Add(widget); _widgetsVersion++; }
     }
 
     public void RegisterSecondaryWidget(string pluginId, ISecondaryWidget widget)
@@ -74,6 +83,7 @@ public sealed class PluginHost
         {
             _secondaryWidgets.Add(widget);
             _secondaryWidgetPluginMap[widget.Id] = pluginId;
+            _widgetsVersion++;
         }
     }
 
@@ -199,6 +209,7 @@ public sealed class PluginHost
             _settingsPages.RemoveAll(p => p.PluginId == pluginId);
             _plugins.RemoveAll(p => p.Id == pluginId);
             _settingsHandlers.Remove(pluginId);
+            _widgetsVersion++;
             if (_refreshes.TryGetValue(pluginId, out var list))
             {
                 refreshes = list;
