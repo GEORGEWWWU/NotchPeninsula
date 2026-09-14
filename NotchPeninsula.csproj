@@ -17,6 +17,15 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- PluginSample 是独立的示例插件工程，不能被主程序一起编译（否则接口类型会重复定义） -->
+		<Compile Remove="PluginSample\**" />
+		<EmbeddedResource Remove="PluginSample\**" />
+		<Page Remove="PluginSample\**" />
+		<None Remove="PluginSample\**" />
+		<Content Remove="PluginSample\**" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- 新增的资源在这里引入 -->
     <Content Include="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />

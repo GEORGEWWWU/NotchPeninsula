@@ -112,6 +112,13 @@ namespace NotchPeninsula
             _barBgPaint.Color = _currentTextColor.WithAlpha(30);   // 未填充进度条的半透明纯色底槽
         }
 
+        /// <summary>
+        /// 把当前主题/DPI 快照成插件侧可用的只读结构体（供 IPluginHost.CurrentTheme 使用）。
+        /// 插件在渲染线程读取，这里只做值拷贝，不含任何共享可变状态。
+        /// </summary>
+        public static Plugins.RenderTheme GetCurrentTheme()
+            => new Plugins.RenderTheme(_currentTextColor, _currentSubTextColor, _bgPaint.Color, GLOBAL_DPI, NOTCH_BOTTOM_RADIUS);
+
         // 动态计算最大边界，防止因刘海变大导致出界
         // 将透明原生窗口的基础画布拓宽至 1200f，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
         public static float WINDOW_WIDTH => Math.Max(1200f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);

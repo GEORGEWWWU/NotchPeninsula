@@ -5,29 +5,82 @@ namespace NotchPeninsula.Plugins;
 /// <summary>
 /// 插件宿主：注册中心 + 服务入口。
 /// 由 NotchWindow 持有单例。外部插件通过 <see cref="CreateScopedHost"/> 获得绑定自身 Id 的视图。
+///
+/// 热加载关键点：所有注册物（组件/设置页/刷新句柄/设置事件）都按 PluginId 归组登记，
+/// <see cref="UnregisterPlugin"/> 能把某个插件留下的引用全部摘掉，这样承载它的
+/// AssemblyLoadContext 才有可能被 GC 真正回收。
 /// </summary>
 public sealed class PluginHost
 {
     private const string RegistryBase = @"SOFTWARE\NotchPeninsula";
 
+    private readonly object _lock = new();
+
     private readonly List<IWidget> _widgets = new();
     private readonly List<ISecondaryWidget> _secondaryWidgets = new();
     private readonly List<(string PluginId, ISettingsPage Page)> _settingsPages = new();
+    private readonly List<(string Id, string DisplayName, string Version)> _plugins = new();
+
+    // 组件 -> 所属插件 的反查表
     private readonly Dictionary<string, string> _widgetPluginMap = new();
-    private readonly List<(string Id, string DisplayName)> _plugins = new();
+    private readonly Dictionary<string, string> _secondaryWidgetPluginMap = new();
 
-    public IReadOnlyList<IWidget> Widgets => _widgets;
-    public IReadOnlyList<ISecondaryWidget> SecondaryWidgets => _secondaryWidgets;
-    public IReadOnlyList<(string PluginId, ISettingsPage Page)> SettingsPages => _settingsPages;
-    public IReadOnlyList<(string Id, string DisplayName)> Plugins => _plugins;
+    // 每个插件登记的资源，卸载时统一释放
+    private readonly Dictionary<string, List<IDisposable>> _refreshes = new();
+    private readonly Dictionary<string, Action?> _settingsHandlers = new();
 
-    public void RegisterPlugin(string id, string displayName) { if (_plugins.All(p => p.Id != id)) _plugins.Add((id, displayName)); }
+    public IReadOnlyList<IWidget> Widgets { get { lock (_lock) return _widgets.ToArray(); } }
+    public IReadOnlyList<ISecondaryWidget> SecondaryWidgets { get { lock (_lock) return _secondaryWidgets.ToArray(); } }
+    public IReadOnlyList<(string PluginId, ISettingsPage Page)> SettingsPages { get { lock (_lock) return _settingsPages.ToArray(); } }
+    public IReadOnlyList<(string Id, string DisplayName, string Version)> Plugins { get { lock (_lock) return _plugins.ToArray(); } }
 
-    public void RegisterWidget(IWidget widget) => _widgets.Add(widget);
-    public void RegisterWidget(string pluginId, IWidget widget) { _widgets.Add(widget); _widgetPluginMap[widget.Id] = pluginId; }
-    public string? GetWidgetPluginId(string widgetId) => _widgetPluginMap.TryGetValue(widgetId, out var p) ? p : null;
-    public void RegisterSecondaryWidget(ISecondaryWidget widget) => _secondaryWidgets.Add(widget);
-    public void RegisterSettingsPage(string pluginId, ISettingsPage page) => _settingsPages.Add((pluginId, page));
+    public void RegisterPlugin(string id, string displayName, string version = "")
+    {
+        lock (_lock)
+        {
+            var idx = _plugins.FindIndex(p => p.Id == id);
+            if (idx >= 0) _plugins[idx] = (id, displayName, version);
+            else _plugins.Add((id, displayName, version));
+        }
+    }
+
+    public void RegisterWidget(IWidget widget)
+    {
+        lock (_lock) _widgets.Add(widget);
+    }
+
+    public void RegisterWidget(string pluginId, IWidget widget)
+    {
+        lock (_lock)
+        {
+            _widgets.Add(widget);
+            _widgetPluginMap[widget.Id] = pluginId;
+        }
+    }
+
+    public string? GetWidgetPluginId(string widgetId)
+    {
+        lock (_lock) return _widgetPluginMap.TryGetValue(widgetId, out var p) ? p : null;
+    }
+
+    public void RegisterSecondaryWidget(ISecondaryWidget widget)
+    {
+        lock (_lock) _secondaryWidgets.Add(widget);
+    }
+
+    public void RegisterSecondaryWidget(string pluginId, ISecondaryWidget widget)
+    {
+        lock (_lock)
+        {
+            _secondaryWidgets.Add(widget);
+            _secondaryWidgetPluginMap[widget.Id] = pluginId;
+        }
+    }
+
+    public void RegisterSettingsPage(string pluginId, ISettingsPage page)
+    {
+        lock (_lock) _settingsPages.Add((pluginId, page));
+    }
 
     /// <summary>为某个插件创建绑定其 Id 的宿主视图（设置持久化自动加前缀）。</summary>
     public IPluginHost CreateScopedHost(string pluginId) => new ScopedPluginHost(this, pluginId);
@@ -35,8 +88,17 @@ public sealed class PluginHost
     public RenderTheme CurrentTheme => Renderer.GetCurrentTheme();
 
     // ---- 刷新调度 ----
-    public IDisposable ScheduleRefresh(TimeSpan interval, Action callback)
-        => new RefreshHandle(interval, callback);
+    public IDisposable ScheduleRefresh(string pluginId, TimeSpan interval, Action callback)
+    {
+        var handle = new RefreshHandle(interval, callback);
+        lock (_lock)
+        {
+            if (!_refreshes.TryGetValue(pluginId, out var list))
+                _refreshes[pluginId] = list = new List<IDisposable>();
+            list.Add(handle);
+        }
+        return handle;
+    }
 
     // ---- 提醒（接现有 Toast 流） ----
     public event Action<ToastData>? ReminderPosted;
@@ -46,14 +108,26 @@ public sealed class PluginHost
         var toast = new ToastData
         {
             AppName = "插件提醒",
-            Title = reminder.Title,
-            Body = reminder.Body,
+            // 复制到宿主堆，避免长期持有插件 loader heap 上的字符串（会锁住可回收 ALC）
+            Title = DetachString(reminder.Title),
+            Body = DetachString(reminder.Body),
             ProcessName = "PluginReminder",
             NotificationId = (uint)Environment.TickCount
         };
-        Logger.Info($"[PluginHost] 插件提醒已投递: {reminder.Title} — {reminder.Body}");
+        Logger.Info($"[PluginHost] 插件提醒已投递: {toast.Title} — {toast.Body}");
         ReminderPosted?.Invoke(toast);
     }
+
+    /// <summary>
+    /// 把插件返回的字符串复制到宿主自己的托管堆。
+    ///
+    /// 为什么必须这样做：插件方法返回的字符串常量位于「可回收 AssemblyLoadContext 的
+    /// loader heap」内，宿主若长期持有该引用（例如存进 PluginEntry / ToastData），
+    /// 这个 ALC 就永远无法被 GC 回收，热重载会持续泄漏旧版本代码。
+    /// new string(...) 会在当前（宿主）上下文重新分配，从而切断这条引用链。
+    /// </summary>
+    internal static string DetachString(string? s)
+        => string.IsNullOrEmpty(s) ? string.Empty : new string(s.ToCharArray());
 
     // ---- 设置持久化 ----
     public string GetSetting(string pluginId, string key, string fallback)
@@ -66,8 +140,6 @@ public sealed class PluginHost
         catch { return fallback; }
     }
 
-    public event Action? SettingsChanged;
-
     public void SetSetting(string pluginId, string key, string value)
     {
         try
@@ -76,10 +148,69 @@ public sealed class PluginHost
             reg?.SetValue(PrefixedKey(pluginId, key), value);
         }
         catch (Exception ex) { Logger.Error($"保存插件设置失败: {pluginId}.{key}", ex); }
-        SettingsChanged?.Invoke();
+
+        Action? handler;
+        lock (_lock) _settingsHandlers.TryGetValue(pluginId, out handler);
+        handler?.Invoke();
+    }
+
+    internal void AddSettingsHandler(string pluginId, Action? handler)
+    {
+        lock (_lock)
+        {
+            _settingsHandlers.TryGetValue(pluginId, out var cur);
+            _settingsHandlers[pluginId] = cur + handler;
+        }
+    }
+
+    internal void RemoveSettingsHandler(string pluginId, Action? handler)
+    {
+        lock (_lock)
+        {
+            _settingsHandlers.TryGetValue(pluginId, out var cur);
+            var next = cur - handler;
+            if (next == null) _settingsHandlers.Remove(pluginId);
+            else _settingsHandlers[pluginId] = next;
+        }
     }
 
     private static string PrefixedKey(string pluginId, string key) => $"Plugin.{pluginId}.{key}";
+
+    // ---- 注销（热卸载 / 热重载的核心） ----
+    /// <summary>
+    /// 摘除某个插件登记的全部内容：组件、二级组件、设置页、刷新句柄、设置事件订阅。
+    /// 调用后该插件留下的对象将不再被宿主引用，可被 GC 回收。
+    /// </summary>
+    public void UnregisterPlugin(string pluginId)
+    {
+        List<IDisposable>? refreshes = null;
+        lock (_lock)
+        {
+            foreach (var w in _widgets.Where(w => _widgetPluginMap.TryGetValue(w.Id, out var p) && p == pluginId).ToArray())
+            {
+                _widgets.Remove(w);
+                _widgetPluginMap.Remove(w.Id);
+            }
+            foreach (var w in _secondaryWidgets.Where(w => _secondaryWidgetPluginMap.TryGetValue(w.Id, out var p) && p == pluginId).ToArray())
+            {
+                _secondaryWidgets.Remove(w);
+                _secondaryWidgetPluginMap.Remove(w.Id);
+            }
+            _settingsPages.RemoveAll(p => p.PluginId == pluginId);
+            _plugins.RemoveAll(p => p.Id == pluginId);
+            _settingsHandlers.Remove(pluginId);
+            if (_refreshes.TryGetValue(pluginId, out var list))
+            {
+                refreshes = list;
+                _refreshes.Remove(pluginId);
+            }
+        }
+
+        // 定时器在锁外释放，避免 Dispose 回调再次进入宿主造成死锁
+        if (refreshes != null)
+            foreach (var r in refreshes)
+                try { r.Dispose(); } catch { }
+    }
 
     // ---- 交互调度（Phase 2 接线） ----
     public void OpenDetailPage(string widgetId) => Logger.Info($"[PluginHost] 打开详情(占位): {widgetId}");
@@ -142,7 +273,7 @@ public sealed class ScopedPluginHost : IPluginHost
     }
 
     public void RegisterWidget(IWidget widget) => _host.RegisterWidget(_pluginId, widget);
-    public void RegisterSecondaryWidget(ISecondaryWidget widget) => _host.RegisterSecondaryWidget(widget);
+    public void RegisterSecondaryWidget(ISecondaryWidget widget) => _host.RegisterSecondaryWidget(_pluginId, widget);
     public void RegisterSettingsPage(ISettingsPage page) => _host.RegisterSettingsPage(_pluginId, page);
 
     public RenderTheme CurrentTheme => _host.CurrentTheme;
@@ -151,10 +282,10 @@ public sealed class ScopedPluginHost : IPluginHost
     public void SetSetting(string key, string value) => _host.SetSetting(_pluginId, key, value);
     public event Action? SettingsChanged
     {
-        add => _host.SettingsChanged += value;
-        remove => _host.SettingsChanged -= value;
+        add => _host.AddSettingsHandler(_pluginId, value);
+        remove => _host.RemoveSettingsHandler(_pluginId, value);
     }
-    public IDisposable ScheduleRefresh(TimeSpan interval, Action callback) => _host.ScheduleRefresh(interval, callback);
+    public IDisposable ScheduleRefresh(TimeSpan interval, Action callback) => _host.ScheduleRefresh(_pluginId, interval, callback);
     public void RequestRedraw() { /* 常驻 60FPS 渲染下为空操作，事件驱动化预留 */ }
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();

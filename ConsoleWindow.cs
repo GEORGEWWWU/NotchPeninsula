@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 using System.Diagnostics;
+using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -47,6 +48,13 @@ namespace NotchPeninsula
         private bool _lyricResetHovered = false;
         // 关于页交互状态
         private int _hoveredLinkIndex = -1;
+
+        // 插件中心交互状态
+        private int _hoveredPluginAction = -1;  // 0=导入 DLL, 1=打开目录, 2=插件市场
+        private int _hoveredPluginToggle = -1;  // 行索引：启用/禁用开关
+        private int _hoveredPluginReload = -1;  // 行索引：热重载
+        private int _hoveredPluginRemove = -1;  // 行索引：移除
+        private List<PluginEntry> _pluginView = new();
 
         // 显示设置
         private int _selectedDisplayIndex = 0;
@@ -300,7 +308,8 @@ namespace NotchPeninsula
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 1; // 3. 显示设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 2; // 4. 媒体设置
                     else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 180 && y <= TITLE_BAR_HEIGHT + 216) newHoveredTab = 3; // 5. 交互设置
-                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 4; // 6. 关于软件
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 6; // 6. 插件中心
+                    else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 280 && y <= TITLE_BAR_HEIGHT + 316) newHoveredTab = 4; // 7. 关于软件
 
                     int newHoveredTheme = -1;
                     int newHoveredOpacityIndex = -1;
@@ -371,6 +380,10 @@ namespace NotchPeninsula
                     bool newCompDateTimeHover = false;
                     bool newCompHardwareHover = false;
                     bool newCompMediaHover = false;
+                    int newHoveredPluginAction = -1;
+                    int newHoveredPluginToggle = -1;
+                    int newHoveredPluginReload = -1;
+                    int newHoveredPluginRemove = -1;
 
                     if (_selectedTab == 0) // 通用设置
                     {
@@ -475,6 +488,35 @@ namespace NotchPeninsula
                         // 使用局部变量，防止状态死锁
                         newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
                     }
+                    else if (_selectedTab == 6) // 插件中心
+                    {
+                        float topY = TITLE_BAR_HEIGHT + 12;
+                        // 三个操作按钮
+                        if (y >= topY + 60 && y <= topY + 84)
+                        {
+                            if (x >= 216 && x <= 312) newHoveredPluginAction = 0;       // 导入 DLL
+                            else if (x >= 320 && x <= 416) newHoveredPluginAction = 1;  // 打开目录
+                            else if (x >= 424 && x <= 520) newHoveredPluginAction = 2;  // 插件市场
+                        }
+
+                        // 列表行内的开关 / 重载 / 移除
+                        float listY = topY + 110;
+                        int rows = Math.Min(_pluginView.Count, 7);
+                        if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
+                        {
+                            int idx = (int)((y - (listY + 44)) / 58);
+                            if (idx >= 0 && idx < rows)
+                            {
+                                float rowY = listY + 44 + idx * 58;
+                                if (y >= rowY + 17 && y <= rowY + 41)
+                                {
+                                    if (x >= WIDTH - 78 && x <= WIDTH - 36) newHoveredPluginToggle = idx;
+                                    else if (x >= WIDTH - 134 && x <= WIDTH - 84) newHoveredPluginReload = idx;
+                                    else if (x >= WIDTH - 188 && x <= WIDTH - 140) newHoveredPluginRemove = idx;
+                                }
+                            }
+                        }
+                    }
 
                     int newHoveredLinkIndex = -1;
                     if (_selectedTab == 4) // 关于页
@@ -515,7 +557,11 @@ namespace NotchPeninsula
                         newCompositeToggleHover != _compositeToggleHovered ||
                         newCompDateTimeHover != _compDateTimeHovered ||
                         newCompHardwareHover != _compHardwareHovered ||
-                        newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered
+                        newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered ||
+                        newHoveredPluginAction != _hoveredPluginAction ||
+                        newHoveredPluginToggle != _hoveredPluginToggle ||
+                        newHoveredPluginReload != _hoveredPluginReload ||
+                        newHoveredPluginRemove != _hoveredPluginRemove
                         )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -541,6 +587,10 @@ namespace NotchPeninsula
                         _compMediaHovered = newCompMediaHover;
                         _topmostToggleHovered = newTopmostToggleHovered;
                         _passToggleHovered = newPassToggleHovered;
+                        _hoveredPluginAction = newHoveredPluginAction;
+                        _hoveredPluginToggle = newHoveredPluginToggle;
+                        _hoveredPluginReload = newHoveredPluginReload;
+                        _hoveredPluginRemove = newHoveredPluginRemove;
                         Render();
                     }
                     break;
@@ -572,6 +622,7 @@ namespace NotchPeninsula
                     else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; Render(); }
                     else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 6 && _selectedTab != 6) { _selectedTab = 6; _dropdownOpen = false; RefreshPluginView(); Render(); }
                     else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
                     else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
                     {
@@ -827,6 +878,31 @@ namespace NotchPeninsula
                         Program.SaveSetting("Composite_ShowMedia", Renderer.CompShowMedia ? 1 : 0);
                         Render();
                     }
+                    // ===== 插件中心交互 =====
+                    else if (_selectedTab == 6 && _hoveredPluginAction != -1)
+                    {
+                        switch (_hoveredPluginAction)
+                        {
+                            case 0: ImportPluginDll(); break;
+                            case 1: PluginManager.Instance.OpenPluginsFolder(); break;
+                            case 2: PluginManager.Instance.OpenMarketplace(); break;
+                        }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginToggle != -1)
+                    {
+                        var pe = GetPluginAt(_hoveredPluginToggle);
+                        if (pe != null) { PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginReload != -1)
+                    {
+                        var pe = GetPluginAt(_hoveredPluginReload);
+                        if (pe != null) { PluginManager.Instance.Reload(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    }
+                    else if (_selectedTab == 6 && _hoveredPluginRemove != -1)
+                    {
+                        var pe = GetPluginAt(_hoveredPluginRemove);
+                        if (pe != null) { PluginManager.Instance.Remove(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    }
                     break;
 
                 case Win32.WM_DESTROY:
@@ -859,6 +935,62 @@ namespace NotchPeninsula
                 6 => TITLE_BAR_HEIGHT + 535 + 40,
                 _ => 0
             };
+        }
+
+        // ================= 插件中心辅助逻辑 =================
+        private void RefreshPluginView()
+        {
+            _pluginView = PluginManager.Instance.Entries.ToList();
+        }
+
+        private PluginEntry? GetPluginAt(int index)
+            => index >= 0 && index < _pluginView.Count ? _pluginView[index] : null;
+
+        /// <summary>列表变化后清空行内悬停索引，避免指向错行。</summary>
+        private void ResetPluginHover()
+        {
+            _hoveredPluginToggle = -1;
+            _hoveredPluginReload = -1;
+            _hoveredPluginRemove = -1;
+        }
+
+        /// <summary>弹出文件选择框导入插件 DLL。</summary>
+        private void ImportPluginDll()
+        {
+            try
+            {
+                using var dlg = new System.Windows.Forms.OpenFileDialog
+                {
+                    Title = "选择 NotchPeninsula 插件 DLL",
+                    Filter = "插件动态库 (*.dll)|*.dll|所有文件 (*.*)|*.*",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+
+                var (ok, msg) = PluginManager.Instance.Import(dlg.FileName);
+                Logger.Info($"[PluginCenter] 导入结果: {(ok ? "成功" : "失败")} — {msg}");
+                ResetPluginHover();
+                RefreshPluginView();
+                Render();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("[PluginCenter] 导入插件异常", ex);
+            }
+        }
+
+        /// <summary>按像素宽度截断文本并追加省略号（零 GC 不敏感，交互时才调用）。</summary>
+        private static string TruncateText(string? text, SKPaint paint, float maxWidth)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (paint.MeasureText(text) <= maxWidth) return text;
+            for (int len = text.Length - 1; len > 0; len--)
+            {
+                var candidate = text[..len] + "…";
+                if (paint.MeasureText(candidate) <= maxWidth) return candidate;
+            }
+            return "…";
         }
 
         private unsafe void Render()
@@ -924,7 +1056,9 @@ namespace NotchPeninsula
             DrawTab(2, "媒体设置", 140);
             DrawTab(3, "交互设置", 180);
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + 222, 160, TITLE_BAR_HEIGHT + 222, _separatorPaint);
-            DrawTab(4, "关于软件", 230);
+            DrawTab(6, "插件中心", 230);
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 272, 160, TITLE_BAR_HEIGHT + 272, _separatorPaint);
+            DrawTab(4, "关于软件", 280);
 
             // 右侧卡片内容区
             void DrawToggleCard(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
@@ -1446,6 +1580,111 @@ namespace NotchPeninsula
                 DrawMultiCard(299, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
                 DrawMultiCard(417, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
                 DrawMultiCard(535, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+            }
+            else if (_selectedTab == 6)
+            {
+                RefreshPluginView();
+
+                // ── 顶部操作卡片 ──
+                float topY = TITLE_BAR_HEIGHT + 12;
+                var topRect = new SKRect(200, topY, WIDTH - 20, topY + 96);
+                canvas.DrawRoundRect(topRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(topRect, 6, 6, _cardBorder);
+                canvas.DrawText("插件中心", 216, topY + 26, _uiTextPaint);
+                canvas.DrawText("导入第三方 DLL 扩展灵动岛能力，支持热重载", 216, topY + 46, _subTextPaint);
+
+                void DrawPluginButton(int index, string label, float bx, float by, float bw)
+                {
+                    bool hovered = _hoveredPluginAction == index;
+                    var btn = new SKRect(bx, by, bx + bw, by + 24);
+                    _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
+                    float tw = _uiTextPaint.MeasureText(label);
+                    canvas.DrawText(label, bx + (bw - tw) / 2f, by + 17, _uiTextPaint);
+                }
+
+                DrawPluginButton(0, "导入 DLL", 216, topY + 60, 96);
+                DrawPluginButton(1, "打开目录", 320, topY + 60, 96);
+                DrawPluginButton(2, "插件市场", 424, topY + 60, 96);
+
+                // ── 插件列表卡片 ──
+                float listY = topY + 110;
+                var listRect = new SKRect(200, listY, WIDTH - 20, HEIGHT - 20);
+                canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
+                canvas.DrawText($"已安装插件 ({_pluginView.Count})", 216, listY + 26, _uiTextPaint);
+
+                const int maxRows = 7;
+                float textMax = WIDTH - 188 - 216 - 8; // 文本可用宽度（到"移除"按钮为止）
+
+                if (_pluginView.Count == 0)
+                    canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 66, _subTextPaint);
+
+                for (int i = 0; i < Math.Min(_pluginView.Count, maxRows); i++)
+                {
+                    var entry = _pluginView[i];
+                    float rowY = listY + 44 + i * 58;
+                    if (i > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
+
+                    // 名称与状态
+                    canvas.DrawText(TruncateText(entry.FriendlyName, _uiTextPaint, textMax), 216, rowY + 20, _uiTextPaint);
+
+                    string sub;
+                    SKColor subColor = new SKColor(170, 170, 170);
+                    if (entry.State == PluginState.Failed)
+                    {
+                        sub = "加载失败：" + (entry.Error ?? "未知错误");
+                        subColor = new SKColor(232, 100, 100);
+                    }
+                    else if (entry.State == PluginState.Loaded)
+                    {
+                        sub = string.IsNullOrEmpty(entry.Version) ? "运行中" : $"运行中 · v{entry.Version}";
+                    }
+                    else
+                    {
+                        sub = "已禁用 · " + entry.Key;
+                    }
+                    _subTextPaint.Color = subColor;
+                    canvas.DrawText(TruncateText(sub, _subTextPaint, textMax), 216, rowY + 40, _subTextPaint);
+                    _subTextPaint.Color = new SKColor(170, 170, 170);
+
+                    // 行内小按钮（重载 / 移除）
+                    void DrawRowButton(float bx, bool hovered, string label, bool danger)
+                    {
+                        var r = new SKRect(bx, rowY + 17, bx + 50, rowY + 41);
+                        _dynamicFillPaint.Color = hovered
+                            ? (danger ? new SKColor(180, 50, 50) : new SKColor(255, 255, 255, 30))
+                            : new SKColor(255, 255, 255, 15);
+                        canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
+                        float tw = _subTextPaint.MeasureText(label);
+                        canvas.DrawText(label, bx + (50 - tw) / 2f, rowY + 34, _uiTextPaint);
+                    }
+
+                    DrawRowButton(WIDTH - 134, _hoveredPluginReload == i, "重载", false);
+                    DrawRowButton(WIDTH - 188, _hoveredPluginRemove == i, "移除", true);
+
+                    // 启用 / 禁用开关
+                    float tW = 42, tH = 20;
+                    float tX = WIDTH - 36 - tW, tY = rowY + 19;
+                    var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+                    if (entry.IsEnabled)
+                    {
+                        _dynamicFillPaint.Color = _hoveredPluginToggle == i ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                        canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                        canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                    }
+                    else
+                    {
+                        _dynamicStrokePaint.Color = _hoveredPluginToggle == i ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
+                        canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                        _toggleCirclePaint.Color = _hoveredPluginToggle == i ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
+                        canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                        _toggleCirclePaint.Color = SKColors.White;
+                    }
+                }
+
+                if (_pluginView.Count > maxRows)
+                    canvas.DrawText($"还有 {_pluginView.Count - maxRows} 个插件未显示，可在“打开目录”中管理", 216, HEIGHT - 32, _subTextPaint);
             }
 
             canvas.Restore();

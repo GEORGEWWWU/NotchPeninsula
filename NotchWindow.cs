@@ -5,6 +5,7 @@ using Microsoft.Win32;
 using Timer = System.Timers.Timer;
 using static NotchPeninsula.Logger;
 using System.Windows.Threading;
+using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -206,6 +207,9 @@ namespace NotchPeninsula
             _notifyIcon.Visible = true;
             _currentVolume = audio.GetSystemVolume();
             Debug($"初始音量读取完成，当前音量：{_currentVolume:F2}");
+            // 🧩 插件系统：先把插件提醒接入 Toast 流，再初始化运行时自动加载已启用插件
+            PluginManager.Instance.Host.ReminderPosted += OnPluginReminder;
+            PluginManager.Instance.Initialize();
             _ = InitializeListenerAsync();
             Timer aud = new Timer(500);
             aud.Elapsed += (s, e) => {
@@ -242,6 +246,19 @@ namespace NotchPeninsula
 
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
+        }
+
+        /// <summary>插件通过 IPluginHost.PostReminder 投递的提醒，复用现有 Toast 展示通道。</summary>
+        private void OnPluginReminder(ToastData toast)
+        {
+            if (toast == null) return;
+            // 插件提醒来自后台线程，切回 UI 线程更新共享的 Toast 状态
+            if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnPluginReminder(toast)); return; }
+            if (!IsToastEnabled) return;
+
+            _currentToast = toast;
+            _toastEndTime = DateTime.Now.AddSeconds(4);
+            clicked_info = false;
         }
 
         #endregion

@@ -1,107 +1,110 @@
 using System.IO;
-using System.Reflection;
-using System.Runtime.Loader;
 using System.Text.Json;
 
 namespace NotchPeninsula.Plugins;
 
-/// <summary>从 plugins 目录发现并加载插件 DLL。</summary>
+/// <summary>一个待加载的插件来源（磁盘上的 DLL）。</summary>
+public sealed class PluginSource
+{
+    /// <summary>相对 plugins 根目录的稳定标识，用于持久化“启用/禁用”状态。例如 "HelloPlugin.dll" 或 "MyPlugin/MyPlugin.dll"。</summary>
+    public string Key { get; init; } = "";
+
+    /// <summary>入口 DLL 的绝对路径。</summary>
+    public string DllPath { get; init; } = "";
+
+    /// <summary>true=目录型插件（会复制整个目录，支持带依赖）；false=根目录下的单文件插件。</summary>
+    public bool IsFolderLayout { get; init; }
+
+    /// <summary>插件所在目录：目录型为插件文件夹，单文件型为 plugins 根目录。</summary>
+    public string RootDir { get; init; } = "";
+}
+
+/// <summary>
+/// 插件发现器：扫描 plugins 目录，产出所有可加载的 DLL 来源。
+///
+/// 支持的两种目录布局：
+///   plugins/HelloPlugin.dll            单文件型（适合无外部依赖的简单插件）
+///   plugins/MyPlugin/MyPlugin.dll      目录型（可携带依赖 DLL，可用 plugin.json 指定入口）
+///   plugins/MyPlugin/plugin.json       { "dll": "MyPlugin.dll" }
+///
+/// 以 "_" 或 "." 开头的目录会被跳过（例如 _recycle 回收站）。
+/// </summary>
 public static class PluginLoader
 {
-    public static List<INotchPlugin> LoadAll(PluginHost host, string? pluginsRoot = null)
+    // 明显属于宿主/通用依赖的 DLL 名，目录型插件在自动挑选入口时应跳过它们
+    private static readonly HashSet<string> _notPluginDlls = new(StringComparer.OrdinalIgnoreCase)
     {
-        var loaded = new List<INotchPlugin>();
-        pluginsRoot ??= Path.Combine(GetAppDirectory(), "plugins");
-        if (!Directory.Exists(pluginsRoot))
+        "NotchPeninsula", "SkiaSharp", "SkiaSharp.NativeAssets.Win32", "NAudio.Core", "NAudio.Wasapi",
+        "System.Text.Json", "Newtonsoft.Json", "Microsoft.Win32.SystemEvents"
+    };
+
+    public static List<PluginSource> Discover(string pluginsRoot)
+    {
+        var list = new List<PluginSource>();
+        if (!Directory.Exists(pluginsRoot)) return list;
+
+        // 1. 根目录下的单文件插件
+        foreach (var dll in Directory.GetFiles(pluginsRoot, "*.dll"))
         {
-            Logger.Info($"[PluginLoader] 插件目录不存在: {pluginsRoot}");
-            return loaded;
+            list.Add(new PluginSource
+            {
+                Key = Path.GetFileName(dll),
+                DllPath = dll,
+                IsFolderLayout = false,
+                RootDir = pluginsRoot
+            });
         }
 
+        // 2. 子目录型插件
         foreach (var dir in Directory.GetDirectories(pluginsRoot))
+        {
+            var folder = Path.GetFileName(dir);
+            if (folder.StartsWith('_') || folder.StartsWith('.')) continue; // _recycle 等内部目录
+
+            var dll = PickEntryDll(dir, folder);
+            if (dll == null) { Logger.Warn($"[PluginLoader] 目录中未找到可加载的 DLL: {dir}"); continue; }
+
+            list.Add(new PluginSource
+            {
+                Key = $"{folder}/{Path.GetFileName(dll)}",
+                DllPath = dll,
+                IsFolderLayout = true,
+                RootDir = dir
+            });
+        }
+
+        return list;
+    }
+
+    /// <summary>按优先级挑选入口 DLL：plugin.json 指定 → 与目录同名 → 目录内首个非通用 DLL。</summary>
+    private static string? PickEntryDll(string dir, string folderName)
+    {
+        // a) plugin.json 显式指定
+        var manifest = Path.Combine(dir, "plugin.json");
+        if (File.Exists(manifest))
         {
             try
             {
-                // 1. 读 manifest（可选，缺省用目录名 + ".dll"）
-                var manifestPath = Path.Combine(dir, "plugin.json");
-                string? dllName = null;
-                if (File.Exists(manifestPath))
+                using var doc = JsonDocument.Parse(File.ReadAllText(manifest));
+                if (doc.RootElement.TryGetProperty("dll", out var d) && d.GetString() is { Length: > 0 } name)
                 {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
-                    if (doc.RootElement.TryGetProperty("dll", out var d)) dllName = d.GetString();
+                    var p = Path.Combine(dir, name);
+                    if (File.Exists(p)) return p;
+                    Logger.Warn($"[PluginLoader] plugin.json 指定的 DLL 不存在: {p}");
                 }
-                dllName ??= Path.GetFileName(dir) + ".dll";
-
-                var dllPath = Path.Combine(dir, dllName);
-                if (!File.Exists(dllPath)) { Logger.Warn($"[PluginLoader] 缺少 DLL: {dllPath}"); continue; }
-
-                // 2. 用独立 AssemblyLoadContext 加载，避免污染主程序
-                var alc = new PluginLoadContext(dir);
-                var asm = alc.LoadFromAssemblyPath(dllPath);
-
-                // 3. 反射找 INotchPlugin 实现
-                INotchPlugin? plugin = null;
-                foreach (var t in asm.GetTypes())
-                {
-                    if (!t.IsAbstract && typeof(INotchPlugin).IsAssignableFrom(t))
-                    {
-                        plugin = (INotchPlugin)Activator.CreateInstance(t)!;
-                        break;
-                    }
-                }
-
-                if (plugin == null) { Logger.Warn($"[PluginLoader] {dllName} 未找到 INotchPlugin 实现"); continue; }
-
-                // 4. 初始化，并绑定该插件自己的 Id（设置持久化自动加前缀）
-                host.RegisterPlugin(plugin.Id, plugin.DisplayName);
-                plugin.Initialize(host.CreateScopedHost(plugin.Id));
-                loaded.Add(plugin);
-                Logger.Info($"[PluginLoader] 已加载插件: {plugin.Id} ({plugin.DisplayName}), 设置页={host.SettingsPages.Count}");
             }
             catch (Exception ex)
             {
-                if (ex is System.Reflection.ReflectionTypeLoadException rtle)
-                {
-                    foreach (var le in rtle.LoaderExceptions)
-                        if (le != null) Logger.Error($"[PluginLoader] 类型加载失败: {le.Message}");
-                }
-                Logger.Error($"[PluginLoader] 加载插件目录失败: {Path.GetFileName(dir)}", ex);
+                Logger.Warn($"[PluginLoader] 解析 plugin.json 失败: {manifest} — {ex.Message}");
             }
         }
 
-        return loaded;
-    }
+        // b) 与目录同名
+        var sameName = Path.Combine(dir, folderName + ".dll");
+        if (File.Exists(sameName)) return sameName;
 
-    /// <summary>exe 所在目录：单文件发布时 AppContext.BaseDirectory 是临时解压目录，插件必须放 exe 同级，故优先取进程自身路径。</summary>
-    private static string GetAppDirectory()
-    {
-        var exe = Environment.ProcessPath;
-        // 通过 dotnet NotchPeninsula.dll 启动时，进程路径是 dotnet.exe，此时回退到程序集目录
-        if (!string.IsNullOrEmpty(exe) &&
-            !Path.GetFileNameWithoutExtension(exe).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
-        {
-            var dir = Path.GetDirectoryName(exe);
-            if (!string.IsNullOrEmpty(dir)) return dir;
-        }
-        return AppContext.BaseDirectory;
-    }
-
-    /// <summary>插件加载上下文：优先从插件目录加载依赖，否则回退默认解析。</summary>
-    private sealed class PluginLoadContext : AssemblyLoadContext
-    {
-        private readonly string _dir;
-
-        public PluginLoadContext(string dir) : base($"plugin:{Path.GetFileName(dir)}", isCollectible: false)
-        {
-            _dir = dir;
-        }
-
-        protected override Assembly? Load(AssemblyName assemblyName)
-        {
-            var path = Path.Combine(_dir, assemblyName.Name + ".dll");
-            if (File.Exists(path))
-                return LoadFromAssemblyPath(path);
-            return null; // 回退默认解析（主程序及其依赖）
-        }
+        // c) 目录内首个非通用 DLL
+        return Directory.GetFiles(dir, "*.dll")
+            .FirstOrDefault(f => !_notPluginDlls.Contains(Path.GetFileNameWithoutExtension(f)));
     }
 }
