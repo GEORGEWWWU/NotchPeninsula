@@ -63,8 +63,8 @@ public sealed class PluginEntry
 /// </summary>
 public sealed class PluginManager
 {
-    /// <summary>官网插件市场地址（如需换成独立站点，改这里即可）。</summary>
-    public const string MarketplaceUrl = "https://github.com/GEORGEWWWU/NotchPeninsula/wiki";
+    /// <summary>官网插件市场地址</summary>
+    public const string MarketplaceUrl = "https://nps.georgewu.top/market";
 
     private const string RegistryBase = @"SOFTWARE\NotchPeninsula";
     private const string DisabledListValue = "Plugins_Disabled";
