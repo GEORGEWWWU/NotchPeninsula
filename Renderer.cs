@@ -582,6 +582,7 @@ namespace NotchPeninsula
         private static string _cachedToastAppName = "";
         // 预加载 Windows 自带 Emoji 彩色字体与零 GC 渲染缓存列表
         private static readonly SKTypeface _emojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
+        private static readonly List<(string Text, bool IsEmoji, float X)> _karaokeRuns = new(); // 歌词/歌名/歌手 逐字 emoji 回退用的 runs
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastSenderRuns = new();
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastBodyRuns = new();
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastAppNameRuns = new();
@@ -1123,7 +1124,7 @@ namespace NotchPeninsula
                             float textStartX = coverX + coverSize + 12f;
                             _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
                             _titlePaint.TextSize = 14.5f;
-                            canvas.DrawText(_lastMediaTitle, textStartX, coverY + 18f, _titlePaint);
+                            DrawKaraoke(canvas, _lastMediaTitle, textStartX, coverY + 18f, _titlePaint, alpha, 0f, false); // 歌名也做 emoji/多语言回退
 
                             _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
                             _bodyPaint.TextSize = 12.5f;
@@ -1498,28 +1499,48 @@ namespace NotchPeninsula
         // 卡拉OK渲染引擎
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
+            SKTypeface baseTypeface = paint.Typeface;
+            BuildTextRuns(text, paint, baseTypeface, _karaokeRuns, out float totalWidth);
+
             // 如果没开启卡拉OK，直接短路渲染普通的实体文字，瞬间返回，0 性能开销
             if (!isLyric || progress <= 0f || !MediaController.IsKaraokeEnabled)
             {
+                foreach (var run in _karaokeRuns)
+                {
+                    paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
+                    paint.Color = paint.Color.WithAlpha(targetAlpha);
+                    canvas.DrawText(run.Text, x + run.X, y, paint);
+                }
+                paint.Typeface = baseTypeface;
                 paint.Color = paint.Color.WithAlpha(targetAlpha);
-                canvas.DrawText(text, x, y, paint);
                 return;
             }
 
             // 1. 先画完整的半透明底板 (40% 亮度)
-            paint.Color = paint.Color.WithAlpha((byte)(targetAlpha * 0.4f));
-            canvas.DrawText(text, x, y, paint);
+            foreach (var run in _karaokeRuns)
+            {
+                paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
+                paint.Color = paint.Color.WithAlpha((byte)(targetAlpha * 0.4f));
+                canvas.DrawText(run.Text, x + run.X, y, paint);
+            }
 
             // 2. 算出现在应该亮起到多宽
-            float scanWidth = paint.MeasureText(text) * progress;
+            float scanWidth = totalWidth * progress;
 
             // 3. 硬件级裁剪高亮部分并覆盖上去
             canvas.Save();
             // y-30 到 y+10 足够包裹住字体的上下最高/低点
             canvas.ClipRect(new SKRect(x, y - 30f, x + scanWidth, y + 10f), SKClipOperation.Intersect, true);
             paint.Color = paint.Color.WithAlpha(targetAlpha);
-            canvas.DrawText(text, x, y, paint);
+            foreach (var run in _karaokeRuns)
+            {
+                paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
+                canvas.DrawText(run.Text, x + run.X, y, paint);
+            }
             canvas.Restore();
+
+            paint.Typeface = baseTypeface;
+            paint.Color = paint.Color.WithAlpha(targetAlpha);
         }
 
         /// <summary>硬件占用模块在组合模式下的占宽（CPU 组 + 16px + RAM 组）。</summary>
