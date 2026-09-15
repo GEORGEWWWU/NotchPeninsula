@@ -492,8 +492,8 @@ namespace NotchPeninsula
                     }
                     else if (_selectedTab == 3) // 交互设置
                     {
-                        // 自动隐藏
-                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                        // 自动隐藏（穿透模式下禁止）
+                        if (!Renderer.PassthroughModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
                         // 媒体交互模式
                         if (!Renderer.CompositeModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
@@ -793,7 +793,7 @@ namespace NotchPeninsula
                         Program.SaveSetting("LyricDelayOffset", MediaController.LyricDelayOffset);
                         Render();
                     }
-                    else if (_autoHideToggleHovered)
+                    else if (_autoHideToggleHovered && !Renderer.PassthroughModeEnabled)
                     {
                         NotchWindow.IsAutoHideEnabled = !NotchWindow.IsAutoHideEnabled;
                         // 保存自动隐藏开关
@@ -1462,7 +1462,9 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 3)
             {
-                DrawToggleCard(12, "自动隐藏", "当鼠标离开时自动隐藏刘海", NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
+                bool isAutoHideDisabled = Renderer.PassthroughModeEnabled;
+                DrawToggleCard(12, "自动隐藏", isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "当鼠标离开时自动隐藏刘海",
+                    NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered, isAutoHideDisabled);
 
                 bool isMediaExpDisabled = Renderer.CompositeModeEnabled;
                 DrawToggleCard(84, "媒体交互方式", isMediaExpDisabled ? "组合模式下固定为直接交互" : "开启为展开交互，关闭为直接交互",
