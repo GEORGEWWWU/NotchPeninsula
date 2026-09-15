@@ -5,3 +5,5 @@
 *.vsidx
 bin/
 obj/
+.workbuddy-ai
+.workbuddy-ai/
