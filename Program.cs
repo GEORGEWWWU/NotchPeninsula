@@ -48,6 +48,13 @@ namespace NotchPeninsula
                     Renderer.CompShowHardware = (int)key.GetValue("Composite_ShowHardware", 1) != 0;
                     Renderer.CompShowMedia = (int)key.GetValue("Composite_ShowMedia", 1) != 0;
                     Renderer.PassthroughModeEnabled = (int)key.GetValue("PassthroughMode", 0) != 0;
+                    // 悬停隐身的开关卡片已不在设置面板中，重置历史残留的开启状态避免无法从应用内关闭
+                    if (Renderer.PassthroughModeEnabled)
+                    {
+                        Renderer.PassthroughModeEnabled = false;
+                        SaveSetting("PassthroughMode", 0);
+                    }
+                    Renderer.DisplayOnlyModeEnabled = (int)key.GetValue("DisplayOnlyMode", 0) != 0;
 
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }

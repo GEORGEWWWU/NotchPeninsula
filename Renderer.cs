@@ -36,6 +36,7 @@ namespace NotchPeninsula
         public static bool CompShowMedia { get; set; } = true;     // 显示媒体控制器(含频谱)
         public static bool PassthroughModeEnabled = false; // 穿透模式总开关
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
+        public static bool DisplayOnlyModeEnabled = false; // 纯展示模式总开关：完全保留显示，仅媒体控制按钮可交互，其余区域鼠标穿透到底层窗口
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
         private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true }; // 极简线条画笔
         private static readonly SKPaint _wakeHitPaint = new SKPaint { Style = SKPaintStyle.Fill }; // 隐形物理热区底板

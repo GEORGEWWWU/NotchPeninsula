@@ -144,6 +144,7 @@ namespace NotchPeninsula
             // 动态判定是否追加置顶属性
             int exStyle = Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED;
             if (IsTopmostEnabled) exStyle |= Win32.WS_EX_TOPMOST;
+            if (Renderer.DisplayOnlyModeEnabled) exStyle |= Win32.WS_EX_TRANSPARENT; // 纯展示模式：启动即穿透
 
             _hwnd = Win32.CreateWindowEx(
                 exStyle,
@@ -152,6 +153,9 @@ namespace NotchPeninsula
                 x, y, _scaledWidth, _scaledHeight, // 传入缩放后的尺寸
                 IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero
             );
+
+            // 与构造样式同步穿透缓存，避免启动时鼠标恰在按钮热区导致首次切换被缓存短路
+            _displayOnlyClickThrough = Renderer.DisplayOnlyModeEnabled;
 
             InitRenderBuffer();
 
@@ -368,6 +372,55 @@ namespace NotchPeninsula
             }
         }
 
+        private bool _displayOnlyClickThrough = false; // 当前是否处于 WS_EX_TRANSPARENT 穿透态（缓存，避免每帧改样式）
+
+        /// <summary>
+        /// 穿透模式：动态切换 WS_EX_TRANSPARENT 实现鼠标命中穿透。
+        /// 窗口构造时已具备 WS_EX_LAYERED（上游既有样式），二者组合后系统将鼠标命中
+        /// 传递给 Z 序下方的窗口（跨进程穿透，悬浮窗/小组件类软件的标准做法）。
+        /// 鼠标进入媒体控制按钮热区时解除穿透保持可交互，离开后恢复穿透到底层窗口。
+        /// </summary>
+        private void SetDisplayOnlyClickThrough(bool clickThrough)
+        {
+            if (clickThrough == _displayOnlyClickThrough) return;
+            int exStyle = Win32.GetWindowLong(_hwnd, Win32.GWL_EXSTYLE);
+            int newStyle = clickThrough ? (exStyle | Win32.WS_EX_TRANSPARENT) : (exStyle & ~Win32.WS_EX_TRANSPARENT);
+            if (newStyle != exStyle)
+                Win32.SetWindowLong(_hwnd, Win32.GWL_EXSTYLE, newStyle);
+            _displayOnlyClickThrough = clickThrough;
+        }
+
+        /// <summary>
+        /// 纯展示模式：判定逻辑坐标 (mx, my) 是否落在媒体控制按钮热区内。
+        /// 热区与 WndProc / Renderer.Draw 的按钮位置完全一致。
+        /// </summary>
+        private bool IsOverMediaButtons(float mx, float my)
+        {
+            if (!_media.IsActive || _currentToast != null) return false;
+            // 组合模式关闭媒体显示时媒体模块不绘制，热区同步失效，避免幽灵区域拦截底层点击
+            if (Renderer.CompositeModeEnabled && !Renderer.CompShowMedia) return false;
+            float hitTopY = 12f * _currentStyleProgress;
+
+            if (Renderer.IsMediaExpanded)
+            {
+                // 展开面板：底部三个大按钮，热区与 WndProc 点击判定完全一致，按钮间空白保持穿透
+                float btnY = (_currentHeight - 32f) + hitTopY;
+                if (my < btnY - 5 || my > btnY + 25) return false;
+                float dx = Math.Abs(mx - Renderer.WINDOW_WIDTH / 2f);
+                return dx <= 15f || (dx >= 35f && dx <= 65f);
+            }
+
+            // 展开交互模式的收起态没有按钮
+            if (Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled) return false;
+
+            // 收起态：媒体模块右侧的小按钮组（锚定右边界，与 Renderer.Draw 一致）
+            float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
+            int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
+            float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
+            if (my < btnStartY || my > btnEndY) return false;
+            return (mx >= btnPrevX + 6 && mx <= btnPrevX + 24) || (mx >= btnPlayX + 6 && mx <= btnPlayX + 24) || (mx >= btnNextX + 6 && mx <= btnNextX + 24);
+        }
+
         private unsafe void RenderLoop()
         {
             if (System.Threading.Interlocked.Exchange(ref _isRendering, 1) == 1) return;
@@ -430,6 +483,44 @@ namespace NotchPeninsula
                 {
                     Renderer.PassthroughAlpha = 1.0f;
                     _isPassthroughAwake = false;
+                }
+
+                // 穿透模式（纯展示）：WS_EX_TRANSPARENT 全窗口穿透（跨进程可靠），
+                // 底层轮询鼠标位置，仅鼠标位于媒体控制按钮热区时解除穿透保持可交互
+                if (Renderer.DisplayOnlyModeEnabled)
+                {
+                    // 压制悬停隐身（两功能同时开启时穿透模式保持完全显示）
+                    Renderer.PassthroughAlpha = 1.0f;
+                    _isPassthroughAwake = false;
+
+                    Win32.GetCursorPos(out var pt);
+                    float winX = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2f;
+                    float winY = _cachedMonitorY + _currentY;
+                    float mx = (pt.x - winX) / _dpiScale;
+                    float my = (pt.y - winY) / _dpiScale;
+
+                    float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                    float topY = 12f * _currentStyleProgress;
+                    bool overNotch = mx >= left && mx <= left + _currentWidth && my >= topY && my <= topY + _currentHeight;
+
+                    // 展开交互模式：岛体穿透无法点击展开，鼠标进入岛内自动展开以提供控制按钮
+                    if (overNotch && !Renderer.IsMediaExpanded && _media.IsActive && _currentToast == null
+                        && Renderer.MediaInteractionMode == 1 && !Renderer.CompositeModeEnabled)
+                        Renderer.IsMediaExpanded = true;
+
+                    bool overButtons = IsOverMediaButtons(mx, my);
+                    SetDisplayOnlyClickThrough(!overButtons);
+                    // 穿透态收不到 WM_MOUSEMOVE，悬停状态从轮询坐标同步，确保解除穿透后点击守卫立即生效
+                    _isHovered = overButtons;
+
+                    // 展开态兜底：鼠标既不在按钮上也不在岛内时自动收起面板
+                    if (Renderer.IsMediaExpanded && !overButtons && !overNotch && !_isHovered)
+                        Renderer.IsMediaExpanded = false;
+                }
+                else if (_displayOnlyClickThrough)
+                {
+                    // 穿透模式关闭：恢复窗口正常交互
+                    SetDisplayOnlyClickThrough(false);
                 }
                 if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
 

@@ -43,6 +43,7 @@ namespace NotchPeninsula
         private bool _autoHideToggleHovered = false;
         private bool _mediaExpToggleHovered = false;
         private bool _passToggleHovered = false;
+        private bool _displayOnlyToggleHovered = false;
 
         // 媒体设置状态
         private bool _mediaToggleHovered = false;
@@ -385,6 +386,7 @@ namespace NotchPeninsula
                     int newHoveredDropdownIndex = -1;
                     bool newMediaExpToggleHovered = false;
                     bool newPassToggleHovered = false;
+                    bool newDisplayOnlyToggleHovered = false;
                     bool newMonitorDropdownHovered = false;
                     int newHoveredMonitorDropdownIndex = -1;
                     bool newCompositeToggleHover = false;
@@ -499,7 +501,10 @@ namespace NotchPeninsula
                         if (!Renderer.CompositeModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                             newMediaExpToggleHovered = true;
                         // 使用局部变量，防止状态死锁
-                        newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
+                        // 悬停隐身开关卡片已隐藏，检测停用（代码保留）
+                        // newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
+                        // 穿透模式开关（上移至悬停隐身原位置）
+                        newDisplayOnlyToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
                     }
                     else if (_selectedTab == 6) // 插件中心
                     {
@@ -576,6 +581,7 @@ namespace NotchPeninsula
                         newCompDateTimeHover != _compDateTimeHovered ||
                         newCompHardwareHover != _compHardwareHovered ||
                         newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered ||
+                        newDisplayOnlyToggleHovered != _displayOnlyToggleHovered ||
                         newHoveredPluginAction != _hoveredPluginAction ||
                         newHoveredPluginToggle != _hoveredPluginToggle ||
                         newHoveredPluginReload != _hoveredPluginReload ||
@@ -607,6 +613,7 @@ namespace NotchPeninsula
                         _compMediaHovered = newCompMediaHover;
                         _topmostToggleHovered = newTopmostToggleHovered;
                         _passToggleHovered = newPassToggleHovered;
+                        _displayOnlyToggleHovered = newDisplayOnlyToggleHovered;
                         _hoveredPluginAction = newHoveredPluginAction;
                         _hoveredPluginToggle = newHoveredPluginToggle;
                         _hoveredPluginReload = newHoveredPluginReload;
@@ -813,6 +820,12 @@ namespace NotchPeninsula
                         Renderer.PassthroughModeEnabled = !Renderer.PassthroughModeEnabled;
                         Program.SaveSetting("PassthroughMode", Renderer.PassthroughModeEnabled ? 1 : 0);
                         Renderer.ApplyThemeColors(); // 立刻刷新基底色
+                        Render();
+                    }
+                    else if (_displayOnlyToggleHovered)
+                    {
+                        Renderer.DisplayOnlyModeEnabled = !Renderer.DisplayOnlyModeEnabled;
+                        Program.SaveSetting("DisplayOnlyMode", Renderer.DisplayOnlyModeEnabled ? 1 : 0);
                         Render();
                     }
                     else if (_dropdownHovered)
@@ -1470,7 +1483,10 @@ namespace NotchPeninsula
                     !isMediaExpDisabled && _mediaExpToggleHovered,
                     isMediaExpDisabled);
 
-                DrawToggleCard(156, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+                // 悬停隐身为上游已有功能（非本 PR 范围），开关卡片暂不显示，功能代码全部保留
+                // DrawToggleCard(156, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+
+                DrawToggleCard(156, "穿透模式", "完全保留显示，仅媒体控制按钮可交互", Renderer.DisplayOnlyModeEnabled, _displayOnlyToggleHovered);
             }
             else if (_selectedTab == 4)
             {

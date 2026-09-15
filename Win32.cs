@@ -9,6 +9,8 @@ namespace NotchPeninsula
         public const int WS_EX_TOPMOST = 0x00000008;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
         public const int WS_EX_LAYERED = 0x00080000;
+        public const int WS_EX_TRANSPARENT = 0x00000020; // 纯展示模式：鼠标事件全部穿透到底层窗口
+        public const int GWL_EXSTYLE = -20;
 
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
@@ -249,5 +251,12 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
+
+        // 纯展示模式：动态读写窗口扩展样式，运行时切换 WS_EX_TRANSPARENT
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
     }
 }
