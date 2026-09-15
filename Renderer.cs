@@ -583,6 +583,10 @@ namespace NotchPeninsula
         // 预加载 Windows 自带 Emoji 彩色字体与零 GC 渲染缓存列表
         private static readonly SKTypeface _emojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
         private static readonly List<(string Text, bool IsEmoji, float X)> _karaokeRuns = new(); // 歌词/歌名/歌手 逐字 emoji 回退用的 runs
+        private static readonly List<(string Text, bool IsEmoji, float X)> _karaokeRuns1 = new(); // 第二缓存槽（叠化动画时旧/新两条歌词各占一槽）
+        private static (string Text, SKTypeface Type, float Width) _krKey0;
+        private static (string Text, SKTypeface Type, float Width) _krKey1;
+        private static bool _krSlot;
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastSenderRuns = new();
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastBodyRuns = new();
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastAppNameRuns = new();
@@ -1500,12 +1504,39 @@ namespace NotchPeninsula
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
             SKTypeface baseTypeface = paint.Typeface;
-            BuildTextRuns(text, paint, baseTypeface, _karaokeRuns, out float totalWidth);
+
+            // 缓存 runs：播放时段文本不变则直接复用，不重建，避免每帧 BuildTextRuns 拖慢渲染帧率导致时间刷新滞后
+            List<(string Text, bool IsEmoji, float X)> runs;
+            float totalWidth;
+            if (_krKey0.Text == text && _krKey0.Type == baseTypeface)
+            {
+                runs = _karaokeRuns; totalWidth = _krKey0.Width;
+            }
+            else if (_krKey1.Text == text && _krKey1.Type == baseTypeface)
+            {
+                runs = _karaokeRuns1; totalWidth = _krKey1.Width;
+            }
+            else
+            {
+                if (_krSlot)
+                {
+                    BuildTextRuns(text, paint, baseTypeface, _karaokeRuns1, out totalWidth);
+                    _krKey1 = (text, baseTypeface, totalWidth);
+                    runs = _karaokeRuns1;
+                }
+                else
+                {
+                    BuildTextRuns(text, paint, baseTypeface, _karaokeRuns, out totalWidth);
+                    _krKey0 = (text, baseTypeface, totalWidth);
+                    runs = _karaokeRuns;
+                }
+                _krSlot = !_krSlot;
+            }
 
             // 如果没开启卡拉OK，直接短路渲染普通的实体文字，瞬间返回，0 性能开销
             if (!isLyric || progress <= 0f || !MediaController.IsKaraokeEnabled)
             {
-                foreach (var run in _karaokeRuns)
+                foreach (var run in runs)
                 {
                     paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
                     paint.Color = paint.Color.WithAlpha(targetAlpha);
@@ -1517,7 +1548,7 @@ namespace NotchPeninsula
             }
 
             // 1. 先画完整的半透明底板 (40% 亮度)
-            foreach (var run in _karaokeRuns)
+            foreach (var run in runs)
             {
                 paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
                 paint.Color = paint.Color.WithAlpha((byte)(targetAlpha * 0.4f));
@@ -1532,7 +1563,7 @@ namespace NotchPeninsula
             // y-30 到 y+10 足够包裹住字体的上下最高/低点
             canvas.ClipRect(new SKRect(x, y - 30f, x + scanWidth, y + 10f), SKClipOperation.Intersect, true);
             paint.Color = paint.Color.WithAlpha(targetAlpha);
-            foreach (var run in _karaokeRuns)
+            foreach (var run in runs)
             {
                 paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
                 canvas.DrawText(run.Text, x + run.X, y, paint);
