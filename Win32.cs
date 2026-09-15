@@ -249,5 +249,63 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
+
+        // ====================================================================
+        // 传统打开文件对话框（comdlg32）
+        //
+        // 为什么不用 System.Windows.Forms.OpenFileDialog：
+        //   WinForms 的 OpenFileDialog 在 .NET Core+ 上走的是 Vista「通用项对话框」
+        //   （CLSID_FileOpenDialog），它会在**本进程内**拉起 ExplorerBrowser + 外壳命名空间
+        //   + 图标/缩略图缓存。这些是进程级 DLL 与缓存，第一次打开就常驻 20~30MB，
+        //   并且 Dispose 对话框、关闭资源管理器都不会归还（Windows 不会卸载已加载的外壳组件）。
+        //   传统对话框只是 comdlg32 的一个普通模态窗口，完全不碰 ExplorerBrowser。
+        // ====================================================================
+
+        public const uint OFN_HIDEREADONLY = 0x00000004;
+        public const uint OFN_NOCHANGEDIR = 0x00000008;
+        public const uint OFN_PATHMUSTEXIST = 0x00000800;
+        public const uint OFN_FILEMUSTEXIST = 0x00001000;
+        public const uint OFN_EXPLORER = 0x00080000;
+
+        // 注意：所有字符串字段一律用 IntPtr，刻意不用 string / StringBuilder。
+        // 原因是 .NET 10 的 Marshal.SizeOf 对「含托管引用字段的结构体」会直接抛
+        // ArgumentException("no meaningful size or offset can be computed")，泛型与非泛型重载都一样
+        // （.NET Framework 时代可以，属于行为变更）。而 lStructSize 必须精确等于原生结构体大小，
+        // 否则 comdlg32 会拒绝调用。只有全 IntPtr 的纯 blittable 结构体才能算出尺寸（x64 下为 152）。
+        // 字符串由调用方 Marshal.StringToHGlobalUni 手工分配、finally 里释放。
+        [StructLayout(LayoutKind.Sequential)]
+        public struct OPENFILENAME
+        {
+            public uint lStructSize;
+            public IntPtr hwndOwner;
+            public IntPtr hInstance;
+            public IntPtr lpstrFilter;          // LPCWSTR
+            public IntPtr lpstrCustomFilter;    // LPWSTR，这里不用
+            public uint nMaxCustFilter;
+            public uint nFilterIndex;
+            public IntPtr lpstrFile;            // LPWSTR，输出缓冲区（字符数 = nMaxFile）
+            public uint nMaxFile;
+            public IntPtr lpstrFileTitle;
+            public uint nMaxFileTitle;
+            public IntPtr lpstrInitialDir;      // LPCWSTR
+            public IntPtr lpstrTitle;           // LPCWSTR
+            public uint Flags;
+            public ushort nFileOffset;
+            public ushort nFileExtension;
+            public IntPtr lpstrDefExt;
+            public IntPtr lCustData;
+            public IntPtr lpfnHook;
+            public IntPtr lpTemplateName;
+            public IntPtr pvReserved;
+            public uint dwReserved;
+            public uint FlagsEx;
+        }
+
+        [DllImport("comdlg32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern bool GetOpenFileNameW(ref OPENFILENAME lpofn);
+
+        /// <summary>对话框出错时的扩展错误码；用户正常取消时返回 0。</summary>
+        [DllImport("comdlg32.dll")]
+        public static extern uint CommDlgExtendedError();
     }
 }

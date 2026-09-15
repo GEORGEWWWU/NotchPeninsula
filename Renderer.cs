@@ -625,6 +625,16 @@ namespace NotchPeninsula
             _lastToastId = uint.MaxValue;     // Toast 分段缓存（下一帧强制重建）
             _lastMediaTitle = "";             // 媒体文本度量缓存
             _lastMediaArtist = "";            // 不动 _lastLyric，避免误触发歌词叠化动画
+
+            // 分段缓存里每条 run 都记着「用哪个 SKTypeface 画的」。旧字体在 FontConfig 发完通知后
+            // 就会被 Dispose，这里必须把列表连同 key 一起清掉，绝不能留下指向已释放字体的悬挂引用。
+            _cachedToastSenderRuns.Clear();
+            _cachedToastBodyRuns.Clear();
+            _cachedToastAppNameRuns.Clear();
+            _karaokeRuns.Clear();
+            _karaokeRuns1.Clear();
+            _krKey0 = default;
+            _krKey1 = default;
         }
 
         private static readonly SKPaint _titlePaint = new() { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = _boldTypeface };

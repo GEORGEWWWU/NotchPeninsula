@@ -56,8 +56,20 @@ namespace NotchPeninsula
         public static event Action? Changed;
 
         /// <summary>
+        /// 当前正在使用的自定义字体面（来自 <see cref="SKTypeface.FromFile"/>）。
+        /// 所有权归本类：切换字体 / 重置为系统字体时必须释放，否则每次换字体都会永久多出一份
+        /// 字体文件数据（CJK 字体单份 15~30MB，ttc 集合更大），而 Renderer 的静态画笔会把它钉到进程结束。
+        /// 系统字体三档 _systemNormal/_systemBold/_systemSemiBold 是进程级共享资源，永不进入这里，因此永不被释放。
+        /// </summary>
+        private static List<SKTypeface>? _customFaces;
+
+        /// <summary>
         /// 加载指定字体文件并热应用到全岛。失败时保持原字体不变，并通过 error 返回原因。
         /// 只在用户点选字体时调用一次，无持续开销。
+        ///
+        /// 资源纪律：本次调用创建的每一个 SKTypeface 都有明确归宿 ——
+        /// 被选中的三档字重由 <see cref="_customFaces"/> 接管，其余（ttc 里多余的字重）当场释放，
+        /// 加载中途失败则全部释放。任何一条路径都不会留下无主的字体面。
         /// </summary>
         public static bool ApplyCustomFont(string path, out string error)
         {
@@ -68,47 +80,113 @@ namespace NotchPeninsula
                 return false;
             }
 
+            List<SKTypeface>? faces = null;
+            SKTypeface? newNormal = null, newBold = null, newSemiBold = null;
+            bool picked = false;
+
             try
             {
-                var faces = LoadFaces(path);
+                faces = LoadFaces(path);
                 if (faces.Count == 0)
                 {
                     error = "无法解析该字体文件（仅支持 ttf / otf / ttc）";
-                    return false;
+                    return false; // faces 为空，没有需要释放的对象
                 }
 
                 // 一个字体文件（尤其 ttc）可能内含多个字重，按目标字重挑最接近的那个
-                Normal = PickClosest(faces, SKFontStyleWeight.Normal);
-                Bold = PickClosest(faces, SKFontStyleWeight.Bold);
-                SemiBold = PickClosest(faces, SKFontStyleWeight.SemiBold);
-
-                HasCustomFont = true;
-                CustomFontPath = path;
-                DisplayName = string.IsNullOrWhiteSpace(Normal.FamilyName) ? Path.GetFileNameWithoutExtension(path) : Normal.FamilyName;
-
-                Changed?.Invoke();
-                Logger.Info($"[FontConfig] 已切换灵动岛字体：{DisplayName}（{path}）");
-                return true;
+                newNormal = PickClosest(faces, SKFontStyleWeight.Normal);
+                newBold = PickClosest(faces, SKFontStyleWeight.Bold);
+                newSemiBold = PickClosest(faces, SKFontStyleWeight.SemiBold);
+                picked = true;
             }
             catch (Exception ex)
             {
                 error = "加载字体失败：" + ex.Message;
                 Logger.Error($"[FontConfig] 加载自定义字体失败：{path}", ex);
+            }
+
+            if (!picked)
+            {
+                DisposeFaces(faces); // 失败：本次加载出来的字体面全部释放
                 ResetToSystemFont();
                 return false;
             }
+
+            // 只保留被选中的字面，其余（ttc 中多余的字重）立刻释放。
+            // 这些字面既不会被引用也不会再被用到，晚释放一秒就多占一秒的字体文件内存。
+            for (int i = 0; i < faces!.Count; i++)
+            {
+                var face = faces[i];
+                if (ReferenceEquals(face, newNormal) || ReferenceEquals(face, newBold) || ReferenceEquals(face, newSemiBold))
+                    continue;
+                SafeDispose(face);
+            }
+
+            SwitchFont(newNormal!, newBold!, newSemiBold!, path);
+            return true;
+        }
+
+        /// <summary>
+        /// 接管新字体并把上一套自定义字体释放掉。
+        ///
+        /// 释放时机是这里的关键：旧字体在被换下来的那一刻仍然被 Renderer 的 8 支静态画笔引用着，
+        /// 必须等 <see cref="Changed"/> 事件把画笔全部重绑到新字体之后才能 Dispose，
+        /// 否则画笔会短暂指向已释放的字体，下一帧绘制就是 use-after-dispose。
+        /// </summary>
+        private static void SwitchFont(SKTypeface normal, SKTypeface bold, SKTypeface semiBold, string path)
+        {
+            var oldFaces = _customFaces;
+
+            Normal = normal;
+            Bold = bold;
+            SemiBold = semiBold;
+            _customFaces = [normal, bold, semiBold];
+
+            HasCustomFont = true;
+            CustomFontPath = path;
+            DisplayName = string.IsNullOrWhiteSpace(normal.FamilyName) ? Path.GetFileNameWithoutExtension(path) : normal.FamilyName;
+
+            // 先重绑画笔，再释放旧字体；通知抛异常也不能让旧字体变成无主内存
+            try { Changed?.Invoke(); }
+            catch (Exception ex) { Logger.Error("[FontConfig] 字体变更通知异常", ex); }
+
+            DisposeFaces(oldFaces);
+            Logger.Info($"[FontConfig] 已切换灵动岛字体：{DisplayName}（{path}）");
         }
 
         /// <summary>恢复系统字体（只改内存状态，是否持久化由调用方决定）。</summary>
         public static void ResetToSystemFont()
         {
+            var oldFaces = _customFaces;
+            _customFaces = null;
+
             Normal = _systemNormal;
             Bold = _systemBold;
             SemiBold = _systemSemiBold;
             HasCustomFont = false;
             CustomFontPath = "";
             DisplayName = "系统字体";
-            Changed?.Invoke();
+
+            // 同样先让画笔重绑回系统字体，再释放自定义字体
+            try { Changed?.Invoke(); }
+            catch (Exception ex) { Logger.Error("[FontConfig] 字体变更通知异常", ex); }
+
+            DisposeFaces(oldFaces);
+        }
+
+        /// <summary>释放一批字体面；null / 空集合安全，单个失败不影响其余。</summary>
+        private static void DisposeFaces(List<SKTypeface>? faces)
+        {
+            if (faces == null) return;
+            for (int i = 0; i < faces.Count; i++)
+                SafeDispose(faces[i]);
+        }
+
+        /// <summary>释放单个字体面（同一实例可能被三档字重共用，重复 Dispose 在 SkiaSharp 里是安全空操作）。</summary>
+        private static void SafeDispose(SKTypeface? face)
+        {
+            try { face?.Dispose(); }
+            catch (Exception ex) { Logger.Warn($"[FontConfig] 释放字体面失败：{ex.Message}"); }
         }
 
         /// <summary>
@@ -125,7 +203,11 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>读取字体文件内的全部字体面（ttc / otf 集合可能包含多个字重）。</summary>
+        /// <summary>
+        /// 读取字体文件内的全部字体面（ttc / otf 集合可能包含多个字重）。
+        /// 注意：返回的每一个 SKTypeface 都是新分配的非托管对象，<b>所有权全部交给调用方</b>，
+        /// 调用方必须保证每个实例最终被 Dispose（选中的交给 _customFaces，未选中的立即释放）。
+        /// </summary>
         private static List<SKTypeface> LoadFaces(string path)
         {
             var faces = new List<SKTypeface>(4);

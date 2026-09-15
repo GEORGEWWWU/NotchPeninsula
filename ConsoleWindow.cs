@@ -1148,21 +1148,70 @@ namespace NotchPeninsula
             _hoveredPluginRemove = -1;
         }
 
+        /// <summary>
+        /// 弹出传统 Win32 打开文件对话框（comdlg32!GetOpenFileNameW），返回选中路径；用户取消返回 null。
+        ///
+        /// 为什么不用 System.Windows.Forms.OpenFileDialog：
+        ///   WinForms 的 OpenFileDialog 走 Vista「通用项对话框」，会在本进程内加载 ExplorerBrowser
+        ///   + 外壳命名空间 + 图标/缩略图缓存 —— 首次打开就常驻 20~30MB，而且这是 Windows 的
+        ///   进程级外壳组件，Dispose 对话框、关闭资源管理器都不会归还，看起来就像"内存泄漏"。
+        ///   传统对话框是 comdlg32 的普通模态窗口，不碰 ExplorerBrowser，开销可以忽略。
+        /// </summary>
+        private static string? ShowOpenFileDialog(IntPtr owner, string title, string filter)
+        {
+            // OPENFILENAME 里的字符串字段在 Win32.cs 中被声明成 IntPtr，所以要手工分配/释放原生内存。
+            // 不能改成 string / StringBuilder 字段：.NET 10 的 Marshal.SizeOf 遇到含托管引用字段的
+            // 结构体会抛 ArgumentException，而 lStructSize 又必须精确，两者冲突，只能手工封送。
+            IntPtr pFilter = IntPtr.Zero, pTitle = IntPtr.Zero, pFile = IntPtr.Zero;
+            try
+            {
+                const int maxFile = 1024; // 单位是「字符」而非字节，故下面的缓冲区要 ×2
+                pFilter = Marshal.StringToHGlobalUni(filter);
+                pTitle = Marshal.StringToHGlobalUni(title);
+                pFile = Marshal.AllocHGlobal(maxFile * 2);
+                Marshal.WriteInt16(pFile, 0); // 首字符置 0：不预填文件名，对话框沿用上次访问的目录
+
+                var ofn = new Win32.OPENFILENAME
+                {
+                    lStructSize = (uint)Marshal.SizeOf<Win32.OPENFILENAME>(),
+                    hwndOwner = owner,
+                    lpstrFilter = pFilter,
+                    lpstrFile = pFile,
+                    nMaxFile = maxFile,
+                    lpstrTitle = pTitle,
+                    // NOCHANGEDIR：传统对话框默认会把进程当前目录改成用户选的目录，必须禁掉
+                    Flags = Win32.OFN_EXPLORER | Win32.OFN_FILEMUSTEXIST | Win32.OFN_PATHMUSTEXIST | Win32.OFN_NOCHANGEDIR
+                };
+
+                if (Win32.GetOpenFileNameW(ref ofn))
+                {
+                    string? result = Marshal.PtrToStringUni(pFile);
+                    return string.IsNullOrEmpty(result) ? null : result;
+                }
+
+                // 返回 false 时可能是"用户取消"（CommDlgExtendedError == 0），也可能是真出错
+                uint err = Win32.CommDlgExtendedError();
+                if (err != 0) Logger.Warn($"[文件对话框] GetOpenFileNameW 失败，CommDlgExtendedError=0x{err:X}");
+                return null;
+            }
+            finally
+            {
+                if (pFilter != IntPtr.Zero) Marshal.FreeHGlobal(pFilter);
+                if (pTitle != IntPtr.Zero) Marshal.FreeHGlobal(pTitle);
+                if (pFile != IntPtr.Zero) Marshal.FreeHGlobal(pFile);
+            }
+        }
+
         /// <summary>弹出文件选择框导入插件 DLL。</summary>
         private void ImportPluginDll()
         {
             try
             {
-                using var dlg = new System.Windows.Forms.OpenFileDialog
-                {
-                    Title = "选择 NotchPeninsula 插件 DLL",
-                    Filter = "插件动态库 (*.dll)|*.dll|所有文件 (*.*)|*.*",
-                    CheckFileExists = true,
-                    Multiselect = false
-                };
-                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+                string? picked = ShowOpenFileDialog(_hwnd, "选择 NotchPeninsula 插件 DLL",
+                    "插件动态库 (*.dll)\0*.dll\0所有文件 (*.*)\0*.*\0");
+                if (picked == null) return;
 
-                var (ok, msg) = PluginManager.Instance.Import(dlg.FileName);
+                var (ok, msg) = PluginManager.Instance.Import(picked);
                 Logger.Info($"[PluginCenter] 导入结果: {(ok ? "成功" : "失败")} — {msg}");
                 ResetPluginHover();
                 RefreshPluginView();
@@ -1175,25 +1224,21 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 弹出系统文件资源管理器挑选字体文件，选中后热替换灵动岛全部文本字体，并把路径写入注册表实现记忆化。
+        /// 弹出文件对话框挑选字体文件，选中后热替换灵动岛全部文本字体，并把路径写入注册表实现记忆化。
         /// 加载失败时不做任何改动，只在卡片副标题上提示原因。
+        /// 走的是传统 Win32 对话框（见 <see cref="ShowOpenFileDialog"/>），不会把外壳组件拉进进程。
         /// </summary>
         private void PickCustomFont()
         {
             try
             {
-                using var dlg = new System.Windows.Forms.OpenFileDialog
-                {
-                    Title = "选择灵动岛字体文件",
-                    Filter = "字体文件 (*.ttf;*.otf;*.ttc)|*.ttf;*.otf;*.ttc|所有文件 (*.*)|*.*",
-                    CheckFileExists = true,
-                    Multiselect = false
-                };
-                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+                string? picked = ShowOpenFileDialog(_hwnd, "选择灵动岛字体文件",
+                    "字体文件 (*.ttf;*.otf;*.ttc)\0*.ttf;*.otf;*.ttc\0所有文件 (*.*)\0*.*\0");
+                if (picked == null) return;
 
-                if (FontConfig.ApplyCustomFont(dlg.FileName, out string error))
+                if (FontConfig.ApplyCustomFont(picked, out string error))
                 {
-                    Program.SaveSetting("CustomFontPath", dlg.FileName); // 记忆化：下次启动自动恢复
+                    Program.SaveSetting("CustomFontPath", picked); // 记忆化：下次启动自动恢复
                     _fontHint = "";
                 }
                 else
