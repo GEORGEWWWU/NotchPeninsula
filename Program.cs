@@ -19,6 +19,10 @@ namespace NotchPeninsula
                 using var key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\NotchPeninsula");
                 if (key != null)
                 {
+                    // 灵动岛字体：先恢复，保证 Renderer 首次初始化时拿到的就是记忆的字体。
+                    // 未选择过自定义字体（默认）或记忆的文件已失效时，保持系统字体，不做任何改动。
+                    FontConfig.Restore(key.GetValue("CustomFontPath", "") as string);
+
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
                     MediaController.IsKaraokeEnabled = (int)key.GetValue("KaraokeEnabled", 1) != 0;

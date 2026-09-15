@@ -27,6 +27,15 @@ namespace NotchPeninsula
         private const float PLUGIN_BTN_REMOVE_X = 460f;  // 移除按钮
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
+        // 🔤 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
+        private const float FONT_CARD_Y = 300f;        // 卡片相对标题栏的纵向偏移
+        private const float FONT_BTN_H = 26f;          // 按钮高度
+        private const float FONT_BTN_Y = FONT_CARD_Y + 18f;
+        private const float FONT_RESET_W = 56f;        // [重置] 按钮宽度
+        private const float FONT_PICK_W = 78f;         // [选择字体] 按钮宽度
+        private const float FONT_RESET_X = WIDTH - 36 - FONT_RESET_W;
+        private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
+
         private bool _minHovered = false;
         private bool _closeHovered = false;
         private static SKBitmap? _appIconBitmap;
@@ -39,6 +48,10 @@ namespace NotchPeninsula
         private bool _toggleHovered = false;
         private bool _toastToggleHovered = false;
         private bool _topmostToggleHovered = false;
+        // 灵动岛字体切换状态（字体本身由 FontConfig 统一持有）
+        private bool _fontPickHovered = false;
+        private bool _fontResetHovered = false;
+        private string _fontHint = ""; // 加载失败时在卡片副标题上直接提示，避免弹窗打断操作
         // 交互设置状态
         private bool _autoHideToggleHovered = false;
         private bool _mediaExpToggleHovered = false;
@@ -460,27 +473,36 @@ namespace NotchPeninsula
                     int newHoveredPluginRemove = -1;
                     int newHoveredPluginMoveLeft = -1;
                     int newHoveredPluginMoveRight = -1;
+                    bool newFontPickHovered = false;
+                    bool newFontResetHovered = false;
 
                     if (_selectedTab == 0) // 通用设置
                     {
                         // 开机自启
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newToggleHovered = true;
-                        // 系统消息通知开关
+                        // 窗口置顶开关（与消息通知整组互换位置后上移到第 2 张卡）
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
+                            newTopmostToggleHovered = true;
+
+                        // 系统消息通知开关
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196)
                             newToastToggleHovered = true;
                         // 消息通知内容下拉（复用现有下拉控件样式）
-                        if (!_toastModeDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 168 && y <= TITLE_BAR_HEIGHT + 200)
+                        if (!_toastModeDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 240 && y <= TITLE_BAR_HEIGHT + 272)
                             newToastModeDropdownHovered = true;
                         if (_toastModeDropdownOpen)
                         {
-                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 202 && y < TITLE_BAR_HEIGHT + 202 + _toastModeOptions.Length * 26)
-                                newHoveredToastModeIndex = (y - (TITLE_BAR_HEIGHT + 202)) / 26;
+                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 274 && y < TITLE_BAR_HEIGHT + 274 + _toastModeOptions.Length * 26)
+                                newHoveredToastModeIndex = (y - (TITLE_BAR_HEIGHT + 274)) / 26;
                         }
 
-                        // 窗口置顶开关（整体下移 72px 给新增的下拉卡让位，热区同步下移）
-                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 268)
-                            newTopmostToggleHovered = true;
+                        // 切换灵动岛字体：[选择字体…] 与 [重置] 两个按钮
+                        if (y >= TITLE_BAR_HEIGHT + FONT_BTN_Y && y <= TITLE_BAR_HEIGHT + FONT_BTN_Y + FONT_BTN_H)
+                        {
+                            if (x >= FONT_PICK_X && x <= FONT_PICK_X + FONT_PICK_W) newFontPickHovered = true;
+                            if (x >= FONT_RESET_X && x <= FONT_RESET_X + FONT_RESET_W) newFontResetHovered = true;
+                        }
                     }
                     else if (_selectedTab == 1) // 显示设置
                     {
@@ -655,7 +677,8 @@ namespace NotchPeninsula
                         newHoveredPluginReload != _hoveredPluginReload ||
                         newHoveredPluginRemove != _hoveredPluginRemove ||
                         newHoveredPluginMoveLeft != _hoveredPluginMoveLeft ||
-                        newHoveredPluginMoveRight != _hoveredPluginMoveRight
+                        newHoveredPluginMoveRight != _hoveredPluginMoveRight ||
+                        newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered
                         )
                     {
                         _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -689,6 +712,8 @@ namespace NotchPeninsula
                         _hoveredPluginRemove = newHoveredPluginRemove;
                         _hoveredPluginMoveLeft = newHoveredPluginMoveLeft;
                         _hoveredPluginMoveRight = newHoveredPluginMoveRight;
+                        _fontPickHovered = newFontPickHovered;
+                        _fontResetHovered = newFontResetHovered;
                         Render();
                     }
                     break;
@@ -857,6 +882,14 @@ namespace NotchPeninsula
                         // 直接调用底层 API 热重载层级，无需重启和重建画布
                         Win32.SetWindowPos(NotchWindow.InstanceHandle, NotchWindow.IsTopmostEnabled ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST, 0, 0, 0, 0, Win32.SWP_NOMOVE_NOSIZE);
                         Render();
+                    }
+                    else if (_fontPickHovered)
+                    {
+                        PickCustomFont();
+                    }
+                    else if (_fontResetHovered)
+                    {
+                        ResetCustomFont();
                     }
                     else if (_mediaToggleHovered)
                     {
@@ -1141,6 +1174,52 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 弹出系统文件资源管理器挑选字体文件，选中后热替换灵动岛全部文本字体，并把路径写入注册表实现记忆化。
+        /// 加载失败时不做任何改动，只在卡片副标题上提示原因。
+        /// </summary>
+        private void PickCustomFont()
+        {
+            try
+            {
+                using var dlg = new System.Windows.Forms.OpenFileDialog
+                {
+                    Title = "选择灵动岛字体文件",
+                    Filter = "字体文件 (*.ttf;*.otf;*.ttc)|*.ttf;*.otf;*.ttc|所有文件 (*.*)|*.*",
+                    CheckFileExists = true,
+                    Multiselect = false
+                };
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+
+                if (FontConfig.ApplyCustomFont(dlg.FileName, out string error))
+                {
+                    Program.SaveSetting("CustomFontPath", dlg.FileName); // 记忆化：下次启动自动恢复
+                    _fontHint = "";
+                }
+                else
+                {
+                    _fontHint = error;
+                    Logger.Error($"[FontCenter] 字体加载失败：{error}");
+                }
+                Render();
+            }
+            catch (Exception ex)
+            {
+                _fontHint = "打开字体选择框失败";
+                Logger.Error("[FontCenter] 选择字体异常", ex);
+                Render();
+            }
+        }
+
+        /// <summary>恢复系统字体（等价于从未选择过自定义字体），并清空注册表里的记忆。</summary>
+        private void ResetCustomFont()
+        {
+            FontConfig.ResetToSystemFont();
+            Program.SaveSetting("CustomFontPath", "");
+            _fontHint = "";
+            Render();
+        }
+
         /// <summary>按像素宽度截断文本并追加省略号（零 GC 不敏感，交互时才调用）。</summary>
         private static string TruncateText(string? text, SKPaint paint, float maxWidth)
         {
@@ -1334,22 +1413,24 @@ namespace NotchPeninsula
             if (_selectedTab == 0)
             {
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
-                DrawToggleCard(84, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
+                // 窗口置顶（与下方消息通知整组互换位置）
+                DrawToggleCard(84, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
+                DrawToggleCard(156, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
 
                 // 消息通知内容下拉卡（完整时展示应用名并拉大通知尺寸）
-                var toastModeCard = new SKRect(200, TITLE_BAR_HEIGHT + 156, WIDTH - 20, TITLE_BAR_HEIGHT + 218);
+                var toastModeCard = new SKRect(200, TITLE_BAR_HEIGHT + 228, WIDTH - 20, TITLE_BAR_HEIGHT + 290);
                 canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBg);
                 canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBorder);
-                canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 182, _uiTextPaint);
+                canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 254, _uiTextPaint);
                 string toastModeDesc = _selectedToastModeIndex switch
                 {
                     2 => "完整显示应用名、发送者与消息主体",
                     1 => "右侧展示“现在”与应用名",
                     _ => "仅显示发送者与消息主体"
                 };
-                canvas.DrawText(toastModeDesc, 216, TITLE_BAR_HEIGHT + 202, _subTextPaint);
+                canvas.DrawText(toastModeDesc, 216, TITLE_BAR_HEIGHT + 274, _subTextPaint);
 
-                float tmdW = 110, tmdX = WIDTH - 140, tmdY = TITLE_BAR_HEIGHT + 168, tmdH = 32;
+                float tmdW = 110, tmdX = WIDTH - 140, tmdY = TITLE_BAR_HEIGHT + 240, tmdH = 32;
                 var tmdRect = new SKRect(tmdX, tmdY, tmdX + tmdW, tmdY + tmdH);
                 _dynamicFillPaint.Color = _toastModeDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8);
                 canvas.DrawRoundRect(tmdRect, 4, 4, _dynamicFillPaint);
@@ -1357,8 +1438,29 @@ namespace NotchPeninsula
                 canvas.DrawLine(tmdX + tmdW - 20, tmdY + 14, tmdX + tmdW - 15, tmdY + 19, _chevronPaint);
                 canvas.DrawLine(tmdX + tmdW - 15, tmdY + 19, tmdX + tmdW - 10, tmdY + 14, _chevronPaint);
 
-                // 窗口置顶（整体下移，给新增下拉卡让位）
-                DrawToggleCard(228, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
+                // 切换灵动岛字体：选中字体文件后立即热替换岛内全部文本字体（默认系统字体，不做任何改动）
+                var fontCard = new SKRect(200, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - 20, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);
+                canvas.DrawRoundRect(fontCard, 6, 6, _cardBg);
+                canvas.DrawRoundRect(fontCard, 6, 6, _cardBorder);
+                canvas.DrawText("切换灵动岛字体", 216, TITLE_BAR_HEIGHT + FONT_CARD_Y + 26, _uiTextPaint);
+
+                bool fontError = _fontHint.Length > 0;
+                string fontSub = fontError ? _fontHint : $"当前：{FontConfig.DisplayName}";
+                _subTextPaint.Color = fontError ? new SKColor(232, 100, 100) : new SKColor(170, 170, 170);
+                canvas.DrawText(TruncateText(fontSub, _subTextPaint, FONT_PICK_X - 216 - 8), 216, TITLE_BAR_HEIGHT + FONT_CARD_Y + 46, _subTextPaint);
+                _subTextPaint.Color = new SKColor(170, 170, 170);
+
+                void DrawFontButton(bool hovered, string label, float bx, float bw)
+                {
+                    var btn = new SKRect(bx, TITLE_BAR_HEIGHT + FONT_BTN_Y, bx + bw, TITLE_BAR_HEIGHT + FONT_BTN_Y + FONT_BTN_H);
+                    _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
+                    float tw = _uiTextPaint.MeasureText(label);
+                    canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + FONT_BTN_Y + 18, _uiTextPaint);
+                }
+
+                DrawFontButton(_fontPickHovered, "选择字体", FONT_PICK_X, FONT_PICK_W);
+                DrawFontButton(_fontResetHovered, "重置", FONT_RESET_X, FONT_RESET_W);
             }
             else if (_selectedTab == 1)
             {
@@ -1943,7 +2045,7 @@ namespace NotchPeninsula
             // 消息通知内容下拉菜单（通用设置）
             if (_selectedTab == 0 && _toastModeDropdownOpen)
             {
-                float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 202; float dW = 110; float dH = _toastModeOptions.Length * 26;
+                float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 274; float dW = 110; float dH = _toastModeOptions.Length * 26;
                 var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
                 canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
                 canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);

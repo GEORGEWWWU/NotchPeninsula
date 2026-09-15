@@ -1,4 +1,4 @@
-using SkiaSharp;
+﻿using SkiaSharp;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -589,9 +589,43 @@ namespace NotchPeninsula
         private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
         private static readonly SKPaint _fallbackIconPaint = new() { Color = new SKColor(0, 120, 212), IsAntialias = true };
 
-        private static readonly SKTypeface _boldTypeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
-        private static readonly SKTypeface _normalTypeface = SKTypeface.FromFamilyName("Microsoft YaHei UI");
-        private static readonly SKTypeface _semiBoldTypeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
+        // 岛内字体统一取自 FontConfig（公共字体变量），用户切换自定义字体时由 ApplyFont() 热替换
+        private static SKTypeface _boldTypeface = FontConfig.Bold;
+        private static SKTypeface _normalTypeface = FontConfig.Normal;
+        private static SKTypeface _semiBoldTypeface = FontConfig.SemiBold;
+
+        // 订阅字体变更：用户选中自定义字体后立即把新字体重绑到全部文本画笔，无需重启、无需改绘制代码
+        static Renderer()
+        {
+            FontConfig.Changed += ApplyFont;
+            ApplyFont();
+        }
+
+        /// <summary>
+        /// 把 FontConfig 当前的公共字体变量热绑定到岛内所有文本画笔上。
+        /// 只在启动和用户切换字体时执行，渲染路径（每帧）不调用，因此不影响零 GC 目标。
+        /// </summary>
+        public static void ApplyFont()
+        {
+            _boldTypeface = FontConfig.Bold;
+            _normalTypeface = FontConfig.Normal;
+            _semiBoldTypeface = FontConfig.SemiBold;
+
+            _titlePaint.Typeface = _boldTypeface;
+            _bodyPaint.Typeface = _normalTypeface;
+            _textPaint.Typeface = _semiBoldTypeface;
+            _timePaint.Typeface = _boldTypeface;
+            _datePaint.Typeface = _normalTypeface;
+            _compactTimePaint.Typeface = _semiBoldTypeface;
+            _compactAppPaint.Typeface = _normalTypeface;
+            _tagTextPaint.Typeface = _boldTypeface;
+
+            // 下面这些缓存都以「字体」为前提，换字体后必须作废，否则会沿用旧字体的排版宽度导致文字错位
+            _lastMinute = -1;                 // 时间/日期文本与宽度缓存
+            _lastToastId = uint.MaxValue;     // Toast 分段缓存（下一帧强制重建）
+            _lastMediaTitle = "";             // 媒体文本度量缓存
+            _lastMediaArtist = "";            // 不动 _lastLyric，避免误触发歌词叠化动画
+        }
 
         private static readonly SKPaint _titlePaint = new() { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = _boldTypeface };
         private static readonly SKPaint _bodyPaint = new() { Color = new SKColor(200, 200, 200), TextSize = 11.5f, IsAntialias = true, Typeface = _normalTypeface };
@@ -761,14 +795,14 @@ namespace NotchPeninsula
         private static string _cachedToastAppName = "";
         // 预加载 Windows 自带 Emoji 彩色字体与零 GC 渲染缓存列表
         private static readonly SKTypeface _emojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
-        private static readonly List<(string Text, bool IsEmoji, float X)> _karaokeRuns = new(); // 歌词/歌名/歌手 逐字 emoji 回退用的 runs
-        private static readonly List<(string Text, bool IsEmoji, float X)> _karaokeRuns1 = new(); // 第二缓存槽（叠化动画时旧/新两条歌词各占一槽）
+        private static readonly List<(string Text, SKTypeface Type, float X)> _karaokeRuns = new(); // 歌词/歌名/歌手 逐字字体回退用的 runs
+        private static readonly List<(string Text, SKTypeface Type, float X)> _karaokeRuns1 = new(); // 第二缓存槽（叠化动画时旧/新两条歌词各占一槽）
         private static (string Text, SKTypeface Type, float Width) _krKey0;
         private static (string Text, SKTypeface Type, float Width) _krKey1;
         private static bool _krSlot;
-        private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastSenderRuns = new();
-        private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastBodyRuns = new();
-        private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastAppNameRuns = new();
+        private static readonly List<(string Text, SKTypeface Type, float X)> _cachedToastSenderRuns = new();
+        private static readonly List<(string Text, SKTypeface Type, float X)> _cachedToastBodyRuns = new();
+        private static readonly List<(string Text, SKTypeface Type, float X)> _cachedToastAppNameRuns = new();
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
         private static float _cachedToastAppNameWidth = 0f;
@@ -960,7 +994,7 @@ namespace NotchPeninsula
                         // 渲染应用名（小字），右上角同排悬浮“现在”
                         foreach (var run in _cachedToastAppNameRuns)
                         {
-                            _bodyPaint.Typeface = run.IsEmoji ? _emojiTypeface : _normalTypeface;
+                            _bodyPaint.Typeface = run.Type;
                             canvas.DrawText(run.Text, toastTextX + run.X, line1Y, _bodyPaint);
                         }
                         _bodyPaint.Typeface = _normalTypeface; // 重置
@@ -974,7 +1008,7 @@ namespace NotchPeninsula
                     float senderY = IsToastFullMode ? line2Y : line1Y;
                     foreach (var run in _cachedToastSenderRuns)
                     {
-                        _titlePaint.Typeface = run.IsEmoji ? _emojiTypeface : _boldTypeface;
+                        _titlePaint.Typeface = run.Type;
                         canvas.DrawText(run.Text, toastTextX + run.X, senderY, _titlePaint);
                     }
                     _titlePaint.Typeface = _boldTypeface; // 重置
@@ -983,7 +1017,7 @@ namespace NotchPeninsula
                     float bodyY = IsToastFullMode ? line3Y : line2Y;
                     foreach (var run in _cachedToastBodyRuns)
                     {
-                        _bodyPaint.Typeface = run.IsEmoji ? _emojiTypeface : _normalTypeface;
+                        _bodyPaint.Typeface = run.Type;
                         canvas.DrawText(run.Text, toastTextX + run.X, bodyY, _bodyPaint);
                     }
                     _bodyPaint.Typeface = _normalTypeface; // 重置
@@ -1619,15 +1653,15 @@ namespace NotchPeninsula
         private static SKPath CreatePrevPath() { var path = new SKPath(); path.AddRect(new SKRect(0, 0, 2, 10)); path.MoveTo(8, 0); path.LineTo(2, 5); path.LineTo(8, 10); path.Close(); return path; }
         private static SKPath CreateNextPath() { var path = new SKPath(); path.MoveTo(0, 0); path.LineTo(6, 5); path.LineTo(0, 10); path.Close(); path.AddRect(new SKRect(6, 0, 8, 10)); return path; }
 
-        // 文本拆分引擎，实现emoji显示
-        private static void BuildTextRuns(string text, SKPaint paint, SKTypeface baseTypeface, List<(string Text, bool IsEmoji, float X)> runs, out float totalWidth)
+        // 文本拆分引擎：逐码点决定用哪套字体，把连续同字体的片段切成 runs，实现 Emoji 与缺字回退
+        private static void BuildTextRuns(string text, SKPaint paint, SKTypeface baseTypeface, List<(string Text, SKTypeface Type, float X)> runs, out float totalWidth)
         {
             runs.Clear();
             totalWidth = 0;
             if (string.IsNullOrEmpty(text)) return;
 
             int start = 0;
-            bool currentIsEmoji = false;
+            SKTypeface? currentType = null;
 
             for (int i = 0; i < text.Length; i++)
             {
@@ -1639,43 +1673,45 @@ namespace NotchPeninsula
                     charLen = 2;
                 }
 
-                // 基础判定：默认字体里没有这个字，那就是 Emoji
-                bool isEmoji = baseTypeface.GetGlyph(cp) == 0;
+                // 基础判定：基础字体里没有这个字（可能是 Emoji，也可能是自定义英文字体缺的中文）
+                bool missingInBase = baseTypeface.GetGlyph(cp) == 0;
+                bool forcedEmoji = false;
 
                 // 1. 向前探测：如果当前字符（比如 # 或 ⛸）后面紧跟了 Emoji 变体选择器(FE0F)或零宽连字(200D)，
                 // 说明它是 Emoji 组合的开头，强制视为 Emoji，防止被默认字体抢走。
-                if (!isEmoji && i + charLen < text.Length)
+                if (!missingInBase && i + charLen < text.Length)
                 {
                     char nextChar = text[i + charLen];
                     if (nextChar == '\uFE0F' || nextChar == '\u200D' || nextChar == '\u20E3')
                     {
-                        isEmoji = true;
+                        forcedEmoji = true;
                     }
                 }
 
                 // 2. 修饰符绑定：这些不可见字符本身必须作为 Emoji 处理，不能断开
                 if (cp == 0xFE0F || cp == 0xFE0E || cp == 0x200D || cp == 0x20E3)
                 {
-                    isEmoji = true;
+                    forcedEmoji = true;
                 }
 
                 // 3. 肤色修饰符 (U+1F3FB ~ U+1F3FF)，强制绑定为 Emoji
                 if (cp >= 0x1F3FB && cp <= 0x1F3FF)
                 {
-                    isEmoji = true;
+                    forcedEmoji = true;
                 }
 
-                if (i == 0) currentIsEmoji = isEmoji; // 初始化第一个状态
+                SKTypeface type = ResolveTypeface(cp, baseTypeface, missingInBase, forcedEmoji);
+                currentType ??= type; // 初始化第一个状态
 
                 // 只有当字体类型发生真正的改变时，才进行安全切割
-                if (isEmoji != currentIsEmoji)
+                if (!ReferenceEquals(type, currentType))
                 {
                     string sub = text.Substring(start, i - start);
-                    runs.Add((sub, currentIsEmoji, totalWidth));
-                    paint.Typeface = currentIsEmoji ? _emojiTypeface : baseTypeface;
+                    runs.Add((sub, currentType, totalWidth));
+                    paint.Typeface = currentType;
                     totalWidth += paint.MeasureText(sub);
 
-                    currentIsEmoji = isEmoji;
+                    currentType = type;
                     start = i;
                 }
 
@@ -1683,16 +1719,40 @@ namespace NotchPeninsula
             }
 
             // 处理收尾文本
-            if (start < text.Length)
+            if (start < text.Length && currentType != null)
             {
                 string sub = text.Substring(start);
-                runs.Add((sub, currentIsEmoji, totalWidth));
-                paint.Typeface = currentIsEmoji ? _emojiTypeface : baseTypeface;
+                runs.Add((sub, currentType, totalWidth));
+                paint.Typeface = currentType;
                 totalWidth += paint.MeasureText(sub);
             }
 
             paint.Typeface = baseTypeface; // 重置画笔
         }
+
+        /// <summary>
+        /// 逐码点决定用哪套字体：
+        ///   基础字体有这个字 → 基础字体；
+        ///   缺字且是 Emoji → 彩色 Emoji 字体；
+        ///   缺字但是中文等文字（用户选了纯英文字体的情况）→ 系统兜底字体，避免整块文字变方块。
+        /// 未启用自定义字体时 Fallback 与基础字体是同一个，行为与改动前完全一致。
+        /// </summary>
+        private static SKTypeface ResolveTypeface(int cp, SKTypeface baseTypeface, bool missingInBase, bool forcedEmoji)
+        {
+            if (!missingInBase && !forcedEmoji) return baseTypeface;
+            if (forcedEmoji) return _emojiTypeface;
+            if (IsEmojiCodePoint(cp) && _emojiTypeface.GetGlyph(cp) != 0) return _emojiTypeface;
+            if (FontConfig.Fallback.GetGlyph(cp) != 0) return FontConfig.Fallback;
+            return _emojiTypeface; // 兜底字体也没有：维持改动前「交给 Emoji 字体」的旧行为
+        }
+
+        /// <summary>粗略判定码点是否落在 Emoji 区段（仅在基础字体缺字时才用于选择字体）。</summary>
+        private static bool IsEmojiCodePoint(int cp)
+            => (cp >= 0x1F000 && cp <= 0x1FAFF)   // Emoji 主体区（表情、交通、补充符号等）
+            || (cp >= 0x2600 && cp <= 0x27BF)     // 杂项符号与装饰符号
+            || (cp >= 0x2B00 && cp <= 0x2BFF)     // 杂项符号与箭头
+            || (cp >= 0xFE00 && cp <= 0xFE0F)     // 变体选择符
+            || cp == 0x200D || cp == 0x20E3;
 
         // 卡拉OK渲染引擎
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
@@ -1700,7 +1760,7 @@ namespace NotchPeninsula
             SKTypeface baseTypeface = paint.Typeface;
 
             // 缓存 runs：播放时段文本不变则直接复用，不重建，避免每帧 BuildTextRuns 拖慢渲染帧率导致时间刷新滞后
-            List<(string Text, bool IsEmoji, float X)> runs;
+            List<(string Text, SKTypeface Type, float X)> runs;
             float totalWidth;
             if (_krKey0.Text == text && _krKey0.Type == baseTypeface)
             {
@@ -1732,7 +1792,7 @@ namespace NotchPeninsula
             {
                 foreach (var run in runs)
                 {
-                    paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
+                    paint.Typeface = run.Type;
                     paint.Color = paint.Color.WithAlpha(targetAlpha);
                     canvas.DrawText(run.Text, x + run.X, y, paint);
                 }
@@ -1744,7 +1804,7 @@ namespace NotchPeninsula
             // 1. 先画完整的半透明底板 (40% 亮度)
             foreach (var run in runs)
             {
-                paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
+                paint.Typeface = run.Type;
                 paint.Color = paint.Color.WithAlpha((byte)(targetAlpha * 0.4f));
                 canvas.DrawText(run.Text, x + run.X, y, paint);
             }
@@ -1759,7 +1819,7 @@ namespace NotchPeninsula
             paint.Color = paint.Color.WithAlpha(targetAlpha);
             foreach (var run in runs)
             {
-                paint.Typeface = run.IsEmoji ? _emojiTypeface : baseTypeface;
+                paint.Typeface = run.Type;
                 canvas.DrawText(run.Text, x + run.X, y, paint);
             }
             canvas.Restore();
