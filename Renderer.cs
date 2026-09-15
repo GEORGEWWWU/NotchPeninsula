@@ -25,6 +25,10 @@ namespace NotchPeninsula
         public static float TOAST_HEIGHT { get => _toastHeight; set => _toastHeight = value; }
         // 消息通知内容：false=缩略(默认，仅 icon+发送者+主体)，true=完整(icon+应用名+发送者+主体+右上角“现在”)
         public static bool IsToastFullMode = false;
+        // 紧凑模式：尺寸与缩略一致，但右侧靠边显示双行信息（右上“现在”、右下应用名），左侧文本过长时用遮罩过渡
+        public static bool IsToastCompactMode = false;
+        // 紧凑模式下右侧双行信息预留宽度
+        public static readonly float COMPACT_RIGHT_WIDTH = 90f;
         // 完整模式下的消息通知最小尺寸（默认缩略为 260x55，完整需更长更高以容纳应用名）
         public static readonly float FULL_TOAST_MIN_WIDTH = 300f;
         public static readonly float FULL_TOAST_MIN_HEIGHT = 72f;
@@ -67,7 +71,10 @@ namespace NotchPeninsula
             float maxTextW = IsToastFullMode
                 ? Math.Max(_cachedToastTitleWidth, Math.Max(_cachedToastBodyWidth, _cachedToastAppNameWidth))
                 : Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
-            return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), 800f);
+            float w = maxTextW + 68f;
+            // 紧凑模式：左侧文本之外还需为右侧双行信息（现在 + 应用名）预留空间
+            if (IsToastCompactMode) w += COMPACT_RIGHT_WIDTH;
+            return Math.Min(Math.Max(TOAST_WIDTH, w), 800f);
         }
         public static bool IsMediaExpanded = false;
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
@@ -101,6 +108,8 @@ namespace NotchPeninsula
             _textPaint.Color = _currentTextColor;
             _timePaint.Color = _currentTextColor;
             _datePaint.Color = _currentSubTextColor;
+            _compactTimePaint.Color = _currentTextColor;   // “现在”纯黑纯白
+            _compactAppPaint.Color = _currentSubTextColor; // 应用名灰色
             _mediaIconPaint.Color = _currentTextColor;
             _barPaint.Color = _currentTextColor;
             _shadowPaint.Color = _currentTextColor.WithAlpha(50);
@@ -499,6 +508,9 @@ namespace NotchPeninsula
         // 待机时间显示专用画笔
         private static readonly SKPaint _timePaint = new() { Color = SKColors.White, TextSize = 14.5f, IsAntialias = true, Typeface = _boldTypeface };
         private static readonly SKPaint _datePaint = new() { Color = new SKColor(200, 200, 200), TextSize = 14.5f, IsAntialias = true, Typeface = _normalTypeface };
+        // 紧凑模式右侧小号信息画笔：“现在”用纯色(跟随主题明暗)，应用名用灰色(小号)
+        private static readonly SKPaint _compactTimePaint = new() { Color = SKColors.White, TextSize = 10f, IsAntialias = true, Typeface = _semiBoldTypeface };
+        private static readonly SKPaint _compactAppPaint = new() { Color = new SKColor(200, 200, 200), TextSize = 10f, IsAntialias = true, Typeface = _normalTypeface };
         // 硬件监控零 GC 缓存池 (预热101个字符串，避免每帧 ToString 分配内存)
         private static string[]? _cpuStrs;
         private static string[]? _ramStrs;
@@ -728,6 +740,16 @@ namespace NotchPeninsula
                     float toastMaxTextRight = right - 16f;
                     if (IsToastFullMode) toastMaxTextRight -= 36f; // 完整模式右上角需预留“现在”的空间
 
+                    // 紧凑模式：右侧文本块的真实左边缘（“现在”与应用名两行的最大宽者），遮罩与溢出判断都紧贴它
+                    float compactNowWidth = 0f, compactAppW = 0f, compactRightLeft = 0f;
+                    if (IsToastCompactMode)
+                    {
+                        compactNowWidth = _compactTimePaint.MeasureText("现在");
+                        string compactAppName0 = string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName;
+                        compactAppW = _compactAppPaint.MeasureText(compactAppName0);
+                        compactRightLeft = (right - 16f) - Math.Max(compactNowWidth, compactAppW);
+                    }
+
                     float textSpacing = 5f;
 
                     // 三行文本参数（完整模式）或两行文本参数（缩略模式）
@@ -782,17 +804,23 @@ namespace NotchPeninsula
                     }
                     _bodyPaint.Typeface = _normalTypeface; // 重置
 
-                    bool textOverflow = IsToastFullMode
-                        ? (toastTextX + _cachedToastAppNameWidth > toastMaxTextRight ||
-                           toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
-                           toastTextX + _cachedToastBodyWidth > toastMaxTextRight)
-                        : (toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
-                           toastTextX + _cachedToastBodyWidth > toastMaxTextRight);
+                    bool textOverflow;
+                    if (IsToastFullMode)
+                        textOverflow = toastTextX + _cachedToastAppNameWidth > toastMaxTextRight ||
+                                       toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
+                                       toastTextX + _cachedToastBodyWidth > toastMaxTextRight;
+                    else if (IsToastCompactMode)
+                        textOverflow = toastTextX + _cachedToastTitleWidth > compactRightLeft ||
+                                       toastTextX + _cachedToastBodyWidth > compactRightLeft;
+                    else
+                        textOverflow = toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
+                                       toastTextX + _cachedToastBodyWidth > toastMaxTextRight;
 
                     if (textOverflow)
                     {
                         float fadeWidth = 15f;
-                        float fadeStart = toastMaxTextRight - fadeWidth;
+                        // 紧凑模式下遮罩紧贴右侧文本真实左边缘，其余模式按统一文本右边界
+                        float fadeStart = IsToastCompactMode ? compactRightLeft - fadeWidth : toastMaxTextRight - fadeWidth;
 
                         canvas.Save();
                         canvas.Translate(fadeStart, 0);
@@ -800,7 +828,19 @@ namespace NotchPeninsula
                         canvas.DrawRect(0, 0, 1, 1, _fadePaint);
                         canvas.Restore();
 
-                        canvas.DrawRect(toastMaxTextRight, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+                        // 紧凑模式在左侧文本与右侧信息接触处用遮罩过渡，其余模式则覆盖超出右边界的文字
+                        if (!IsToastCompactMode)
+                            canvas.DrawRect(toastMaxTextRight, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+                    }
+
+                    // 紧凑模式：右侧靠边显示双行信息（右上“现在”纯色、右下应用名灰色，均小号右对齐）
+                    if (IsToastCompactMode)
+                    {
+                        string compactAppName = string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName;
+                        // 先铺与窗口背景同色的实心色块，从右侧文本真实左边缘延伸到右缘，与渐变遮罩衔接，保证左侧长内容不会透到这两行信息上
+                        canvas.DrawRect(compactRightLeft, 0f, right - 16f, currentHeight, _bgPaint);
+                        canvas.DrawText("现在", right - 16f - compactNowWidth, line1Y, _compactTimePaint);
+                        canvas.DrawText(compactAppName, right - 16f - compactAppW, line2Y, _compactAppPaint);
                     }
 
                     canvas.Restore();

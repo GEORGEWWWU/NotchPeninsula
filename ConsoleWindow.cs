@@ -54,8 +54,8 @@ namespace NotchPeninsula
         private bool _toastModeDropdownOpen = false;
         private bool _toastModeDropdownHovered = false;
         private int _hoveredToastModeIndex = -1;
-        private int _selectedToastModeIndex = 0; // 0=缩略, 1=完整
-        private static readonly string[] _toastModeOptions = ["缩略", "完整"];
+        private int _selectedToastModeIndex = 0; // 0=缩略, 1=紧凑, 2=完整
+        private static readonly string[] _toastModeOptions = ["缩略", "紧凑", "完整"];
         private float _savedToastW = -1f; // 切到完整模式前的用户消息宽度快照
         private float _savedToastH = -1f; // 切到完整模式前的用户消息高度快照
         private bool _lyricToggleHovered = false;
@@ -201,7 +201,7 @@ namespace NotchPeninsula
             }
 
             // 消息通知内容模式（0=缩略, 1=完整）
-            _selectedToastModeIndex = Renderer.IsToastFullMode ? 1 : 0;
+            _selectedToastModeIndex = Renderer.IsToastFullMode ? 2 : (Renderer.IsToastCompactMode ? 1 : 0);
 
             if (!_classRegistered)
             {
@@ -305,12 +305,12 @@ namespace NotchPeninsula
             _valStrCache[index] = index == 6 ? $"{_customValues[index]:F2} x" : $"{(int)_customValues[index]} px";
         }
 
-        // 应用“消息通知内容”模式（0=缩略默认，1=完整）
+        // 应用“消息通知内容”模式（0=缩略默认，1=紧凑，2=完整）
         // 完整模式：强制消息通知尺寸不小于容纳应用名的最小值，并把当前用户尺寸快照保存，便于切回时恢复；
-        // 缩略模式：恢复为用户设定的尺寸。
+        // 缩略/紧凑模式：尺寸均恢复为用户设定的值（紧凑的弹窗尺寸与缩略一致）。
         private void ApplyToastContentMode(int modeIndex)
         {
-            if (modeIndex == 1) // 完整
+            if (modeIndex == 2) // 完整
             {
                 if (_savedToastW < 0f) { _savedToastW = Renderer.TOAST_WIDTH; _savedToastH = Renderer.TOAST_HEIGHT; }
 
@@ -329,12 +329,14 @@ namespace NotchPeninsula
                     UpdateValueString(5);
                 }
                 Renderer.IsToastFullMode = true;
-                Program.SaveSetting("ToastContentMode", 1);
+                Renderer.IsToastCompactMode = false;
+                Program.SaveSetting("ToastContentMode", 2);
             }
-            else // 缩略：恢复为用户设定的尺寸
+            else // 0=缩略 或 1=紧凑：尺寸均恢复为用户设定的值
             {
                 Renderer.IsToastFullMode = false;
-                Program.SaveSetting("ToastContentMode", 0);
+                Renderer.IsToastCompactMode = modeIndex == 1;
+                Program.SaveSetting("ToastContentMode", modeIndex);
 
                 float w = _savedToastW >= 0f ? _savedToastW : _defaultCustomValues[4];
                 float h = _savedToastH >= 0f ? _savedToastH : _defaultCustomValues[5];
@@ -1339,7 +1341,13 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBg);
                 canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBorder);
                 canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 182, _uiTextPaint);
-                canvas.DrawText(_selectedToastModeIndex == 1 ? "完整显示应用名、发送者与消息主体" : "仅显示发送者与消息主体", 216, TITLE_BAR_HEIGHT + 202, _subTextPaint);
+                string toastModeDesc = _selectedToastModeIndex switch
+                {
+                    2 => "完整显示应用名、发送者与消息主体",
+                    1 => "右侧展示“现在”与应用名",
+                    _ => "仅显示发送者与消息主体"
+                };
+                canvas.DrawText(toastModeDesc, 216, TITLE_BAR_HEIGHT + 202, _subTextPaint);
 
                 float tmdW = 110, tmdX = WIDTH - 140, tmdY = TITLE_BAR_HEIGHT + 168, tmdH = 32;
                 var tmdRect = new SKRect(tmdX, tmdY, tmdX + tmdW, tmdY + tmdH);
