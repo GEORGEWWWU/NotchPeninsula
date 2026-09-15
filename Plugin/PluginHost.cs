@@ -53,6 +53,15 @@ public sealed class PluginHost
     // 稳态 60FPS 下读取零分配，插件禁用/卸载后渲染侧下一帧自动感知。
     private int _widgetsVersion;
 
+    // ---- 详情页展开状态（右键组件 / IPluginHost.OpenDetailPage）----
+    // 由宿主统一持有：渲染侧每帧读 ActiveDetailPage 决定岛体是否整块切成详情页，
+    // NotchWindow 读尺寸决定岛体展开多大。组件卸载/插件卸载时这里必须同步失效。
+    private string? _activeDetailWidgetId;
+    private IDetailPage? _activeDetailPage;
+
+    /// <summary>详情页展开 / 收起时触发（渲染侧可借此立即重绘；不保证在 UI 线程）。</summary>
+    public event Action? DetailPageChanged;
+
     // 内容显示顺序（builtin.* 原生模块 + 插件 pluginId 混排）：决定灵动岛上各内容的排列次序。
     // 由 PluginManager 从注册表读回后通过 SetPluginOrder 注入，宿主只按它输出组件，不做持久化。
     private readonly List<string> _pluginOrder = new();
@@ -292,8 +301,24 @@ public sealed class PluginHost
     public void UnregisterPlugin(string pluginId)
     {
         List<IDisposable>? refreshes = null;
+        bool detailInvalidated = false;
         lock (_lock)
         {
+            // 若被卸载的插件正开着详情页，必须先收起：否则宿主会一直强引用已卸载插件的对象，
+            // 可回收 ALC 永远回收不掉（热重载会持续泄漏旧版本代码）。
+            if (_activeDetailWidgetId != null)
+            {
+                bool ownsActive = _widgetPluginMap.TryGetValue(_activeDetailWidgetId, out var ap)
+                                  && string.Equals(ap, pluginId, StringComparison.OrdinalIgnoreCase);
+                bool widgetGone = !_widgets.Any(w => string.Equals(w.Id, _activeDetailWidgetId, StringComparison.OrdinalIgnoreCase));
+                if (ownsActive || widgetGone)
+                {
+                    _activeDetailWidgetId = null;
+                    _activeDetailPage = null;
+                    detailInvalidated = true;
+                }
+            }
+
             foreach (var w in _widgets.Where(w => _widgetPluginMap.TryGetValue(w.Id, out var p) && p == pluginId).ToArray())
             {
                 _widgets.Remove(w);
@@ -319,11 +344,104 @@ public sealed class PluginHost
         if (refreshes != null)
             foreach (var r in refreshes)
                 try { r.Dispose(); } catch { }
+
+        if (detailInvalidated) DetailPageChanged?.Invoke();
     }
 
-    // ---- 交互调度（Phase 2 接线） ----
-    public void OpenDetailPage(string widgetId) => Logger.Info($"[PluginHost] 打开详情(占位): {widgetId}");
-    public void CloseDetailPage() { }
+    // ---- 交互调度：详情页（右键展开） ----
+    // 数据流：右键命中组件 → NotchWindow 调 OpenDetailPage(widgetId) → 宿主取组件 DetailPage 缓存起来
+    //        → 渲染侧每帧读 ActiveDetailPage，有值就把岛体整块换成详情页（尺寸由详情页 Measure* 决定）
+    //        → 岛内左键经 DispatchDetailPageClick 交给详情页 HitTest/OnAction
+    //        → 再右键 / 点击岛外 / CloseDetailPage() 收起。
+
+    /// <summary>当前展开的详情页实例；null = 未展开。渲染侧据此把岛体内容整块换成详情页。</summary>
+    public IDetailPage? ActiveDetailPage { get { lock (_lock) return _activeDetailPage; } }
+
+    /// <summary>当前展开的详情页所属组件 Id；null = 未展开。</summary>
+    public string? ActiveDetailWidgetId { get { lock (_lock) return _activeDetailWidgetId; } }
+
+    /// <summary>是否正处于详情页展开状态。</summary>
+    public bool HasActiveDetailPage { get { lock (_lock) return _activeDetailPage != null; } }
+
+    /// <summary>
+    /// 展开指定组件的详情页（右键组件的默认行为，插件也可通过 IPluginHost.OpenDetailPage 主动调用）。
+    /// 组件不存在、组件 DetailPage 为 null、或取用过程抛异常时返回 false（宿主不展开，右键继续走原逻辑）。
+    /// 详情页实例在这里取一次并缓存，避免插件每帧 new 一个新对象。
+    /// </summary>
+    public bool OpenDetailPage(string widgetId)
+    {
+        if (string.IsNullOrEmpty(widgetId)) return false;
+
+        IWidget? target;
+        lock (_lock)
+            target = _widgets.FirstOrDefault(w => string.Equals(w.Id, widgetId, StringComparison.OrdinalIgnoreCase));
+        if (target == null) return false;
+
+        IDetailPage? page;
+        try { page = target.DetailPage; }
+        catch (Exception ex)
+        {
+            Logger.Error($"[PluginHost] 读取组件详情页失败: {widgetId}", ex);
+            return false;
+        }
+        if (page == null) return false;
+
+        lock (_lock)
+        {
+            if (ReferenceEquals(_activeDetailPage, page)
+                && string.Equals(_activeDetailWidgetId, widgetId, StringComparison.OrdinalIgnoreCase)) return true;
+            _activeDetailWidgetId = widgetId;
+            _activeDetailPage = page;
+        }
+        Logger.Info($"[PluginHost] 已展开插件详情页: {widgetId}");
+        DetailPageChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>收起当前详情页（未展开时为空操作）。</summary>
+    public void CloseDetailPage()
+    {
+        bool had;
+        lock (_lock)
+        {
+            had = _activeDetailPage != null;
+            _activeDetailWidgetId = null;
+            _activeDetailPage = null;
+        }
+        if (!had) return;
+        Logger.Info("[PluginHost] 已收起插件详情页");
+        DetailPageChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// 右键命中组件时的默认展开：该组件提供详情页则展开（已展开则收起），返回 true 表示右键已被消费。
+    /// 返回 false 时调用方继续走原右键逻辑（打开设置窗口）。
+    /// </summary>
+    public bool ToggleDetailPage(string widgetId)
+    {
+        if (string.IsNullOrEmpty(widgetId)) return false;
+
+        bool closed = false;
+        lock (_lock)
+        {
+            // 已展开的正是它 → 收起
+            if (_activeDetailPage != null
+                && string.Equals(_activeDetailWidgetId, widgetId, StringComparison.OrdinalIgnoreCase))
+            {
+                _activeDetailWidgetId = null;
+                _activeDetailPage = null;
+                closed = true;
+            }
+        }
+
+        if (closed)
+        {
+            Logger.Info($"[PluginHost] 已收起插件详情页: {widgetId}");
+            DetailPageChanged?.Invoke();
+            return true;
+        }
+        return OpenDetailPage(widgetId);
+    }
 
     // ---- 窗口 ----
     public IPluginWindow CreateWindow(string title, int width, int height)

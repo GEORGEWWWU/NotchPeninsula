@@ -317,13 +317,36 @@ dotnet build HelloPlugin.csproj -c Debug
 
 **设置页（ISettingsPage）**：想让用户在程序设置窗口配置你的插件，就实现这个接口并 `host.RegisterSettingsPage(...)`。它只需要声明一个标题和一组控件，程序负责绘制和持久化。控件有三种：`ToggleSetting`（开/关）、`ChoiceSetting`（单选）、`NumberSetting`（数字）。程序把控件的变化存进注册表，会触发 `SettingsChanged` 事件，你的插件订阅后就能立刻响应。**注意：目前主程序还没有真正渲染设置页，注册了也不会显示（暂未开放）**，机制先写好，等接线补齐就能直接用。
 
-**详情页（IDetailPage）**：右键组件展开的详细内容页。在组件的 `DetailPage` 属性里返回一个实现 `IDetailPage` 的对象即可。它的方法和组件类似：`MeasureWidth` / `MeasureHeight` 报尺寸、`Draw` 画内容、`HitTest` / `OnAction` 处理点击，只是画面更大，可以展示更多信息。**注意：目前右键展开这一接线还是占位（暂未开放），返回了详情页也不会真正弹出来**，先按这套接口写好，等接线补齐就能用。
+**详情页（IDetailPage）**：右键组件展开的详细内容页。在组件的 `DetailPage` 属性里返回一个实现 `IDetailPage` 的对象即可（没有就返回 `null`，右键就只会打开设置窗口）。它的方法和组件类似：`MeasureWidth` / `MeasureHeight` 报尺寸、`Draw` 画内容、`HitTest` / `OnAction` 处理点击，只是画面更大，可以展示更多信息或做成一个小设置面板。**已开放**：右键组件后灵动岛会按你报的尺寸整块展开成详情页，展开 / 收起都带和原生一致的弹簧动画；岛内左键会按 `HitTest` 命中的动作名回调 `OnAction`。约定与细节见第七节。
 
 **自定义窗口（CreateWindow）**：`host.CreateWindow(title, width, height)` 创建一个独立于灵动岛的、可用 SkiaSharp 绘制、支持鼠标和键盘的小窗口（自动居中、右上角有关闭按钮、Esc 可关闭）。它返回一个 `IPluginWindow`，你可以 `SetDraw` 设置绘制回调 `(canvas, width, height)`，`SetMouse` 设置鼠标按下/移动/松开回调，`SetKey` 设置键盘字符回调，画完调用 `RequestRedraw()` 刷新，用完 `Close()` 关闭。适合做“悬浮工具面板”这类不依赖灵动岛的小工具。
 
 ---
 
-## 七、几个必须避开的坑
+## 七、详情页（IDetailPage）怎么用
+
+详情页就是「右键组件后，灵动岛整块展开成你的内容」。它不占用灵动岛的常驻位置，只在用户主动右键时才出现，所以适合放“详细信息、设置项、操作按钮”这类平时不该露出来的东西。用法只有三步：
+
+1. **给组件挂上详情页**：在组件的 `DetailPage` 属性里返回一个实现 `IDetailPage` 的对象（建议建一次就缓存起来，别每次访问都 `new`）。返回 `null` 表示这个组件没有详情页，右键它仍然只是打开设置窗口。
+2. **报尺寸**：`MeasureWidth()` / `MeasureHeight()` 返回你想要的大小，单位是逻辑像素。**尺寸完全由你决定**，宿主只做一层保护性裁剪：宽度会被限制在 `180 ~ 1000`，高度限制在 `48 ~ 480`，免得插件把岛体撑到屏幕外。灵动岛会用弹簧动画平滑过渡到这个尺寸，不用你自己做动画。
+3. **画内容 + 处理点击**：`Draw(canvas, rect, frame)` 里的 `rect` 就是整个岛体区域（左上角是 `rect.Left / rect.Top`，`rect.MidX / rect.MidY` 是中心），照着它布局即可；`HitTest(x, y, rect)` 返回动作名，用户左键点中后宿主回调 `OnAction(action, x, y)`。`x / y` 都是相对 `rect` 左上角的逻辑坐标，和你 `HitTest` 里判断的坐标系完全一致。
+
+交互上还有几条约定，知道就行，不用你写代码：
+
+- **右键展开 / 收起**：右键组件展开详情页；详情页展开时再在岛内右键一次就收起（不会再弹设置窗口）。
+- **点岛外收起**：鼠标移到岛外点一下左键，详情页自动收起。所以插件不用自己做关闭按钮——当然你想加也行（调用 `host.CloseDetailPage()` 即可）。
+- **左键优先给详情页**：详情页展开期间，岛内左键只会走详情页的 `HitTest` / `OnAction`，不会误触到原生媒体按钮。
+- **通知优先**：详情页展开时如果来了新的通知（Toast），灵动岛会先显示通知，通知结束后详情页自动回来。
+- **异常熔断**：`MeasureWidth` / `MeasureHeight` / `Draw` 里抛异常，这个详情页会被停用并自动收起，主程序照常运行（日志里能看到原因）。所以别在里面做可能阻塞很久的事。
+- **尺寸变化要主动报**：详情页内容变了、想让岛体跟着变大变小，直接让 `MeasureWidth` / `MeasureHeight` 返回新值即可；宿主在下一次展开时会重新测量（同一次展开期间尺寸是固定的，不会每帧抖动）。
+- **主动开合**：`host.OpenDetailPage("你的组件Id")` / `host.CloseDetailPage()` 可以让插件自己控制详情页的开合（比如数据加载完了自动弹出来）。传入的 Id 必须是组件 `Id` 属性那个字符串。
+- **一个组件一个详情页**：详情页是挂在组件上的，一个组件最多对应一个详情页；多个组件可以各自有自己的详情页。
+
+最省事的验证方式：直接看本仓库 `TestPlugin/` 目录下的测试插件，它把上面这套全部用了一遍，右键它的组件就能看到详情页长什么样。
+
+---
+
+## 八、几个必须避开的坑
 
 新手写插件最容易在这几处出问题，提前知道能省下大把调试时间：
 
@@ -347,7 +370,7 @@ dotnet build HelloPlugin.csproj -c Debug
 
 ---
 
-## 八、开放接口清单（面向有经验的人）
+## 九、开放接口清单（面向有经验的人）
 
 这一节给有经验的开发者一份“接线总览”：程序对外开放了哪些接口、每个接口负责衔接哪一段能力、有哪些成员。用一句话概括——**你只需要实现好入口类，其余能力全部由下面的接口自由组合**。所有定义都在 `Plugin/PluginApi.cs` 一个文件里，翻源码就能逐行核对。需要特别说明：**接口定义了、但主程序还没有真正接线实现（注册了也不会在界面上出现，或只有占位逻辑）的，会在后面标上（暂未开放）**。正式开放的接口可以放心用；标了（暂未开放）的接口建议你真正要用之前先确认它已经转正，否则写了也看不到效果。
 
@@ -361,11 +384,11 @@ dotnet build HelloPlugin.csproj -c Debug
 - 提醒：`void PostReminder(ReminderData)`。
 - 设置持久化：`string GetSetting(string key, string fallback)` / `void SetSetting(string key, string value)`，键会自动加 `Plugin.<你的Id>.` 前缀隔离，不会互相覆盖；`event Action? SettingsChanged` 在设置被写入后触发。
 - 刷新：`IDisposable ScheduleRefresh(TimeSpan interval, Action callback)`，后台线程周期性回调，返回对象 `Dispose` 即停止。
-- 交互：`void RequestRedraw()`（常驻 60FPS 渲染下为空操作，事件驱动化预留）/ `void OpenDetailPage(string widgetId)`（暂未开放，当前仅打一条日志占位）/ `void CloseDetailPage()`（暂未开放，当前为空实现）。
+- 交互：`void RequestRedraw()`（常驻 60FPS 渲染下为空操作，事件驱动化预留）/ `void OpenDetailPage(string widgetId)`（已开放，展开指定组件的详情页，组件不存在或没有详情页时返回 false 且不展开）/ `void CloseDetailPage()`（已开放，收起当前详情页）。
 - 窗口：`IPluginWindow CreateWindow(string title, int width, int height)`。
 
 **主显示组件 `IWidget`**（灵动岛主区域里的一段内容，一个插件可注册多个）
-- 属性：`Id` / `DisplayName` / `IDetailPage? DetailPage`（暂未开放，可为空）。
+- 属性：`Id` / `DisplayName` / `IDetailPage? DetailPage`（已开放：非空时右键该组件会在灵动岛展开这个详情页；为 null 则右键只打开设置窗口）。
 - 测量与绘制：`float MeasureWidth(float availableHeight)` / `void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`。
 - 命中与点击：`WidgetHit HitTest(float x, float y, SKRect rect)` / `void OnLeftClick(string? action, float x, float y)` / `void OnRightClick()`。
 - 生命周期：`void OnActivate(IPluginHost host)` / `void OnDeactivate()`。
@@ -373,8 +396,9 @@ dotnet build HelloPlugin.csproj -c Debug
 **副显示组件 `ISecondaryWidget`**（副显示区的只读信息）（暂未开放）
 - 只有 `Id` 和 `void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`。当前注册后不会在任何地方真正绘制。
 
-**详情页 `IDetailPage`**（右键组件展开后的详细内容）（暂未开放）
-- `float MeasureWidth()` / `float MeasureHeight()` / `void Draw(SKCanvas, SKRect, WidgetFrame)` / `WidgetHit HitTest(float, float, SKRect)` / `void OnAction(string? action, float x, float y)`。当前右键展开与 `OpenDetailPage` 都只是占位，详情页不会真正显示。
+**详情页 `IDetailPage`**（右键组件展开后的详细内容）（已开放）
+- `float MeasureWidth()` / `float MeasureHeight()` / `void Draw(SKCanvas, SKRect, WidgetFrame)` / `WidgetHit HitTest(float, float, SKRect)` / `void OnAction(string? action, float x, float y)`。
+- 尺寸由插件决定，宿主只把宽裁剪到 `180 ~ 1000`、高裁剪到 `48 ~ 480`；右键组件展开、岛内再右键或点击岛外收起，`OpenDetailPage` / `CloseDetailPage` 也可用。细节见第七节。
 
 **设置页 `ISettingsPage` / `ICustomSettingsPage`**（程序设置窗口里属于插件的区域）（暂未开放）
 - 声明式：`string Title` + `IReadOnlyList<SettingControl> Controls`。控件有三种：`ToggleSetting`（开/关）、`ChoiceSetting`（单选）、`NumberSetting`（数字），各自带默认值，注册后设置窗口目前尚未渲染它们。
@@ -391,4 +415,4 @@ dotnet build HelloPlugin.csproj -c Debug
 
 **提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标路径）、`Duration`（时长，默认 4 秒）、`OnClick`（可选点击回调）。
 
-一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick` → 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的就是主显示组件、定时刷新、提醒、设置持久化和自定义窗口；设置页、详情页、副显示组件这几类接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。
+一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick`（右键则展开 `DetailPage`，详情页自己的 `HitTest` / `OnAction` 接管岛内左键）→ 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的是主显示组件、详情页、定时刷新、提醒、设置持久化和自定义窗口；设置页、副显示组件这两类接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。

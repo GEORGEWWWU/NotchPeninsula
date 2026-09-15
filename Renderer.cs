@@ -203,8 +203,13 @@ namespace NotchPeninsula
         }
 
         /// <summary>把岛内逻辑坐标 (x,y) 的右键事件广播给命中的插件组件（具体行为由插件决定）。</summary>
-        public static void DispatchPluginRightClick(float x, float y)
+        /// <returns>
+        /// 命中且提供详情页的组件 Id（供宿主展开详情页）；没有这种情况返回 null。
+        /// 调用方（NotchWindow）拿到非 null 就展开详情页并消费掉这次右键，否则继续走原右键逻辑。
+        /// </returns>
+        public static string? DispatchPluginRightClick(float x, float y)
         {
+            string? detailWidgetId = null;
             lock (_pluginSlotLock)
             {
                 for (int i = 0; i < _pluginSlots.Count; i++)
@@ -214,8 +219,15 @@ namespace NotchPeninsula
                     if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) continue;
                     try { slot.Widget.OnRightClick(); }
                     catch (Exception ex) { Logger.Error("[Renderer] 插件组件右键回调异常", ex); }
+
+                    if (detailWidgetId == null)
+                    {
+                        try { if (slot.Widget.DetailPage != null) detailWidgetId = slot.Widget.Id; }
+                        catch (Exception ex) { Logger.Error("[Renderer] 读取组件详情页异常", ex); }
+                    }
                 }
             }
+            return detailWidgetId;
         }
 
         /// <summary>每帧绘制前清空插件命中区；只有本帧实际绘制了插件行才会重新填充。</summary>
@@ -226,6 +238,9 @@ namespace NotchPeninsula
                 _pluginSlots.Clear();
                 // 每帧重置「已绘制」标记，让组合模式的顺序表混排能重新按位置分组绘制
                 if (_pluginDrawn != null) Array.Clear(_pluginDrawn);
+                // 详情页命中区同理：只有本帧真的画了详情页才重新登记
+                _detailHitPage = null;
+                _detailHitRect = default;
             }
         }
 
@@ -396,10 +411,174 @@ namespace NotchPeninsula
             Logger.Error($"[Renderer] 插件组件 {(_pluginWidgets != null && index < _pluginWidgets.Length ? _pluginWidgets[index].Id : "?")} 渲染异常，已停用其绘制", ex);
         }
 
+        // ================= 🧩 插件详情页（右键展开） =================
+        // 详情页把整个岛体内容整块换掉：尺寸完全由插件通过 MeasureWidth / MeasureHeight 决定，
+        // 宿主只做上下限裁剪（防止插件把岛体撑到屏幕外），并负责把岛内左键交给详情页处理。
+        // 与组件一致：Measure/Draw 抛异常一律熔断，只记一次日志，绝不拖死渲染循环。
+        private const float MIN_DETAIL_WIDTH = 180f;
+        private const float MAX_DETAIL_WIDTH = 1000f;
+        private const float MIN_DETAIL_HEIGHT = 48f;
+        private const float MAX_DETAIL_HEIGHT = 480f;
+
+        private static Plugins.IDetailPage? _detailPage;      // 缓存的详情页实例（与宿主 ActiveDetailPage 同步）
+        private static float _detailWidth;                    // 裁剪后的详情页宽度
+        private static float _detailHeight;                   // 裁剪后的详情页高度
+        private static volatile bool _detailBroken;           // 详情页抛异常 → 熔断（岛体退回原尺寸）
+        private static bool _detailCloseRequested;            // 熔断后请求宿主收起（由 NotchWindow 消费）
+        private static SKRect _detailHitRect;                 // 本帧详情页命中矩形（岛内逻辑坐标）
+        private static Plugins.IDetailPage? _detailHitPage;   // 本帧详情页命中目标
+
+        /// <summary>详情页展开时岛体应采用的宽度（0 = 未展开 / 详情页已熔断）。</summary>
+        public static float ActiveDetailWidth
+        {
+            get { lock (_pluginSlotLock) return _detailPage != null && !_detailBroken ? _detailWidth : 0f; }
+        }
+
+        /// <summary>详情页展开时岛体应采用的高度（0 = 未展开 / 详情页已熔断）。</summary>
+        public static float ActiveDetailHeight
+        {
+            get { lock (_pluginSlotLock) return _detailPage != null && !_detailBroken ? _detailHeight : 0f; }
+        }
+
+        /// <summary>是否正处于详情页展开状态（渲染侧 / NotchWindow 尺寸决策依据）。</summary>
+        public static bool HasActiveDetailPage
+        {
+            get { lock (_pluginSlotLock) return _detailPage != null && !_detailBroken; }
+        }
+
+        /// <summary>
+        /// 同步宿主详情页状态并测量尺寸。必须在读取 WINDOW_WIDTH / MAX_WINDOW_HEIGHT 之前调用
+        /// （NotchWindow 每帧第一件事就是它），因为底层缓冲尺寸依赖详情页大小。
+        /// 尺寸只在详情页实例变化时测量一次，稳态 60FPS 下不触碰插件代码。
+        /// </summary>
+        public static void RefreshDetailPageState()
+        {
+            var page = Plugins.PluginManager.Instance.Host.ActiveDetailPage;
+            lock (_pluginSlotLock)
+            {
+                if (page == null)
+                {
+                    _detailPage = null;
+                    _detailWidth = _detailHeight = 0f;
+                    _detailBroken = false;
+                    _detailHitPage = null;
+                    _detailHitRect = default;
+                    return;
+                }
+                if (ReferenceEquals(page, _detailPage)) return; // 同一个详情页：尺寸已算好，不重复触碰插件代码
+
+                _detailPage = page;
+                _detailBroken = false;
+                _detailWidth = _detailHeight = 0f;
+                try
+                {
+                    float w = page.MeasureWidth();
+                    float h = page.MeasureHeight();
+                    if (float.IsNaN(w) || float.IsNaN(h) || w <= 0f || h <= 0f)
+                    {
+                        Logger.Warn($"[Renderer] 详情页尺寸非法（{w} x {h}），已按最小尺寸兜底");
+                        w = Math.Max(w, MIN_DETAIL_WIDTH);
+                        h = Math.Max(h, MIN_DETAIL_HEIGHT);
+                    }
+                    _detailWidth = Math.Clamp(w, MIN_DETAIL_WIDTH, MAX_DETAIL_WIDTH);
+                    _detailHeight = Math.Clamp(h, MIN_DETAIL_HEIGHT, MAX_DETAIL_HEIGHT);
+                }
+                catch (Exception ex)
+                {
+                    _detailBroken = true;
+                    _detailWidth = _detailHeight = 0f;
+                    _detailCloseRequested = true;
+                    Logger.Error("[Renderer] 详情页尺寸测量异常，已熔断该详情页", ex);
+                }
+            }
+        }
+
+        /// <summary>详情页展开时的岛体尺寸（已裁剪）；未展开或已熔断时返回 false。</summary>
+        public static bool TryGetDetailPageSize(out float width, out float height)
+        {
+            lock (_pluginSlotLock)
+            {
+                if (_detailPage == null || _detailBroken || _detailWidth <= 0f || _detailHeight <= 0f)
+                {
+                    width = height = 0f;
+                    return false;
+                }
+                width = _detailWidth;
+                height = _detailHeight;
+                return true;
+            }
+        }
+
+        /// <summary>取走「详情页熔断，请宿主收起」的请求（一次性）。NotchWindow 每帧调用。</summary>
+        public static bool ConsumeDetailCloseRequest()
+        {
+            lock (_pluginSlotLock)
+            {
+                if (!_detailCloseRequested) return false;
+                _detailCloseRequested = false;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 绘制详情页：整块岛体交给插件绘制，并登记命中矩形供左键分发。
+        /// mouseX/mouseY 为已扣除 topY 平移后的岛内逻辑坐标（与组件行一致）。
+        /// </summary>
+        private static void DrawDetailPage(SKCanvas canvas, Plugins.IDetailPage page, float left, float currentHeight,
+            float currentWidth, byte alpha, float textOffsetY, float[]? bars, float mouseX, float mouseY)
+        {
+            var rect = new SKRect(left, 0f, left + currentWidth, currentHeight);
+            lock (_pluginSlotLock)
+            {
+                _detailHitPage = page;
+                _detailHitRect = rect;
+            }
+
+            bool hovered = mouseX >= rect.Left && mouseX <= rect.Right && mouseY >= rect.Top && mouseY <= rect.Bottom;
+            var frame = new Plugins.WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, hovered);
+            canvas.Save();
+            try { page.Draw(canvas, rect, frame); }
+            catch (Exception ex) { MarkDetailBroken(ex); }
+            finally { canvas.Restore(); }
+        }
+
+        /// <summary>把岛内逻辑坐标 (x,y) 的左键事件交给详情页（HitTest + OnAction）；未展开或无命中返回 false。</summary>
+        public static bool DispatchDetailPageClick(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page == null) return false;
+                var r = _detailHitRect;
+                if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) return false;
+
+                Plugins.WidgetHit hit;
+                try { hit = page.HitTest(x - r.Left, y - r.Top, r); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页命中检测异常", ex); return false; }
+                if (!hit.IsHit) return false;
+
+                try { page.OnAction(hit.Action, x - r.Left, y - r.Top); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页动作回调异常", ex); }
+                return true;
+            }
+        }
+
+        /// <summary>熔断抛异常的详情页：停用绘制并请求宿主收起，整个生命周期只记一次日志。</summary>
+        private static void MarkDetailBroken(Exception ex)
+        {
+            if (_detailBroken) return;
+            _detailBroken = true;
+            _detailWidth = _detailHeight = 0f;
+            _detailHitPage = null;
+            _detailCloseRequested = true;
+            Logger.Error("[Renderer] 详情页绘制异常，已熔断并收起", ex);
+        }
+
         // 动态计算最大边界，防止因刘海变大导致出界
         // 将透明原生窗口的基础画布拓宽至 1200f，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
-        public static float WINDOW_WIDTH => Math.Max(1200f, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH)) + 80f);
-        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f);
+        // 🧩 插件详情页展开时，底层缓冲必须容得下详情页尺寸（+80 / +45 是原有的四周留白）
+        public static float WINDOW_WIDTH => Math.Max(1200f, Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))) + 80f);
+        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT))) + 45f);
 
         public const int OUTER_R = 14;
         public const int INNER_R = 12;
@@ -851,6 +1030,21 @@ namespace NotchPeninsula
                     canvas.Restore();
                     canvas.Restore();
                     canvas.Restore();
+                    return;
+                }
+
+                // ---------------- [ 🧩 插件详情页（右键展开） ] ----------------
+                // 详情页展开时整块岛体交给插件绘制：不再绘制原生内容，也不再绘制插件行。
+                // 岛体尺寸由 NotchWindow 依据详情页 MeasureWidth/MeasureHeight 决定（这里同步消费一次状态即可）。
+                // Toast 优先级高于详情页：通知到来时先显示通知，通知结束后详情页自动回来。
+                var detailPage = Plugins.PluginManager.Instance.Host.ActiveDetailPage;
+                if (detailPage != null && !_detailBroken)
+                {
+                    DrawDetailPage(canvas, detailPage, left, currentHeight, currentWidth, alpha, textOffsetY, bars,
+                        _pluginMouseX, _pluginMouseY - topY);
+                    canvas.Restore(); // 1. 恢复 ClipPath 裁切
+                    canvas.Restore(); // 2. 闭合 SaveLayer 透明层
+                    canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
                     return;
                 }
 

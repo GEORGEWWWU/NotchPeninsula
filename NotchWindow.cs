@@ -374,6 +374,12 @@ namespace NotchPeninsula
 
             try
             {
+                // 🧩 插件详情页状态必须最先同步：WINDOW_WIDTH / MAX_WINDOW_HEIGHT 会随详情页尺寸变化，
+                //    而下面重建底层显存缓冲的判断恰好依赖这两个值。
+                //    详情页 Measure 抛异常被熔断时，这里顺手把宿主状态收起，岛体恢复原状。
+                Renderer.RefreshDetailPageState();
+                if (Renderer.ConsumeDetailCloseRequest()) PluginManager.Instance.Host.CloseDetailPage();
+
                 // 实时追踪目标尺寸，动态安全重建底层显存画布
                 float currentTargetDpi = (Win32.GetDpiForSystem() / 96f) * Renderer.GLOBAL_DPI;
                 int targetScaledWidth = (int)(Renderer.WINDOW_WIDTH * currentTargetDpi);
@@ -439,8 +445,15 @@ namespace NotchPeninsula
                     _isManuallyExpanded = false; // 触发收起
                 }
 
-                // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏
-                bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive;
+                // 🧩 插件详情页展开时：鼠标移出岛体并按下左键 → 收起详情页（与手动展开同款判定）
+                if (Renderer.HasActiveDetailPage && !_isHovered && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
+                {
+                    PluginManager.Instance.Host.CloseDetailPage();
+                }
+
+                // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏
+                bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive
+                                  && !Renderer.HasActiveDetailPage;
 
                 // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
                 // Y 轴的隐藏位移量必须加上灵动岛专属的下沉高度，否则藏不进屏幕
@@ -500,35 +513,50 @@ namespace NotchPeninsula
                 //    因此不论待机显示什么内容、媒体是否开启，插件都会稳定显示在原生内容之后。
                 // 🧩 组合模式下插件已并入「内容顺序表」与原生模块混排，宽度由 GetCompositeWidth 一并算出，
                 //    因此不再额外追加插件预留宽度；其余模式仍按整行贴在右侧预留。
-                float pluginReserve = isToastActive || Renderer.CompositeModeEnabled ? 0f : Renderer.GetPluginRowReserve();
+                // 🧩 插件详情页展开时：岛体尺寸完全由详情页决定（插件通过 MeasureWidth/MeasureHeight 指定），
+                //    此时忽略原生内容与插件行的预留宽度，岛体只显示详情页内容。
+                //    Toast 优先于详情页（通知到来时先显示通知，通知结束后详情页自动回来）。
+                float detailW = 0f, detailH = 0f;
+                bool detailOpen = !isToastActive && Renderer.TryGetDetailPageSize(out detailW, out detailH);
+
+                float pluginReserve = isToastActive || Renderer.CompositeModeEnabled || detailOpen ? 0f : Renderer.GetPluginRowReserve();
                 float expectedTargetWidth;
-                if (isToastActive)
-                    expectedTargetWidth = Renderer.GetToastAutoWidth();
-                else if (Renderer.CompositeModeEnabled)
+                float expectedTargetHeight;
+                if (detailOpen)
                 {
-                    // 调用渲染器中的像素级精确动态宽度计算，拒绝任何多余空白与错位
-                    expectedTargetWidth = Renderer.GetCompositeWidth(_media);
+                    expectedTargetWidth = detailW;
+                    expectedTargetHeight = detailH;
                 }
                 else
-                    expectedTargetWidth = currentActive
-                        ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) + pluginReserve
-                        : Renderer.STANDBY_WIDTH + pluginReserve;
-
-                // 自动文本长度自适应逻辑
-                // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
-                bool bypassAutoWidth = Renderer.CompositeModeEnabled;
-                if (currentActive && !Renderer.IsMediaExpanded && !bypassAutoWidth)
                 {
-                    float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
-                        ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
-                        : (string.IsNullOrEmpty(_media.Artist)
-                            ? Renderer.MeasureCurrentLyricWidth(_media.Title)
-                            : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
+                    if (isToastActive)
+                        expectedTargetWidth = Renderer.GetToastAutoWidth();
+                    else if (Renderer.CompositeModeEnabled)
+                    {
+                        // 调用渲染器中的像素级精确动态宽度计算，拒绝任何多余空白与错位
+                        expectedTargetWidth = Renderer.GetCompositeWidth(_media);
+                    }
+                    else
+                        expectedTargetWidth = currentActive
+                            ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) + pluginReserve
+                            : Renderer.STANDBY_WIDTH + pluginReserve;
 
-                    float requiredWidth = textWidth + 115f + pluginReserve; // 长歌词自适应时同样要给插件行留位
-                    if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
+                    // 自动文本长度自适应逻辑
+                    // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
+                    bool bypassAutoWidth = Renderer.CompositeModeEnabled;
+                    if (currentActive && !Renderer.IsMediaExpanded && !bypassAutoWidth)
+                    {
+                        float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
+                            ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
+                            : (string.IsNullOrEmpty(_media.Artist)
+                                ? Renderer.MeasureCurrentLyricWidth(_media.Title)
+                                : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
+
+                        float requiredWidth = textWidth + 115f + pluginReserve; // 长歌词自适应时同样要给插件行留位
+                        if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
+                    }
+                    expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
                 }
-                float expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
@@ -731,6 +759,13 @@ namespace NotchPeninsula
                             }
                         }
 
+                        // 🧩 插件详情页展开时跳过原生悬停判定：详情页内容与交互完全由插件自己负责
+                        if (Renderer.HasActiveDetailPage)
+                        {
+                            _isCursorOverIcon = false;
+                            break;
+                        }
+
                         if (_isHovered && _currentToast != null)
                         {
                             _isCursorOverIcon = true;
@@ -812,6 +847,14 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
+                        // 🧩 插件详情页展开时：岛内左键优先交给详情页（HitTest → OnAction）。
+                        //    即使没有命中任何动作也消费掉这次点击，避免误触到底层原生媒体按钮。
+                        if (_isHovered && Renderer.HasActiveDetailPage)
+                        {
+                            Renderer.DispatchDetailPageClick(cx, cy - hitTopY);
+                            return (IntPtr)0;
+                        }
+
                         // 🧩 插件组件左键交互：命中插件绘制区则交给插件决定做什么，不再走媒体控制逻辑
                         if (_isHovered && _currentToast == null && Renderer.DispatchPluginLeftClick(cx, cy - hitTopY))
                         {
@@ -859,12 +902,26 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
-                        // 🧩 先把右键广播给坐标命中的插件组件（插件可借此实现自定义行为），默认动作仍是打开设置
+                        // 🧩 先把右键广播给坐标命中的插件组件（插件可借此实现自定义行为）
                         if (_currentToast == null)
                         {
+                            // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
+                            if (Renderer.HasActiveDetailPage)
+                            {
+                                PluginManager.Instance.Host.CloseDetailPage();
+                                return (IntPtr)0;
+                            }
+
                             int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                             int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                            Renderer.DispatchPluginRightClick(rx, ry - 12f * _currentStyleProgress);
+                            string? detailWidget = Renderer.DispatchPluginRightClick(rx, ry - 12f * _currentStyleProgress);
+
+                            // 主机默认行为：命中的组件提供了详情页 → 在灵动岛展开该组件的详情页（消费这次右键，不弹设置窗口）
+                            if (detailWidget != null)
+                            {
+                                PluginManager.Instance.Host.ToggleDetailPage(detailWidget);
+                                return (IntPtr)0;
+                            }
                         }
                         ConsoleWindow.Toggle();
                     }
