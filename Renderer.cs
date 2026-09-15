@@ -23,6 +23,11 @@ namespace NotchPeninsula
         public static float MEDIA_HEIGHT { get => _mediaHeight; set => _mediaHeight = value; }
         public static float TOAST_WIDTH { get => _toastWidth; set => _toastWidth = value; }
         public static float TOAST_HEIGHT { get => _toastHeight; set => _toastHeight = value; }
+        // 消息通知内容：false=缩略(默认，仅 icon+发送者+主体)，true=完整(icon+应用名+发送者+主体+右上角“现在”)
+        public static bool IsToastFullMode = false;
+        // 完整模式下的消息通知最小尺寸（默认缩略为 260x55，完整需更长更高以容纳应用名）
+        public static readonly float FULL_TOAST_MIN_WIDTH = 300f;
+        public static readonly float FULL_TOAST_MIN_HEIGHT = 72f;
         public static float GLOBAL_DPI { get => _globalDpi; set => _globalDpi = value; }
         public static float NOTCH_BOTTOM_RADIUS { get => _notchBottomRadius; set => _notchBottomRadius = value; }
         public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
@@ -59,7 +64,9 @@ namespace NotchPeninsula
         // 计算Toast消息自适应宽度，限制最大500px
         public static float GetToastAutoWidth()
         {
-            float maxTextW = Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
+            float maxTextW = IsToastFullMode
+                ? Math.Max(_cachedToastTitleWidth, Math.Max(_cachedToastBodyWidth, _cachedToastAppNameWidth))
+                : Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
             return Math.Min(Math.Max(TOAST_WIDTH, maxTextW + 68f), 800f);
         }
         public static bool IsMediaExpanded = false;
@@ -560,12 +567,15 @@ namespace NotchPeninsula
         public static float CachedDateWidth => _cachedDateWidth;
         private static string _cachedToastSender = "";
         private static string _cachedToastBody = "";
+        private static string _cachedToastAppName = "";
         // 预加载 Windows 自带 Emoji 彩色字体与零 GC 渲染缓存列表
         private static readonly SKTypeface _emojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastSenderRuns = new();
         private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastBodyRuns = new();
+        private static readonly List<(string Text, bool IsEmoji, float X)> _cachedToastAppNameRuns = new();
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
+        private static float _cachedToastAppNameWidth = 0f;
 
         public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
         {
@@ -663,10 +673,12 @@ namespace NotchPeninsula
                         _lastToastId = toast.NotificationId;
                         _cachedToastSender = !string.IsNullOrEmpty(toast.Title) ? toast.Title : (!string.IsNullOrEmpty(toast.AppName) ? toast.AppName : "通知");
                         _cachedToastBody = toast.Body ?? "";
+                        _cachedToastAppName = string.IsNullOrEmpty(toast.AppName) ? (string.IsNullOrEmpty(toast.ProcessName) ? "系统通知" : toast.ProcessName) : toast.AppName;
 
                         // 只在接收到新消息时分配一次内存
                         BuildTextRuns(_cachedToastSender, _titlePaint, _boldTypeface, _cachedToastSenderRuns, out _cachedToastTitleWidth);
                         BuildTextRuns(_cachedToastBody, _bodyPaint, _normalTypeface, _cachedToastBodyRuns, out _cachedToastBodyWidth);
+                        BuildTextRuns(_cachedToastAppName, _bodyPaint, _normalTypeface, _cachedToastAppNameRuns, out _cachedToastAppNameWidth);
                     }
 
                     float iconSize = 28f;
@@ -714,31 +726,70 @@ namespace NotchPeninsula
 
                     float toastTextX = toastIconX + iconSize + 10f;
                     float toastMaxTextRight = right - 16f;
+                    if (IsToastFullMode) toastMaxTextRight -= 36f; // 完整模式右上角需预留“现在”的空间
 
                     float textSpacing = 5f;
-                    float totalTextHeight = 13.5f + 11.5f + textSpacing;
-                    float toastTextY = (currentHeight - totalTextHeight) / 2f;
 
-                    float line1Y = toastTextY + 11.5f;
-                    float line2Y = line1Y + 13.5f + textSpacing;
+                    // 三行文本参数（完整模式）或两行文本参数（缩略模式）
+                    float totalTextHeight, line1Y, line2Y, line3Y;
+                    if (IsToastFullMode)
+                    {
+                        totalTextHeight = 12f + 13.5f + 11.5f + textSpacing * 2;
+                        float toastTextY = (currentHeight - totalTextHeight) / 2f;
+                        line1Y = toastTextY + 10f;            // 应用名（小字灰度）
+                        line2Y = line1Y + 12f + textSpacing;  // 发送者（粗体）
+                        line3Y = line2Y + 13.5f + textSpacing;// 消息主体
+                    }
+                    else
+                    {
+                        totalTextHeight = 13.5f + 11.5f + textSpacing;
+                        float toastTextY = (currentHeight - totalTextHeight) / 2f;
+                        line1Y = toastTextY + 11.5f;
+                        line2Y = line1Y + 13.5f + textSpacing;
+                        line3Y = 0f;
+                    }
 
-                    // 渲染标题：自动在常规字体与 Emoji 字体间热切换
+                    if (IsToastFullMode)
+                    {
+                        // 渲染应用名（小字），右上角同排悬浮“现在”
+                        foreach (var run in _cachedToastAppNameRuns)
+                        {
+                            _bodyPaint.Typeface = run.IsEmoji ? _emojiTypeface : _normalTypeface;
+                            canvas.DrawText(run.Text, toastTextX + run.X, line1Y, _bodyPaint);
+                        }
+                        _bodyPaint.Typeface = _normalTypeface; // 重置
+
+                        float nowWidth = _bodyPaint.MeasureText("现在");
+                        canvas.DrawText("现在", right - 16f - nowWidth, line1Y, _bodyPaint);
+                    }
+
+                    // 渲染发送者标题：自动在常规字体与 Emoji 字体间热切换
+                    // 完整模式在第2行，缩略模式在第1行
+                    float senderY = IsToastFullMode ? line2Y : line1Y;
                     foreach (var run in _cachedToastSenderRuns)
                     {
                         _titlePaint.Typeface = run.IsEmoji ? _emojiTypeface : _boldTypeface;
-                        canvas.DrawText(run.Text, toastTextX + run.X, line1Y, _titlePaint);
+                        canvas.DrawText(run.Text, toastTextX + run.X, senderY, _titlePaint);
                     }
                     _titlePaint.Typeface = _boldTypeface; // 重置
 
-                    // 渲染内容主体
+                    // 渲染内容主体（缩略模式在第2行，完整模式在第3行）
+                    float bodyY = IsToastFullMode ? line3Y : line2Y;
                     foreach (var run in _cachedToastBodyRuns)
                     {
                         _bodyPaint.Typeface = run.IsEmoji ? _emojiTypeface : _normalTypeface;
-                        canvas.DrawText(run.Text, toastTextX + run.X, line2Y, _bodyPaint);
+                        canvas.DrawText(run.Text, toastTextX + run.X, bodyY, _bodyPaint);
                     }
                     _bodyPaint.Typeface = _normalTypeface; // 重置
 
-                    if ((toastTextX + _cachedToastTitleWidth > toastMaxTextRight) || (toastTextX + _cachedToastBodyWidth > toastMaxTextRight))
+                    bool textOverflow = IsToastFullMode
+                        ? (toastTextX + _cachedToastAppNameWidth > toastMaxTextRight ||
+                           toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
+                           toastTextX + _cachedToastBodyWidth > toastMaxTextRight)
+                        : (toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
+                           toastTextX + _cachedToastBodyWidth > toastMaxTextRight);
+
+                    if (textOverflow)
                     {
                         float fadeWidth = 15f;
                         float fadeStart = toastMaxTextRight - fadeWidth;

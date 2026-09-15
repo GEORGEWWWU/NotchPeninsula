@@ -27,6 +27,7 @@ namespace NotchPeninsula
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsTopmostEnabled = (int)key.GetValue("TopmostEnabled", 1) != 0;
+                    Renderer.IsToastFullMode = (int)key.GetValue("ToastContentMode", 0) != 0;
 
                     // 读取个性化参数
                     Renderer.STANDBY_WIDTH = Convert.ToSingle(key.GetValue("Custom_StandbyW", 130f));

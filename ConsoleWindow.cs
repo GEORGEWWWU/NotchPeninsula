@@ -50,6 +50,14 @@ namespace NotchPeninsula
         private bool _dropdownHovered = false;
         private int _hoveredDropdownIndex = -1;
         private int _selectedPlatformIndex = 0;
+        // 消息通知内容状态（缩略/完整）
+        private bool _toastModeDropdownOpen = false;
+        private bool _toastModeDropdownHovered = false;
+        private int _hoveredToastModeIndex = -1;
+        private int _selectedToastModeIndex = 0; // 0=缩略, 1=完整
+        private static readonly string[] _toastModeOptions = ["缩略", "完整"];
+        private float _savedToastW = -1f; // 切到完整模式前的用户消息宽度快照
+        private float _savedToastH = -1f; // 切到完整模式前的用户消息高度快照
         private bool _lyricToggleHovered = false;
         private bool _karaokeToggleHovered = false;
         private bool _lyricMinusHovered = false;
@@ -192,6 +200,9 @@ namespace NotchPeninsula
                 }
             }
 
+            // 消息通知内容模式（0=缩略, 1=完整）
+            _selectedToastModeIndex = Renderer.IsToastFullMode ? 1 : 0;
+
             if (!_classRegistered)
             {
                 var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
@@ -294,6 +305,54 @@ namespace NotchPeninsula
             _valStrCache[index] = index == 6 ? $"{_customValues[index]:F2} x" : $"{(int)_customValues[index]} px";
         }
 
+        // 应用“消息通知内容”模式（0=缩略默认，1=完整）
+        // 完整模式：强制消息通知尺寸不小于容纳应用名的最小值，并把当前用户尺寸快照保存，便于切回时恢复；
+        // 缩略模式：恢复为用户设定的尺寸。
+        private void ApplyToastContentMode(int modeIndex)
+        {
+            if (modeIndex == 1) // 完整
+            {
+                if (_savedToastW < 0f) { _savedToastW = Renderer.TOAST_WIDTH; _savedToastH = Renderer.TOAST_HEIGHT; }
+
+                if (Renderer.TOAST_WIDTH < Renderer.FULL_TOAST_MIN_WIDTH)
+                {
+                    Renderer.TOAST_WIDTH = Renderer.FULL_TOAST_MIN_WIDTH;
+                    _customValues[4] = Renderer.TOAST_WIDTH;
+                    Program.SaveSetting("Custom_ToastW", Renderer.TOAST_WIDTH);
+                    UpdateValueString(4);
+                }
+                if (Renderer.TOAST_HEIGHT < Renderer.FULL_TOAST_MIN_HEIGHT)
+                {
+                    Renderer.TOAST_HEIGHT = Renderer.FULL_TOAST_MIN_HEIGHT;
+                    _customValues[5] = Renderer.TOAST_HEIGHT;
+                    Program.SaveSetting("Custom_ToastH", Renderer.TOAST_HEIGHT);
+                    UpdateValueString(5);
+                }
+                Renderer.IsToastFullMode = true;
+                Program.SaveSetting("ToastContentMode", 1);
+            }
+            else // 缩略：恢复为用户设定的尺寸
+            {
+                Renderer.IsToastFullMode = false;
+                Program.SaveSetting("ToastContentMode", 0);
+
+                float w = _savedToastW >= 0f ? _savedToastW : _defaultCustomValues[4];
+                float h = _savedToastH >= 0f ? _savedToastH : _defaultCustomValues[5];
+                _savedToastW = -1f; _savedToastH = -1f;
+
+                Renderer.TOAST_WIDTH = w;
+                Renderer.TOAST_HEIGHT = h;
+                _customValues[4] = w;
+                _customValues[5] = h;
+                Program.SaveSetting("Custom_ToastW", w);
+                Program.SaveSetting("Custom_ToastH", h);
+                UpdateValueString(4);
+                UpdateValueString(5);
+            }
+
+            _selectedToastModeIndex = modeIndex;
+        }
+
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             if (_instance != null && hwnd == _instance._hwnd)
@@ -387,6 +446,8 @@ namespace NotchPeninsula
                     bool newPassToggleHovered = false;
                     bool newMonitorDropdownHovered = false;
                     int newHoveredMonitorDropdownIndex = -1;
+                    bool newToastModeDropdownHovered = false;
+                    int newHoveredToastModeIndex = -1;
                     bool newCompositeToggleHover = false;
                     bool newCompDateTimeHover = false;
                     bool newCompHardwareHover = false;
@@ -406,8 +467,17 @@ namespace NotchPeninsula
                         // 系统消息通知开关
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                             newToastToggleHovered = true;
-                        // 窗口置顶开关
-                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196)
+                        // 消息通知内容下拉（复用现有下拉控件样式）
+                        if (!_toastModeDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 168 && y <= TITLE_BAR_HEIGHT + 200)
+                            newToastModeDropdownHovered = true;
+                        if (_toastModeDropdownOpen)
+                        {
+                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 202 && y < TITLE_BAR_HEIGHT + 202 + _toastModeOptions.Length * 26)
+                                newHoveredToastModeIndex = (y - (TITLE_BAR_HEIGHT + 202)) / 26;
+                        }
+
+                        // 窗口置顶开关（整体下移 72px 给新增的下拉卡让位，热区同步下移）
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 268)
                             newTopmostToggleHovered = true;
                     }
                     else if (_selectedTab == 1) // 显示设置
@@ -572,6 +642,8 @@ namespace NotchPeninsula
                         newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
                         newMonitorDropdownHovered != _monitorDropdownHovered ||
                         newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
+                        newToastModeDropdownHovered != _toastModeDropdownHovered ||
+                        newHoveredToastModeIndex != _hoveredToastModeIndex ||
                         newCompositeToggleHover != _compositeToggleHovered ||
                         newCompDateTimeHover != _compDateTimeHovered ||
                         newCompHardwareHover != _compHardwareHovered ||
@@ -601,6 +673,8 @@ namespace NotchPeninsula
                         _hoveredOpacityIndex = newHoveredOpacityIndex;
                         _monitorDropdownHovered = newMonitorDropdownHovered;
                         _hoveredMonitorDropdownIndex = newHoveredMonitorDropdownIndex;
+                        _toastModeDropdownHovered = newToastModeDropdownHovered;
+                        _hoveredToastModeIndex = newHoveredToastModeIndex;
                         _compositeToggleHovered = newCompositeToggleHover;
                         _compDateTimeHovered = newCompDateTimeHover;
                         _compHardwareHovered = newCompHardwareHover;
@@ -632,6 +706,7 @@ namespace NotchPeninsula
                         _dropdownOpen = false; Render(); // 点击菜单外部收起浮窗
                     }
                     else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex == -1) { _monitorDropdownOpen = false; Render(); }
+                    else if (_toastModeDropdownOpen && _hoveredToastModeIndex == -1) { _toastModeDropdownOpen = false; Render(); }
                     else if (_selectedTab == 1 && _hoveredStyleIndex != -1)
                     {
                         Renderer.NotchStyle = _hoveredStyleIndex;
@@ -653,6 +728,13 @@ namespace NotchPeninsula
                         _monitorDropdownOpen = false;
                         Render();
                     }
+                    else if (_toastModeDropdownHovered) { _toastModeDropdownOpen = true; Render(); }
+                    else if (_toastModeDropdownOpen && _hoveredToastModeIndex != -1)
+                    {
+                        ApplyToastContentMode(_hoveredToastModeIndex);
+                        _toastModeDropdownOpen = false;
+                        Render();
+                    }
                     else if (_selectedTab == 5 && (_hoveredMinusIndex != -1 || _hoveredPlusIndex != -1 || _hoveredResetIndex != -1))
                     {
                         int updateIdx;
@@ -672,6 +754,13 @@ namespace NotchPeninsula
                             // 重置待机宽度时，同步更新快照，防止切回时恢复到旧值
                             if (updateIdx == 0)
                                 _savedStandbyWidth = -1f; // 清除快照，切回时用默认130
+
+                            // 完整模式重置消息通知尺寸时，同样拦截至完整模式最小限制，避免缩得放不下应用名
+                            if (Renderer.IsToastFullMode)
+                            {
+                                if (updateIdx == 4 && _customValues[4] < Renderer.FULL_TOAST_MIN_WIDTH) _customValues[4] = Renderer.FULL_TOAST_MIN_WIDTH;
+                                if (updateIdx == 5 && _customValues[5] < Renderer.FULL_TOAST_MIN_HEIGHT) _customValues[5] = Renderer.FULL_TOAST_MIN_HEIGHT;
+                            }
                         }
                         else
                         {
@@ -687,6 +776,12 @@ namespace NotchPeninsula
                                 {
                                     if (updateIdx == 0) minLimit = 170f;
                                     if (updateIdx == 1) minLimit = 34f;
+                                }
+                                // 完整模式下，消息通知最小尺寸必须能容纳应用名
+                                if (Renderer.IsToastFullMode)
+                                {
+                                    if (updateIdx == 4) minLimit = Renderer.FULL_TOAST_MIN_WIDTH;
+                                    if (updateIdx == 5) minLimit = Renderer.FULL_TOAST_MIN_HEIGHT;
                                 }
                                 _customValues[updateIdx] = Math.Max(minLimit, _customValues[updateIdx] + delta);
                             }
@@ -1238,7 +1333,24 @@ namespace NotchPeninsula
             {
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
                 DrawToggleCard(84, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
-                DrawToggleCard(156, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
+
+                // 消息通知内容下拉卡（完整时展示应用名并拉大通知尺寸）
+                var toastModeCard = new SKRect(200, TITLE_BAR_HEIGHT + 156, WIDTH - 20, TITLE_BAR_HEIGHT + 218);
+                canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBg);
+                canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBorder);
+                canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 182, _uiTextPaint);
+                canvas.DrawText(_selectedToastModeIndex == 1 ? "完整显示应用名、发送者与消息主体" : "仅显示发送者与消息主体", 216, TITLE_BAR_HEIGHT + 202, _subTextPaint);
+
+                float tmdW = 110, tmdX = WIDTH - 140, tmdY = TITLE_BAR_HEIGHT + 168, tmdH = 32;
+                var tmdRect = new SKRect(tmdX, tmdY, tmdX + tmdW, tmdY + tmdH);
+                _dynamicFillPaint.Color = _toastModeDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8);
+                canvas.DrawRoundRect(tmdRect, 4, 4, _dynamicFillPaint);
+                canvas.DrawText(_toastModeOptions[_selectedToastModeIndex], tmdX + 10, tmdY + 21, _uiTextPaint);
+                canvas.DrawLine(tmdX + tmdW - 20, tmdY + 14, tmdX + tmdW - 15, tmdY + 19, _chevronPaint);
+                canvas.DrawLine(tmdX + tmdW - 15, tmdY + 19, tmdX + tmdW - 10, tmdY + 14, _chevronPaint);
+
+                // 窗口置顶（整体下移，给新增下拉卡让位）
+                DrawToggleCard(228, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
             }
             else if (_selectedTab == 1)
             {
@@ -1817,6 +1929,24 @@ namespace NotchPeninsula
                     }
                     _dynamicTextPaint.Color = i == _selectedPlatformIndex ? new SKColor(0, 120, 212) : SKColors.White;
                     canvas.DrawText(_platforms[i].Name, mX + 12, itemY + 18, _dynamicTextPaint);
+                }
+            }
+
+            // 消息通知内容下拉菜单（通用设置）
+            if (_selectedTab == 0 && _toastModeDropdownOpen)
+            {
+                float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 202; float dW = 110; float dH = _toastModeOptions.Length * 26;
+                var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
+                canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
+                canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
+
+                for (int i = 0; i < _toastModeOptions.Length; i++)
+                {
+                    float itemY = dY + i * 26;
+                    if (_hoveredToastModeIndex == i)
+                        canvas.DrawRoundRect(new SKRect(dX + 2, itemY + 2, dX + dW - 2, itemY + 24), 3, 3, _tabBgSelected);
+                    _dynamicTextPaint.Color = i == _selectedToastModeIndex ? new SKColor(0, 120, 212) : SKColors.White;
+                    canvas.DrawText(_toastModeOptions[i], dX + 12, itemY + 18, _dynamicTextPaint);
                 }
             }
 
