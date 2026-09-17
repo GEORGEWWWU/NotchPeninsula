@@ -181,6 +181,10 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern IntPtr SetCursor(IntPtr hCursor);
 
+        // 拖动进度条期间把鼠标消息锁到本窗口：鼠标移出岛体也能继续收到 WM_MOUSEMOVE / WM_LBUTTONUP
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetCapture(IntPtr hWnd);
+
         [DllImport("user32.dll")]
         public static extern bool ReleaseCapture();
 

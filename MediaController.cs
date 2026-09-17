@@ -65,6 +65,31 @@ namespace NotchPeninsula
         // 直接读 SourceAppUserModelId 会打 COM 调用，这里由 UpdateSession 同步写一份供它零成本比对。
         private string _currentAppId = "";
 
+        // ==================== 🎵 歌曲时间轴 ====================
+        // 仅当 SMTC 会话提供完整时间轴（EndTime > 0）时启用，不区分平台。
+        // 位置唯一真源是 _timelinePos：歌词槽位与进度条都写它、读它，所以拖动后两者必然精确同步。
+        public bool HasTimeline { get; private set; }
+        public TimeSpan Duration { get; private set; }
+        public string TimelineElapsed { get; private set; } = "0:00";
+        public string TimelineTotal { get; private set; } = "0:00";
+        private TimeSpan _timelinePos;
+
+        // 状态锁：拖动期间冻结一切上游写入与自动推进，否则每一帧都会被真实值拉回原处（拖动卡顿的根源）
+        private volatile bool _isDragging;
+        public bool IsDragging => _isDragging;
+
+        // 文本按「整数秒」为键缓存：拖动是 60FPS 路径，绝不允许每帧 ToString
+        private int _shownSec = -1, _shownTotal = -1;
+
+        // SMTC 采样快照：每帧最多一次 COM 采样（200ms 节流，换歌后立即补采），歌词 / 进度条 / 总时长共用同一份
+        private const double SmtcProbeIntervalSec = 0.2;
+        private DateTime _smtcProbeAt = DateTime.MinValue;
+        private TimeSpan _smtcPos = TimeSpan.Zero;
+        private TimeSpan _smtcDuration = TimeSpan.Zero;
+
+        public float TimelineProgress => Duration > TimeSpan.Zero
+            ? Math.Clamp((float)(_timelinePos.TotalSeconds / Duration.TotalSeconds), 0f, 1f) : 0f;
+
         public string Title { get; private set; } = "Notch Peninsula";
         public string Artist { get; private set; } = "Waiting for media...";
         public bool IsPlaying { get; private set; } = false;
@@ -585,10 +610,43 @@ namespace NotchPeninsula
             // 被切走的那首歌若还在后台播放，继续替它推算进度（内部按 1 秒节流，无挂起时立即返回）
             AdvanceSuspendedTimeline(now);
 
-            // 无会话 / 浏览器视频类会话 / 尚未接管任何歌：不显示歌词，也不碰时间轴
-            if (_currentSession == null || IsNonLyricSession || _lyricSlot < 0)
+            // 无会话：不显示歌词，也不保留时间轴
+            if (_currentSession == null)
             {
                 CurrentLyric = "";
+                if (!_isDragging) { HasTimeline = false; Duration = TimeSpan.Zero; _timelinePos = TimeSpan.Zero; }
+                return;
+            }
+
+            // ★ 全帧唯一一次 SMTC 时间轴采样（200ms 节流，换歌后立即补采）：
+            //   歌词推进、进度条、总时长三处共用这份快照，杜绝每帧重复打 COM。
+            if (_forceResync || (now - _smtcProbeAt).TotalSeconds >= SmtcProbeIntervalSec)
+            {
+                _smtcProbeAt = now;
+                try
+                {
+                    var t = _currentSession.GetTimelineProperties();
+                    _smtcPos = t.Position;
+                    _smtcDuration = t.EndTime > TimeSpan.Zero ? t.EndTime : TimeSpan.Zero;
+                }
+                catch { _smtcPos = TimeSpan.Zero; _smtcDuration = TimeSpan.Zero; }
+                // 没有端到端时长（网易云 / 酷狗等）：强制对齐标记留着也没用，就地消费掉，
+                // 让采样稳定回到 200ms 节流 —— 否则它会每帧都触发一次补采，等于没节流。
+                if (_smtcDuration <= TimeSpan.Zero) _forceResync = false;
+            }
+
+            // 「检测到 SMTC 提供歌曲进度」= 端到端时长有效，不区分具体平台
+            HasTimeline = _smtcDuration > TimeSpan.Zero;
+            Duration = _smtcDuration;
+            UpdateTimelineTexts();
+
+            // 浏览器视频 / PotPlayer 这类无歌词会话、以及尚未接管歌词的歌：不显示歌词，
+            // 但时间轴照常走 —— 只要 SMTC 给出进度就显示。
+            if (IsNonLyricSession || _lyricSlot < 0)
+            {
+                CurrentLyric = "";
+                AdvanceFreeTimeline(_smtcPos, dt);
+                _forceResync = false; // 无歌词槽位：强制对齐标记不适用，就地消费，避免每帧重复采样
                 return;
             }
 
@@ -607,7 +665,7 @@ namespace NotchPeninsula
             }
 
             // 自己接管进度！不管有没有拿到歌词，底层的时间轴必须一直跟着播放状态往前走！
-            AdvanceTimeline(_currentSession, IsPlaying, dt, now);
+            AdvanceTimeline(_currentSession, HasTimeline, _smtcPos, dt, now);
 
             // 只有等时间轴正确走完后，如果还没歌词，我们再退出渲染拦截
             if (_lyrics.Length == 0) { CurrentLyric = ""; return; }
@@ -676,25 +734,15 @@ namespace NotchPeninsula
             if (_lyricSlot >= 0) _slotSessions[_lyricSlot] = null;
         }
 
-        // 推进当前歌词歌的时间轴。
+        // 推进当前歌词歌的时间轴。SMTC 采样已由 UpdateLyrics 统一完成（每帧最多一次），这里只做纯计算。
         // 提供真实时间轴的播放器（Apple Music / QQ音乐 / Echo Music 等，EndTime 有效）以 SMTC 为准：
-        // 接管新歌后第一次采样强制对齐，之后位置跳变超过 1.5 秒也直接对齐（拖动进度条 / 播放器主动上报）。
+        // 接管新歌后第一次采样强制对齐，之后位置跳变超过 1.5 秒也直接对齐（播放器内拖动 / 主动上报）。
         // 不提供时间轴的播放器（网易云、酷狗等，EndTime 恒为 0）才按播放状态自行累加。
-        private void AdvanceTimeline(GlobalSystemMediaTransportControlsSession session, bool playing, TimeSpan dt, DateTime now)
+        private void AdvanceTimeline(GlobalSystemMediaTransportControlsSession? session, bool hasTimeline, TimeSpan smtcPos, TimeSpan dt, DateTime now)
         {
             // 快照槽位：异步线程可能在本方法执行期间换掉 _lyricSlot，逐次读取会写串槽位。
             int slot = _lyricSlot;
-            if (slot < 0) return;
-
-            TimeSpan smtcPos = TimeSpan.Zero;
-            bool hasTimeline = false;
-            try
-            {
-                var t = session.GetTimelineProperties();
-                smtcPos = t.Position;
-                hasTimeline = t.EndTime > TimeSpan.Zero; // 端到端时长有效才算「时间轴完整」
-            }
-            catch { /* 会话已失效：按播放状态自行累加即可 */ }
+            if (slot < 0 || _isDragging) return; // 状态锁：拖动期间禁止上游写入与自动推进
 
             if (hasTimeline)
             {
@@ -706,9 +754,74 @@ namespace NotchPeninsula
                 _forceResync = false;
             }
 
-            if (playing) _recentSongs[slot].Position += dt;
+            if (IsPlaying) _recentSongs[slot].Position += dt;
 
             _recentSongs[slot].TickedAt = now; // 标记这个进度是刚推算过的，换歌时据此判断能否续用
+            _timelinePos = _recentSongs[slot].Position; // 进度条与歌词同源：永远读同一份位置
+        }
+
+        // 无歌词槽位的时间轴（浏览器视频 / PotPlayer / 尚未接管歌词）：位置只服务进度条。
+        // smtcPos 为 0 视为「本帧没有可用时间轴」，只按播放状态自走；否则跳变超过 1.5 秒即对齐。
+        private void AdvanceFreeTimeline(TimeSpan smtcPos, TimeSpan dt)
+        {
+            if (_isDragging) return;
+            if (smtcPos > TimeSpan.Zero && Math.Abs((smtcPos - _timelinePos).TotalSeconds) > 1.5) _timelinePos = smtcPos;
+            if (IsPlaying) _timelinePos += dt;
+        }
+
+        // ==================== 🎵 进度条拖动（状态锁 + 拖动缓存） ====================
+        // 拖动期间只改本地缓存，不打任何 COM / IO；松手才提交一次 seek —— 这是「频繁拖动不卡顿」的全部秘密。
+
+        /// <summary>开始拖动。命中时返回 true，调用方据此 SetCapture 并消费这次点击。</summary>
+        public bool BeginDrag(float ratio)
+        {
+            if (!HasTimeline || Duration <= TimeSpan.Zero) return false;
+            _isDragging = true;
+            DragTo(ratio);
+            return true;
+        }
+
+        /// <summary>拖动中：落点写进缓存，并同步写回歌词槽位（歌词与进度条读同一份位置，天然精确同步）。</summary>
+        public void DragTo(float ratio)
+        {
+            if (!_isDragging) return;
+            var pos = TimeSpan.FromSeconds(Math.Clamp(ratio, 0f, 1f) * Duration.TotalSeconds);
+            _timelinePos = pos;
+            if (_lyricSlot >= 0) _recentSongs[_lyricSlot].Position = pos;
+            UpdateTimelineTexts();
+        }
+
+        /// <summary>松手：解除状态锁，把落点登记为 SMTC 对齐基准，再异步提交一次 seek。</summary>
+        public void EndDrag()
+        {
+            if (!_isDragging) return;
+            _isDragging = false;
+            // 播放器执行 seek 的几十~几百毫秒里，落点会被判成「跳变」而把进度弹回原处，所以先把它写成对齐基准
+            _lastSmtcPosition = _timelinePos;
+            if (_currentSession != null) CommitSeek(_currentSession, _timelinePos.Ticks);
+        }
+
+        // 提交一次 seek（位置单位是 100ns tick）。异步丢弃：UI 线程绝不等待播放器，异常也不会冒泡打断交互。
+        private static async void CommitSeek(GlobalSystemMediaTransportControlsSession session, long ticks)
+        {
+            try { await session.TryChangePlaybackPositionAsync(ticks); } catch { }
+        }
+
+        // 时钟文本（秒 → m:ss / h:mm:ss）。只在整数秒变化时调用，不产生持续分配。
+        private static string FormatClock(int sec)
+        {
+            if (sec < 0) sec = 0;
+            int h = sec / 3600;
+            return h > 0 ? $"{h}:{sec / 60 % 60:00}:{sec % 60:00}" : $"{sec / 60}:{sec % 60:00}";
+        }
+
+        // 按「整数秒」为键缓存文本：60FPS 拖动路径上，秒数没变就一行都不重排、一个字符串都不新建。
+        private void UpdateTimelineTexts()
+        {
+            int sec = (int)_timelinePos.TotalSeconds;
+            if (sec != _shownSec) { _shownSec = sec; TimelineElapsed = FormatClock(sec); }
+            int total = (int)Duration.TotalSeconds;
+            if (total != _shownTotal) { _shownTotal = total; TimelineTotal = FormatClock(total); }
         }
 
         // 退到后台的歌词会话：只要它还在放，就继续替它把进度写回自己的槽位，

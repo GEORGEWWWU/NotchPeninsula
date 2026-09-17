@@ -555,7 +555,7 @@ namespace NotchPeninsula
                         float requiredWidth = textWidth + 115f + pluginReserve; // 长歌词自适应时同样要给插件行留位
                         if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
                     }
-                    expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? 130f : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
+                    expectedTargetHeight = isToastActive ? Renderer.TOAST_HEIGHT : (currentActive ? (Renderer.IsMediaExpanded ? Renderer.GetExpandedHeight(_media) : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT);
                 }
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
@@ -766,6 +766,15 @@ namespace NotchPeninsula
                             break;
                         }
 
+                        // 🎵 时间轴拖动进行中：最优先接管（此时已 SetCapture，鼠标可能早已移出岛体）。
+                        //    只改本地缓存，不打任何 COM / IO —— 这是频繁拖动不卡顿的关键。
+                        if (_media.IsDragging)
+                        {
+                            _media.DragTo(Renderer.TimelineRatio(mx));
+                            _isCursorOverIcon = true;
+                            break;
+                        }
+
                         if (_isHovered && _currentToast != null)
                         {
                             _isCursorOverIcon = true;
@@ -781,7 +790,8 @@ namespace NotchPeninsula
                                 bool hitPlay = mx >= center - 20 && mx <= center + 22;
                                 bool hitNext = mx >= center + 32 && mx <= center + 75;
                                 Renderer.HoveredExpandedButton = inY ? (hitPrev ? 0 : (hitPlay ? 1 : (hitNext ? 2 : -1))) : -1;
-                                _isCursorOverIcon = Renderer.HoveredExpandedButton != -1;
+                                // 🎵 悬停到时间轴上也要切小手（y 需扣掉岛体下沉偏移，与 Draw 共用同一套坐标）
+                                _isCursorOverIcon = Renderer.HoveredExpandedButton != -1 || Renderer.HitTimeline(mx, my - hitTopY);
                             }
                             else
                             {
@@ -809,15 +819,33 @@ namespace NotchPeninsula
                         break;
                     }
 
+                case Win32.WM_LBUTTONUP:
+                    // 🎵 松手：解除状态锁并把落点提交给播放器（拖动期间攒下的所有改动只在这一刻提交一次）
+                    if (_media.IsDragging)
+                    {
+                        _media.EndDrag();
+                        Win32.ReleaseCapture();
+                        return (IntPtr)0;
+                    }
+                    break;
+
                 case Win32.WM_MOUSELEAVE:
                     {
                         _isTrackingMouse = false;
                         _isHovered = false;
                         _isCursorOverIcon = false;
                         Renderer.HoveredExpandedButton = -1;
-                        Renderer.IsMediaExpanded = false;
                         // 🧩 鼠标离开灵动岛，清空插件组件悬停状态
                         Renderer.UpdatePluginMouse(-1f, -1f);
+                        // 🎵 拖动中（已 SetCapture）：不收起岛体、也不解除状态锁，松手统一交给 WM_LBUTTONUP。
+                        //    若消息丢失导致左键其实早已抬起，这里兜底解锁，避免进度条永久卡在拖动态。
+                        if (_media.IsDragging)
+                        {
+                            if ((Win32.GetAsyncKeyState(0x01) & 0x8000) != 0) break;
+                            _media.EndDrag();
+                            Win32.ReleaseCapture();
+                        }
+                        Renderer.IsMediaExpanded = false;
                         break;
                     }
 
@@ -863,6 +891,15 @@ namespace NotchPeninsula
 
                         if (_isHovered && _media.IsActive && _currentToast == null)
                         {
+                            // 🎵 命中时间轴：进入拖动并锁住鼠标，同时消费这次点击
+                            //    （不能落到下面「点任意处就展开」的兜底分支）
+                            if (Renderer.IsMediaExpanded && Renderer.HitTimeline(cx, cy - hitTopY)
+                                && _media.BeginDrag(Renderer.TimelineRatio(cx)))
+                            {
+                                Win32.SetCapture(hwnd);
+                                return (IntPtr)0;
+                            }
+
                             bool hitButtons = false;
                             if (Renderer.IsMediaExpanded)
                             {

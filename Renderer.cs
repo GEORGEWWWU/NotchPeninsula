@@ -78,6 +78,30 @@ namespace NotchPeninsula
         }
         public static bool IsMediaExpanded = false;
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
+
+        // ==================== 🎵 展开态歌曲时间轴 ====================
+        // 几何登记表：Draw 里「真的画了」才登记，帧首统一作废 —— 画与点因此共用同一套坐标，
+        // 且 HitTimeline 返回 false 天然等价于「本帧没画」，收起 / 切状态时不会在空处误触发。
+        private static float _tlBarX1, _tlBarX2, _tlBarY;
+        private const float TL_SIDE_PAD = 22f;    // 时间文本距岛体左右边缘的留白
+        private const float TL_TEXT_GAP = 8f;     // 时间文本与进度条之间的间距
+        private const float TL_BOTTOM_GAP = 68f;  // 进度条距岛体底边的距离（加高 28px 后正好落在封面与按钮之间的空档）
+        private const float TL_MIN_HEIGHT = 140f; // 高度涨到这条线之前不画，避免与底部按钮叠字
+
+        // 显示门控：仅「纯媒体控制器（可点击展开）+ 灵动岛已展开 + 非组合模式 + SMTC 提供进度」时出现
+        public static bool TimelineVisible(MediaController media)
+            => IsMediaExpanded && MediaInteractionMode == 1 && !CompositeModeEnabled && media.HasTimeline;
+
+        // 展开态高度：有时间轴时加高 28px，保证进度条与底部按钮互不侵占
+        public static float GetExpandedHeight(MediaController media) => media.HasTimeline ? 158f : 130f;
+
+        public static bool HitTimeline(float x, float y)
+            => _tlBarX2 > _tlBarX1 && x >= _tlBarX1 - 8f && x <= _tlBarX2 + 8f && Math.Abs(y - _tlBarY) <= 13f;
+
+        // 鼠标 x → 0~1 落点比例（与 HitTimeline 共用同一套坐标）
+        public static float TimelineRatio(float x)
+            => _tlBarX2 > _tlBarX1 ? Math.Clamp((x - _tlBarX1) / (_tlBarX2 - _tlBarX1), 0f, 1f) : 0f;
+
         private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔
         private static SKColor _currentTextColor = SKColors.White;
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
@@ -112,6 +136,7 @@ namespace NotchPeninsula
             _compactAppPaint.Color = _currentSubTextColor; // 应用名灰色
             _mediaIconPaint.Color = _currentTextColor;
             _barPaint.Color = _currentTextColor;
+            _tlTextPaint.Color = _currentSubTextColor; // 🎵 时间轴时间文本
             _shadowPaint.Color = _currentTextColor.WithAlpha(50);
             // 绑定悬浮圆圈底色为文字颜色的 25% 透明度，实现系统级无缝浅色适配
             _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
@@ -619,6 +644,7 @@ namespace NotchPeninsula
             _compactTimePaint.Typeface = _semiBoldTypeface;
             _compactAppPaint.Typeface = _normalTypeface;
             _tagTextPaint.Typeface = _boldTypeface;
+            _tlTextPaint.Typeface = _semiBoldTypeface; // 🎵 时间轴时间文本
 
             // 下面这些缓存都以「字体」为前提，换字体后必须作废，否则会沿用旧字体的排版宽度导致文字错位
             _lastMinute = -1;                 // 时间/日期文本与宽度缓存
@@ -644,6 +670,8 @@ namespace NotchPeninsula
         private static readonly SKPaint _shadowPaint = new() { IsAntialias = true, Color = SKColors.White.WithAlpha(50), MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Outer, 1.5f) };
         private static readonly SKPaint _mediaIconPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
         private static readonly SKPaint _barPaint = new() { Color = SKColors.White, IsAntialias = true };
+        // 🎵 时间轴左右两侧的时间文本画笔（颜色每帧按透明度刷新，Typeface 由 ApplyFont 热替换）
+        private static readonly SKPaint _tlTextPaint = new() { Color = SKColors.White, TextSize = 10f, IsAntialias = true, Typeface = _semiBoldTypeface };
 
         private static readonly SKShader _fadeShader = SKShader.CreateLinearGradient(
             new SKPoint(0, 0), new SKPoint(1, 0),
@@ -827,6 +855,9 @@ namespace NotchPeninsula
                 // 🧩 每帧清空插件命中区，仅当本帧实际绘制插件行时才重新填充
                 // （防止 Toast / 媒体激活等不绘制插件的状态下残留上一帧的过期命中矩形）
                 InvalidatePluginHitAreas();
+
+                // 🎵 时间轴几何登记表帧首作废：本帧不画就等于命中区不存在
+                _tlBarX1 = _tlBarX2 = _tlBarY = 0f;
 
                 float left = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）
@@ -1432,6 +1463,11 @@ namespace NotchPeninsula
                             DrawSvgPath(canvas, _mediaIconPaint, centerX - 60f, btnY, _prevPath, scale);
                             DrawSvgPath(canvas, _mediaIconPaint, centerX - 7f, playBtnY, media.IsPlaying ? _pausePath : _playPath, scale);
                             DrawSvgPath(canvas, _mediaIconPaint, centerX + 45f, btnY, _nextPath, scale);
+
+                            // 🎵 歌曲时间轴：必须画在文字遮罩之后（否则右半边被整块盖掉）。
+                            //    高度没涨到 140 之前不画，避免展开动画途中与底部按钮叠字。
+                            if (TimelineVisible(media) && currentHeight > TL_MIN_HEIGHT)
+                                DrawTimeline(canvas, media, left, right, currentHeight, alpha);
                         }
                         else // 原版折叠模式布局
                         {
@@ -1652,6 +1688,37 @@ namespace NotchPeninsula
             {
                 Monitor.Exit(_renderLock);
             }
+        }
+
+        // 🎵 展开态歌曲时间轴：左「当前时间」+ 中间进度条 + 右「总时长」。
+        // 纵向从岛体底边反推（currentHeight - TL_BOTTOM_GAP），随展开动画一起生长，天然落在封面与按钮之间。
+        // 全程只用静态画笔与 SKRect 值类型，零分配；画完登记几何，供命中判定与落点换算共用。
+        private static void DrawTimeline(SKCanvas canvas, MediaController media, float left, float right, float currentHeight, byte alpha)
+        {
+            float barY = currentHeight - TL_BOTTOM_GAP;
+            float baseline = barY + 3.6f;              // 10px 字号的视觉居中基线
+            float padL = left + TL_SIDE_PAD, padR = right - TL_SIDE_PAD;
+
+            _tlTextPaint.Color = _currentSubTextColor.WithAlpha(alpha);
+            string elapsed = media.TimelineElapsed, total = media.TimelineTotal;
+            canvas.DrawText(elapsed, padL, baseline, _tlTextPaint);
+            float totalW = _tlTextPaint.MeasureText(total);
+            canvas.DrawText(total, padR - totalW, baseline, _tlTextPaint);
+
+            float x1 = padL + _tlTextPaint.MeasureText(elapsed) + TL_TEXT_GAP;
+            float x2 = padR - totalW - TL_TEXT_GAP;
+            if (x2 - x1 < 20f) return;                 // 岛体太窄：宁可不画，也不画一条糊掉的条
+
+            float h = 3.5f, top = barY - h / 2f, radius = h / 2f;
+            _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.22f));
+            canvas.DrawRoundRect(new SKRect(x1, top, x2, top + h), radius, radius, _barBgPaint);
+
+            float head = x1 + (x2 - x1) * media.TimelineProgress;
+            _barPaint.Color = _currentTextColor.WithAlpha(alpha);
+            if (head > x1) canvas.DrawRoundRect(new SKRect(x1, top, head, top + h), radius, radius, _barPaint);
+            if (media.IsDragging) canvas.DrawCircle(head, barY, 4.5f, _barPaint); // 拖动时才亮出圆点：常态极简，操作时给足抓取反馈
+
+            _tlBarX1 = x1; _tlBarX2 = x2; _tlBarY = barY;
         }
 
         private static void DrawSvgPath(SKCanvas canvas, SKPaint paint, float x, float y, SKPath path, float scale = 1f)
