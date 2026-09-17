@@ -46,7 +46,9 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 ### 1. 灵动岛式媒体控制
 
 - 自动识别当前系统媒体会话
-- 支持常见平台：通用媒体、网易云音乐、QQ音乐、酷狗、Spotify、Apple Music、Echo Music、LX Music
+- 支持常见平台：通用媒体、浏览器媒体、网易云音乐、QQ音乐、酷狗、Spotify、Apple Music、Echo Music、LX Music
+- **浏览器媒体模式**：只接管浏览器（Chrome / Edge / Firefox / Brave / Opera / Vivaldi / QQ浏览器 / 360 / 搜狗等）的 SMTC 会话，
+  其他播放器的会话一律不接管；命中后自动清理网页标题后缀、不请求歌词
 - 提供播放/暂停、上一曲、下一曲交互
 - 允许无缝切换目标媒体来源
 

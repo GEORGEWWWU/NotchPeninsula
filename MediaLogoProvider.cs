@@ -29,8 +29,30 @@ namespace NotchPeninsula
             new("Edge",      ["edge"],              "data\\image\\edge-logo.png",     CoverStrategy.Fallback),
         ];
 
+        // 浏览器 SMTC 会话的 AppID 关键字（Chromium 系 + Firefox 系），新增浏览器只需在此追加。
+        // 「浏览器媒体」模式靠它过滤会话，浏览器标题清理策略也复用同一份判定，避免两处规则漂移。
+        private static readonly string[] BrowserAppIds =
+        [
+            "chrome", "edge", "firefox", "brave", "opera", "vivaldi",
+            "qqbrowser", "360se", "360chrome", "sogou",
+        ];
+
         // 路径 -> 已解码位图缓存，全进程共享，避免重复 IO + 解码
         private static readonly Dictionary<string, SKBitmap> _cache = new(StringComparer.OrdinalIgnoreCase);
+
+        // 判断会话是否来自浏览器。刻意用 OrdinalIgnoreCase 直接比较，
+        // 不做 ToLowerInvariant 拷贝 —— 该方法在会话扫描的循环体内调用，必须零分配。
+        public static bool IsBrowser(string? sourceAppUserModelId)
+        {
+            if (string.IsNullOrEmpty(sourceAppUserModelId)) return false;
+
+            foreach (var appId in BrowserAppIds)
+            {
+                if (sourceAppUserModelId.Contains(appId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
 
         // 根据会话 AppUserModelId 返回对应平台站标封面副本；未命中返回 null
         // hasThumbnail 表示会话是否提供了 SMTC 封面，Fallback 平台仅在其为空时才使用站标

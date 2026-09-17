@@ -138,6 +138,7 @@ namespace NotchPeninsula
         // 预设媒体平台数组
         private static readonly (string Id, string Name)[] _platforms = [
             ("other", "通用媒体"),
+            ("browser", "浏览器媒体"),
             ("netease", "网易云音乐"),
             ("qqmusic", "QQ音乐"),
             ("kugou", "酷狗音乐"),
@@ -1648,7 +1649,8 @@ namespace NotchPeninsula
                 var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 84, WIDTH - 20, TITLE_BAR_HEIGHT + 146);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBg); canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
                 canvas.DrawText("目标媒体平台", 216, TITLE_BAR_HEIGHT + 110, _uiTextPaint);
-                canvas.DrawText("多平台共存时，优先截获并接管的平台", 216, TITLE_BAR_HEIGHT + 130, _subTextPaint);
+                canvas.DrawText(MediaController.TargetPlatform == "browser" ? "仅接管浏览器内的播放会话" : "多平台共存时，优先截获并接管的平台",
+                    216, TITLE_BAR_HEIGHT + 130, _subTextPaint);
 
                 float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 96; float dH = 32;
                 var dRect = new SKRect(dX, dY, dX + dW, dY + dH);

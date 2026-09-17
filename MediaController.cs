@@ -75,51 +75,26 @@ namespace NotchPeninsula
             // 如果总开关打开，执行精确的平台过滤
             if (IsMediaControlEnabled)
             {
+                // 单遍扫描直接选出目标会话：索引遍历避免枚举器分配，
+                // 全程 OrdinalIgnoreCase 比较，不再 ToLower 出临时字符串。
                 var sessions = manager.GetSessions();
-                Logger.Info("会话列表: " + string.Join(" | ", sessions.Select(s => s.SourceAppUserModelId))); // 临时调试
-
-                if (TargetPlatform == "other")
+                for (int i = 0; i < sessions.Count; i++)
                 {
-                    // 通用模式屏蔽抖音
-                    newSession = sessions.FirstOrDefault(s => s.SourceAppUserModelId.Contains("justsolo", StringComparison.OrdinalIgnoreCase))
-                              ?? sessions.FirstOrDefault(s => !s.SourceAppUserModelId.Contains("douyin", StringComparison.OrdinalIgnoreCase));
-                }
-                else
-                {
-                    foreach (var s in sessions)
-                    {
-                        var id = s.SourceAppUserModelId.ToLower();
-                        if (id.Contains("douyin")) continue; // 全局拉黑抖音
+                    var s = sessions[i];
+                    string id = s.SourceAppUserModelId ?? "";
+                    if (id.Length == 0) continue;
 
-                        // 网易云音乐 (包名常为 cloudmusic 或 netease)
-                        if (TargetPlatform == "netease" && (id.Contains("cloudmusic") || id.Contains("netease")))
-                        { newSession = s; break; }
-
-                        // QQ音乐 (包名常为 qqmusic 或 tencent)
-                        else if (TargetPlatform == "qqmusic" && (id.Contains("qqmusic") || id.Contains("tencent")))
-                        { newSession = s; break; }
-
-                        // Apple Music (包名通常包含 apple 和 music)
-                        else if (TargetPlatform == "applemusic" && id.Contains("apple") && id.Contains("music"))
-                        { newSession = s; break; }
-
-                        // 酷狗、Spotify、Echomusic 直接匹配 TargetPlatform ID
-                        else if (TargetPlatform != "netease" && TargetPlatform != "qqmusic" && TargetPlatform != "applemusic"
-                                 && id.Contains(TargetPlatform))
-                        { newSession = s; break; }
-
-                        // LX Music (包名通常包含 cn.toside.music.desktop 或 lxmusic)
-                        else if (TargetPlatform == "lxmusic" && (id.Contains("cn.toside.music.desktop") || id.Contains("lxmusic")))
-                        { newSession = s; break; }
-                    }
+                    int rank = SessionRank(id);
+                    if (rank == 0) continue;                  // 不关心的会话，零成本跳过
+                    if (rank == 3) { newSession = s; break; }  // 最高优先，立即锁定
+                    if (newSession == null) newSession = s;    // 备选，继续往后找更高优先的
                 }
             }
 
             // 命中 bilibili / PotPlayer / 浏览器 会话时打标记，供刷新时应用文本显示策略
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
             _isPotPlayerSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "PotPlayer");
-            _isBrowserSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Chrome")
-                             || MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Edge");
+            _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
 
             // 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
             if (_currentSession != null && newSession != null && _currentSession.SourceAppUserModelId == newSession.SourceAppUserModelId)
@@ -158,6 +133,34 @@ namespace NotchPeninsula
                 Thumbnail = null;
             }
         }
+
+        // 会话优先级：3 = 立即锁定，2 = 备选（仅通用模式），0 = 忽略。
+        // 抽成纯函数既让扫描循环极简，也让优先级规则能脱离 WinRT 做无头验证。
+        private static int SessionRank(string id)
+        {
+            // 浏览器媒体：只认浏览器 SMTC 会话，其余进程一律不接管
+            if (TargetPlatform == "browser")
+                return MediaLogoProvider.IsBrowser(id) ? 3 : 0;
+
+            // 通用模式：抖音(justsolo)最高优先，其余非抖音会话只作备选
+            if (TargetPlatform == "other")
+                return id.Contains("justsolo", StringComparison.OrdinalIgnoreCase) ? 3
+                     : id.Contains("douyin", StringComparison.OrdinalIgnoreCase) ? 0 : 2;
+
+            if (id.Contains("douyin", StringComparison.OrdinalIgnoreCase)) return 0; // 全局拉黑抖音
+            return MatchesTargetPlatform(id) ? 3 : 0;
+        }
+
+        // 目标平台与会话 AppID 的匹配规则（单一数据源）。
+        // browser 模式在上游已单独分流，这里只管具体应用；未列出的平台走 ID 直配。
+        private static bool MatchesTargetPlatform(string id) => TargetPlatform switch
+        {
+            "netease" => id.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase) || id.Contains("netease", StringComparison.OrdinalIgnoreCase),
+            "qqmusic" => id.Contains("qqmusic", StringComparison.OrdinalIgnoreCase) || id.Contains("tencent", StringComparison.OrdinalIgnoreCase),
+            "applemusic" => id.Contains("apple", StringComparison.OrdinalIgnoreCase) && id.Contains("music", StringComparison.OrdinalIgnoreCase),
+            "lxmusic" => id.Contains("cn.toside.music.desktop", StringComparison.OrdinalIgnoreCase) || id.Contains("lxmusic", StringComparison.OrdinalIgnoreCase),
+            _ => id.Contains(TargetPlatform, StringComparison.OrdinalIgnoreCase),
+        };
 
         private async Task RefreshProperties()
         {
