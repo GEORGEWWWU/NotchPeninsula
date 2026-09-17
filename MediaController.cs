@@ -34,18 +34,36 @@ namespace NotchPeninsula
         private string _lastFetchedArtist = "";
 
         // 最近播放过的歌曲及其进度。进度挂在「歌曲槽位」上而不是全局变量，
-        // 所以切平台来回（音乐↔浏览器、音乐↔音乐）时，只要这首歌还在缓冲里就能取回上次的进度，
-        // 歌词不会从头开始。定长环形缓冲，只存字符串引用与 TimeSpan，零分配。
+        // 所以切平台来回（音乐↔浏览器、音乐↔音乐）时能取回进度，歌词不会从头开始。
+        // 定长环形缓冲，只存字符串引用与值类型，零分配。
+        //
+        // AppId 记录这首歌是在哪个会话里播的，换歌时靠它区分两种情况：
+        //   同 App 换歌 —— 上一首已经停了，它的进度必须作废；
+        //   跨 App 切换 —— 它还在后台放着，进度要接着算。
+        // 少了这个区分，「同 App 换歌后又切回来」会把上一轮的进度续用，歌词就从上一首的进度继续播。
+        // TickedAt 记录该槽位的进度最后一次被推算的时刻，用来剔除陈年快照（那首歌早播完了，槽里只是残留值）。
         private const int RecentSongSlots = 4;
-        private readonly (string Title, string Artist, TimeSpan Position)[] _recentSongs = new (string, string, TimeSpan)[RecentSongSlots];
+        private readonly (string Title, string Artist, TimeSpan Position, DateTime TickedAt, string AppId)[] _recentSongs
+            = new (string, string, TimeSpan, DateTime, string)[RecentSongSlots];
+        private const double FreshSlotSeconds = 3.0; // 后台会话每秒采样一次，留足调度抖动余量
         private int _recentCursor;
         private int _lyricSlot = -1;      // 当前歌词与时间轴归属的槽位，-1 表示尚未接管
-        private int _suspendedSlot = -1;  // 被切走、仍在后台推算进度的槽位
 
-        // 被切走但仍需继续推算进度的会话。留着它每秒采一次播放状态，
-        // 就能在切回来之前把进度补上，避免歌词落后。
-        private GlobalSystemMediaTransportControlsSession? _suspendedSession;
-        private DateTime _suspendedSampleAt = DateTime.MinValue;
+        // 「退到后台但仍在播放」的会话，按槽位登记。
+        // 用数组而不是单个变量：音乐↔音乐来回切时会有两首歌同时需要后台推算，
+        // 单个变量会被中途路过的平台顶掉，跨平台停留久了进度就被判成陈旧值而清零。
+        // 每秒采样一次播放状态，60FPS 下不产生额外开销。
+        private readonly GlobalSystemMediaTransportControlsSession?[] _slotSessions
+            = new GlobalSystemMediaTransportControlsSession?[RecentSongSlots];
+        private readonly DateTime[] _slotSampleAt = new DateTime[RecentSongSlots];
+
+        // 接管新歌后，等下一帧拿到 SMTC 时间轴就强制对齐一次。
+        // 不能靠「位置跳变 > 1.5 秒」来兜底：新歌位置往往也是 0，差值判不出来，旧进度就会残留。
+        private bool _forceResync;
+
+        // 当前会话 AppID 的镜像。渲染线程每帧都要做一次「歌词归属校验」，
+        // 直接读 SourceAppUserModelId 会打 COM 调用，这里由 UpdateSession 同步写一份供它零成本比对。
+        private string _currentAppId = "";
 
         public string Title { get; private set; } = "Notch Peninsula";
         public string Artist { get; private set; } = "Waiting for media...";
@@ -110,6 +128,7 @@ namespace NotchPeninsula
 
             // 命中 bilibili / PotPlayer / 浏览器 会话时打标记，供刷新时应用文本显示策略
             bool wasNonLyric = IsNonLyricSession;
+            _currentAppId = newSession?.SourceAppUserModelId ?? "";
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
             _isPotPlayerSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "PotPlayer");
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
@@ -122,15 +141,13 @@ namespace NotchPeninsula
                 return;
             }
 
-            // 会话换走：只要离开的是「正在追踪的那首歌」，就把它挂起继续推算进度，
-            // 这样在音乐↔浏览器、音乐↔音乐之间来回切换时，歌词位置始终是连续的。
-            // 挂起只在它自己回到台前时才解除（见 FetchLyricsAsync 的 ReleaseSuspension），
-            // 否则中间路过浏览器、无会话、别的音乐平台都会把进度算漏。
-            if (!wasNonLyric && _currentSession != null && _lyricSlot >= 0)
+            // 会话换走：把正在追踪的那首歌登记成「后台推算」，切回来时进度就是连续的。
+            // 只在会话级切换时登记 —— 同会话换歌说明这首歌已经停了（清理见 FetchLyricsAsync），
+            // 登记它反而会让它的进度被一直推进，下一首就背上残留进度。
+            if (!wasNonLyric && _currentSession != null && _lyricSlot >= 0 && _slotSessions[_lyricSlot] == null)
             {
-                _suspendedSlot = _lyricSlot;
-                _suspendedSession = _currentSession;
-                _suspendedSampleAt = DateTime.UtcNow; // 以切换时刻为起点，避免首次采样吃进一段巨大的时间差
+                _slotSessions[_lyricSlot] = _currentSession;
+                _slotSampleAt[_lyricSlot] = DateTime.UtcNow; // 以切换时刻为起点，避免首次采样吃进一段巨大的时间差
             }
 
             // 切换到了新的会话（或者置空）
@@ -347,16 +364,40 @@ namespace NotchPeninsula
             if (IsLyricOwner(title, artist))
             {
                 ReleaseSuspension();
-                _lastSmtcPosition = TimeSpan.Zero;
+                _forceResync = true;
                 return;
             }
 
-            // 换歌：接管这首歌的槽位。缓冲里已有它就直接续用上次的进度，否则从 0 开始
-            _lyricSlot = SlotFor(title, artist);
-            ReleaseSuspension();
-            _lastSmtcPosition = TimeSpan.Zero;
+            // ---- 换歌：强制重载歌词与时间轴。----
+            string appId = _currentAppId;
+            int newSlot = SlotFor(title, artist);
+
+            // 清理后台登记：当前 App 已经回到台前，它名下所有登记一律作废（那些歌不可能还在后台放）。
+            // 少了这一步，上一轮退到后台的歌会被每秒 +1 地推进，下次切回去就是「残留进度」。
+            for (int i = 0; i < RecentSongSlots; i++)
+            {
+                if (i == newSlot || _slotSessions[i] == null) continue;
+                if (_recentSongs[i].AppId == appId) _slotSessions[i] = null;
+            }
+
+            if (newSlot >= 0)
+            {
+                // 进度续用判定：只有「退到后台、仍在播放」的那首歌才允许续用进度。
+                // 其余一律归零 —— 缓冲里翻出来的陈年快照、以及同 App 换歌后又切回来的那首歌，
+                // 都已经从 0 重新开始，续用就会让歌词从上一首的进度继续播。
+                bool resumable = _recentSongs[newSlot].AppId == appId
+                                 && _slotSessions[newSlot] != null
+                                 && IsFreshSlot(_recentSongs[newSlot]);
+                if (!resumable) _recentSongs[newSlot].Position = TimeSpan.Zero;
+                _recentSongs[newSlot].AppId = appId;
+                _slotSessions[newSlot] = null; // 这首歌已回到台前，交回当前会话推进
+            }
+
+            _lyricSlot = newSlot;
+            _forceResync = true;
             _lyrics = Array.Empty<(TimeSpan, string)>();
             CurrentLyric = "";
+            CurrentLyricProgress = 0f;
 
             // 等待获取通行证（防止多首歌同时修改 HttpClient 导致程序崩溃）
             await _fetchLock.WaitAsync();
@@ -551,8 +592,22 @@ namespace NotchPeninsula
                 return;
             }
 
+            // ★ 歌词归属校验：槽位里的歌必须与当前会话正在放的歌完全一致。
+            // UpdateSession / RefreshProperties 都跑在异步线程上，渲染线程完全可能正好夹在
+            // 「会话已换、歌词还没换」的缝隙里 —— 那一瞬间上一首的歌词会被新会话的时间轴推着继续走，
+            // 这就是切歌残留的根源。这里每帧做一次本地比对（多数情况下是同一实例的短路比较），
+            // 只要对不上就当场清空：宁可空一帧，也不让上一首的歌词多留一帧。
+            if (_recentSongs[_lyricSlot].Title != Title
+                || _recentSongs[_lyricSlot].Artist != Artist
+                || _recentSongs[_lyricSlot].AppId != _currentAppId)
+            {
+                CurrentLyric = "";
+                CurrentLyricProgress = 0f;
+                return;
+            }
+
             // 自己接管进度！不管有没有拿到歌词，底层的时间轴必须一直跟着播放状态往前走！
-            AdvanceTimeline(_currentSession, IsPlaying, dt);
+            AdvanceTimeline(_currentSession, IsPlaying, dt, now);
 
             // 只有等时间轴正确走完后，如果还没歌词，我们再退出渲染拦截
             if (_lyrics.Length == 0) { CurrentLyric = ""; return; }
@@ -582,81 +637,113 @@ namespace NotchPeninsula
             CurrentLyricProgress = IsLyricsEnabled ? progress : 0f;
         }
 
-        // 取一首歌的槽位（缓冲里没有就新建一个）。刻意跳过正在追踪的两个槽位，
-        // 保证「当前歌」与「被挂起的歌」不会被环形覆盖挤掉。
+        // 取一首歌的槽位（缓冲里没有就新建一个）。优先选空闲槽位，跳过当前歌词槽与后台仍在推算的槽位，
+        // 保证「当前歌」与「后台还在放的歌」不会被环形覆盖挤掉；四个槽全满时退化为强占游标槽，
+        // 保证换歌永远有槽可用（否则歌词会直接消失）。
         private int SlotFor(string title, string artist)
         {
             for (int i = 0; i < RecentSongSlots; i++)
                 if (_recentSongs[i].Title == title && _recentSongs[i].Artist == artist) return i;
 
+            int victim = -1;
             for (int n = 0; n < RecentSongSlots; n++)
             {
                 int i = _recentCursor;
                 _recentCursor = (_recentCursor + 1) % RecentSongSlots;
-                if (i != _lyricSlot && i != _suspendedSlot)
-                {
-                    _recentSongs[i] = (title, artist, TimeSpan.Zero);
-                    return i;
-                }
+                if (i == _lyricSlot) continue;
+                if (_slotSessions[i] == null) { victim = i; break; }
+                if (victim < 0) victim = i;
             }
-            return -1;
+            if (victim < 0) return -1;
+
+            _recentSongs[victim] = (title, artist, TimeSpan.Zero, DateTime.UtcNow, "");
+            _slotSessions[victim] = null;
+            return victim;
         }
+
+        // 这个槽位的进度是不是「刚刚还在被推算」——只有这种进度才可信、可以拿来续播
+        private static bool IsFreshSlot((string Title, string Artist, TimeSpan Position, DateTime TickedAt, string AppId) slot)
+            => (DateTime.UtcNow - slot.TickedAt).TotalSeconds < FreshSlotSeconds;
 
         // 这首歌是否仍是当前歌词时间轴的归属者
         private bool IsLyricOwner(string title, string artist)
             => _lyricSlot >= 0 && _recentSongs[_lyricSlot].Title == title && _recentSongs[_lyricSlot].Artist == artist;
 
-        // 这首歌回到台前时撤销挂起：时间轴交回当前会话推进，
-        // 否则同一首歌会被「当前会话」和「挂起会话」各累加一次。
+        // 这首歌回到台前时撤销后台登记：时间轴交回当前会话推进，
+        // 否则同一首歌会被「当前会话」和「后台会话」各累加一次。
         private void ReleaseSuspension()
         {
-            if (_suspendedSlot < 0 || _suspendedSlot != _lyricSlot) return;
-            _suspendedSlot = -1;
-            _suspendedSession = null;
+            if (_lyricSlot >= 0) _slotSessions[_lyricSlot] = null;
         }
 
-        // 推进当前歌词歌的时间轴。SMTC 报出的位置相对上次偏差超过 1.5 秒即视为跳变
-        //（用户拖动进度条，或播放器主动上报）并直接对齐；否则按播放状态自行累加 ——
-        // 这样网易云、酷狗这类不提供时间轴的播放器也能拿到连续进度。
-        private void AdvanceTimeline(GlobalSystemMediaTransportControlsSession session, bool playing, TimeSpan dt)
+        // 推进当前歌词歌的时间轴。
+        // 提供真实时间轴的播放器（Apple Music / QQ音乐 / Echo Music 等，EndTime 有效）以 SMTC 为准：
+        // 接管新歌后第一次采样强制对齐，之后位置跳变超过 1.5 秒也直接对齐（拖动进度条 / 播放器主动上报）。
+        // 不提供时间轴的播放器（网易云、酷狗等，EndTime 恒为 0）才按播放状态自行累加。
+        private void AdvanceTimeline(GlobalSystemMediaTransportControlsSession session, bool playing, TimeSpan dt, DateTime now)
         {
+            // 快照槽位：异步线程可能在本方法执行期间换掉 _lyricSlot，逐次读取会写串槽位。
+            int slot = _lyricSlot;
+            if (slot < 0) return;
+
+            TimeSpan smtcPos = TimeSpan.Zero;
+            bool hasTimeline = false;
             try
             {
-                var smtcPos = session.GetTimelineProperties().Position;
-                if (Math.Abs((smtcPos - _lastSmtcPosition).TotalSeconds) > 1.5)
+                var t = session.GetTimelineProperties();
+                smtcPos = t.Position;
+                hasTimeline = t.EndTime > TimeSpan.Zero; // 端到端时长有效才算「时间轴完整」
+            }
+            catch { /* 会话已失效：按播放状态自行累加即可 */ }
+
+            if (hasTimeline)
+            {
+                if (_forceResync || Math.Abs((smtcPos - _lastSmtcPosition).TotalSeconds) > 1.5)
                 {
-                    _recentSongs[_lyricSlot].Position = smtcPos;
+                    _recentSongs[slot].Position = smtcPos;
                     _lastSmtcPosition = smtcPos;
                 }
+                _forceResync = false;
             }
-            catch { /* 会话已失效时忽略，按播放状态自行累加即可 */ }
 
-            if (playing) _recentSongs[_lyricSlot].Position += dt;
+            if (playing) _recentSongs[slot].Position += dt;
+
+            _recentSongs[slot].TickedAt = now; // 标记这个进度是刚推算过的，换歌时据此判断能否续用
         }
 
-        // 被切走的歌词会话：只要它还在放，就继续替它把进度写回自己的槽位，
+        // 退到后台的歌词会话：只要它还在放，就继续替它把进度写回自己的槽位，
         // 切回来时歌词位置就是连续的。每秒采样一次，避免 60FPS 下每帧都打 COM 调用。
         private void AdvanceSuspendedTimeline(DateTime now)
         {
-            if (_suspendedSession == null || _suspendedSlot < 0) return;
-
-            var dt = now - _suspendedSampleAt;
-            if (dt.TotalSeconds < 1) return;
-            _suspendedSampleAt = now;
-
-            try
+            for (int i = 0; i < RecentSongSlots; i++)
             {
-                if (_suspendedSession.GetPlaybackInfo()?.PlaybackStatus
-                    != GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing) return;
-            }
-            catch
-            {
-                _suspendedSession = null; // 播放器已退出，放弃推算
-                _suspendedSlot = -1;
-                return;
-            }
+                var session = _slotSessions[i];
+                if (session == null) continue;
 
-            _recentSongs[_suspendedSlot].Position += dt;
+                // 当前会话是无歌词能力的（浏览器 / 视频类）：这首歌确实还在后台放，必须继续替它算。
+                // 否则说明当前会话就是它自己 —— 它已经回到台前，交回 AdvanceTimeline 推进。
+                if (i == _lyricSlot && !IsNonLyricSession) { _slotSessions[i] = null; continue; }
+
+                var dt = now - _slotSampleAt[i];
+                if (dt.TotalSeconds < 1) continue;
+                _slotSampleAt[i] = now;
+
+                // 先打时间戳：即使这首歌处于暂停，也说明这个槽位「还在被跟踪」，进度依然可信
+                _recentSongs[i].TickedAt = now;
+
+                try
+                {
+                    if (session.GetPlaybackInfo()?.PlaybackStatus
+                        != GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing) continue;
+                }
+                catch
+                {
+                    _slotSessions[i] = null; // 播放器已退出，放弃推算
+                    continue;
+                }
+
+                _recentSongs[i].Position += dt;
+            }
         }
     }
 }

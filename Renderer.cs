@@ -1097,13 +1097,18 @@ namespace NotchPeninsula
                 {
                     if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist || _lastLyric != media.CurrentLyric)
                     {
+                        // 换歌：整块歌词状态强制重载。_prevLyric 是叠化动画的「淡出层」，
+                        // 不清掉的话上一首的最后一句会被带到新歌的第一帧上 —— 切歌残留的视觉来源。
+                        bool songChanged = _lastMediaTitle != media.Title || _lastMediaArtist != media.Artist;
+                        if (songChanged) _prevLyric = "";
+
                         _lastMediaTitle = media.Title ?? "";
                         _lastMediaArtist = media.Artist ?? "";
 
                         // 触发叠化动画
                         if (_lastLyric != media.CurrentLyric)
                         {
-                            _prevLyric = _lastLyric;
+                            _prevLyric = songChanged ? "" : _lastLyric;
                             _lastLyric = media.CurrentLyric ?? "";
                             _lyricAnimProgress = 0f;
                             _lyricChangeTime = DateTime.Now;
