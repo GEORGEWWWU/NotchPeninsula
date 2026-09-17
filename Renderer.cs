@@ -63,6 +63,9 @@ namespace NotchPeninsula
         public static float MeasureCurrentLyricWidth(string text)
         {
             if (string.IsNullOrEmpty(text)) return 0;
+            // 复用卡拉OK run 缓存：组合模式 / 折叠模式每帧都会用同一句歌词调这里，
+            // 命中缓存时连 MeasureText 都不做（稳定期零重算、零分配，也不打断渲染节奏）。
+            if (ReuseCachedRuns(text, _semiBoldTypeface, out float cachedWidth)) return cachedWidth;
             return _textPaint.MeasureText(text);
         }
         // 计算Toast消息自适应宽度，限制最大500px
@@ -1816,14 +1819,25 @@ namespace NotchPeninsula
         /// 逐码点决定用哪套字体：
         ///   基础字体有这个字 → 基础字体；
         ///   缺字且是 Emoji → 彩色 Emoji 字体；
-        ///   缺字但是中文等文字（用户选了纯英文字体的情况）→ 系统兜底字体，避免整块文字变方块。
-        /// 未启用自定义字体时 Fallback 与基础字体是同一个，行为与改动前完全一致。
+        ///   缺字的普通文字：
+        ///     · 用户选了自定义字体 → 系统兜底字体（<b>自定义字体优先级最高，多语言兜底层绝不插手</b>）；
+        ///     · 默认系统字体     → 先问 <see cref="LyricsFont"/> 要一套真正含该字形的系统字体
+        ///       （韩文、泰文、阿拉伯文……），拿到就用，拿不到才落回原来的系统字体 / Emoji 兜底。
         /// </summary>
         private static SKTypeface ResolveTypeface(int cp, SKTypeface baseTypeface, bool missingInBase, bool forcedEmoji)
         {
             if (!missingInBase && !forcedEmoji) return baseTypeface;
             if (forcedEmoji) return _emojiTypeface;
             if (IsEmojiCodePoint(cp) && _emojiTypeface.GetGlyph(cp) != 0) return _emojiTypeface;
+
+            // ★ 多语言兜底：只在默认字体下启用。Emoji 区段已在上一步分流，这里只处理"真的缺字的文字"。
+            //    LyricsFont 内部按码点缓存决定（含负缓存），同一句歌词每个码点只询问系统一次。
+            if (!FontConfig.HasCustomFont && missingInBase)
+            {
+                SKTypeface? multi = LyricsFont.Resolve(cp, baseTypeface);
+                if (multi != null) return multi;
+            }
+
             if (FontConfig.Fallback.GetGlyph(cp) != 0) return FontConfig.Fallback;
             return _emojiTypeface; // 兜底字体也没有：维持改动前「交给 Emoji 字体」的旧行为
         }
@@ -1836,6 +1850,17 @@ namespace NotchPeninsula
             || (cp >= 0xFE00 && cp <= 0xFE0F)     // 变体选择符
             || cp == 0x200D || cp == 0x20E3;
 
+        /// <summary>
+        /// 命中原有的卡拉OK run 缓存则直接复用（不重建、不测量）。命中与否由 <see cref="DrawKaraoke"/> 侧同一套 key 决定。
+        /// </summary>
+        private static bool ReuseCachedRuns(string text, SKTypeface baseTypeface, out float totalWidth)
+        {
+            if (_krKey0.Text == text && ReferenceEquals(_krKey0.Type, baseTypeface)) { totalWidth = _krKey0.Width; return true; }
+            if (_krKey1.Text == text && ReferenceEquals(_krKey1.Type, baseTypeface)) { totalWidth = _krKey1.Width; return true; }
+            totalWidth = 0f;
+            return false;
+        }
+
         // 卡拉OK渲染引擎
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
@@ -1844,13 +1869,9 @@ namespace NotchPeninsula
             // 缓存 runs：播放时段文本不变则直接复用，不重建，避免每帧 BuildTextRuns 拖慢渲染帧率导致时间刷新滞后
             List<(string Text, SKTypeface Type, float X)> runs;
             float totalWidth;
-            if (_krKey0.Text == text && _krKey0.Type == baseTypeface)
+            if (ReuseCachedRuns(text, baseTypeface, out totalWidth))
             {
-                runs = _karaokeRuns; totalWidth = _krKey0.Width;
-            }
-            else if (_krKey1.Text == text && _krKey1.Type == baseTypeface)
-            {
-                runs = _karaokeRuns1; totalWidth = _krKey1.Width;
+                runs = ReferenceEquals(_krKey0.Type, baseTypeface) && _krKey0.Text == text ? _karaokeRuns : _karaokeRuns1;
             }
             else
             {
