@@ -1,4 +1,4 @@
-﻿using SkiaSharp;
+using SkiaSharp;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -80,12 +80,14 @@ namespace NotchPeninsula
             return Math.Min(Math.Max(TOAST_WIDTH, w), 800f);
         }
 
-        // 📋 剪贴板链接面板自适应宽度：媒体控制器同款基准尺寸，链接过长时按文本加宽并封顶
+        // 📋 剪贴板链接面板自适应宽度：媒体控制器同款基准尺寸，链接过长时按文本加宽，
+        //    封顶宽度与消息通知弹窗的最大长度保持一致（800）
+        private const float CLIPBOARD_EXTRA_WIDTH = 10f; // 计算宽度之外的视觉呼吸量，避免文本贴边
         public static float GetClipboardAutoWidth(string url)
         {
             EnsureClipboardTextCache(url);
-            float w = 14f + 20f + 10f + _cachedClipboardTextWidth + 10f + 22f + 14f;
-            return Math.Min(Math.Max(MEDIA_WIDTH, w), 560f);
+            float w = 14f + 20f + 10f + _cachedClipboardTextWidth + 10f + 22f + 14f + CLIPBOARD_EXTRA_WIDTH;
+            return Math.Min(Math.Max(MEDIA_WIDTH, w), 800f);
         }
 
         // 📋 「打开」按钮命中判定：本帧未绘制则热区为空，天然不会在收起后误触发
@@ -120,22 +122,21 @@ namespace NotchPeninsula
                 canvas.Restore();
             }
 
-            // 右侧「打开」按钮
+            // 右侧「打开」按钮布局（先算坐标，按钮本体在文本之后绘制，保证永远压在最上层不被遮挡）
             float btnSize = 22f;
             float btnRight = right - 14f;
             float btnLeft = btnRight - btnSize;
             float btnTop = (currentHeight - btnSize) / 2f + textOffsetY;
             _clipboardOpenHit = new SKRect(btnLeft - 4f, btnTop - 3f, btnRight + 4f, btnTop + btnSize + 3f);
-            if (_openLinkIcon != null)
-            {
-                var btnRect = new SKRect(btnLeft, btnTop, btnRight, btnTop + btnSize);
-                canvas.DrawBitmap(_openLinkIcon, btnRect, _highQualitySampling);
-            }
 
-            // 中间链接文本（单行垂直居中，超宽时右侧渐隐）
+            // 中间链接文本（单行垂直居中）。
+            // 关键保护：把文本严格裁剪在 [textX, btnLeft-10] 区域内，超长只渐隐截断文字，
+            // 绝不绘制到按钮热区上 —— 任何岛体宽度（含弹簧动画过程中）都不会遮挡「打开」按钮。
             float textX = iconX + iconSize + 10f;
             float textRightLimit = btnLeft - 10f;
             float textY = currentHeight / 2f + _textPaint.TextSize * 0.36f + textOffsetY;
+            canvas.Save();
+            canvas.ClipRect(new SKRect(textX, 0f, textRightLimit, currentHeight), SKClipOperation.Intersect, false);
             foreach (var run in _cachedClipboardRuns)
             {
                 _textPaint.Typeface = run.Type;
@@ -152,7 +153,14 @@ namespace NotchPeninsula
                 canvas.Scale(fadeWidth, currentHeight);
                 canvas.DrawRect(0, 0, 1, 1, _fadePaint);
                 canvas.Restore();
-                canvas.DrawRect(textRightLimit, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+            }
+            canvas.Restore(); // 结束文本裁剪区
+
+            // 按钮最后绘制：即使动画中途岛体宽度暂时不足，按钮也完整可见可点
+            if (_openLinkIcon != null)
+            {
+                var btnRect = new SKRect(btnLeft, btnTop, btnRight, btnTop + btnSize);
+                canvas.DrawBitmap(_openLinkIcon, btnRect, _highQualitySampling);
             }
         }
 
@@ -164,11 +172,27 @@ namespace NotchPeninsula
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string clipPath = Path.Combine(baseDir, "data", "image", "clipboard.png");
                 string openPath = Path.Combine(baseDir, "data", "image", "open_the_link.png");
-                if (File.Exists(clipPath)) { using var s = File.OpenRead(clipPath); _clipboardIcon = SKBitmap.Decode(s); }
-                if (File.Exists(openPath)) { using var s = File.OpenRead(openPath); _openLinkIcon = SKBitmap.Decode(s); }
+                _clipboardIcon ??= TryDecode(clipPath);
+                _openLinkIcon ??= TryDecode(openPath);
+                // 两张都就绪才标记完成；若文件缺失/解码失败，下一帧继续重试，避免一次失败后永久空白
+                _clipboardIconsLoaded = _clipboardIcon != null && _openLinkIcon != null;
             }
             catch (Exception ex) { Logger.Error("加载剪贴板图标失败", ex); }
-            finally { _clipboardIconsLoaded = true; }
+        }
+
+        private static SKBitmap? TryDecode(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return null;
+                using var s = File.OpenRead(path);
+                return SKBitmap.Decode(s);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"加载图标失败: {path}", ex);
+                return null;
+            }
         }
 
         public static bool IsMediaExpanded = false;
