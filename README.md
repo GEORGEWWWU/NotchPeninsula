@@ -91,7 +91,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 通过 Just Solo LyricServer（`ws://127.0.0.1:47290`）实时获取带时间轴的歌词
 - 支持逐字卡拉 OK 动效与歌词延迟微调
 - 歌词过长时岛体自适应加宽，并优先使用服务端推送的实时频谱
-- 协议细节见 [Just-Solo-LyricServer.md](./Just-Solo-LyricServer.md)
+- 协议细节见WIKI中的文档
 
 ### 7. 插件系统
 
@@ -186,7 +186,6 @@ NotchPeninsula/
 ├── Plugin/                     # 插件系统（API、宿主、加载器、管理、窗口、布局）
 ├── data/image/                 # 平台 logo / 图标资源
 ├── NPS_PluginsAPI.md           # 插件开发文档
-├── Just-Solo-LyricServer.md    # 歌词推送协议文档
 ├── build.ps1                   # 一键发布为单文件 exe
 ├── NPS_NotchPeninsula-logo.ico # 应用图标
 ├── NotchPeninsula.csproj       # .NET 项目配置
