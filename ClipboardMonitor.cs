@@ -17,7 +17,6 @@ namespace NotchPeninsula
         public event Action<string>? OnUrlDetected;
 
         private IntPtr _hwnd;
-        private string _lastUrl = "";
 
         public void Attach(IntPtr hwnd)
         {
@@ -34,17 +33,16 @@ namespace NotchPeninsula
             _hwnd = IntPtr.Zero;
         }
 
-        /// <summary>由 WndProc 在收到 WM_CLIPBOARDUPDATE 时调用。</summary>
+        /// <summary>由 WndProc 在收到 WM_CLIPBOARDUPDATE 时调用。每次剪贴板内容变化（即每次复制/剪切）都会触发。</summary>
         public void HandleClipboardUpdate()
         {
             string text = ReadClipboardText();
             if (string.IsNullOrWhiteSpace(text)) return;
 
             text = text.Trim();
-            if (!UrlRegex.IsMatch(text)) return;                                  // 非链接：直接忽略，不弹面板
-            if (string.Equals(text, _lastUrl, StringComparison.Ordinal)) return;  // 同一链接去重
-            _lastUrl = text;
+            if (!UrlRegex.IsMatch(text)) return; // 非链接：直接忽略，不弹面板
 
+            // 不做去重：即使复制的是同一个链接，也要每次都弹出
             OnUrlDetected?.Invoke(text);
         }
 
