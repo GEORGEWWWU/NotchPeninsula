@@ -25,6 +25,7 @@ namespace NotchPeninsula
         public event EventHandler<WindowClickEventArgs>? WindowClicked;
 
         public static bool IsToastEnabled = true;
+        public static bool IsClipboardEnabled = true; // 📋 剪贴板链接检测开关（交互设置，默认开启）
         public static bool IsTopmostEnabled = true; // 默认开启置顶
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         float _currentVolume = 0f;
@@ -275,6 +276,7 @@ namespace NotchPeninsula
         private void OnClipboardUrlDetected(string url)
         {
             if (string.IsNullOrEmpty(url)) return;
+            if (!IsClipboardEnabled) return; // 开关关闭：直接丢弃，不弹面板
             if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnClipboardUrlDetected(url)); return; }
 
             // 通知优先：通知展示中先把链接挂起，等通知结束再显示
@@ -481,7 +483,14 @@ namespace NotchPeninsula
                 if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
 
                 // 📋 级别调度（消息队列，零额外分配）：系统通知 > 剪贴板链接 > 媒体控制器
-                if (isToastActive)
+                // 开关关闭时立即收起正在展示的链接并清空排队槽位
+                if (!IsClipboardEnabled)
+                {
+                    _clipboardUrl = null;
+                    _pendingClipboardUrl = null;
+                    _clipboardEndTime = default;
+                }
+                else if (isToastActive)
                 {
                     // 通知到来：正在展示的链接退回单槽队列，等通知结束后再回来
                     if (_clipboardUrl != null) { _pendingClipboardUrl = _clipboardUrl; _clipboardUrl = null; }
@@ -783,10 +792,15 @@ namespace NotchPeninsula
         {
             switch (msg)
             {
-                // 📋 剪贴板内容变化（事件驱动，仅在复制时触发一次读取）
+                // 📋 剪贴板内容变化（事件驱动，仅在复制/剪切导致剪贴板内容变化时触发一次读取；开关关闭直接忽略）
                 case Win32.WM_CLIPBOARDUPDATE:
-                    _clipboardMonitor.HandleClipboardUpdate();
+                    if (IsClipboardEnabled) _clipboardMonitor.HandleClipboardUpdate();
                     return (IntPtr)0;
+
+                case Win32.WM_DESTROY:
+                    // 📋 窗口销毁前反注册剪贴板监听，避免系统继续向已销毁窗口投递消息
+                    _clipboardMonitor.Detach();
+                    break;
 
                 case Win32.WM_SETCURSOR:
                     if (_isCursorOverIcon)

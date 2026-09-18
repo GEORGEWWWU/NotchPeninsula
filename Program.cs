@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Windows;
 using Microsoft.Win32; // 添加注册表命名空间
 
@@ -30,6 +30,7 @@ namespace NotchPeninsula
                     MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
+                    NotchWindow.IsClipboardEnabled = (int)key.GetValue("ClipboardEnabled", 1) != 0;
                     NotchWindow.IsTopmostEnabled = (int)key.GetValue("TopmostEnabled", 1) != 0;
                     int toastContentMode = (int)key.GetValue("ToastContentMode", 0); // 0=缩略, 1=紧凑, 2=完整
                     Renderer.IsToastFullMode = toastContentMode == 2;
