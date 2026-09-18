@@ -8,7 +8,9 @@
 <img alt="Windows" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white" />
 <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white" />
 <img alt="C#" src="https://img.shields.io/badge/C%23-9.0%2B-239120?logo=csharp&logoColor=white" />
+<img alt="NAudio" src="https://img.shields.io/badge/NAudio-2.2-5C2D91" />
 <img alt="SkiaSharp" src="https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2" />
+<img alt="Version" src="https://img.shields.io/badge/version-1.7.0-blue" />
 <img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-green.svg" />
 
 <p>
@@ -33,10 +35,13 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 它会在桌面顶部生成一个轻量透明窗口，实时展示：
 
 - 当前系统媒体播放状态（标题、艺术家、播放/暂停）
-- 多平台音乐应用的媒体来源识别
+- 多平台音乐应用的媒体来源识别与桌面歌词
 - 实时音频频谱柱状图
+- 时间日期与 CPU / 内存硬件占用
 - Windows Toast 通知气泡
-- 可配置的自动隐藏与开机自启
+- 剪贴板链接识别与一键打开
+- 可安装第三方插件扩展的自定义组件
+- 可配置的自动隐藏、窗口置顶、鼠标穿透与自动更新检测
 - 托盘菜单快捷控制
 
 这种设计适合单屏、窄边框布局，以及希望保留桌面空间同时拥有交互反馈的使用场景。
@@ -67,21 +72,60 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 在界面中展示最近通知的标题和正文
 - 自动折叠和淡出，避免遮挡桌面内容
 - 可在设置中禁用通知展示
+- 通知内容支持「缩略 / 紧凑 / 完整」三种呈现方式
 
-### 4. 自动隐藏与交互体验
+### 4. 时间日期与硬件占用
+
+- 待机状态下显示时间日期，或选择留白
+- 实时读取并平滑展示 CPU、内存占用
+- **组合模式**：把时间日期、硬件占用、媒体控制器（含频谱）横向拼成一条完整信息栏
+
+### 5. 剪贴板链接识别
+
+- 事件驱动监听剪贴板（`WM_CLIPBOARDUPDATE`），稳态零 CPU / 零额外内存占用
+- 复制整段链接后自动在岛体弹出面板，点击即可用默认浏览器打开
+- 可在交互设置中关闭
+
+### 6. 桌面歌词
+
+- 通过 Just Solo LyricServer（`ws://127.0.0.1:47290`）实时获取带时间轴的歌词
+- 支持逐字卡拉 OK 动效与歌词延迟微调
+- 歌词过长时岛体自适应加宽，并优先使用服务端推送的实时频谱
+- 协议细节见 [Just-Solo-LyricServer.md](./Just-Solo-LyricServer.md)
+
+### 7. 插件系统
+
+- 插件以独立 dll 形式放在程序同级 `plugins` 目录，启动时自动加载
+- 支持组件、详情页、设置页、定时刷新、提醒、自定义窗口六类扩展点
+- 内置「插件中心」：导入 / 启用 / 禁用 / 热重载 / 移除 / 调整显示顺序
+- 内置插件市场入口，可直接下载、分享第三方插件
+- 开发文档见 [NPS_PluginsAPI.md](./NPS_PluginsAPI.md)
+
+### 8. 外观与个性化
+
+- 主题模式（深色 / 浅色 / 跟随系统）与背景不透明度调节
+- 多种刘海样式与底部圆角自定义
+- 待机 / 媒体 / 通知各状态尺寸与全局 DPI 缩放可调
+- 灵动岛字体可整体切换为自定义字体，缺字自动回退
+- **窗口置顶**与**鼠标穿透**模式
+- 多显示器环境下可指定目标显示器
+
+### 9. 自动隐藏与交互体验
 
 - 支持在无媒体状态下自动隐藏到顶部
 - 鼠标悬停时恢复展示
 - 点击交互区可控制播放、上/下一曲、音量等
 - 通过托盘菜单快速调出设置窗口
 
-### 5. 系统级配置
+### 10. 系统级配置与更新
 
 - 开机自启
-- 系统消息通知开关
-- 媒体控制开关
-- 自动隐藏开关
-- 目标媒体平台配置
+- 窗口置顶开关
+- 系统消息通知开关（含通知内容模式）
+- 媒体控制 / 歌词 / 卡拉 OK 开关与目标媒体平台配置
+- 自动隐藏与鼠标穿透开关
+- 剪贴板链接识别开关
+- 启动时静默检测 GitHub 新版本并弹窗提示更新
 - 配置保存在 Windows 注册表中，开机后保持状态
 
 ## 使用方式
@@ -98,13 +142,15 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 开机自启
 - 退出
 
-在设置窗口中，可配置：
+在设置窗口中，按左侧导航分类配置：
 
-- 媒体控制开关
-- 目标音乐平台
-- 自动隐藏
-- 系统通知显示
-- 开机自启
+- **个性化中心**：主题、背景不透明度、刘海样式与圆角、各状态尺寸、DPI 缩放
+- **通用设置**：开机自启、窗口置顶、系统消息通知、通知内容模式、灵动岛字体
+- **显示设置**：待机内容（时间日期 / 空白）、目标显示器、组合模式
+- **媒体设置**：媒体控制、目标音乐平台、歌词与卡拉 OK、歌词延迟
+- **交互设置**：自动隐藏、鼠标穿透、剪贴板链接识别等交互选项
+- **插件中心**：导入 / 启用 / 禁用 / 热重载 / 移除插件、打开插件目录、进入插件市场
+- **关于软件**：版本信息与相关链接
 
 ### 权限要求
 
@@ -119,22 +165,33 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 
 ```text
 NotchPeninsula/
-├── Program.cs                 # 程序入口，单例启动与配置加载
-├── NotchWindow.cs             # 主要窗口逻辑、动画、托盘、交互
-├── Renderer.cs                # UI 渲染与材质绘制
-├── MediaController.cs         # 媒体会话识别与属性更新
-├── AudioAnalyzer.cs           # 音频频谱分析
-├── SystemSettingManager.cs    # 系统音量控制
-├── ConsoleWindow.cs           # 设置窗口
-├── toast.cs                   # Toast 通知监听
-├── MediaLogoProvider.cs       # 媒体平台站标与 LOGO 管理
-├── Win32.cs                   # Win32 API 封装
-├── Logger.cs                  # 日志
-├── data/image/                # 平台 logo / 图标资源
+├── Program.cs                  # 程序入口，单例启动与配置读写
+├── NotchWindow.cs              # 主窗口逻辑、动画、托盘、消息队列调度
+├── Renderer.cs                 # UI 渲染与材质绘制（时间/硬件/媒体/歌词/通知/剪贴板）
+├── MediaController.cs          # 媒体会话识别、歌词与卡拉 OK
+├── MediaLogoProvider.cs        # 媒体平台站标与 LOGO 管理
+├── JustSoloLyricClient.cs      # Just Solo LyricServer 歌词客户端
+├── AudioAnalyzer.cs            # WASAPI Loopback 音频频谱分析
+├── Audio.cs                    # NAudio 音频底层适配
+├── SystemSettingManager.cs     # 系统音量控制
+├── ClipboardMonitor.cs         # 剪贴板链接监听
+├── FontConfig.cs               # 灵动岛字体统一配置中心
+├── LyricsFont.cs               # 歌词字体
+├── ConsoleWindow.cs            # 设置窗口（个性化/通用/显示/媒体/交互/插件/关于）
+├── UpdateManager.cs            # GitHub 版本检测与更新弹窗
+├── toast.cs                    # Toast 通知监听
+├── appactivator.cs             # 通过 AUMID 激活应用
+├── Win32.cs                    # Win32 API 封装
+├── Logger.cs                   # 日志
+├── Plugin/                     # 插件系统（API、宿主、加载器、管理、窗口、布局）
+├── data/image/                 # 平台 logo / 图标资源
+├── NPS_PluginsAPI.md           # 插件开发文档
+├── Just-Solo-LyricServer.md    # 歌词推送协议文档
+├── build.ps1                   # 一键发布为单文件 exe
 ├── NPS_NotchPeninsula-logo.ico # 应用图标
-├── NotchPeninsula.csproj      # .NET 项目配置
-├── LICENSE                    # Apache 2.0
-└── README.md                  # 项目说明
+├── NotchPeninsula.csproj       # .NET 项目配置
+├── LICENSE                     # Apache 2.0
+└── README.md                   # 项目说明
 ```
 
 ## 构建与运行
@@ -164,6 +221,16 @@ dotnet publish -c Release -r win-x64 --self-contained false
 bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\
 ```
 
+### 一键打包（推荐）
+
+仓库自带 PowerShell 打包脚本，会先清理 `bin` / `obj` / `publish`，再发布为单文件 exe（约 35 MB，不内置 .NET 运行时）：
+
+```powershell
+.\build.ps1
+```
+
+产物位于 `publish\NotchPeninsula.exe`，目标机需自备 .NET 10 Desktop Runtime。仅清理不打包可执行 `\build.ps1 -Clean`。
+
 ### 运行说明
 
 运行发布产物中的可执行文件即可。该程序默认在后台托盘运行，右键托盘图标即可打开设置窗口。
@@ -173,6 +240,10 @@ bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\
 - 本项目是 Windows 桌面程序，不适合在 macOS/Linux 平台直接运行。
 - 使用了 Windows 通知管理 API，因此需要在 Windows 10/11 环境中执行。
 - 若你的系统未安装相应音频设备或输出设备，音频频谱可能会显示为空白或静态效果。
+
+## 相关文档
+- 详见WIKI：<https://github.com/georgewu/NotchPeninsula/wiki>
+- 插件市场：<https://nps.georgewu.top/market>
 
 ## 许可协议
 
