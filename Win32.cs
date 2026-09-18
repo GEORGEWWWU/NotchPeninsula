@@ -28,6 +28,8 @@ namespace NotchPeninsula
         public const int SW_MINIMIZE = 6;
         public const int SW_RESTORE = 9;
         public const int WM_DESTROY = 0x0002;
+        public const int WM_CLIPBOARDUPDATE = 0x031D; // 剪贴板内容变化系统消息
+        public const uint CF_UNICODETEXT = 13;         // 剪贴板 Unicode 文本格式
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT
@@ -253,6 +255,31 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
+
+        // ==================== 剪贴板监听 ====================
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool AddClipboardFormatListener(IntPtr hwnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool CloseClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool IsClipboardFormatAvailable(uint format);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr GetClipboardData(uint uFormat);
+
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr GlobalLock(IntPtr hMem);
+
+        [DllImport("kernel32.dll")]
+        public static extern bool GlobalUnlock(IntPtr hMem);
 
         // ====================================================================
         // 传统打开文件对话框（comdlg32）
