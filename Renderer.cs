@@ -79,6 +79,98 @@ namespace NotchPeninsula
             if (IsToastCompactMode) w += COMPACT_RIGHT_WIDTH;
             return Math.Min(Math.Max(TOAST_WIDTH, w), 800f);
         }
+
+        // 📋 剪贴板链接面板自适应宽度：媒体控制器同款基准尺寸，链接过长时按文本加宽并封顶
+        public static float GetClipboardAutoWidth(string url)
+        {
+            EnsureClipboardTextCache(url);
+            float w = 14f + 20f + 10f + _cachedClipboardTextWidth + 10f + 22f + 14f;
+            return Math.Min(Math.Max(MEDIA_WIDTH, w), 560f);
+        }
+
+        // 📋 「打开」按钮命中判定：本帧未绘制则热区为空，天然不会在收起后误触发
+        public static bool HitClipboardOpen(float x, float y)
+            => _clipboardOpenHit.Width > 0f && _clipboardOpenHit.Contains(x, y);
+
+        private static void EnsureClipboardTextCache(string url)
+        {
+            if (_lastClipboardUrl == url) return;
+            _lastClipboardUrl = url ?? "";
+            BuildTextRuns(_lastClipboardUrl, _textPaint, _semiBoldTypeface, _cachedClipboardRuns, out _cachedClipboardTextWidth);
+        }
+
+        // 📋 剪贴板链接面板：左「icon」+ 中间链接 + 右「打开」按钮（尺寸与媒体控制器同款）
+        private static void DrawClipboard(SKCanvas canvas, string url, float left, float right, float currentHeight, float textOffsetY)
+        {
+            EnsureClipboardIconsLoaded();
+            EnsureClipboardTextCache(url);
+
+            // 左侧 icon（与 Toast 图标同款圆角裁切）
+            float iconSize = 20f;
+            float iconX = left + 14f;
+            float iconY = (currentHeight - iconSize) / 2f + textOffsetY;
+            if (_clipboardIcon != null)
+            {
+                var iconRect = new SKRect(iconX, iconY, iconX + iconSize, iconY + iconSize);
+                canvas.Save();
+                _clipPath.Rewind();
+                _clipPath.AddRoundRect(iconRect, 4, 4);
+                canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                canvas.DrawBitmap(_clipboardIcon, iconRect, _highQualitySampling);
+                canvas.Restore();
+            }
+
+            // 右侧「打开」按钮
+            float btnSize = 22f;
+            float btnRight = right - 14f;
+            float btnLeft = btnRight - btnSize;
+            float btnTop = (currentHeight - btnSize) / 2f + textOffsetY;
+            _clipboardOpenHit = new SKRect(btnLeft - 4f, btnTop - 3f, btnRight + 4f, btnTop + btnSize + 3f);
+            if (_openLinkIcon != null)
+            {
+                var btnRect = new SKRect(btnLeft, btnTop, btnRight, btnTop + btnSize);
+                canvas.DrawBitmap(_openLinkIcon, btnRect, _highQualitySampling);
+            }
+
+            // 中间链接文本（单行垂直居中，超宽时右侧渐隐）
+            float textX = iconX + iconSize + 10f;
+            float textRightLimit = btnLeft - 10f;
+            float textY = currentHeight / 2f + _textPaint.TextSize * 0.36f + textOffsetY;
+            foreach (var run in _cachedClipboardRuns)
+            {
+                _textPaint.Typeface = run.Type;
+                canvas.DrawText(run.Text, textX + run.X, textY, _textPaint);
+            }
+            _textPaint.Typeface = _semiBoldTypeface; // 重置，防污染
+
+            if (textX + _cachedClipboardTextWidth > textRightLimit)
+            {
+                float fadeWidth = 15f;
+                float fadeStart = textRightLimit - fadeWidth;
+                canvas.Save();
+                canvas.Translate(fadeStart, 0);
+                canvas.Scale(fadeWidth, currentHeight);
+                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                canvas.Restore();
+                canvas.DrawRect(textRightLimit, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+            }
+        }
+
+        private static void EnsureClipboardIconsLoaded()
+        {
+            if (_clipboardIconsLoaded) return;
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string clipPath = Path.Combine(baseDir, "data", "image", "clipboard.png");
+                string openPath = Path.Combine(baseDir, "data", "image", "open_the_link.png");
+                if (File.Exists(clipPath)) { using var s = File.OpenRead(clipPath); _clipboardIcon = SKBitmap.Decode(s); }
+                if (File.Exists(openPath)) { using var s = File.OpenRead(openPath); _openLinkIcon = SKBitmap.Decode(s); }
+            }
+            catch (Exception ex) { Logger.Error("加载剪贴板图标失败", ex); }
+            finally { _clipboardIconsLoaded = true; }
+        }
+
         public static bool IsMediaExpanded = false;
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
 
@@ -660,6 +752,8 @@ namespace NotchPeninsula
             _cachedToastSenderRuns.Clear();
             _cachedToastBodyRuns.Clear();
             _cachedToastAppNameRuns.Clear();
+            _cachedClipboardRuns.Clear();
+            _lastClipboardUrl = "";
             _karaokeRuns.Clear();
             _karaokeRuns1.Clear();
             _krKey0 = default;
@@ -848,7 +942,16 @@ namespace NotchPeninsula
         private static float _cachedToastBodyWidth = 0f;
         private static float _cachedToastAppNameWidth = 0f;
 
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
+        // 📋 剪贴板链接面板专用缓存（只在链接变化 / 换字体时重建一次，稳态零重算）
+        private static readonly List<(string Text, SKTypeface Type, float X)> _cachedClipboardRuns = new();
+        private static string _lastClipboardUrl = "";
+        private static float _cachedClipboardTextWidth = 0f;
+        private static SKRect _clipboardOpenHit;   // 本帧「打开」按钮命中区，帧首作废
+        private static SKBitmap? _clipboardIcon;
+        private static SKBitmap? _openLinkIcon;
+        private static bool _clipboardIconsLoaded;
+
+        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f, string? clipboardUrl = null)
         {
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
@@ -861,6 +964,9 @@ namespace NotchPeninsula
 
                 // 🎵 时间轴几何登记表帧首作废：本帧不画就等于命中区不存在
                 _tlBarX1 = _tlBarX2 = _tlBarY = 0f;
+
+                // 📋 剪贴板「打开」按钮热区帧首作废：本帧不画就等于命中区不存在
+                _clipboardOpenHit = default;
 
                 float left = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）
@@ -1108,6 +1214,18 @@ namespace NotchPeninsula
                     canvas.Restore();
                     canvas.Restore();
                     canvas.Restore();
+                    return;
+                }
+
+                // ---------------- [ 📋 剪贴板链接（已识别到链接） ] ----------------
+                // 优先级：系统通知 > 剪贴板链接 > 媒体控制器。通知展示期间上层已把链接拦住排队，
+                // 所以这里只要拿到链接，就把整块岛体交给剪贴板面板绘制。
+                if (!string.IsNullOrEmpty(clipboardUrl))
+                {
+                    DrawClipboard(canvas, clipboardUrl, left, right, currentHeight, textOffsetY);
+                    canvas.Restore(); // 1. 恢复 ClipPath 裁切
+                    canvas.Restore(); // 2. 闭合 SaveLayer 透明层
+                    canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
                     return;
                 }
 
