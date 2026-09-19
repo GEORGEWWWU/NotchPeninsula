@@ -279,18 +279,13 @@ namespace NotchPeninsula
         public static float MeasureLyricTranslationWidth(string text)
             => string.IsNullOrEmpty(text) ? 0f : MeasureCurrentLyricWidth(text) * LYRIC_TRANS_SCALE;
 
-        // ==================== 🎵 折叠态媒体标题区（右键展开媒体控制） ====================
-        // 与时间轴同一套「真的画了才登记、帧首统一作废」的做法：折叠布局每帧画出歌名/歌手/歌词文本时才登记命中区，
-        // 于是 HitMediaTitle 返回 true 天然等价于「这一帧标题文本在屏幕上且位置已知」。
-        // 组合模式与展开态都不登记（组合模式固定为直接交互、展开态本来就在展开），因此不会误触发。
-        private static SKRect _mediaTitleHit = default;
-
-        /// <summary>
-        /// 折叠态媒体标题（歌名 / 歌手 / 歌词文本）的命中判定，坐标与 <see cref="Draw"/> 内部一致（不含灵动岛下沉的 topY）。
-        /// 只有本帧真的画了标题文本才可能返回 true；没命中就是普通区域（右键照旧打开设置窗口）。
-        /// </summary>
-        public static bool HitMediaTitle(float x, float y)
-            => _mediaTitleHit.Width > 0f && _mediaTitleHit.Contains(x, y);
+        // ==================== 🎵 折叠态媒体标题区：**故意没有右键热区** ====================
+        // 这里曾经有一套「本帧真的画了标题文本才登记命中区、帧首统一作废」的机制（`_mediaTitleHit` +
+        // `HitMediaTitle`），给「右键媒体标题展开媒体面板」用。但那个热区高度 = 整个岛体高、宽度 = 文字宽度，
+        // 媒体控制器铺满岛体时几乎吃掉整片右键：用户想打开设置窗口得精确点到岛体最右侧那条窄边。
+        // 用户 2026-09-19 要求「整个媒体控制器的右键都只打开设置窗口」，故整套机制已删除 ——
+        // 原生媒体区域（标题 / 歌词 / 频谱 / 播放按钮 / 空白）的右键一律不消费。
+        // 以后若要重新加媒体区域的右键行为，**不要**再用「覆盖整岛高度的大热区」，改成明确的小按钮热区。
 
         // 鼠标 x → 0~1 落点比例（与 HitTimeline 共用同一套坐标）
         public static float TimelineRatio(float x)
@@ -478,13 +473,6 @@ namespace NotchPeninsula
             if (!RefreshPluginWidgets()) return 0f;
             return _pluginRowReserve;
         }
-
-        /// <summary>
-        /// 本帧插件行是否有可显示内容（预留宽度 &gt; 0）。
-        /// 返回 false 即「纯媒体控制器」形态：岛体右侧没有插件预留区，原生媒体内容铺满整条岛体。
-        /// 交互侧据此判定右键该走哪条路，见 NotchWindow 的 WM_RBUTTONDOWN。
-        /// </summary>
-        public static bool HasPluginRowContent => GetPluginRowReserve() > 0f;
 
         /// <summary>
         /// 岛体宽度弹簧动画的**目标**宽度（由 NotchWindow 每帧写入）。
@@ -1260,9 +1248,6 @@ namespace NotchPeninsula
                 // 📋 剪贴板「打开」按钮热区帧首作废：本帧不画就等于命中区不存在
                 _clipboardOpenHit = default;
 
-                // 🎵 折叠态媒体标题热区帧首作废：本帧没画标题（待机 / 展开态 / 组合模式）就等于不存在
-                _mediaTitleHit = default;
-
                 float left = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）
                 float islandRight = left + currentWidth;
@@ -1931,17 +1916,6 @@ namespace NotchPeninsula
                             {
                                 DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                             }
-
-                            // 🎵 折叠态标题热区（右键展开媒体控制面板，见 NotchWindow 的 WM_RBUTTONDOWN）：
-                            //    右边界 = 文字遮罩起点，保证「标题文字占的那一段」才响应，右侧频谱/按钮区仍归设置窗口。
-                            //    下方两个模式的 maskEnd 计算与此处共用同一组常量，改动时需同步。
-                            float titleOcc = MediaInteractionMode == 0 ? (isHovered ? 95f : 45f) : (bars != null ? 45f : 15f);
-                            float titleMaskEnd = right - titleOcc + 5f;
-                            float titleW = CachedMediaTextWidth();
-                            if (titleW <= 0f) titleW = _textPaint.MeasureText(_cachedMediaDisplay); // 缓存未命中（刚换字体）兜底
-                            float titleEnd = Math.Min(textX + titleW, titleMaskEnd);
-                            if (titleEnd > textX)
-                                _mediaTitleHit = new SKRect(textX - 4f, 0f, titleEnd + 4f, currentHeight);
 
                             if (MediaInteractionMode == 0) // 直接交互模式
                             {

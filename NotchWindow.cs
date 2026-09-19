@@ -87,6 +87,15 @@ namespace NotchPeninsula
         private bool _isYAnimating = false;
         private DateTime _yAnimStartTime;
         private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
+        // 🧩 插件详情页的「延迟收起」截止时间（DateTime.MinValue = 当前没有待收起的详情页）。
+        //    鼠标离开岛体时媒体面板立即收，详情页只挂这个时间戳，由 TickDetailCollapse() 到期才收 ——
+        //    免得「刚右键展开、鼠标恰好落在展开后的矩形之外」被瞬间收掉。鼠标回到岛上会取消它。
+        private DateTime _detailCollapseDeadline = DateTime.MinValue;
+        // 挂起的那次延迟收起是冲着哪个组件去的。到期时只收这一个 —— 万一这 0.9s 里插件换了另一张
+        // 详情页（前一张自己收起、后一张打开），不能把用户刚看到的新页面顺手收掉。
+        private string? _detailCollapseWidgetId;
+        /// <summary>插件详情页的延迟收起时长（用户 2026-09-19 要求 0.8~1s）。</summary>
+        private const int DetailCollapseDelayMs = 900;
         public static bool _isPassthroughAwake = false; // 本体是否已被唤醒并锁定交互
         // 用于跟踪内容状态，实现 0.3s 叠化过渡
         private int _lastDisplayState = -1;
@@ -509,16 +518,22 @@ namespace NotchPeninsula
                 isClipboardActive = _clipboardUrl != null && DateTime.Now < _clipboardEndTime;
                 if (!isClipboardActive && _clipboardUrl != null) { _clipboardUrl = null; _clipboardEndTime = default; }
 
-                // 🧩 展开态的收起策略（用户 2026-09-19 要求）：
-                //    · **鼠标移走不收起** —— 手滑划出岛体不该把面板弄没。原本的三条自动折叠路径已全部停用：
-                //        `_isManuallyExpanded && !_isHovered && 左键` / `HasActiveDetailPage && !_isHovered` /
-                //        媒体面板的 `WM_MOUSELEAVE → IsMediaExpanded = false`
-                //    · **点击屏幕其他地方（岛外）才收起** —— 这是用户主动表达「我看完了」，语义清晰。
-                //    实现要点：窗口只有鼠标在它范围内时才收得到鼠标消息，岛外点击根本不会派发 WM_LBUTTONDOWN，
-                //    所以这里用 GetCursorPos 底层轮询判断「左键按下 且 光标不在岛体矩形内」
-                //    （坐标换算与上面穿透模式那段完全同一套：减去显示器原点、减窗口 Y 偏移、再除 DPI）。
+                // 🧩 展开态的收起策略（用户 2026-09-19 要求）：**只要鼠标离开灵动岛，展开的面板就自动收缩**。
+                //    · 主触发在 WM_MOUSELEAVE（见下）：系统按「岛体可见形状」派发，零延迟 ——
+                //      媒体控制面板在那里立即收，插件详情页只挂一个 0.9s 的延迟（见 CollapseExpandedPanels）；
+                //      自动隐藏的「手动展开」刻意不跟，理由也写在 CollapseExpandedPanels 上。
+                //    · 详情页的延迟到点由下面这行统一结算（每帧一次 DateTime 比较，可忽略）。
+                TickDetailCollapse();
+
+                //    · 这里是一层兜底轮询：窗口只在鼠标进入它范围内时才收得到鼠标消息，岛外点击根本不会派发
+                //      WM_LBUTTONDOWN，且 SetCapture（拖时间轴）期间 WM_MOUSELEAVE 会被吞掉，
+                //      所以额外判断一次「左键按下 且 光标不在岛体矩形内」，命中就收起
+                //      （坐标换算与上面穿透模式那段完全同一套：减去显示器原点、减窗口 Y 偏移、再除 DPI）。
+                //    · 拖动中一律不收起 —— 拖时间轴时鼠标合法地待在岛外，此时收起会把面板从手里抽走；
+                //      松手若仍在岛外，由 WM_LBUTTONUP 补一次判定。
                 //    只在「确实有东西展开着」时才轮询，三个状态全 false 时这段直接跳过，稳态零开销。
-                if (_isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage)
+                if (!_media.IsDragging
+                    && (_isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage))
                 {
                     float expLeft = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
                     float expTopY = 12f * _currentStyleProgress;
@@ -530,9 +545,7 @@ namespace NotchPeninsula
 
                     if (!isOverIsland && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
                     {
-                        _isManuallyExpanded = false;
-                        Renderer.IsMediaExpanded = false;
-                        if (Renderer.HasActiveDetailPage) PluginManager.Instance.Host.CloseDetailPage();
+                        CollapseAllExpanded();
                     }
                 }
 
@@ -894,6 +907,9 @@ namespace NotchPeninsula
                             Win32.TrackMouseEvent(ref tme);
                             _isTrackingMouse = true;
                             _isHovered = true;
+                            // 🧩 鼠标回到岛上 → 取消插件详情页挂起的延迟收起（还没到期就当没发生过）
+                            _detailCollapseDeadline = DateTime.MinValue;
+                            _detailCollapseWidgetId = null;
                         }
 
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
@@ -992,6 +1008,9 @@ namespace NotchPeninsula
                     {
                         _media.EndDrag();
                         Win32.ReleaseCapture();
+                        // 🧩 拖到岛外松手：拖动期间的 WM_MOUSELEAVE 被上面「拖动中不收起」的分支吃掉了，
+                        //    松手后系统不会再来第二次，这里补一次判定，免得面板挂在岛外一直不收。
+                        if (!_isHovered) CollapseExpandedPanels();
                         return (IntPtr)0;
                     }
                     break;
@@ -1012,9 +1031,12 @@ namespace NotchPeninsula
                             _media.EndDrag();
                             Win32.ReleaseCapture();
                         }
-                        // 🧩 鼠标移走**不收起**媒体面板（用户 2026-09-19 要求）：
-                        //    原来这里是 `Renderer.IsMediaExpanded = false`，移走即折叠。
-                        //    现在收起只认「点击岛外」（见 Render 里的统一判定），鼠标单纯移开不管。
+                        // 🧩 鼠标离开灵动岛 → **展开的面板一律自动收起**（用户 2026-09-19 要求）：
+                        //    媒体控制面板立即收；插件详情页延迟 0.9s 收（收法差异的理由见 CollapseExpandedPanels）。
+                        //    WM_MOUSELEAVE 由系统按「岛体可见形状」派发（分层窗口的透明像素不吃鼠标消息），
+                        //    所以这里判定等价于「鼠标真的离开了灵动岛」，不用轮询。
+                        //    注意：时间轴拖动中已在上面的分支里 break 掉，不会误伤正在拖动的面板。
+                        CollapseExpandedPanels();
                         break;
                     }
 
@@ -1115,8 +1137,13 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
-                        // 🧩 岛内右键的优先级：详情页收起 → 媒体标题展开媒体控制 → 插件组件广播 → 设置窗口。
-                        //    （前两步都是「原生区域」，插件组件占的是岛体右侧独立预留区，几何上不重叠）
+                        // 🧩 岛内右键的优先级：详情页收起 → 插件组件广播 → 设置窗口。
+                        //
+                        // ⚠️ 原生媒体控制器区域（标题文字 / 歌词 / 频谱 / 播放按钮 / 空白）**一律不消费右键**，
+                        //    整个媒体控制器的右键都只打开设置窗口 —— 用户 2026-09-19 明确要求。
+                        //    早先这里有个「右键折叠态媒体标题 → 展开媒体面板」的快捷入口（05df004 加的），
+                        //    它把标题文字那一段的右键整片吃掉（热区高 = 整个岛体高），用户想开设置窗口
+                        //    还得精确点到岛体最右侧那条窄边。已整体删除，不再登记任何媒体标题热区。
                         if (_currentToast == null)
                         {
                             // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
@@ -1129,21 +1156,6 @@ namespace NotchPeninsula
                             int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                             int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                             float rtY = 12f * _currentStyleProgress;
-
-                            // 🎵 折叠态右键媒体标题 → 直接展开媒体控制面板（消费这次右键，不弹设置窗口）。
-                            //    展开交互模式（MediaInteractionMode == 1）下左键点空白处本就能展开，这里是给
-                            //    「直接交互模式 / 左键被插件拿走」准备的等价入口；组合模式固定为直接交互不适用。
-                            //    命中区由渲染侧「本帧真的画了标题文本」才登记，所以待机 / 通知 / 剪贴板 / 展开态都不会误判。
-                            //    ⚠️ 仅当插件行真的有内容时才启用这个快捷入口：纯媒体控制器（无插件组件）时没有插件预留区，
-                            //       岛体几乎整片都是标题热区，右键会被整片吃掉、只剩最右侧一条窄边能开设置窗口。
-                            //       此时恢复默认交互 —— 右键直接打开设置窗口。
-                            if (_media.IsActive && !Renderer.IsMediaExpanded && !Renderer.CompositeModeEnabled
-                                && Renderer.HasPluginRowContent
-                                && Renderer.HitMediaTitle(rx, ry - rtY))
-                            {
-                                Renderer.IsMediaExpanded = true;
-                                return (IntPtr)0;
-                            }
 
                             string? detailWidget = Renderer.DispatchPluginRightClick(rx, ry - rtY);
 
@@ -1160,6 +1172,68 @@ namespace NotchPeninsula
             }
 
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+
+        /// <summary>
+        /// 鼠标离开岛体时收起两块「展开面板」：媒体控制面板 + 插件详情页。
+        ///
+        /// 用户 2026-09-19 要求：**不论展开的是什么，只要鼠标离开灵动岛就自动收缩**。
+        /// 触发点统一走这里（WM_MOUSELEAVE 主触发、拖时间轴到岛外松手补判），免得日后加一种面板时漏改某一处。
+        ///
+        /// 两者的**收法不同**：
+        /// · 媒体控制面板 → 立即收。它就在岛体原位展开，鼠标离开时人已经走了，收掉正好。
+        /// · 插件详情页 → **延迟 <see cref="DetailCollapseDelayMs"/> 毫秒再收**（用户 2026-09-19 要求 0.8~1s）。
+        ///   详情页的尺寸由插件决定，可能比展开前的岛体更窄 / 更矮，展开动画一结束，
+        ///   原本停在岛体边缘的光标就落到了岛外 —— 立即收会变成「刚点开就自己没了」。
+        ///   所以这里只挂一个截止时间戳，由 <see cref="TickDetailCollapse"/> 到期结算；
+        ///   期间鼠标回到岛上（WM_MOUSEMOVE 里）会把它取消掉。
+        /// </summary>
+        private void CollapseExpandedPanels()
+        {
+            Renderer.IsMediaExpanded = false;
+            if (Renderer.HasActiveDetailPage)
+            {
+                _detailCollapseDeadline = DateTime.Now.AddMilliseconds(DetailCollapseDelayMs);
+                _detailCollapseWidgetId = PluginManager.Instance.Host.ActiveDetailWidgetId;
+            }
+        }
+
+        /// <summary>
+        /// 结算插件详情页挂起的延迟收起：到点了才真的收，没到点什么都不做。
+        /// 每帧调一次（RenderLoop），代价只有一次 <see cref="DateTime"/> 比较；没有待收起任务时第一次比较就返回。
+        /// </summary>
+        private void TickDetailCollapse()
+        {
+            if (_detailCollapseDeadline == DateTime.MinValue) return;
+            if (DateTime.Now < _detailCollapseDeadline) return;
+
+            _detailCollapseDeadline = DateTime.MinValue;
+            string? scheduled = _detailCollapseWidgetId;
+            _detailCollapseWidgetId = null;
+
+            // 只收当初挂时间戳的那一张：期间插件若已经换了别的详情页，说明用户在看新东西，不动它
+            if (scheduled != null && Renderer.HasActiveDetailPage
+                && string.Equals(PluginManager.Instance.Host.ActiveDetailWidgetId, scheduled, StringComparison.OrdinalIgnoreCase))
+            {
+                PluginManager.Instance.Host.CloseDetailPage();
+            }
+        }
+
+        /// <summary>
+        /// 收起全部展开态：两块面板（**立即**，不延迟）+ 自动隐藏唤醒出来的「手动展开」。
+        ///
+        /// 只在**岛外点击**时用（用户主动表达「我看完了」，再拖 0.9s 反而像卡住）。
+        /// 刻意不挂到鼠标离开上：自动隐藏的唤醒是「点一下顶部那条边 → 岛体滑下来」，
+        /// 滑下来之后光标本来就落在岛体上方，若跟着鼠标离开一起收，会立刻弹回隐藏态 —— 变成点一下闪一下。
+        /// </summary>
+        private void CollapseAllExpanded()
+        {
+            _isManuallyExpanded = false;
+            // 岛外点击是明确的用户动作：不延迟，顺手把可能挂着的延迟收起一起取消
+            _detailCollapseDeadline = DateTime.MinValue;
+            _detailCollapseWidgetId = null;
+            Renderer.IsMediaExpanded = false;
+            if (Renderer.HasActiveDetailPage) PluginManager.Instance.Host.CloseDetailPage();
         }
 
         // 零拷贝显存通道
