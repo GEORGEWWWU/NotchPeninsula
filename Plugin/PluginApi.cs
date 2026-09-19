@@ -71,7 +71,14 @@ public interface IWidget
     /// <summary>null 表示无详情页（一个组件对应一个详情页）。</summary>
     IDetailPage? DetailPage { get; }
 
-    /// <summary>期望宽度（逻辑像素）。组合模式下主机逐块累加。</summary>
+    /// <summary>
+    /// <b>完整显示本组件内容所需的宽度</b>（逻辑像素）。
+    ///
+    /// 主机用它与本帧剩余空间比对：放得下就按这个宽度布局、内容完整显示；
+    /// 放不下则本帧<b>整个组件都不显示</b>（主机不会替你压缩、截断或加省略号）。
+    /// 所以请返回真实需求值——别为了「挤进去」少报，也别用岛体总长上限（800）去夹自己。
+    /// 组合模式下主机逐块累加。
+    /// </summary>
     float MeasureWidth(float availableHeight);
 
     /// <summary>绘制。rect 由主机布局后给出，坐标均为逻辑像素；frame 含主题 / 动画 / 频谱等每帧上下文。</summary>
@@ -201,6 +208,19 @@ public interface IPluginHost
     void RequestRedraw();
     void OpenDetailPage(string widgetId);
     void CloseDetailPage();
+
+    // 布局调度
+    /// <summary>
+    /// 请求宿主重新测量本插件组件的宽度。
+    ///
+    /// 宿主的组件宽度是按「组件注册表版本」缓存的：只在插件注册 / 注销 / 排序时调用一次
+    /// <see cref="IWidget.MeasureWidth"/>，之后每帧直接复用缓存值（稳态 60FPS 零测量开销）。
+    /// 所以插件内容变化导致期望宽度变化时（例如按文本长度自适应），必须调用本方法通知宿主，
+    /// 宿主下一帧才会重新测量并用新宽度布局，岛体宽度会平滑过渡到新值。
+    ///
+    /// 开销：仅让宿主宽度缓存失效一次并重测所有插件组件，别每帧调用。
+    /// </summary>
+    void InvalidateWidgetLayout();
 
     // 窗口
     /// <summary>创建一个插件自有窗口（SkiaSharp 绘制 + 鼠标输入）。</summary>
