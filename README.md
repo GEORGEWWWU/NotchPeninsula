@@ -233,7 +233,7 @@ bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\
 - 若你的系统未安装相应音频设备或输出设备，音频频谱可能会显示为空白或静态效果。
 
 ## 相关文档
-- 详见WIKI：<https://github.com/georgewu/NotchPeninsula/wiki>
+- 详见WIKI：<https://github.com/GEORGEWWWU/NotchPeninsula/wiki>
 - 插件市场：<https://nps.georgewu.top/market>
 
 ## 许可协议
