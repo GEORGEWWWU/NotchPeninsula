@@ -27,6 +27,8 @@ namespace NotchPeninsula
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
                     MediaController.IsKaraokeEnabled = (int)key.GetValue("KaraokeEnabled", 1) != 0;
                     MediaController.TargetPlatform = (string)key.GetValue("TargetPlatform", "other") ?? "other";
+                    MediaController.IsManualSessionMatch = (int)key.GetValue("ManualSessionMatch", 0) != 0;
+                    MediaController.ManualSessionAppId = (string)key.GetValue("ManualSessionAppId", "") ?? "";
                     MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
                     MediaController.IsTranslationEnabled = (int)key.GetValue("TranslationEnabled", 1) != 0;
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));

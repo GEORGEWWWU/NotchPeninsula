@@ -36,6 +36,16 @@ namespace NotchPeninsula
         private const float FONT_RESET_X = WIDTH - 36 - FONT_RESET_W;
         private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
 
+        // 🎚 媒体设置页「匹配方式」行（渲染与鼠标命中必须使用同一组坐标）
+        private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
+        private const float MATCH_BOX_H = 32f;
+        private const float MATCH_MODE_X = 340f;       // 左框：自动匹配 / 手动选择软件
+        private const float MATCH_APP_X = 460f;        // 右框：手动模式下的目标软件
+        private const float MATCH_ROW_Y = TITLE_BAR_HEIGHT + 168f;   // 选项框顶部
+        private const float MATCH_MENU_Y = TITLE_BAR_HEIGHT + 202f;  // 下拉菜单顶部
+        private const float MATCH_MENU_RIGHT = 570f;   // 软件菜单右边界
+        private const float APP_MENU_W = 280f;         // 软件菜单宽度
+
         private bool _minHovered = false;
         private bool _closeHovered = false;
         private static SKBitmap? _appIconBitmap;
@@ -64,6 +74,15 @@ namespace NotchPeninsula
         private bool _dropdownHovered = false;
         private int _hoveredDropdownIndex = -1;
         private int _selectedPlatformIndex = 0;
+        // 通用媒体匹配方式（左：自动匹配/手动选择软件；右：手动模式下的目标软件，直接显示 AppID）
+        private bool _matchModeDropdownOpen = false;
+        private bool _matchModeDropdownHovered = false;
+        private int _hoveredMatchModeIndex = -1;
+        private bool _appDropdownOpen = false;
+        private bool _appDropdownHovered = false;
+        private int _hoveredAppIndex = -1;
+        private string[] _appOptions = [];
+        private static readonly string[] _matchModeOptions = ["自动匹配", "手动选择软件"];
         // 消息通知内容状态（缩略/完整）
         private bool _toastModeDropdownOpen = false;
         private bool _toastModeDropdownHovered = false;
@@ -460,6 +479,10 @@ namespace NotchPeninsula
                     bool newAutoHideToggleHovered = false;
                     bool newDropdownHovered = false;
                     int newHoveredDropdownIndex = -1;
+                    bool newMatchModeDropdownHovered = false;
+                    int newHoveredMatchModeIndex = -1;
+                    bool newAppDropdownHovered = false;
+                    int newHoveredAppIndex = -1;
                     bool newMediaExpToggleHovered = false;
                     bool newPassToggleHovered = false;
                     bool newClipboardToggleHovered = false;
@@ -553,12 +576,15 @@ namespace NotchPeninsula
                     }
                     else if (_selectedTab == 2) // 媒体设置
                     {
+                        // 任意下拉展开时，底层控件一律不吃悬停，避免浮窗底下的按钮被误触
+                        bool anyPopupOpen = _dropdownOpen || _matchModeDropdownOpen || _appDropdownOpen;
+
                         // 媒体控制
-                        if (!_dropdownOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                        if (!anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newMediaToggleHovered = true;
 
                         // 下拉菜单
-                        if (!_dropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
+                        if (!anyPopupOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
                             newDropdownHovered = true;
 
                         if (_dropdownOpen)
@@ -567,17 +593,37 @@ namespace NotchPeninsula
                                 newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
                         }
 
-                        float lyricY = TITLE_BAR_HEIGHT + 160;
-                        bool newLyricToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
-                        bool newTransToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 77 && y <= lyricY + 97);
-                        bool newKaraokeToggleHovered = !_dropdownOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 117 && y <= lyricY + 137);
+                        // 匹配方式：仅通用媒体可选；右框只在手动模式下可选
+                        bool matchRowEnabled = MediaController.TargetPlatform == "other";
+                        newMatchModeDropdownHovered = !anyPopupOpen && matchRowEnabled
+                            && x >= MATCH_MODE_X && x <= MATCH_MODE_X + MATCH_BOX_W && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H;
+                        newAppDropdownHovered = !anyPopupOpen && matchRowEnabled && MediaController.IsManualSessionMatch
+                            && x >= MATCH_APP_X && x <= MATCH_APP_X + MATCH_BOX_W && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H;
+
+                        if (_matchModeDropdownOpen
+                            && x >= MATCH_MODE_X && x <= MATCH_MODE_X + MATCH_BOX_W
+                            && y >= MATCH_MENU_Y && y < MATCH_MENU_Y + _matchModeOptions.Length * 26)
+                            newHoveredMatchModeIndex = (int)((y - MATCH_MENU_Y) / 26);
+
+                        if (_appDropdownOpen)
+                        {
+                            int appRows = Math.Clamp(_appOptions.Length, 1, 8);
+                            float appMenuX = MATCH_MENU_RIGHT - APP_MENU_W;
+                            if (x >= appMenuX && x <= MATCH_MENU_RIGHT && y >= MATCH_MENU_Y && y < MATCH_MENU_Y + appRows * 26)
+                                newHoveredAppIndex = (int)((y - MATCH_MENU_Y) / 26);
+                        }
+
+                        float lyricY = TITLE_BAR_HEIGHT + 232;
+                        bool newLyricToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
+                        bool newTransToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 77 && y <= lyricY + 97);
+                        bool newKaraokeToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 117 && y <= lyricY + 137);
 
                         // 延迟补偿按钮整行排在最后（歌词卡片里第四行）
                         float btnY = lyricY + 147;
                         float cardRightX = WIDTH - 36;
-                        bool newLyricMinusHovered = !_dropdownOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
-                        bool newLyricPlusHovered = !_dropdownOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
-                        bool newLyricResetHovered = !_dropdownOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
+                        bool newLyricMinusHovered = !anyPopupOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
+                        bool newLyricPlusHovered = !anyPopupOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
+                        bool newLyricResetHovered = !anyPopupOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
 
                         if (newLyricToggleHovered != _lyricToggleHovered || newTransToggleHovered != _transToggleHovered || newKaraokeToggleHovered != _karaokeToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
                         {
@@ -666,6 +712,10 @@ namespace NotchPeninsula
                         newToastToggleHovered != _toastToggleHovered || newTopmostToggleHovered != _topmostToggleHovered ||
                         newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
                         newDropdownHovered != _dropdownHovered ||
+                        newMatchModeDropdownHovered != _matchModeDropdownHovered ||
+                        newHoveredMatchModeIndex != _hoveredMatchModeIndex ||
+                        newAppDropdownHovered != _appDropdownHovered ||
+                        newHoveredAppIndex != _hoveredAppIndex ||
                         newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
                         newHoveredDisplayOptionIndex != _hoveredDisplayOptionIndex ||
                         newHoveredStyleIndex != _hoveredStyleIndex ||
@@ -696,6 +746,10 @@ namespace NotchPeninsula
                         _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
                         _dropdownHovered = newDropdownHovered;
                         _hoveredDropdownIndex = newHoveredDropdownIndex;
+                        _matchModeDropdownHovered = newMatchModeDropdownHovered;
+                        _hoveredMatchModeIndex = newHoveredMatchModeIndex;
+                        _appDropdownHovered = newAppDropdownHovered;
+                        _hoveredAppIndex = newHoveredAppIndex;
                         _hoveredLinkIndex = newHoveredLinkIndex;
                         _hoveredDisplayOptionIndex = newHoveredDisplayOptionIndex;
                         _hoveredStyleIndex = newHoveredStyleIndex;
@@ -740,22 +794,24 @@ namespace NotchPeninsula
                     }
                     else if (_dropdownOpen && _hoveredDropdownIndex == -1)
                     {
-                        _dropdownOpen = false; Render(); // 点击菜单外部收起浮窗
+                        CloseAllDropdowns(); Render(); // 点击菜单外部收起浮窗
                     }
-                    else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex == -1) { _monitorDropdownOpen = false; Render(); }
-                    else if (_toastModeDropdownOpen && _hoveredToastModeIndex == -1) { _toastModeDropdownOpen = false; Render(); }
+                    else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex == -1) { CloseAllDropdowns(); Render(); }
+                    else if (_toastModeDropdownOpen && _hoveredToastModeIndex == -1) { CloseAllDropdowns(); Render(); }
+                    else if (_matchModeDropdownOpen && _hoveredMatchModeIndex == -1) { CloseAllDropdowns(); Render(); }
+                    else if (_appDropdownOpen && _hoveredAppIndex == -1) { CloseAllDropdowns(); Render(); }
                     else if (_selectedTab == 1 && _hoveredStyleIndex != -1)
                     {
                         Renderer.NotchStyle = _hoveredStyleIndex;
                         Program.SaveSetting("NotchStyle", _hoveredStyleIndex);
                         Render();
                     }
-                    else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; _dropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; _dropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; _dropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; _dropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; _dropdownOpen = false; Render(); }
-                    else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; _dropdownOpen = false; Render(); }
+                    else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; CloseAllDropdowns(); Render(); }
+                    else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; CloseAllDropdowns(); Render(); }
+                    else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; CloseAllDropdowns(); Render(); }
+                    else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; CloseAllDropdowns(); Render(); }
+                    else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; CloseAllDropdowns(); Render(); }
+                    else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; CloseAllDropdowns(); Render(); }
                     else if (_hoveredTab == 6 && _selectedTab != 6) { _selectedTab = 6; _dropdownOpen = false; RefreshPluginView(); Render(); }
                     else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
                     else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
@@ -770,6 +826,36 @@ namespace NotchPeninsula
                     {
                         ApplyToastContentMode(_hoveredToastModeIndex);
                         _toastModeDropdownOpen = false;
+                        Render();
+                    }
+                    else if (_selectedTab == 2 && _matchModeDropdownHovered)
+                    {
+                        CloseAllDropdowns();
+                        _matchModeDropdownOpen = true;
+                        Render();
+                    }
+                    else if (_selectedTab == 2 && _matchModeDropdownOpen && _hoveredMatchModeIndex != -1)
+                    {
+                        MediaController.IsManualSessionMatch = _hoveredMatchModeIndex == 1;
+                        Program.SaveSetting("ManualSessionMatch", MediaController.IsManualSessionMatch ? 1 : 0);
+                        _matchModeDropdownOpen = false;
+                        _ = MediaController.Instance?.ForceRefresh();
+                        Render();
+                    }
+                    else if (_selectedTab == 2 && _appDropdownHovered)
+                    {
+                        // 展开时现取一次活动会话列表，保证「所有 SMTC 活动」是最新的
+                        _appOptions = MediaController.Instance?.GetAvailableAppIds() ?? Array.Empty<string>();
+                        CloseAllDropdowns();
+                        _appDropdownOpen = true;
+                        Render();
+                    }
+                    else if (_selectedTab == 2 && _appDropdownOpen && _hoveredAppIndex != -1 && _hoveredAppIndex < _appOptions.Length)
+                    {
+                        MediaController.ManualSessionAppId = _appOptions[_hoveredAppIndex];
+                        Program.SaveSetting("ManualSessionAppId", MediaController.ManualSessionAppId);
+                        _appDropdownOpen = false;
+                        _ = MediaController.Instance?.ForceRefresh();
                         Render();
                     }
                     else if (_selectedTab == 5 && (_hoveredMinusIndex != -1 || _hoveredPlusIndex != -1 || _hoveredResetIndex != -1))
@@ -1301,6 +1387,16 @@ namespace NotchPeninsula
             return "…";
         }
 
+        /// <summary>收起所有下拉浮窗（同一时刻只允许展开一个）。</summary>
+        private void CloseAllDropdowns()
+        {
+            _dropdownOpen = false;
+            _monitorDropdownOpen = false;
+            _toastModeDropdownOpen = false;
+            _matchModeDropdownOpen = false;
+            _appDropdownOpen = false;
+        }
+
         private unsafe void Render()
         {
             var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
@@ -1683,8 +1779,52 @@ namespace NotchPeninsula
                 canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, _chevronPaint);
                 canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, _chevronPaint);
 
+                // 匹配方式卡片：仅「通用媒体」下可选，其余平台整行置灰
+                bool matchEnabled = MediaController.TargetPlatform == "other";
+                bool appBoxEnabled = matchEnabled && MediaController.IsManualSessionMatch;
+                float matchCardY = TITLE_BAR_HEIGHT + 156;
+                var matchCardRect = new SKRect(200, matchCardY, WIDTH - 20, matchCardY + 62);
+                canvas.DrawRoundRect(matchCardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(matchCardRect, 6, 6, _cardBorder);
+                _uiTextPaint.Color = matchEnabled ? SKColors.White : new SKColor(100, 100, 100);
+                canvas.DrawText("匹配方式", 216, matchCardY + 26, _uiTextPaint);
+                _uiTextPaint.Color = SKColors.White;
+                _subTextPaint.Color = matchEnabled ? new SKColor(170, 170, 170) : new SKColor(80, 80, 80);
+                canvas.DrawText("自动匹配或手动指定", 216, matchCardY + 46, _subTextPaint);
+                _subTextPaint.Color = new SKColor(170, 170, 170);
+
+                float moX = MATCH_MODE_X, appX = MATCH_APP_X, mBoxY = MATCH_ROW_Y, mBoxW = MATCH_BOX_W, mBoxH = MATCH_BOX_H;
+
+                // 左框：自动匹配 / 手动选择软件
+                var moRect = new SKRect(moX, mBoxY, moX + mBoxW, mBoxY + mBoxH);
+                _dynamicFillPaint.Color = !matchEnabled ? new SKColor(255, 255, 255, 4)
+                    : (_matchModeDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8));
+                canvas.DrawRoundRect(moRect, 4, 4, _dynamicFillPaint);
+                _dynamicTextPaint.Color = matchEnabled ? SKColors.White : new SKColor(100, 100, 100);
+                canvas.DrawText(_matchModeOptions[MediaController.IsManualSessionMatch ? 1 : 0], moX + 10, mBoxY + 21, _dynamicTextPaint);
+                _dynamicTextPaint.Color = SKColors.White;
+                _chevronPaint.Color = matchEnabled ? new SKColor(150, 150, 150) : new SKColor(90, 90, 90);
+                canvas.DrawLine(moX + mBoxW - 20, mBoxY + 14, moX + mBoxW - 15, mBoxY + 19, _chevronPaint);
+                canvas.DrawLine(moX + mBoxW - 15, mBoxY + 19, moX + mBoxW - 10, mBoxY + 14, _chevronPaint);
+
+                // 右框：手动模式的目标软件（直接显示 AppID）；自动匹配或非通用媒体时置灰
+                var appRect = new SKRect(appX, mBoxY, appX + mBoxW, mBoxY + mBoxH);
+                _dynamicFillPaint.Color = appBoxEnabled ? (_appDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8))
+                    : new SKColor(255, 255, 255, 4);
+                canvas.DrawRoundRect(appRect, 4, 4, _dynamicFillPaint);
+                string appLabel = !appBoxEnabled ? "自动匹配"
+                    : (!MediaController.HasActiveSessions ? ""
+                        : (MediaController.ManualSessionAppId.Length > 0 ? MediaController.ManualSessionAppId : "未选择"));
+                _dynamicTextPaint.Color = appBoxEnabled ? SKColors.White : new SKColor(100, 100, 100);
+                canvas.DrawText(TruncateText(appLabel, _dynamicTextPaint, mBoxW - 32), appX + 10, mBoxY + 21, _dynamicTextPaint);
+                _dynamicTextPaint.Color = SKColors.White;
+                _chevronPaint.Color = appBoxEnabled ? new SKColor(150, 150, 150) : new SKColor(90, 90, 90);
+                canvas.DrawLine(appX + mBoxW - 20, mBoxY + 14, appX + mBoxW - 15, mBoxY + 19, _chevronPaint);
+                canvas.DrawLine(appX + mBoxW - 15, mBoxY + 19, appX + mBoxW - 10, mBoxY + 14, _chevronPaint);
+                _chevronPaint.Color = new SKColor(150, 150, 150);
+
                 // 歌词设置卡片
-                float lyricY = TITLE_BAR_HEIGHT + 160;
+                float lyricY = TITLE_BAR_HEIGHT + 232;
                 var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 176);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
@@ -2129,6 +2269,55 @@ namespace NotchPeninsula
                     }
                     _dynamicTextPaint.Color = i == _selectedPlatformIndex ? new SKColor(0, 120, 212) : SKColors.White;
                     canvas.DrawText(_platforms[i].Name, mX + 12, itemY + 18, _dynamicTextPaint);
+                }
+            }
+
+            // 匹配方式下拉菜单（左框）
+            if (_selectedTab == 2 && _matchModeDropdownOpen)
+            {
+                float mX = MATCH_MODE_X; float mY = MATCH_MENU_Y; float mW = MATCH_BOX_W; float mH = _matchModeOptions.Length * 26;
+                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
+                canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
+                canvas.DrawRoundRect(mRect, 4, 4, _menuBorder);
+
+                int selectedMode = MediaController.IsManualSessionMatch ? 1 : 0;
+                for (int i = 0; i < _matchModeOptions.Length; i++)
+                {
+                    float itemY = mY + i * 26;
+                    if (_hoveredMatchModeIndex == i)
+                        canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, _tabBgSelected);
+                    _dynamicTextPaint.Color = i == selectedMode ? new SKColor(0, 120, 212) : SKColors.White;
+                    canvas.DrawText(_matchModeOptions[i], mX + 12, itemY + 18, _dynamicTextPaint);
+                }
+            }
+
+            // 手动选择软件下拉菜单（右框）：直接展示所有 SMTC 会话的 AppID
+            if (_selectedTab == 2 && _appDropdownOpen)
+            {
+                int rows = Math.Clamp(_appOptions.Length, 1, 8);
+                float mW = APP_MENU_W; float mX = MATCH_MENU_RIGHT - mW; float mY = MATCH_MENU_Y; float mH = rows * 26;
+                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
+                canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
+                canvas.DrawRoundRect(mRect, 4, 4, _menuBorder);
+
+                if (_appOptions.Length == 0)
+                {
+                    _dynamicTextPaint.Color = new SKColor(150, 150, 150);
+                    canvas.DrawText("暂无活动会话", mX + 12, mY + 18, _dynamicTextPaint);
+                    _dynamicTextPaint.Color = SKColors.White;
+                }
+                else
+                {
+                    for (int i = 0; i < rows; i++)
+                    {
+                        float itemY = mY + i * 26;
+                        if (_hoveredAppIndex == i)
+                            canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, _tabBgSelected);
+                        _dynamicTextPaint.Color = string.Equals(_appOptions[i], MediaController.ManualSessionAppId, StringComparison.OrdinalIgnoreCase)
+                            ? new SKColor(0, 120, 212) : SKColors.White;
+                        canvas.DrawText(TruncateText(_appOptions[i], _dynamicTextPaint, mW - 24), mX + 12, itemY + 18, _dynamicTextPaint);
+                    }
+                    _dynamicTextPaint.Color = SKColors.White;
                 }
             }
 
