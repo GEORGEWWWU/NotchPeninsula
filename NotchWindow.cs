@@ -589,7 +589,45 @@ namespace NotchPeninsula
                 float detailW = 0f, detailH = 0f;
                 bool detailOpen = !isToastActive && !isClipboardActive && Renderer.TryGetDetailPageSize(out detailW, out detailH);
 
-                float pluginReserve = isToastActive || isClipboardActive || Renderer.CompositeModeEnabled || detailOpen ? 0f : Renderer.GetPluginRowReserve();
+                // 🧩 原生内容（不含插件行）本帧需要多宽：媒体激活时，长歌词会自适应把岛体撑宽
+                float nativeWidth = currentActive
+                    ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH)
+                    : Renderer.STANDBY_WIDTH;
+                if (currentActive && !Renderer.IsMediaExpanded && !Renderer.CompositeModeEnabled)
+                {
+                    float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
+                        ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
+                        : (string.IsNullOrEmpty(_media.Artist)
+                            ? Renderer.MeasureCurrentLyricWidth(_media.Title)
+                            : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
+
+                    nativeWidth = Math.Max(nativeWidth, textWidth + 115f);
+                }
+                nativeWidth = Math.Min(nativeWidth, Renderer.MAX_ISLAND_WIDTH); // 岛体总长上限，窄屏也不会被撑破
+
+                // 🧩 插件行取舍：受「岛体总长上限」（MAX_ISLAND_WIDTH，与消息弹窗最大长度一致）约束。
+                //    原生内容（尤其是开着媒体控制 + 长歌词自适应）吃掉太多宽度、剩余放不下插件行时，
+                //    本帧整行隐藏所有插件 —— 原生内容照常显示，岛体也不会被撑过上限。
+                //    隐藏走的是「预留宽度归零」这条路：渲染侧既不绘制插件行、也不留位、命中区同样为空。
+                float pluginReserve = 0f;
+                if (Renderer.CompositeModeEnabled)
+                {
+                    // 组合模式：插件已并入「内容顺序表」与原生模块混排，宽度统一由 GetCompositeWidth 计算
+                    Renderer.SetPluginRowVisible(true);
+                }
+                else if (!isToastActive && !isClipboardActive && !detailOpen)
+                {
+                    float pluginRowWidth = Renderer.GetPluginRowReserve();
+                    bool fits = nativeWidth + pluginRowWidth <= Renderer.MAX_ISLAND_WIDTH;
+                    Renderer.SetPluginRowVisible(fits);
+                    pluginReserve = fits ? pluginRowWidth : 0f;
+                }
+                else
+                {
+                    // 通知 / 剪贴板 / 详情页：整块岛体被接管，插件行本帧不参与
+                    Renderer.SetPluginRowVisible(false);
+                }
+
                 float expectedTargetWidth;
                 float expectedTargetHeight;
                 if (detailOpen)
@@ -610,30 +648,12 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    if (Renderer.CompositeModeEnabled)
-                    {
-                        // 调用渲染器中的像素级精确动态宽度计算，拒绝任何多余空白与错位
-                        expectedTargetWidth = Renderer.GetCompositeWidth(_media);
-                    }
-                    else
-                        expectedTargetWidth = currentActive
-                            ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH) + pluginReserve
-                            : Renderer.STANDBY_WIDTH + pluginReserve;
+                    // 组合模式走渲染器里的像素级精确动态宽度计算，拒绝任何多余空白与错位；
+                    // 其余模式 = 原生内容宽度 + 插件行预留（插件行放不下时预留已归零）
+                    expectedTargetWidth = Renderer.CompositeModeEnabled
+                        ? Renderer.GetCompositeWidth(_media)
+                        : nativeWidth + pluginReserve;
 
-                    // 自动文本长度自适应逻辑
-                    // 如果在组合模式下，完全跳过外层的媒体自适应逻辑，避免没勾选却幽灵撑宽
-                    bool bypassAutoWidth = Renderer.CompositeModeEnabled;
-                    if (currentActive && !Renderer.IsMediaExpanded && !bypassAutoWidth)
-                    {
-                        float textWidth = (!string.IsNullOrEmpty(_media.CurrentLyric) && MediaController.IsLyricsEnabled)
-                            ? Renderer.MeasureCurrentLyricWidth(_media.CurrentLyric)
-                            : (string.IsNullOrEmpty(_media.Artist)
-                                ? Renderer.MeasureCurrentLyricWidth(_media.Title)
-                                : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
-
-                        float requiredWidth = textWidth + 115f + pluginReserve; // 长歌词自适应时同样要给插件行留位
-                        if (requiredWidth > expectedTargetWidth) expectedTargetWidth = requiredWidth;
-                    }
                     expectedTargetHeight = currentActive ? (Renderer.IsMediaExpanded ? Renderer.GetExpandedHeight(_media) : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT;
                 }
 

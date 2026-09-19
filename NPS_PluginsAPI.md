@@ -385,11 +385,20 @@ dotnet build HelloPlugin.csproj -c Debug
 - 设置持久化：`string GetSetting(string key, string fallback)` / `void SetSetting(string key, string value)`，键会自动加 `Plugin.<你的Id>.` 前缀隔离，不会互相覆盖；`event Action? SettingsChanged` 在设置被写入后触发。
 - 刷新：`IDisposable ScheduleRefresh(TimeSpan interval, Action callback)`，后台线程周期性回调，返回对象 `Dispose` 即停止。
 - 交互：`void RequestRedraw()`（常驻 60FPS 渲染下为空操作，事件驱动化预留）/ `void OpenDetailPage(string widgetId)`（已开放，展开指定组件的详情页，组件不存在或没有详情页时返回 false 且不展开）/ `void CloseDetailPage()`（已开放，收起当前详情页）。
+- 布局：`void InvalidateWidgetLayout()`（已开放，请求宿主重新测量本插件组件的宽度）。
+  宿主的组件宽度是按「组件注册表版本」缓存的——只在插件注册 / 注销 / 排序时调一次 `MeasureWidth`，之后每帧直接复用缓存值（稳态 60FPS 零测量开销）。
+  所以**组件宽度随内容变化的插件**（例如按文本长度自适应），在内容变化后必须调用它通知宿主，下一帧才会重新测量并用新宽度布局；岛体宽度会走既有弹簧动画平滑过渡到新值。
+  内容没变、宽度没变就别调（会让宿主重测一次所有插件组件）。
 - 窗口：`IPluginWindow CreateWindow(string title, int width, int height)`。
 
 **主显示组件 `IWidget`**（灵动岛主区域里的一段内容，一个插件可注册多个）
 - 属性：`Id` / `DisplayName` / `IDetailPage? DetailPage`（已开放：非空时右键该组件会在灵动岛展开这个详情页；为 null 则右键只打开设置窗口）。
 - 测量与绘制：`float MeasureWidth(float availableHeight)` / `void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`。
+  `MeasureWidth` **只在组件注册表版本变化时被调用一次**（插件注册 / 注销 / 内容顺序变化），返回值被缓存进后续每一帧的布局，宿主不会每帧问你。所以宽度要随内容变化的插件，在内容更新后得主动调一次 `host.InvalidateWidgetLayout()`，否则宽度会一直停在首次测量值上。
+  宿主不对组件宽度做上下限裁剪，请自行定一个合理上限（参考：消息弹窗的最大长度是 `800`）。
+- 岛体总长上限与「插件行隐藏」：宿主岛体的总长上限是 `800`（与消息弹窗 `Toast` 的最大长度一致，常量 `Renderer.MAX_ISLAND_WIDTH`），Toast / 剪贴板面板的自适应宽度、组合模式总宽、插件行取舍都以它封顶。
+  这个上限对**所有插件一视同仁**：当原生内容已经吃掉了大半宽度（最典型的是媒体控制器开着、且歌词很长触发了自适应撑宽），剩余空间放不下插件行时，该帧会**整行隐藏所有插件组件**——不绘制、不留位、也不响应点击，原生内容照常显示，岛体宽度也不会被撑过上限。等歌词变短、原生内容收窄后，插件自动回来。
+  这是宿主侧行为，插件不用做任何处理、也无法阻止；想让插件尽量别被挤掉，把 `MeasureWidth` 控制在合理范围内即可。
 - 命中与点击：`WidgetHit HitTest(float x, float y, SKRect rect)` / `void OnLeftClick(string? action, float x, float y)` / `void OnRightClick()`。
 - 生命周期：`void OnActivate(IPluginHost host)` / `void OnDeactivate()`。
 

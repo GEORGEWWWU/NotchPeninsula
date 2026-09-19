@@ -199,6 +199,18 @@ public sealed class PluginHost
         lock (_lock) _settingsPages.Add((pluginId, page));
     }
 
+    /// <summary>
+    /// 请求宿主重新测量插件组件宽度：把注册表版本号自增一次，
+    /// 渲染侧下一帧的 <c>RefreshPluginWidgets</c> 就会重新调用各组件的 MeasureWidth 并重建快照，
+    /// NotchWindow 随之把岛体宽度平滑过渡到新值（宽度变化走既有弹簧动画）。
+    ///
+    /// 供「宽度随内容变化」的插件使用（内容变化时调一次即可，别每帧调用）。
+    /// </summary>
+    public void InvalidateWidgetLayout()
+    {
+        lock (_lock) _widgetsVersion++;
+    }
+
     /// <summary>为某个插件创建绑定其 Id 的宿主视图（设置持久化自动加前缀）。</summary>
     public IPluginHost CreateScopedHost(string pluginId) => new ScopedPluginHost(this, pluginId);
 
@@ -514,6 +526,7 @@ public sealed class ScopedPluginHost : IPluginHost
     }
     public IDisposable ScheduleRefresh(TimeSpan interval, Action callback) => _host.ScheduleRefresh(_pluginId, interval, callback);
     public void RequestRedraw() { /* 常驻 60FPS 渲染下为空操作，事件驱动化预留 */ }
+    public void InvalidateWidgetLayout() => _host.InvalidateWidgetLayout();
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
     public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(title, width, height);

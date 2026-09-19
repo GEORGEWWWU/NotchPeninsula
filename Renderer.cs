@@ -68,7 +68,13 @@ namespace NotchPeninsula
             if (ReuseCachedRuns(text, _semiBoldTypeface, out float cachedWidth)) return cachedWidth;
             return _textPaint.MeasureText(text);
         }
-        // 计算Toast消息自适应宽度，限制最大500px
+        /// <summary>
+        /// 岛体总长度上限：与消息弹窗（Toast）的最大长度保持一致。
+        /// Toast / 剪贴板面板的自适应宽度、组合模式总宽、以及插件行的取舍都以它封顶。
+        /// </summary>
+        public const float MAX_ISLAND_WIDTH = 800f;
+
+        // 计算Toast消息自适应宽度，限制最大宽度（与岛体总长上限一致）
         public static float GetToastAutoWidth()
         {
             float maxTextW = IsToastFullMode
@@ -77,17 +83,17 @@ namespace NotchPeninsula
             float w = maxTextW + 68f;
             // 紧凑模式：左侧文本之外还需为右侧双行信息（现在 + 应用名）预留空间
             if (IsToastCompactMode) w += COMPACT_RIGHT_WIDTH;
-            return Math.Min(Math.Max(TOAST_WIDTH, w), 800f);
+            return Math.Min(Math.Max(TOAST_WIDTH, w), MAX_ISLAND_WIDTH);
         }
 
         // 📋 剪贴板链接面板自适应宽度：媒体控制器同款基准尺寸，链接过长时按文本加宽，
-        //    封顶宽度与消息通知弹窗的最大长度保持一致（800）
+        //    封顶宽度与消息通知弹窗的最大长度保持一致
         private const float CLIPBOARD_EXTRA_WIDTH = 10f; // 计算宽度之外的视觉呼吸量，避免文本贴边
         public static float GetClipboardAutoWidth(string url)
         {
             EnsureClipboardTextCache(url);
             float w = 14f + 20f + 10f + _cachedClipboardTextWidth + 10f + 22f + 14f + CLIPBOARD_EXTRA_WIDTH;
-            return Math.Min(Math.Max(MEDIA_WIDTH, w), 800f);
+            return Math.Min(Math.Max(MEDIA_WIDTH, w), MAX_ISLAND_WIDTH);
         }
 
         // 📋 「打开」按钮命中判定：本帧未绘制则热区为空，天然不会在收起后误触发
@@ -295,6 +301,24 @@ namespace NotchPeninsula
         // 组合模式下媒体模块的右边界（供 UI 线程判定媒体按钮/悬停命中，避免窗口宽度换算误差）
         private static float _compositeMediaRight = -1f;
         private static readonly List<Plugins.WidgetLayout.Slot> _pluginSlots = new(8);
+
+        // 🧩 插件行本帧是否显示：由 NotchWindow 每帧按「岛体总长上限」判定后写入。
+        //    媒体控制器开着且歌词很长时，原生内容会吃掉大半个岛，剩余宽度放不下插件行；
+        //    这种帧就整行隐藏（对所有插件一视同仁），插件既不绘制、也不留位、命中区同样为空。
+        //    默认 true —— 宿主还没跑到判定逻辑时（启动首帧等）插件照常显示。
+        private static volatile bool _pluginRowVisible = true;
+
+        /// <summary>
+        /// 设置本帧插件行是否显示。
+        ///
+        /// 判定权在 NotchWindow：它知道原生内容（媒体控制器 / 长歌词自适应 / 硬件占用）本帧要多宽，
+        /// 当「原生宽度 + 插件行宽度 &gt; <see cref="MAX_ISLAND_WIDTH"/>」时，就说明剩余长度放不下插件，
+        /// 此时整行隐藏所有插件，原生内容照常显示，岛体也不会被撑过上限。
+        ///
+        /// 只影响「插件行独立贴在原生内容右侧」的非组合模式；组合模式下插件已并入内容顺序表混排，
+        /// 宽度统一由 <c>GetCompositeWidth</c> 计算，不受本开关影响。
+        /// </summary>
+        public static void SetPluginRowVisible(bool visible) => _pluginRowVisible = visible;
         private static readonly object _pluginSlotLock = new();
         // 组件快照/测量的锁：渲染线程与 UI 线程（鼠标命中路径会查询预留宽度）都可能访问
         private static readonly object _pluginSnapshotLock = new();

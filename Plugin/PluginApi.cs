@@ -202,6 +202,19 @@ public interface IPluginHost
     void OpenDetailPage(string widgetId);
     void CloseDetailPage();
 
+    // 布局调度
+    /// <summary>
+    /// 请求宿主重新测量本插件组件的宽度。
+    ///
+    /// 宿主的组件宽度是按「组件注册表版本」缓存的：只在插件注册 / 注销 / 排序时调用一次
+    /// <see cref="IWidget.MeasureWidth"/>，之后每帧直接复用缓存值（稳态 60FPS 零测量开销）。
+    /// 所以插件内容变化导致期望宽度变化时（例如按文本长度自适应），必须调用本方法通知宿主，
+    /// 宿主下一帧才会重新测量并用新宽度布局，岛体宽度会平滑过渡到新值。
+    ///
+    /// 开销：仅让宿主宽度缓存失效一次并重测所有插件组件，别每帧调用。
+    /// </summary>
+    void InvalidateWidgetLayout();
+
     // 窗口
     /// <summary>创建一个插件自有窗口（SkiaSharp 绘制 + 鼠标输入）。</summary>
     IPluginWindow CreateWindow(string title, int width, int height);
