@@ -104,15 +104,37 @@ namespace NotchPeninsula
         /// </summary>
         public static float CompositeMediaMaxWidth = 460f;
 
+        /// <summary>
+        /// Toast 文本右边界与渐隐遮罩起点之间的兜底余量（逻辑像素）。
+        ///
+        /// 宽度公式与 <c>Draw</c> 里的排版是两套独立计算：文字宽由 <c>BuildTextRuns</c> 分 run 累加，
+        /// 绘制时又按 run 逐段画（跨 run 的 kerning 会丢一点），再加上岛体宽度是弹簧动画、
+        /// 可能稳定在目标值下方零点几像素 —— 余量取 0 时就会出现「刚好卡在遮罩边缘」：
+        /// 文字既显示不全（末尾被渐隐吃掉），又因为缓存宽度认为放得下而不触发加宽。
+        /// </summary>
+        private const float TOAST_TEXT_MARGIN = 8f;
+
+        /// <summary>完整模式右上角「现在」的预留宽度，必须与 <c>Draw</c> 里 <c>toastMaxTextRight -= 36f</c> 一致。</summary>
+        private const float TOAST_FULL_MODE_RIGHT_RESERVE = 36f;
+
         // 计算Toast消息自适应宽度，限制最大宽度（与岛体总长上限一致）
         public static float GetToastAutoWidth()
         {
             float maxTextW = IsToastFullMode
                 ? Math.Max(_cachedToastTitleWidth, Math.Max(_cachedToastBodyWidth, _cachedToastAppNameWidth))
                 : Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
+            // 68 = 左侧 chrome（14 左边距 + 28 图标 + 10 间距）+ 右侧 16 内边距，
+            // 与 Draw 里 toastTextX / toastMaxTextRight 的取值严格对应，改一处必须同步另一处。
             float w = maxTextW + 68f;
-            // 紧凑模式：左侧文本之外还需为右侧双行信息（现在 + 应用名）预留空间
-            if (IsToastCompactMode) w += COMPACT_RIGHT_WIDTH;
+            // 🩹 完整模式右上角要放「现在」：Draw 里让了 36px，这里必须一起让，
+            //    否则文本右边界永远比遮罩起点多出 36px —— 每行末尾都会被渐隐截掉一截。
+            if (IsToastFullMode) w += TOAST_FULL_MODE_RIGHT_RESERVE;
+            // 紧凑模式：左侧文本之外还需为右侧双行信息（现在 + 应用名）预留空间。
+            // 取「固定预留」与「实测占宽」的较大者：应用名较长时按实测值预留，
+            // 否则右侧信息会实际压进左侧消息文字里，把消息尾巴挤到遮罩下面。
+            if (IsToastCompactMode) w += Math.Max(COMPACT_RIGHT_WIDTH, _cachedToastCompactRightWidth);
+            // 🩹 兜底余量：保证文本右边界不会正好落在遮罩起点上（见 TOAST_TEXT_MARGIN 注释）
+            w += TOAST_TEXT_MARGIN;
             return Math.Min(Math.Max(TOAST_WIDTH, w), MAX_ISLAND_WIDTH);
         }
 
@@ -1221,6 +1243,10 @@ namespace NotchPeninsula
         private static float _cachedToastTitleWidth = 0f;
         private static float _cachedToastBodyWidth = 0f;
         private static float _cachedToastAppNameWidth = 0f;
+        // 🩹 紧凑模式右侧双行信息（“现在”+ 应用名，小号字体）的真实占宽，随 toast 一起缓存。
+        //    GetToastAutoWidth 用它来预留右侧空间 —— 只写死 COMPACT_RIGHT_WIDTH 的话，
+        //    应用名一长（如“Windows 安全中心”）右侧就会实际吃进左侧消息文字，尾巴被遮罩截掉。
+        private static float _cachedToastCompactRightWidth = 0f;
 
         // 📋 剪贴板链接面板专用缓存（只在链接变化 / 换字体时重建一次，稳态零重算）
         private static readonly List<(string Text, SKTypeface Type, float X)> _cachedClipboardRuns = new();
@@ -1339,6 +1365,12 @@ namespace NotchPeninsula
                         BuildTextRuns(_cachedToastSender, _titlePaint, _boldTypeface, _cachedToastSenderRuns, out _cachedToastTitleWidth);
                         BuildTextRuns(_cachedToastBody, _bodyPaint, _normalTypeface, _cachedToastBodyRuns, out _cachedToastBodyWidth);
                         BuildTextRuns(_cachedToastAppName, _bodyPaint, _normalTypeface, _cachedToastAppNameRuns, out _cachedToastAppNameWidth);
+
+                        // 🩹 紧凑模式右侧那块双行信息的真实占宽（与下面绘制用的画笔、文案、字号完全一致），
+                        //    供 GetToastAutoWidth 预留宽度使用，保证左侧消息文字永远放得下。
+                        _cachedToastCompactRightWidth = Math.Max(
+                            _compactTimePaint.MeasureText("现在"),
+                            _compactAppPaint.MeasureText(string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName));
                     }
 
                     float iconSize = 28f;
