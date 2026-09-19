@@ -8,3 +8,7 @@ obj/
 publish/
 .workbuddy
 .workbuddy/
+
+# WorkBuddy AI 的本地工作数据（项目记忆 / 日志等）：只保留在本地，不进仓库
+.workbuddy-ai
+.workbuddy-ai/
