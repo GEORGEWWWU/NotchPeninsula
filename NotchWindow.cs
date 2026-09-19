@@ -1134,7 +1134,11 @@ namespace NotchPeninsula
                             //    展开交互模式（MediaInteractionMode == 1）下左键点空白处本就能展开，这里是给
                             //    「直接交互模式 / 左键被插件拿走」准备的等价入口；组合模式固定为直接交互不适用。
                             //    命中区由渲染侧「本帧真的画了标题文本」才登记，所以待机 / 通知 / 剪贴板 / 展开态都不会误判。
+                            //    ⚠️ 仅当插件行真的有内容时才启用这个快捷入口：纯媒体控制器（无插件组件）时没有插件预留区，
+                            //       岛体几乎整片都是标题热区，右键会被整片吃掉、只剩最右侧一条窄边能开设置窗口。
+                            //       此时恢复默认交互 —— 右键直接打开设置窗口。
                             if (_media.IsActive && !Renderer.IsMediaExpanded && !Renderer.CompositeModeEnabled
+                                && Renderer.HasPluginRowContent
                                 && Renderer.HitMediaTitle(rx, ry - rtY))
                             {
                                 Renderer.IsMediaExpanded = true;

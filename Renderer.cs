@@ -480,6 +480,13 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 本帧插件行是否有可显示内容（预留宽度 &gt; 0）。
+        /// 返回 false 即「纯媒体控制器」形态：岛体右侧没有插件预留区，原生媒体内容铺满整条岛体。
+        /// 交互侧据此判定右键该走哪条路，见 NotchWindow 的 WM_RBUTTONDOWN。
+        /// </summary>
+        public static bool HasPluginRowContent => GetPluginRowReserve() > 0f;
+
+        /// <summary>
         /// 岛体宽度弹簧动画的**目标**宽度（由 NotchWindow 每帧写入）。
         /// 取值只用于把「插件预留区」按动画进度等比缩放，见 <see cref="GetScaledPluginReserve"/>。
         /// </summary>
