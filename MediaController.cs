@@ -15,6 +15,8 @@ namespace NotchPeninsula
         internal static bool IsMediaControlEnabled = true; // 媒体开关
         internal static bool IsLyricsEnabled = true;
         internal static bool IsKaraokeEnabled = true;
+        // 翻译歌词：开启后把当前句的译文作为第二行画在原文下方（仅在有译文时生效）
+        internal static bool IsTranslationEnabled = true;
         internal static float LyricDelayOffset = 0f;
         private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
         {
@@ -25,8 +27,14 @@ namespace NotchPeninsula
         // 声明一个容量为 1 的异步锁，控制网络请求只能单线进行
         private static readonly System.Threading.SemaphoreSlim _fetchLock = new(1, 1);
 
-        private (TimeSpan Time, string Text)[] _lyrics = Array.Empty<(TimeSpan, string)>();
+        private (TimeSpan Time, string Text, string Translation)[] _lyrics = Array.Empty<(TimeSpan, string, string)>();
+        // 当前时间轴里是否存在译文行（随 _lyrics 一起更新，避免每帧遍历数组）
+        private bool _lyricsHasTranslation;
         public string CurrentLyric { get; private set; } = "";
+        // 当前歌词行的译文（无译文时为空串）。渲染层据此在原文下方再画一行。
+        public string CurrentLyricTranslation { get; private set; } = "";
+        // 当前这首歌的时间轴里是否有译文：高度补偿只认它，避免逐句有无译文导致岛体忽高忽低
+        public bool HasLyricTranslation { get; private set; }
         public float CurrentLyricProgress { get; private set; } = 0f;
         private TimeSpan _lastSmtcPosition = TimeSpan.Zero;
         private DateTime _lastUpdateTime = DateTime.UtcNow;
@@ -405,8 +413,11 @@ namespace NotchPeninsula
 
             if (string.IsNullOrEmpty(title))
             {
-                _lyrics = Array.Empty<(TimeSpan, string)>();
+                _lyrics = Array.Empty<(TimeSpan, string, string)>();
+                _lyricsHasTranslation = false;
                 CurrentLyric = "";
+                CurrentLyricTranslation = "";
+                HasLyricTranslation = false;
                 return;
             }
 
@@ -447,8 +458,11 @@ namespace NotchPeninsula
 
             _lyricSlot = newSlot;
             _forceResync = true;
-            _lyrics = Array.Empty<(TimeSpan, string)>();
+            _lyrics = Array.Empty<(TimeSpan, string, string)>();
+            _lyricsHasTranslation = false;
             CurrentLyric = "";
+            CurrentLyricTranslation = "";
+            HasLyricTranslation = false;
             CurrentLyricProgress = 0f;
 
             // 等待获取通行证（防止多首歌同时修改 HttpClient 导致程序崩溃）
@@ -462,6 +476,8 @@ namespace NotchPeninsula
 
                 string query = Uri.EscapeDataString($"{title} {artist}");
                 string lrcText = "";
+                // 译文 LRC：与原文同一套时间戳，解析后按时间对齐成「原文行 → 译文」的映射
+                string transText = "";
                 string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
                 // ====== 引擎 1：QQ音乐 (优先) ======
@@ -505,6 +521,15 @@ namespace NotchPeninsula
                         if (lyricDoc.RootElement.TryGetProperty("lyric", out var lrcEl))
                         {
                             lrcText = lrcEl.GetString()?
+                                .Replace("&#10;", "\n").Replace("&#13;", "\r")
+                                .Replace("&#32;", " ").Replace("&#45;", "-")
+                                .Replace("&#40;", "(").Replace("&#41;", ")") ?? "";
+                        }
+
+                        // QQ 音乐把译文放在同一次响应的 trans 字段里（与 lyric 同格式、同时间戳）
+                        if (lyricDoc.RootElement.TryGetProperty("trans", out var transEl))
+                        {
+                            transText = transEl.GetString()?
                                 .Replace("&#10;", "\n").Replace("&#13;", "\r")
                                 .Replace("&#32;", " ").Replace("&#45;", "-")
                                 .Replace("&#40;", "(").Replace("&#41;", ")") ?? "";
@@ -569,6 +594,13 @@ namespace NotchPeninsula
                             {
                                 lrcText = lyricStr.GetString() ?? "";
                             }
+
+                            // 网易云译文：独立字段 tlyric，时间戳与原文一一对应
+                            if (lyricDoc.RootElement.TryGetProperty("tlyric", out var tl) &&
+                                tl.TryGetProperty("lyric", out var tlStr))
+                            {
+                                transText = tlStr.GetString() ?? "";
+                            }
                         }
                     }
                     catch (Exception ex) { Logger.Warn($"网易云引擎失败: {ex.Message}"); }
@@ -599,7 +631,9 @@ namespace NotchPeninsula
                 // ====== 极速解析时间轴 ======
                 if (!string.IsNullOrEmpty(lrcText))
                 {
-                    var lines = new List<(TimeSpan, string)>();
+                    // 译文先按时间戳建表，随后在解析原文时按同一时间戳贴上第二行
+                    var transMap = ParseLrcMap(transText);
+                    var lines = new List<(TimeSpan, string, string)>();
                     foreach (var line in lrcText.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                     {
                         if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
@@ -607,7 +641,11 @@ namespace NotchPeninsula
                             if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
                             {
                                 string text = line.Substring(idx + 1).Trim();
-                                if (!string.IsNullOrEmpty(text)) lines.Add((ts, text));
+                                if (!string.IsNullOrEmpty(text))
+                                {
+                                    string trans = transMap.TryGetValue(ts.Ticks, out var tv) ? tv : "";
+                                    lines.Add((ts, text, trans));
+                                }
                             }
                         }
                     }
@@ -617,6 +655,7 @@ namespace NotchPeninsula
                     if (IsLyricOwner(title, artist))
                     {
                         _lyrics = lines.ToArray();
+                        _lyricsHasTranslation = lines.Exists(l => !string.IsNullOrEmpty(l.Item3));
                     }
                 }
             }
@@ -625,6 +664,28 @@ namespace NotchPeninsula
                 // 必须释放锁，让下一首歌可以正常获取
                 _fetchLock.Release();
             }
+        }
+
+        // 把译文 LRC 解析成「时间戳(Ticks) → 译文」表，供原文解析时按时间对齐。
+        // 用的是和原文完全相同的解析口径（同一套时间格式），所以两边的时间戳能精确对上；
+        // 同一时间戳出现多行时后者覆盖前者，与「多时间标签展开」的语义保持一致。
+        private static Dictionary<long, string> ParseLrcMap(string lrc)
+        {
+            var map = new Dictionary<long, string>();
+            if (string.IsNullOrEmpty(lrc)) return map;
+
+            foreach (var line in lrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
+                {
+                    if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
+                    {
+                        string text = line.Substring(idx + 1).Trim();
+                        if (!string.IsNullOrEmpty(text)) map[ts.Ticks] = text;
+                    }
+                }
+            }
+            return map;
         }
 
         // 被底层渲染循环以 60FPS 极速调用，彻底无视流氓播放器的限制
@@ -640,16 +701,16 @@ namespace NotchPeninsula
             // 无会话：不显示歌词，也不保留时间轴
             if (_currentSession == null)
             {
-                CurrentLyric = "";
+                SetLyric("", "", 0f, false);
                 if (!_isDragging) { HasTimeline = false; Duration = TimeSpan.Zero; _timelinePos = TimeSpan.Zero; }
                 return;
             }
 
             // Just Solo LyricServer 直连歌词优先（仅通用模式下检测到 justsolo 会话时才会处于连接状态）
-            if (_justSoloLyric.TryGetCurrentLyric(LyricDelayOffset, out string soloText, out float soloProgress))
+            // 译文来自协议里的 translation 字段，由客户端负责上下两行分开画
+            if (_justSoloLyric.TryGetCurrentLyric(LyricDelayOffset, out string soloText, out string soloTrans, out float soloProgress))
             {
-                CurrentLyric = IsLyricsEnabled ? soloText : "";
-                CurrentLyricProgress = IsLyricsEnabled ? soloProgress : 0f;
+                SetLyric(soloText, soloTrans, soloProgress, _justSoloLyric.HasTranslation);
                 return;
             }
 
@@ -679,7 +740,7 @@ namespace NotchPeninsula
             // 但时间轴照常走 —— 只要 SMTC 给出进度就显示。
             if (IsNonLyricSession || _lyricSlot < 0)
             {
-                CurrentLyric = "";
+                SetLyric("", "", 0f, false);
                 AdvanceFreeTimeline(_smtcPos, dt);
                 _forceResync = false; // 无歌词槽位：强制对齐标记不适用，就地消费，避免每帧重复采样
                 return;
@@ -694,8 +755,7 @@ namespace NotchPeninsula
                 || _recentSongs[_lyricSlot].Artist != Artist
                 || _recentSongs[_lyricSlot].AppId != _currentAppId)
             {
-                CurrentLyric = "";
-                CurrentLyricProgress = 0f;
+                SetLyric("", "", 0f, false);
                 return;
             }
 
@@ -703,9 +763,10 @@ namespace NotchPeninsula
             AdvanceTimeline(_currentSession, HasTimeline, _smtcPos, dt, now);
 
             // 只有等时间轴正确走完后，如果还没歌词，我们再退出渲染拦截
-            if (_lyrics.Length == 0) { CurrentLyric = ""; return; }
+            if (_lyrics.Length == 0) { SetLyric("", "", 0f, false); return; }
 
             string found = "";
+            string foundTrans = "";
             float progress = 0f;
             TimeSpan compensatedPosition = _recentSongs[_lyricSlot].Position + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
             for (int i = _lyrics.Length - 1; i >= 0; i--)
@@ -713,6 +774,7 @@ namespace NotchPeninsula
                 if (compensatedPosition >= _lyrics[i].Time)
                 {
                     found = _lyrics[i].Text;
+                    foundTrans = _lyrics[i].Translation;
                     // 算出当前这句歌词的停留时长，并转换成 0.0 ~ 1.0 的进度
                     TimeSpan endTime = (i < _lyrics.Length - 1) ? _lyrics[i + 1].Time : _lyrics[i].Time + TimeSpan.FromSeconds(4);
                     double duration = (endTime - _lyrics[i].Time).TotalSeconds;
@@ -726,8 +788,28 @@ namespace NotchPeninsula
             }
 
             // 输出结果，供渲染层使用
-            CurrentLyric = IsLyricsEnabled ? found : "";
-            CurrentLyricProgress = IsLyricsEnabled ? progress : 0f;
+            SetLyric(found, foundTrans, progress, _lyricsHasTranslation);
+        }
+
+        /// <summary>
+        /// 原文 / 译文 / 进度三件套的唯一出口。原文与译文必须同生同灭 ——
+        /// 只清原文不清译文的话，渲染层会把上一句的译文贴到「歌手 - 歌名」下方接着显示。
+        /// </summary>
+        private void SetLyric(string text, string translation, float progress, bool hasTranslation)
+        {
+            if (!IsLyricsEnabled)
+            {
+                CurrentLyric = "";
+                CurrentLyricTranslation = "";
+                CurrentLyricProgress = 0f;
+                HasLyricTranslation = false;
+                return;
+            }
+
+            CurrentLyric = text;
+            CurrentLyricTranslation = translation;
+            CurrentLyricProgress = progress;
+            HasLyricTranslation = hasTranslation;
         }
 
         // 取一首歌的槽位（缓冲里没有就新建一个）。优先选空闲槽位，跳过当前歌词槽与后台仍在推算的槽位，
