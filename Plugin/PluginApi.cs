@@ -71,7 +71,14 @@ public interface IWidget
     /// <summary>null 表示无详情页（一个组件对应一个详情页）。</summary>
     IDetailPage? DetailPage { get; }
 
-    /// <summary>期望宽度（逻辑像素）。组合模式下主机逐块累加。</summary>
+    /// <summary>
+    /// <b>完整显示本组件内容所需的宽度</b>（逻辑像素）。
+    ///
+    /// 主机用它与本帧剩余空间比对：放得下就按这个宽度布局、内容完整显示；
+    /// 放不下则本帧<b>整个组件都不显示</b>（主机不会替你压缩、截断或加省略号）。
+    /// 所以请返回真实需求值——别为了「挤进去」少报，也别用岛体总长上限（800）去夹自己。
+    /// 组合模式下主机逐块累加。
+    /// </summary>
     float MeasureWidth(float availableHeight);
 
     /// <summary>绘制。rect 由主机布局后给出，坐标均为逻辑像素；frame 含主题 / 动画 / 频谱等每帧上下文。</summary>

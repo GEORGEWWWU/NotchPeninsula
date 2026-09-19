@@ -302,23 +302,85 @@ namespace NotchPeninsula
         private static float _compositeMediaRight = -1f;
         private static readonly List<Plugins.WidgetLayout.Slot> _pluginSlots = new(8);
 
-        // 🧩 插件行本帧是否显示：由 NotchWindow 每帧按「岛体总长上限」判定后写入。
-        //    媒体控制器开着且歌词很长时，原生内容会吃掉大半个岛，剩余宽度放不下插件行；
-        //    这种帧就整行隐藏（对所有插件一视同仁），插件既不绘制、也不留位、命中区同样为空。
-        //    默认 true —— 宿主还没跑到判定逻辑时（启动首帧等）插件照常显示。
-        private static volatile bool _pluginRowVisible = true;
+        // 🧩 插件行的宽度预算：本帧插件行最多能用多少宽度（含与原生内容之间的 16px 间距）。
+        //    由 NotchWindow 每帧按「岛体总长上限 − 原生内容本帧占用宽度」算出后写入；
+        //    组合模式由 GetCompositeWidth 内部按同一规则设置（那里才知道原生模块总宽）。
+        //    预算内放不下的组件本帧整体不显示 —— 不压缩、不截断，杜绝文字被省略号砍掉半截。
+        //    默认 +∞：宿主还没跑到判定逻辑时（启动首帧等），插件照常按自身所需宽度显示。
+        private static float _pluginRowBudget = float.PositiveInfinity;
+        // 预算判定结果，与 _pluginWidths 同序、同版本：true = 本帧给了这个组件它要的完整宽度。
+        private static bool[]? _pluginVisible;
+        // 本帧实际放行的插件行总宽（含与原生内容的 16px 间距）；0 = 一个组件都没放行。
+        private static float _pluginRowReserve;
+
+        /// <summary>插件行组件间距，也是插件行与原生内容之间的间距（与 Draw 里 <c>right + 16f</c> 对齐）。</summary>
+        private const float PLUGIN_GAP = 16f;
 
         /// <summary>
-        /// 设置本帧插件行是否显示。
+        /// 设置本帧插件行的宽度预算（含与原生内容之间的 16px 间距）。
         ///
-        /// 判定权在 NotchWindow：它知道原生内容（媒体控制器 / 长歌词自适应 / 硬件占用）本帧要多宽，
-        /// 当「原生宽度 + 插件行宽度 &gt; <see cref="MAX_ISLAND_WIDTH"/>」时，就说明剩余长度放不下插件，
-        /// 此时整行隐藏所有插件，原生内容照常显示，岛体也不会被撑过上限。
+        /// 判定权在 NotchWindow：只有它知道原生内容（媒体控制器 / 长歌词自适应 / 硬件占用）
+        /// 本帧要占多宽，用岛体总长上限减掉之后，剩下的才是插件行能用的空间。
         ///
-        /// 只影响「插件行独立贴在原生内容右侧」的非组合模式；组合模式下插件已并入内容顺序表混排，
-        /// 宽度统一由 <c>GetCompositeWidth</c> 计算，不受本开关影响。
+        /// <para>
+        /// 组件宽度是各自声明的（<see cref="Plugins.IWidget.MeasureWidth"/> 的语义 =
+        /// <b>完整显示内容所需的宽度</b>）。本方法按注册顺序贪心分配：
+        /// 所需宽度能完整落进剩余预算的组件才显示，装不下的组件本帧整体不显示 ——
+        /// 宿主绝不替它压缩或截断（那才是「内容显示不全」）。
+        /// 于是每个组件要么完整显示、要么完全不显示，不存在半截内容。
+        /// </para>
+        ///
+        /// 传 0 即整行隐藏（通知 / 剪贴板 / 详情页接管岛体时）。
+        /// 只影响「插件行贴在原生内容右侧」的非组合模式；组合模式由 <c>GetCompositeWidth</c>
+        /// 内部按同一预算规则处理，不需要外部调用。
         /// </summary>
-        public static void SetPluginRowVisible(bool visible) => _pluginRowVisible = visible;
+        public static void SetPluginRowBudget(float availableWidth)
+        {
+            lock (_pluginSnapshotLock)
+            {
+                _pluginRowBudget = float.IsNaN(availableWidth) || availableWidth < 0f ? 0f : availableWidth;
+            }
+            RefreshPluginWidgets(); // 版本变化时内部会重算一次；没变化则由下面这行重算
+            lock (_pluginSnapshotLock) RecomputePluginVisibility();
+        }
+
+        /// <summary>
+        /// <b>兼容旧调用</b>：等价于「给整行插件 +∞ 宽度」或「一点宽度都不给」。
+        ///
+        /// 判定逻辑在 <see cref="SetPluginRowBudget"/> 改成了按「组件所需宽度能否完整落进剩余空间」
+        /// 逐个放行，本方法只是给旧的布尔口径留一个等价出口，宿主自身已不再调用。
+        /// </summary>
+        public static void SetPluginRowVisible(bool visible)
+            => SetPluginRowBudget(visible ? float.PositiveInfinity : 0f);
+
+        /// <summary>
+        /// 按当前预算重算每个组件的放行情况（调用方须持有 <see cref="_pluginSnapshotLock"/>）。
+        ///
+        /// 贪心：按注册顺序逐个体判断「已用宽度 + 16px 间距 + 它要的宽度」是否还在预算内；
+        /// 放不下就跳过它（不占宽度、不绘制、无命中区），后面的组件仍可继续尝试。
+        /// 稳态（预算与内容都不变）下只在「值真的变了」时才写，零分配、零无效写入。
+        /// </summary>
+        private static void RecomputePluginVisibility()
+        {
+            var widgets = _pluginWidgets;
+            var widths = _pluginWidths;
+            var broken = _pluginBroken;
+            var visible = _pluginVisible;
+            if (widgets == null || widths == null || broken == null || visible == null) return;
+            if (visible.Length != widgets.Length || widths.Length != widgets.Length || broken.Length != widgets.Length) return;
+
+            float budget = _pluginRowBudget;
+            float used = 0f;
+
+            for (int i = 0; i < widgets.Length; i++)
+            {
+                bool ok = !broken[i] && widths[i] > 0f && used + PLUGIN_GAP + widths[i] <= budget;
+                if (ok) used += PLUGIN_GAP + widths[i];
+                if (visible[i] != ok) visible[i] = ok; // 只在变化时写：bool 写入原子，渲染线程不会看到中间态
+            }
+
+            if (_pluginRowReserve != used) _pluginRowReserve = used;
+        }
         private static readonly object _pluginSlotLock = new();
         // 组件快照/测量的锁：渲染线程与 UI 线程（鼠标命中路径会查询预留宽度）都可能访问
         private static readonly object _pluginSnapshotLock = new();
@@ -335,15 +397,17 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 插件组件行独立占据岛体最右侧所需的预留宽度（含与原生内容的 16px 间距）。
-        /// 返回 0 表示当前没有可显示的插件组件。
-        /// 原生内容据此内收右边界，因此插件显示与否、排序如何，都完全不影响任何原生功能；
-        /// 对组合模式同样适用：时间日期/硬件占用/媒体控制器先排完，插件一律跟在最后。
+        /// 返回 0 表示本帧没有任何组件被放行（没有可显示的插件，或预算放不下任何一个）。
+        ///
+        /// 放行结果由 <see cref="SetPluginRowBudget"/> 按「组件声明的所需宽度能否完整落进剩余空间」判定：
+        /// 装不下的组件直接不出现在这一帧，而不是被压缩显示。
+        ///
+        /// 原生内容据此内收右边界，因此插件显示与否、排序如何，都完全不影响任何原生功能。
         /// </summary>
         public static float GetPluginRowReserve()
         {
             if (!RefreshPluginWidgets()) return 0f;
-            float rowW = SumPluginRowWidth(null);
-            return rowW > 0f ? rowW + 16f : 0f;
+            return _pluginRowReserve;
         }
 
         /// <summary>把岛内逻辑坐标 (x,y) 的左键事件分发给插件组件；命中并处理返回 true。</summary>
@@ -444,6 +508,7 @@ namespace NotchPeninsula
                 _pluginWidths = _pluginWidgets.Length > 0 ? new float[_pluginWidgets.Length] : Array.Empty<float>();
                 _pluginBroken = _pluginWidgets.Length > 0 ? new bool[_pluginWidgets.Length] : Array.Empty<bool>();
                 _pluginDrawn = _pluginWidgets.Length > 0 ? new bool[_pluginWidgets.Length] : Array.Empty<bool>();
+                _pluginVisible = _pluginWidgets.Length > 0 ? new bool[_pluginWidgets.Length] : Array.Empty<bool>();
 
                 // 宽度与快照同版本一起算好：稳态 60FPS 下不再触碰插件代码，保持零额外开销
                 for (int i = 0; i < _pluginWidgets.Length; i++)
@@ -453,12 +518,15 @@ namespace NotchPeninsula
                     catch (Exception ex) { MarkPluginBroken(i, ex); }
                     _pluginWidths[i] = w;
                 }
+                // 用新宽度按当前预算重算放行情况（新组件默认不显示，必须立刻算一次）
+                RecomputePluginVisibility();
                 return _pluginWidgets.Length > 0;
             }
         }
 
         /// <summary>
         /// 按缓存宽度求和（组件间 16px 间距）。pluginIdFilter 不为 null 时只统计该插件的组件。
+        /// 只累计「本帧被预算放行」的组件 —— 与 Draw 的过滤规则严格一致，宽度与绘制才不会脱节。
         /// 返回 0 表示该范围内没有可显示的组件。
         /// </summary>
         private static float SumPluginRowWidth(string? pluginIdFilter)
@@ -466,6 +534,7 @@ namespace NotchPeninsula
             var widgets = _pluginWidgets;
             var widths = _pluginWidths;
             var broken = _pluginBroken;
+            var visible = _pluginVisible;
             if (widgets == null || widths == null || broken == null) return 0f;
             if (widths.Length != widgets.Length || broken.Length != widgets.Length) return 0f;
 
@@ -474,6 +543,7 @@ namespace NotchPeninsula
             for (int i = 0; i < widgets.Length; i++)
             {
                 if (broken[i] || widths[i] <= 0f) continue;
+                if (visible == null || i >= visible.Length || !visible[i]) continue; // 预算没放行 → 与绘制一起缺席
                 if (pluginIdFilter != null)
                 {
                     if (!host.TryGetWidgetPlugin(widgets[i].Id, out var pid)
@@ -493,6 +563,7 @@ namespace NotchPeninsula
             var widgets = _pluginWidgets;
             var widths = _pluginWidths;
             var broken = _pluginBroken;
+            var visible = _pluginVisible;
             if (widgets == null || widths == null || broken == null) return 0f;
             if (widths.Length != widgets.Length || broken.Length != widgets.Length) return 0f;
 
@@ -501,6 +572,7 @@ namespace NotchPeninsula
             for (int i = 0; i < widgets.Length; i++)
             {
                 if (broken[i] || widths[i] <= 0f) continue;
+                if (visible == null || i >= visible.Length || !visible[i]) continue; // 预算没放行 → 与绘制一起缺席
                 bool inOrder = false;
                 if (host.TryGetWidgetPlugin(widgets[i].Id, out var pid) && pid != null)
                     inOrder = orderSet.Contains(pid);
@@ -514,6 +586,7 @@ namespace NotchPeninsula
         /// 绘制插件组件并缓存命中矩形（供鼠标分发复用）。
         /// pluginIdFilter 为 null 表示绘制「本帧尚未画过」的全部组件（非组合模式的整行绘制）；
         /// 不为 null 时只画属于该插件的组件 —— 组合模式据此把插件摆到顺序表指定的位置。
+        /// 两种模式都只画 <see cref="SetPluginRowBudget"/> 放行的组件：没放行的既不绘制也不登记命中区。
         /// 返回推进后的游标 X（下一个内容块的起点，已含 16px 间距）。
         /// mouseX/mouseY 为扣除 topY 平移后的岛内逻辑坐标。
         /// </summary>
@@ -524,6 +597,7 @@ namespace NotchPeninsula
             float[] widths;
             bool[] broken;
             bool[]? drawn;
+            bool[]? visible;
             // 在同一把锁内取齐快照，避免 UI 线程正好重建快照时读到长度不一致的数组
             lock (_pluginSnapshotLock)
             {
@@ -532,6 +606,7 @@ namespace NotchPeninsula
                 widths = _pluginWidths;
                 broken = _pluginBroken;
                 drawn = _pluginDrawn;
+                visible = _pluginVisible;
                 if (widths.Length != widgets.Length || broken.Length != widgets.Length) return startX;
             }
 
@@ -547,6 +622,8 @@ namespace NotchPeninsula
                     if (drawn[i]) continue;
                     float w = widths[i];
                     if (broken[i] || w <= 0f) continue;
+                    // 预算没放行（所需宽度装不进剩余空间）→ 本帧整体不画它，也不登记命中区
+                    if (visible == null || i >= visible.Length || !visible[i]) continue;
 
                     if (pluginIdFilter != null)
                     {
@@ -2125,6 +2202,10 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 组合模式总宽：按「内容顺序表」把原生模块与插件组件依次累加，与 Renderer.Draw 的混排保持一致。
+        ///
+        /// 插件组件不是无条件计入的：先单独量出一整行「原生模块」的总宽，据此定出插件行的宽度预算
+        /// （岛体总长上限 − 原生总宽），再按同一预算规则决定哪些组件能完整显示。
+        /// 放不下的组件既不计宽也不绘制 —— 与「内容显示不全就不显示」保持一致。
         /// </summary>
         public static float GetCompositeWidth(MediaController media)
         {
@@ -2132,6 +2213,27 @@ namespace NotchPeninsula
 
             RefreshPluginWidgets(); // 插件宽度需与快照同版本，才能算准总宽
 
+            // 第一趟：只量原生模块，定出插件行还能用多少宽度
+            SetPluginRowBudget(MAX_ISLAND_WIDTH - MeasureCompositeWidth(media, includePlugins: false));
+
+            // 第二趟：含插件的总宽（放行结果已写进 _pluginVisible，SumPluginRowWidth 会按它过滤）
+            return Math.Clamp(MeasureCompositeWidth(media, includePlugins: true), 60f, MAX_ISLAND_WIDTH);
+        }
+
+        /// <summary>
+        /// 组合模式下「一整行原生模块」的总宽（不含任何插件组件）。
+        /// 宿主用它给插件行定宽度预算：岛体总长上限 − 这个值 = 插件行可用的空间。
+        /// 只是一串宽度相加，没有副作用，可以安全地在定预算时先调一次。
+        /// </summary>
+        public static float GetCompositeNativeWidth(MediaController media)
+            => CompositeModeEnabled ? MeasureCompositeWidth(media, includePlugins: false) : 0f;
+
+        /// <summary>
+        /// 组合模式宽度累加本体。<paramref name="includePlugins"/> 为 false 时跳过插件组件组，
+        /// 专门用来量「原生模块总宽」，好给插件行定预算。
+        /// </summary>
+        private static float MeasureCompositeWidth(MediaController media, bool includePlugins)
+        {
             float width = 16f; // 初始只有左边距 16px
             bool hasPrev = false;
 
@@ -2144,8 +2246,9 @@ namespace NotchPeninsula
             }
 
             var order = Plugins.PluginManager.Instance.Host.ContentOrder;
-            // 顺序表的插件 ID 集合，供结尾兜底去重（只补「没进表」的插件，已入表的绝不重复计宽）
-            var orderSet = new HashSet<string>(order, StringComparer.OrdinalIgnoreCase);
+            // 顺序表的插件 ID 集合，供结尾兜底去重（只补「没进表」的插件，已入表的绝不重复计宽）；
+            // 第一趟（只量原生）用不到它，直接跳过分配
+            var orderSet = includePlugins ? new HashSet<string>(order, StringComparer.OrdinalIgnoreCase) : null;
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;
 
             for (int i = 0; i < order.Count; i++)
@@ -2166,9 +2269,9 @@ namespace NotchPeninsula
                     mediaHandled = true;
                     if (CompShowMedia && media != null && media.IsActive) AddModule(MeasureMediaBlockWidth(media));
                 }
-                else
+                else if (includePlugins)
                 {
-                    AddModule(SumPluginRowWidth(item)); // 插件组件组
+                    AddModule(SumPluginRowWidth(item)); // 插件组件组（只累计本帧被预算放行的组件）
                 }
             }
 
@@ -2177,11 +2280,11 @@ namespace NotchPeninsula
             if (!hardwareHandled && CompShowHardware) AddModule(MeasureHardwareBlockWidth());
             if (!mediaHandled && CompShowMedia && media != null && media.IsActive) AddModule(MeasureMediaBlockWidth(media));
             // 插件兜底：只补「不在顺序表里」的插件宽度（与 Draw 的未绘制兜底一致），已入表的已被主循环累计，绝不重复
-            AddModule(SumPluginRowWidthNotIn(orderSet));
+            if (includePlugins) AddModule(SumPluginRowWidthNotIn(orderSet!));
 
             width += 16f; // 右侧边距与 Draw 中每模块尾距(16px)对齐，避免最后一个模块被裁切 6px
 
-            return Math.Clamp(width, 60f, 900f);
+            return width;
         }
     }
 }

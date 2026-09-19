@@ -605,27 +605,28 @@ namespace NotchPeninsula
                 }
                 nativeWidth = Math.Min(nativeWidth, Renderer.MAX_ISLAND_WIDTH); // 岛体总长上限，窄屏也不会被撑破
 
-                // 🧩 插件行取舍：受「岛体总长上限」（MAX_ISLAND_WIDTH，与消息弹窗最大长度一致）约束。
-                //    原生内容（尤其是开着媒体控制 + 长歌词自适应）吃掉太多宽度、剩余放不下插件行时，
-                //    本帧整行隐藏所有插件 —— 原生内容照常显示，岛体也不会被撑过上限。
-                //    隐藏走的是「预留宽度归零」这条路：渲染侧既不绘制插件行、也不留位、命中区同样为空。
+                // 🧩 插件行取舍：按「组件声明的所需宽度能否完整落进剩余空间」判定。
+                //    每个组件通过 IWidget.MeasureWidth 声明「完整显示我的内容需要多宽」，
+                //    宿主用「岛体总长上限 − 原生内容本帧占用宽度」得出插件行预算，逐个贪心放行：
+                //    装得下的组件完整显示，装不下的组件本帧整体不显示 —— 宿主绝不替它压缩或截断，
+                //    所以不会出现「文字被省略号砍掉半截」这种显示不全的情况。
+                //    原生内容（尤其是开着媒体控制 + 长歌词自适应）一样照常显示，岛体也不会被撑过上限。
                 float pluginReserve = 0f;
                 if (Renderer.CompositeModeEnabled)
                 {
-                    // 组合模式：插件已并入「内容顺序表」与原生模块混排，宽度统一由 GetCompositeWidth 计算
-                    Renderer.SetPluginRowVisible(true);
+                    // 组合模式：插件已并入「内容顺序表」与原生模块混排。预算必须知道「一整行原生模块」的总宽，
+                    // 所以先量原生（不含插件）、定好预算，随后算含插件的总宽时就会按它放行。
+                    Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - Renderer.GetCompositeNativeWidth(_media));
                 }
                 else if (!isToastActive && !isClipboardActive && !detailOpen)
                 {
-                    float pluginRowWidth = Renderer.GetPluginRowReserve();
-                    bool fits = nativeWidth + pluginRowWidth <= Renderer.MAX_ISLAND_WIDTH;
-                    Renderer.SetPluginRowVisible(fits);
-                    pluginReserve = fits ? pluginRowWidth : 0f;
+                    Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - nativeWidth);
+                    pluginReserve = Renderer.GetPluginRowReserve();
                 }
                 else
                 {
-                    // 通知 / 剪贴板 / 详情页：整块岛体被接管，插件行本帧不参与
-                    Renderer.SetPluginRowVisible(false);
+                    // 通知 / 剪贴板 / 详情页：整块岛体被接管，本帧不给插件行任何宽度
+                    Renderer.SetPluginRowBudget(0f);
                 }
 
                 float expectedTargetWidth;
