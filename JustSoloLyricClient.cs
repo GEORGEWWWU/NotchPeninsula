@@ -23,6 +23,7 @@ namespace NotchPeninsula
 
         private readonly object _lock = new();
         private LyricLine[] _lyrics = Array.Empty<LyricLine>();
+        private bool _hasTranslation;
         private int _position;
         private DateTime _positionStamp = DateTime.UtcNow;
         private bool _isPlaying;
@@ -36,6 +37,15 @@ namespace NotchPeninsula
 
         public bool IsRunning => _running;
         public bool IsConnected => _connected;
+
+        /// <summary>
+        /// 当前这首歌的时间轴里是否存在翻译行。判定挂在「整首歌」而不是「当前这一句」上：
+        /// 只有逐句判定的话，没有翻译的句子会让岛体高度一会儿高一会儿低，看起来像在抽搐。
+        /// </summary>
+        public bool HasTranslation
+        {
+            get { lock (_lock) return _hasTranslation; }
+        }
 
         /// <summary>开始连接（幂等）。</summary>
         public void Start()
@@ -72,10 +82,12 @@ namespace NotchPeninsula
         /// <summary>
         /// 读取当前应显示的歌词行。返回 false 表示 LyricServer 不可用，调用方应回退到其他歌词来源。
         /// 已连接但无歌词（纯音乐）时返回 true 且 text 为空。
+        /// <paramref name="translation"/> 是协议里同一时间戳的第二行（可选），无译文时为空串。
         /// </summary>
-        public bool TryGetCurrentLyric(float userOffsetSeconds, out string text, out float progress)
+        public bool TryGetCurrentLyric(float userOffsetSeconds, out string text, out string translation, out float progress)
         {
             text = "";
+            translation = "";
             progress = 0f;
 
             LyricLine[] lyrics;
@@ -108,7 +120,16 @@ namespace NotchPeninsula
             if (ans < 0) return true;
 
             var line = lyrics[ans];
-            text = string.IsNullOrEmpty(line.Text) ? line.Translation : line.Text;
+            text = line.Text;
+            translation = line.Translation;
+
+            // 只有翻译、没有原文的行（典型的「间奏行只给了译文」）：把翻译当正文显示，
+            // 否则同一句话会被上下画两遍。
+            if (string.IsNullOrEmpty(text))
+            {
+                text = translation;
+                translation = "";
+            }
 
             double endMs = ans < lyrics.Length - 1 ? lyrics[ans + 1].Time : line.Time + 4000d;
             double duration = endMs - line.Time;
@@ -142,6 +163,7 @@ namespace NotchPeninsula
             lock (_lock)
             {
                 _lyrics = Array.Empty<LyricLine>();
+                _hasTranslation = false;
                 _position = 0;
                 _positionStamp = DateTime.UtcNow;
                 _isPlaying = false;
@@ -276,11 +298,16 @@ namespace NotchPeninsula
         {
             if (!root.TryGetProperty("lyrics", out var arr) || arr.ValueKind != JsonValueKind.Array)
             {
-                lock (_lock) _lyrics = Array.Empty<LyricLine>();
+                lock (_lock)
+                {
+                    _lyrics = Array.Empty<LyricLine>();
+                    _hasTranslation = false;
+                }
                 return;
             }
 
             var lines = new List<LyricLine>(arr.GetArrayLength());
+            bool hasTranslation = false;
             foreach (var item in arr.EnumerateArray())
             {
                 if (item.ValueKind != JsonValueKind.Object) continue;
@@ -288,10 +315,37 @@ namespace NotchPeninsula
                 int time = item.TryGetProperty("time", out var t) && t.TryGetInt32(out int tv) ? tv : 0;
                 string text = item.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
                 string translation = item.TryGetProperty("translation", out var tr) ? tr.GetString() ?? "" : "";
+                SplitMergedLine(ref text, ref translation);
+                if (!string.IsNullOrEmpty(translation)) hasTranslation = true;
                 lines.Add(new LyricLine(time, text, translation));
             }
 
-            lock (_lock) _lyrics = lines.ToArray();
+            lock (_lock)
+            {
+                _lyrics = lines.ToArray();
+                _hasTranslation = hasTranslation;
+            }
+        }
+
+        // 同一时间戳的多行歌词，LyricServer 有两种下发形态：
+        //   ① 第二行被判定为译文 → 单独放进 translation 字段（协议文档里的标准形态）；
+        //   ② 判定不出译文（中日以外的同语种对照、粤语夹普通话等）→ 两行合并进 text，用换行符分隔。
+        // 形态 ② 若照原样画出来，换行符会在 Skia 里变成一个「豆腐块」乱码，两行也挤在同一行上。
+        // 这里在加载时就地拆开：第一行仍是原文，其余行合并为一句话当译文 —— 之后渲染层只管两行。
+        private static readonly char[] MergedLineSeparators = { '\n', '\r', '\u2028', '\u2029', '\u0085', '\u000B', '\u000C' };
+
+        private static void SplitMergedLine(ref string text, ref string translation)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            if (text.IndexOfAny(MergedLineSeparators) < 0) return;
+
+            var parts = text.Split(MergedLineSeparators, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2) return;
+
+            text = parts[0].Trim();
+            // 已经有 translation 字段时以它为准，合并进来的第二行直接丢掉，避免同一句译文重复
+            if (string.IsNullOrEmpty(translation))
+                translation = string.Join(" ", parts.Skip(1)).Trim();
         }
 
         private void ApplySpectrum(JsonElement root)

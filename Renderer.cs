@@ -11,7 +11,7 @@ namespace NotchPeninsula
         private static volatile float _standbyWidth = 130f;
         private static volatile float _baseHeight = 34f;
         private static volatile float _mediaWidth = 250f;
-        private static volatile float _mediaHeight = 35f;
+        private static volatile float _mediaHeight = 40f;
         private static volatile float _toastWidth = 260f;
         private static volatile float _toastHeight = 55f;
         private static volatile float _globalDpi = 1.0f;
@@ -254,6 +254,30 @@ namespace NotchPeninsula
 
         public static bool HitTimeline(float x, float y)
             => _tlBarX2 > _tlBarX1 && x >= _tlBarX1 - 8f && x <= _tlBarX2 + 8f && Math.Abs(y - _tlBarY) <= 13f;
+
+        // ==================== 🎵 歌词翻译（上下两行） ====================
+        // 译文画在原文正下方，视觉上「上下分开」：译文沿用原文那支画笔，只把颜色调成次级灰、
+        // 再用画布缩放做小一号 —— 共用同一套字体 run 缓存，不额外占缓存槽，也不动 TextSize。
+        // 注意：两行**不改变岛体高度**，是在原高度里把两条线各自上下让开半格挤出来的
+        // （见 DrawLyricLine）：岛体尺寸恒定，歌词有没有译文都不会弹高弹低。
+        // 间距按默认媒体高度 40px 调过：两行基线相距 15px 时，整块占用约 y=4.4→36，
+        // 中文大字的上下都不打架，也不贴边；高度调小时它还是居中的，只是余量变小。
+        private const float LYRIC_TRANS_LINE_STEP = 15f;  // 原文与译文两条基线的间距
+        private const float LYRIC_TRANS_SCALE = 0.92f;    // 译文视觉缩放：12.5px → 约 11.5px（略小于原文，保持主次）
+
+        /// <summary>
+        /// 本帧是否要把译文作为第二行画出来：开关开启 + 正在显示歌词 + 这句确实有译文。
+        /// 三者缺一不可 —— 否则会把译文贴到「歌手 - 歌名」下面。
+        /// </summary>
+        public static bool IsTranslationLineVisible(MediaController? media)
+            => media != null
+               && MediaController.IsTranslationEnabled
+               && !string.IsNullOrEmpty(media.CurrentLyric)
+               && !string.IsNullOrEmpty(media.CurrentLyricTranslation);
+
+        /// <summary>译文行的排版宽度（已经折算过视觉缩放），供岛体自适应宽度使用。</summary>
+        public static float MeasureLyricTranslationWidth(string text)
+            => string.IsNullOrEmpty(text) ? 0f : MeasureCurrentLyricWidth(text) * LYRIC_TRANS_SCALE;
 
         // ==================== 🎵 折叠态媒体标题区（右键展开媒体控制） ====================
         // 与时间轴同一套「真的画了才登记、帧首统一作废」的做法：折叠布局每帧画出歌名/歌手/歌词文本时才登记命中区，
@@ -1110,6 +1134,8 @@ namespace NotchPeninsula
         // 歌词动画专属独立变量
         private static string _lastLyric = "";
         private static string _prevLyric = ""; // 保存上一句歌词
+        private static string _lastLyricTrans = ""; // 当前句的译文（第二行），无译文时为空
+        private static string _prevLyricTrans = ""; // 叠化淡出层的译文，与 _prevLyric 同生同灭
         private static float _lyricAnimProgress = 1f; // 动画进度 0~1
         private static DateTime _lyricChangeTime; // 动画起始时间
         // 待机时间显示专用画笔
@@ -1509,12 +1535,13 @@ namespace NotchPeninsula
                 // ---------------- [ 媒体控制与待机状态 ] ----------------
                 if (media.IsActive)
                 {
-                    if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist || _lastLyric != media.CurrentLyric)
+                    string liveTrans = media.CurrentLyricTranslation ?? "";
+                    if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist || _lastLyric != media.CurrentLyric || _lastLyricTrans != liveTrans)
                     {
                         // 换歌：整块歌词状态强制重载。_prevLyric 是叠化动画的「淡出层」，
                         // 不清掉的话上一首的最后一句会被带到新歌的第一帧上 —— 切歌残留的视觉来源。
                         bool songChanged = _lastMediaTitle != media.Title || _lastMediaArtist != media.Artist;
-                        if (songChanged) _prevLyric = "";
+                        if (songChanged) { _prevLyric = ""; _prevLyricTrans = ""; }
 
                         _lastMediaTitle = media.Title ?? "";
                         _lastMediaArtist = media.Artist ?? "";
@@ -1523,9 +1550,17 @@ namespace NotchPeninsula
                         if (_lastLyric != media.CurrentLyric)
                         {
                             _prevLyric = songChanged ? "" : _lastLyric;
+                            _prevLyricTrans = songChanged ? "" : _lastLyricTrans;
                             _lastLyric = media.CurrentLyric ?? "";
+                            _lastLyricTrans = liveTrans;
                             _lyricAnimProgress = 0f;
                             _lyricChangeTime = DateTime.Now;
+                        }
+                        else
+                        {
+                            // 原文没变、只有译文姗姗来迟（异步抓到的翻译 LRC）：直接换上，不触发叠化，
+                            // 否则整行会为了一个「补上的小字」白抖 350ms。
+                            _lastLyricTrans = liveTrans;
                         }
 
                         if (!string.IsNullOrEmpty(_lastLyric))
@@ -1677,13 +1712,13 @@ namespace NotchPeninsula
                         {
                             float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
                             if (!string.IsNullOrEmpty(_prevLyric))
-                                DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
-                            DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                                DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                            DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
                             _textPaint.Color = _currentTextColor.WithAlpha(alpha);
                         }
                         else
                         {
-                            DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+                            DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                         }
 
                         // 组合模式媒体控件：一律以「内容末端 + 10px 边距」为锚点
@@ -1790,6 +1825,8 @@ namespace NotchPeninsula
                             _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
                             _bodyPaint.TextSize = 12.5f;
                             string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
+                            // 译文只在「下方那行确实是歌词」时才跟着画（显示的是歌手名时不能贴译文）
+                            string displaySubTrans = string.IsNullOrEmpty(_lastLyric) ? "" : _lastLyricTrans;
 
                             // 展开模式下的平滑叠化渲染 (带卡拉OK)
                             bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
@@ -1799,15 +1836,15 @@ namespace NotchPeninsula
                                 if (!string.IsNullOrEmpty(_prevLyric))
                                 {
                                     // 旧歌词淡出时进度直接锁定 100% (1f)
-                                    DrawKaraoke(canvas, _prevLyric, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                                    DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
                                 }
                                 // 新歌词套用当前进度
-                                DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
                                 _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
                             }
                             else
                             {
-                                DrawKaraoke(canvas, displaySub, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+                                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                             }
 
                             // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
@@ -1877,15 +1914,15 @@ namespace NotchPeninsula
 
                                 if (!string.IsNullOrEmpty(_prevLyric))
                                 {
-                                    DrawKaraoke(canvas, _prevLyric, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                                    DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
                                 }
 
-                                DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                                DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
                                 _textPaint.Color = _currentTextColor.WithAlpha(alpha);
                             }
                             else
                             {
-                                DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+                                DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                             }
 
                             // 🎵 折叠态标题热区（右键展开媒体控制面板，见 NotchWindow 的 WM_RBUTTONDOWN）：
@@ -2333,6 +2370,36 @@ namespace NotchPeninsula
             paint.Color = paint.Color.WithAlpha(targetAlpha);
         }
 
+        /// <summary>
+        /// 画一句歌词（含可选的译文第二行）。
+        ///
+        /// <paramref name="y"/> 传的是「整块文字（原文 + 译文）的竖向中心基线」：没有译文时就是原文基线，
+        /// 与改造前的行为完全一致；有译文时原文上移半格、译文下移半格，两行以原来的基线为轴心上下分开。
+        /// 译文复用调用方那支画笔（字体 run 缓存与原文共用，不额外占缓存槽），
+        /// 颜色改成次级灰、字号交给画布缩放 —— 直接改 TextSize 会让缓存里的宽度度量失效。
+        /// </summary>
+        private static void DrawLyricLine(SKCanvas canvas, string text, string translation, float x, float y,
+            SKPaint paint, byte targetAlpha, float progress, bool isLyric)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            bool twoLines = isLyric && !string.IsNullOrEmpty(translation) && MediaController.IsTranslationEnabled;
+            float mainY = twoLines ? y - LYRIC_TRANS_LINE_STEP * 0.5f : y;
+            DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
+
+            if (!twoLines) return;
+
+            byte transAlpha = (byte)(targetAlpha * 0.88f);
+            var savedColor = paint.Color;
+            paint.Color = _currentSubTextColor.WithAlpha(transAlpha);
+            canvas.Save();
+            canvas.Translate(x, y + LYRIC_TRANS_LINE_STEP * 0.5f);
+            canvas.Scale(LYRIC_TRANS_SCALE, LYRIC_TRANS_SCALE);
+            DrawKaraoke(canvas, translation, 0f, 0f, paint, transAlpha, 1f, false);
+            canvas.Restore();
+            paint.Color = savedColor;
+        }
+
         /// <summary>硬件占用模块在组合模式下的占宽（CPU 组 + 16px + RAM 组）。</summary>
         private static float MeasureHardwareBlockWidth()
         {
@@ -2361,6 +2428,10 @@ namespace NotchPeninsula
                 : (string.IsNullOrEmpty(media?.Artist)
                     ? _textPaint.MeasureText(media?.Title)
                     : _textPaint.MeasureText(media!.Artist) + _textPaint.MeasureText(media.Title) + 15f);
+
+            // 译文第二行若更宽，按它计宽（与折叠态的自适应宽度口径一致）
+            if (IsTranslationLineVisible(media))
+                textWidth = Math.Max(textWidth, _textPaint.MeasureText(media!.CurrentLyricTranslation) * LYRIC_TRANS_SCALE);
 
             float thumbW = media?.Thumbnail != null ? 32f : 0f;
             float full = thumbW + textWidth + 12f + 21.2f;

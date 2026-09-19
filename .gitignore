@@ -6,5 +6,5 @@
 bin/
 obj/
 publish/
-.workbuddy-ai
-.workbuddy-ai/
+.workbuddy
+.workbuddy/

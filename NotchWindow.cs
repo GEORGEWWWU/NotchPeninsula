@@ -617,6 +617,10 @@ namespace NotchPeninsula
                             ? Renderer.MeasureCurrentLyricWidth(_media.Title)
                             : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
 
+                    // 🎵 译文第二行：文字区宽度要容得下更宽的那一行，否则长译文会被遮罩截掉半句
+                    if (Renderer.IsTranslationLineVisible(_media))
+                        textWidth = Math.Max(textWidth, Renderer.MeasureLyricTranslationWidth(_media.CurrentLyricTranslation));
+
                     // 🎵 文本区长度封顶（MEDIA_TEXT_MAX_WIDTH）：长标题 / 长歌词不再把岛体无限撑宽，
                     //    否则右侧的律动频谱与播放按钮会被顶到很偏的位置，插件行也彻底没余量。
                     //    超出部分由渲染侧既有的文字遮罩做渐隐截断，视觉上是自然淡出而不是硬切。
