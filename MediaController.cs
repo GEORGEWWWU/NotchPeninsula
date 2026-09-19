@@ -366,7 +366,7 @@ namespace NotchPeninsula
         // 抽成纯函数既让扫描循环极简，也让优先级规则能脱离 WinRT 做无头验证。
         private static int SessionRank(string id)
         {
-            // 抖音：全局屏蔽，任何平台模式、任何匹配方式下都不接管它（justsolo 例外，见 IsGloballyBlockedApp）
+            // 全局屏蔽名单（抖音、微信视频号）：任何平台模式、任何匹配方式下都不接管它（justsolo 例外，见 IsGloballyBlockedApp）
             if (IsGloballyBlockedApp(id)) return 0;
 
             // 浏览器媒体：只认浏览器 SMTC 会话，其余进程一律不接管
@@ -381,10 +381,11 @@ namespace NotchPeninsula
         }
 
         // 全局屏蔽的软件：所有模式（含手动指定）下都不接管，也不出现在手动选择列表里。
-        // 抖音的 SMTC 会话会长期挂着干扰接管，所以直接拉黑而不是靠优先级规避。
+        // 抖音、微信视频号的 SMTC 会话都会长期挂着干扰接管，所以直接拉黑而不是靠优先级规避。
         // justsolo 单独放行：优先级判断上它排在抖音屏蔽之前，不能被连带屏蔽掉。
         private static bool IsGloballyBlockedApp(string id) =>
-            id.Contains("douyin", StringComparison.OrdinalIgnoreCase)
+            (id.Contains("douyin", StringComparison.OrdinalIgnoreCase)
+             || id.Contains("wechatappex", StringComparison.OrdinalIgnoreCase))
             && !id.Contains("justsolo", StringComparison.OrdinalIgnoreCase);
 
         // 目标平台与会话 AppID 的匹配规则（单一数据源）。
@@ -1194,9 +1195,19 @@ namespace NotchPeninsula
                 var session = _slotSessions[i];
                 if (session == null) continue;
 
-                // 当前会话是无歌词能力的（浏览器 / 视频类）：这首歌确实还在后台放，必须继续替它算。
-                // 否则说明当前会话就是它自己 —— 它已经回到台前，交回 AdvanceTimeline 推进。
-                if (i == _lyricSlot && !IsNonLyricSession) { _slotSessions[i] = null; continue; }
+                // 只在这个槽位登记的后台会话「就是台前正在播的那个软件」时才撤销登记：
+                // 它已经回到台前，交回 AdvanceTimeline 推进，不能再替它累加，否则会被加两次。
+                //
+                // 必须同时比对 AppID，不能只看槽位下标：手动匹配切换软件时，UpdateSession 先把
+                // 旧歌登记成后台会话，而 _lyricSlot 要等 FetchLyricsAsync 拿到新歌的槽位才更新，
+                // 中间隔着一次媒体属性读取。这段窗口里 _lyricSlot 仍停在旧歌的槽位上、当前会话却
+                // 已是新软件，只看下标会把刚登记好的后台会话当场清掉 —— 旧歌进度不再推算、时间戳
+                // 也停更，切回来时续播判定失效而被清零，歌词就从头上重播了。
+                if (i == _lyricSlot && _recentSongs[i].AppId == _currentAppId)
+                {
+                    _slotSessions[i] = null;
+                    continue;
+                }
 
                 var dt = now - _slotSampleAt[i];
                 if (dt.TotalSeconds < 1) continue;
