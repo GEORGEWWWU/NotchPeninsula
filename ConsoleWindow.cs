@@ -129,7 +129,7 @@ namespace NotchPeninsula
         // 硬件检测模式切换前的待机宽度快照（用于切回时恢复）
         private float _savedStandbyWidth = -1f;
         private float[] _customValues = new float[8];
-        private static readonly float[] _defaultCustomValues = [130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f];
+        private static readonly float[] _defaultCustomValues = [130f, 34f, 250f, 40f, 260f, 55f, 1.0f, 12f];
         private readonly string[] _valStrCache = new string[8];
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
         private int _hoveredOpacityIndex = -1;
@@ -778,7 +778,7 @@ namespace NotchPeninsula
                         if (_hoveredResetIndex != -1)
                         {
                             updateIdx = _hoveredResetIndex;
-                            float[] defaultVals = { 130f, 34f, 250f, 35f, 260f, 55f, 1.0f, 12f };
+                            float[] defaultVals = { 130f, 34f, 250f, 40f, 260f, 55f, 1.0f, 12f };
                             _customValues[updateIdx] = defaultVals[updateIdx];
 
                             // 重置时如果处于硬件监控，拦截至最小限制

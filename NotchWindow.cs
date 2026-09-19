@@ -683,7 +683,7 @@ namespace NotchPeninsula
                         ? Renderer.GetCompositeWidth(_media)
                         : nativeWidth + pluginReserve;
 
-                    expectedTargetHeight = currentActive ? (Renderer.IsMediaExpanded ? Renderer.GetExpandedHeight(_media) : Renderer.GetMediaHeight(_media)) : Renderer.BASE_HEIGHT;
+                    expectedTargetHeight = currentActive ? (Renderer.IsMediaExpanded ? Renderer.GetExpandedHeight(_media) : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT;
                 }
 
                 // 🧩 把目标宽度交给渲染侧：它据此把「插件行预留」按动画进度等比缩放，

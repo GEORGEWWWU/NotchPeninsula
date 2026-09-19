@@ -11,7 +11,7 @@ namespace NotchPeninsula
         private static volatile float _standbyWidth = 130f;
         private static volatile float _baseHeight = 34f;
         private static volatile float _mediaWidth = 250f;
-        private static volatile float _mediaHeight = 35f;
+        private static volatile float _mediaHeight = 40f;
         private static volatile float _toastWidth = 260f;
         private static volatile float _toastHeight = 55f;
         private static volatile float _globalDpi = 1.0f;
@@ -258,9 +258,12 @@ namespace NotchPeninsula
         // ==================== 🎵 歌词翻译（上下两行） ====================
         // 译文画在原文正下方，视觉上「上下分开」：译文沿用原文那支画笔，只把颜色调成次级灰、
         // 再用画布缩放做小一号 —— 共用同一套字体 run 缓存，不额外占缓存槽，也不动 TextSize。
-        private const float LYRIC_TRANS_LINE_STEP = 13.5f; // 原文与译文两条基线的间距
+        // 注意：两行**不改变岛体高度**，是在原高度里把两条线各自上下让开半格挤出来的
+        // （见 DrawLyricLine）：岛体尺寸恒定，歌词有没有译文都不会弹高弹低。
+        // 间距按默认媒体高度 40px 调过：两行基线相距 15px 时，整块占用约 y=4.4→36，
+        // 中文大字的上下都不打架，也不贴边；高度调小时它还是居中的，只是余量变小。
+        private const float LYRIC_TRANS_LINE_STEP = 15f;  // 原文与译文两条基线的间距
         private const float LYRIC_TRANS_SCALE = 0.92f;    // 译文视觉缩放：12.5px → 约 11.5px（略小于原文，保持主次）
-        private const float MEDIA_TRANS_EXTRA_HEIGHT = 17f; // 折叠态出现译文时的加高量，给第二行腾位置
 
         /// <summary>
         /// 本帧是否要把译文作为第二行画出来：开关开启 + 正在显示歌词 + 这句确实有译文。
@@ -275,20 +278,6 @@ namespace NotchPeninsula
         /// <summary>译文行的排版宽度（已经折算过视觉缩放），供岛体自适应宽度使用。</summary>
         public static float MeasureLyricTranslationWidth(string text)
             => string.IsNullOrEmpty(text) ? 0f : MeasureCurrentLyricWidth(text) * LYRIC_TRANS_SCALE;
-
-        /// <summary>
-        /// 折叠态媒体控制器本帧应有的高度：翻译开关开着、且这首歌本身带译文时加高一点，好让第二行有地方站。
-        /// 判定挂在「整首歌有没有译文」（<see cref="MediaController.HasLyricTranslation"/>）而不是当前这一句，
-        /// 这样逐句有无译文不会让岛体一帧高一帧低。
-        /// </summary>
-        public static float GetMediaHeight(MediaController? media)
-        {
-            bool twoLines = media != null
-                            && MediaController.IsTranslationEnabled
-                            && MediaController.IsLyricsEnabled
-                            && media.HasLyricTranslation;
-            return twoLines ? MEDIA_HEIGHT + MEDIA_TRANS_EXTRA_HEIGHT : MEDIA_HEIGHT;
-        }
 
         // ==================== 🎵 折叠态媒体标题区（右键展开媒体控制） ====================
         // 与时间轴同一套「真的画了才登记、帧首统一作废」的做法：折叠布局每帧画出歌名/歌手/歌词文本时才登记命中区，
@@ -992,8 +981,7 @@ namespace NotchPeninsula
         // 将透明原生窗口的基础画布拓宽至 1200f，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
         // 🧩 插件详情页展开时，底层缓冲必须容得下详情页尺寸（+80 / +45 是原有的四周留白）
         public static float WINDOW_WIDTH => Math.Max(1200f, Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))) + 80f);
-        // 高度上界要把「歌词带译文时的加高」算进去，否则第二行会被窗口下边缘裁掉
-        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT + MEDIA_TRANS_EXTRA_HEIGHT))) + 45f);
+        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT))) + 45f);
 
         public const int OUTER_R = 14;
         public const int INNER_R = 12;

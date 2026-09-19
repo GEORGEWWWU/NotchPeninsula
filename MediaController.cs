@@ -478,6 +478,8 @@ namespace NotchPeninsula
                 string lrcText = "";
                 // 译文 LRC：与原文同一套时间戳，解析后按时间对齐成「原文行 → 译文」的映射
                 string transText = "";
+                // QQ 搜索命中的 songmid，留着给译文的兜底渠道用（拿到就说明这首歌在 QQ 曲库里有对应记录）
+                string qqSongmid = "";
                 string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
                 // ====== 引擎 1：QQ音乐 (优先) ======
@@ -490,7 +492,6 @@ namespace NotchPeninsula
                     using var searchStream = await _http.GetStreamAsync($"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json");
                     using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
-                    string songmid = "";
                     if (searchDoc.RootElement.TryGetProperty("data", out var data) &&
                         data.TryGetProperty("song", out var songData) &&
                         songData.TryGetProperty("list", out var list))
@@ -506,16 +507,16 @@ namespace NotchPeninsula
                             if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
                                 (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
                             {
-                                songmid = song.GetProperty("songmid").GetString() ?? "";
+                                qqSongmid = song.GetProperty("songmid").GetString() ?? "";
                                 break;
                             }
                         }
                     }
 
-                    if (!string.IsNullOrEmpty(songmid))
+                    if (!string.IsNullOrEmpty(qqSongmid))
                     {
                         _http.DefaultRequestHeaders.Add("Referer", "https://y.qq.com/");
-                        using var lyricStream = await _http.GetStreamAsync($"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1");
+                        using var lyricStream = await _http.GetStreamAsync($"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={qqSongmid}&format=json&nobase64=1");
                         using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
 
                         if (lyricDoc.RootElement.TryGetProperty("lyric", out var lrcEl))
@@ -628,11 +629,22 @@ namespace NotchPeninsula
                     catch (Exception ex) { Logger.Warn($"LRCLIB引擎失败: {ex.Message}"); }
                 }
 
+                // ====== 译文补抓：落月 API ======
+                // 前面的引擎都没给出可用的译文时（要么整段为空，要么拿到的全是 `//` 这类占位），
+                // 用 QQ 搜索命中的 songmid 去落月 API 再要一份。只补译文，不参与歌词正文的获取 ——
+                // 它返回的 trans 与 QQ 官方歌词同源同时间戳，解析后能按时间戳精确贴到原文行上。
+                if (!string.IsNullOrEmpty(qqSongmid) && BuildTransTable(transText).Length == 0)
+                {
+                    string? fallbackTrans = await FetchTransFromLuoYueAsync(qqSongmid, ua);
+                    if (!string.IsNullOrEmpty(fallbackTrans)) transText = fallbackTrans;
+                }
+
                 // ====== 极速解析时间轴 ======
                 if (!string.IsNullOrEmpty(lrcText))
                 {
-                    // 译文先按时间戳建表，随后在解析原文时按同一时间戳贴上第二行
-                    var transMap = ParseLrcMap(transText);
+                    // 译文先按时间戳建表，随后在解析原文时按时间对齐贴上第二行
+                    var transTable = BuildTransTable(transText);
+                    int transCursor = 0;
                     var lines = new List<(TimeSpan, string, string)>();
                     foreach (var line in lrcText.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                     {
@@ -643,7 +655,7 @@ namespace NotchPeninsula
                                 string text = line.Substring(idx + 1).Trim();
                                 if (!string.IsNullOrEmpty(text))
                                 {
-                                    string trans = transMap.TryGetValue(ts.Ticks, out var tv) ? tv : "";
+                                    string trans = LookupTrans(transTable, ts.Ticks, ref transCursor);
                                     lines.Add((ts, text, trans));
                                 }
                             }
@@ -666,14 +678,55 @@ namespace NotchPeninsula
             }
         }
 
-        // 把译文 LRC 解析成「时间戳(Ticks) → 译文」表，供原文解析时按时间对齐。
-        // 用的是和原文完全相同的解析口径（同一套时间格式），所以两边的时间戳能精确对上；
-        // 同一时间戳出现多行时后者覆盖前者，与「多时间标签展开」的语义保持一致。
-        private static Dictionary<long, string> ParseLrcMap(string lrc)
-        {
-            var map = new Dictionary<long, string>();
-            if (string.IsNullOrEmpty(lrc)) return map;
+        // 落月 API 译文源。主域名不通时自动退回备用域名（官方文档给出的容灾域名）。
+        private static readonly string[] LuoYueHosts = { "https://api.vkeys.cn", "https://api.epdd.cn" };
 
+        /// <summary>
+        /// 按 QQ songmid 向落月 API 要一份译文 LRC。**只用于译文**，不参与歌词正文获取：
+        /// 它返回的 trans 与 QQ 官方歌词同源同时间戳，解析后能按时间戳精确贴到原文行上。
+        /// 拿不到（网络异常 / 曲库无此曲 / code 非 200）一律返回 null，调用方保持「无译文」的单行显示。
+        /// </summary>
+        private async Task<string?> FetchTransFromLuoYueAsync(string mid, string ua)
+        {
+            foreach (var host in LuoYueHosts)
+            {
+                try
+                {
+                    _http.DefaultRequestHeaders.Clear();
+                    _http.DefaultRequestHeaders.Add("User-Agent", ua);
+
+                    using var stream = await _http.GetStreamAsync($"{host}/v2/music/tencent/lyric?mid={Uri.EscapeDataString(mid)}");
+                    using var doc = await JsonDocument.ParseAsync(stream);
+                    var root = doc.RootElement;
+
+                    // code != 200 视为这个域名没戏，但换个域名还有救，所以继续循环
+                    if (root.TryGetProperty("code", out var codeEl) && codeEl.TryGetInt32(out int code) && code != 200) continue;
+                    if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object) continue;
+                    if (!data.TryGetProperty("trans", out var transEl)) continue;
+
+                    string trans = transEl.GetString() ?? "";
+                    if (!string.IsNullOrEmpty(trans)) return trans;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug($"落月API译文获取失败({host}): {ex.Message}");
+                }
+            }
+            return null;
+        }
+
+        // 译文行与原文行的时间戳允许的最大偏差。两个源（QQ 官方 trans / 落月 API）与歌词正文
+        // 偶尔会差个几十毫秒（例：[00:44.48] 橡皮擦… vs [00:44.56] 消しゴムが…），
+        // 只认精确相等的话这些行会白白丢掉译文；放到 300ms 又不会串到隔壁句（正常行距都是秒级）。
+        private const long TransMatchToleranceTicks = 300L * TimeSpan.TicksPerMillisecond;
+
+        // 把译文 LRC 解析成按时间戳升序的数组，供原文行做「精确命中 → 邻近命中」两级查找。
+        // 同一时间戳出现多行时后者覆盖前者，与「多时间标签展开」的语义保持一致。
+        private static (long Ticks, string Text)[] BuildTransTable(string lrc)
+        {
+            if (string.IsNullOrEmpty(lrc)) return Array.Empty<(long, string)>();
+
+            var list = new List<(long Ticks, string Text)>();
             foreach (var line in lrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
@@ -681,11 +734,39 @@ namespace NotchPeninsula
                     if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
                     {
                         string text = line.Substring(idx + 1).Trim();
-                        if (!string.IsNullOrEmpty(text)) map[ts.Ticks] = text;
+                        if (IsUsableTranslation(text)) list.Add((ts.Ticks, text));
                     }
                 }
             }
-            return map;
+
+            list.Sort((a, b) => a.Ticks.CompareTo(b.Ticks));
+            return list.ToArray();
+        }
+
+        // 取某条原文行对应的译文。<paramref name="cursor"/> 由调用方持有并随歌词推进单调后移 ——
+        // 歌词是按时间升序解析的，所以线性扫描摊下来是 O(n)，不需要每次二分。
+        private static string LookupTrans((long Ticks, string Text)[] table, long ticks, ref int cursor)
+        {
+            if (table.Length == 0) return "";
+
+            while (cursor < table.Length && table[cursor].Ticks < ticks - TransMatchToleranceTicks) cursor++;
+            if (cursor >= table.Length) return "";
+
+            return Math.Abs(table[cursor].Ticks - ticks) <= TransMatchToleranceTicks ? table[cursor].Text : "";
+        }
+
+        // 译文里的占位符与版权声明不该被当成歌词显示：
+        // `//`、`/`、`…` 这类整行只有符号的占位，以及 QQ 音乐那句「享有本翻译作品的著作权」，
+        // 统一按「这句没有译文」处理 —— 少了这层过滤，间奏行会变成一堆「//」。
+        private static bool IsUsableTranslation(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            if (text.Contains("翻译作品") || text.Contains("本译文")) return false;
+
+            foreach (char c in text)
+                if (char.IsLetterOrDigit(c)) return true; // 中日韩文字 / 拉丁字母 / 数字都算有效内容
+
+            return false;
         }
 
         // 被底层渲染循环以 60FPS 极速调用，彻底无视流氓播放器的限制
