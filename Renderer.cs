@@ -87,6 +87,23 @@ namespace NotchPeninsula
         /// </summary>
         public static float MEDIA_TEXT_MAX_WIDTH = 480f;
 
+        /// <summary>
+        /// 组合模式下媒体模块（缩略图 + 文本 + 频谱/按钮）的占宽上限。
+        ///
+        /// 组合模式是**固定宽度**而不是自适应：一旦媒体块超长，整行原生模块就会顶破
+        /// <see cref="MAX_ISLAND_WIDTH"/>，而 <see cref="GetCompositeWidth"/> 末尾是
+        /// <c>Math.Clamp(…, 60f, MAX_ISLAND_WIDTH)</c> —— 超出的部分会在右侧被硬裁，
+        /// 最先牺牲的正是排在后面的频谱与播放按钮（以及可能出现的一切右侧内容）。
+        ///
+        /// 所以这里直接给模块占宽封顶：<see cref="MeasureMediaBlockWidth"/> 按它夹，
+        /// 文本超出部分由 <c>DrawMediaModule</c> 里那层渐隐遮罩自然截断，
+        /// 频谱、按钮与右侧插件的位置因此始终可预期。
+        ///
+        /// 默认 460 ≈ 缩略图 32 + 间距 10 + 文本 340（约 21 个汉字）+ 12 + 频谱 21.2
+        /// + 锚点后的 45（非悬停按钮/频谱区）。
+        /// </summary>
+        public static float CompositeMediaMaxWidth = 460f;
+
         // 计算Toast消息自适应宽度，限制最大宽度（与岛体总长上限一致）
         public static float GetToastAutoWidth()
         {
@@ -2329,7 +2346,14 @@ namespace NotchPeninsula
             return cpuGroupW + 16f + ramGroupW;
         }
 
-        /// <summary>媒体模块在组合模式下的占宽（缩略图 + 文本 + 间距 + 频谱）。</summary>
+        /// <summary>
+        /// 媒体模块在组合模式下的占宽（缩略图 + 文本 + 间距 + 频谱）。
+        ///
+        /// <b>按 <see cref="CompositeMediaMaxWidth"/> 封顶</b>：组合模式是固定宽度布局，
+        /// 超长的标题/歌词若照实计宽，会把整行原生模块顶破 <see cref="MAX_ISLAND_WIDTH"/>，
+        /// 末尾的 <c>Math.Clamp</c> 就会把右侧（频谱 / 播放按钮 / 后面的插件）硬裁掉。
+        /// 封顶之后超出部分由绘制侧的渐隐遮罩截断，宽度与绘制口径一致。
+        /// </summary>
         private static float MeasureMediaBlockWidth(MediaController? media)
         {
             float textWidth = (!string.IsNullOrEmpty(media?.CurrentLyric) && MediaController.IsLyricsEnabled)
@@ -2339,7 +2363,8 @@ namespace NotchPeninsula
                     : _textPaint.MeasureText(media!.Artist) + _textPaint.MeasureText(media.Title) + 15f);
 
             float thumbW = media?.Thumbnail != null ? 32f : 0f;
-            return thumbW + textWidth + 12f + 21.2f;
+            float full = thumbW + textWidth + 12f + 21.2f;
+            return Math.Min(full, CompositeMediaMaxWidth);
         }
 
         /// <summary>

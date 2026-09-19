@@ -509,17 +509,33 @@ namespace NotchPeninsula
                 isClipboardActive = _clipboardUrl != null && DateTime.Now < _clipboardEndTime;
                 if (!isClipboardActive && _clipboardUrl != null) { _clipboardUrl = null; _clipboardEndTime = default; }
 
-                // 如果灵动岛已展开，且鼠标不在岛上(!_isHovered)，且按下了左键(0x01)
-                if (_isManuallyExpanded && !_isHovered && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
+                // 🧩 展开态的收起策略（用户 2026-09-19 要求）：
+                //    · **鼠标移走不收起** —— 手滑划出岛体不该把面板弄没。原本的三条自动折叠路径已全部停用：
+                //        `_isManuallyExpanded && !_isHovered && 左键` / `HasActiveDetailPage && !_isHovered` /
+                //        媒体面板的 `WM_MOUSELEAVE → IsMediaExpanded = false`
+                //    · **点击屏幕其他地方（岛外）才收起** —— 这是用户主动表达「我看完了」，语义清晰。
+                //    实现要点：窗口只有鼠标在它范围内时才收得到鼠标消息，岛外点击根本不会派发 WM_LBUTTONDOWN，
+                //    所以这里用 GetCursorPos 底层轮询判断「左键按下 且 光标不在岛体矩形内」
+                //    （坐标换算与上面穿透模式那段完全同一套：减去显示器原点、减窗口 Y 偏移、再除 DPI）。
+                //    只在「确实有东西展开着」时才轮询，三个状态全 false 时这段直接跳过，稳态零开销。
+                if (_isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage)
                 {
-                    _isManuallyExpanded = false; // 触发收起
+                    float expLeft = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                    float expTopY = 12f * _currentStyleProgress;
+                    Win32.GetCursorPos(out var expPt);
+                    float expX = (expPt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
+                    float expY = (expPt.y - _cachedMonitorY - _currentY) / _dpiScale;
+                    bool isOverIsland = expX >= expLeft && expX <= expLeft + _currentWidth
+                                        && expY >= expTopY && expY <= expTopY + _currentHeight;
+
+                    if (!isOverIsland && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
+                    {
+                        _isManuallyExpanded = false;
+                        Renderer.IsMediaExpanded = false;
+                        if (Renderer.HasActiveDetailPage) PluginManager.Instance.Host.CloseDetailPage();
+                    }
                 }
 
-                // 🧩 插件详情页展开时：鼠标移出岛体并按下左键 → 收起详情页（与手动展开同款判定）
-                if (Renderer.HasActiveDetailPage && !_isHovered && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
-                {
-                    PluginManager.Instance.Host.CloseDetailPage();
-                }
 
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏
                 bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive
@@ -614,6 +630,8 @@ namespace NotchPeninsula
                 //    装得下的组件完整显示，装不下的组件本帧整体不显示 —— 宿主绝不替它压缩或截断，
                 //    所以不会出现「文字被省略号砍掉半截」这种显示不全的情况。
                 //    原生内容（尤其是开着媒体控制 + 长歌词自适应）一样照常显示，岛体也不会被撑过上限。
+                //    例外：媒体控制面板展开（IsMediaExpanded）时插件行整体不显示 —— 那是块独立面板，
+                //    插件贴上去只会把面板和岛体一起撑宽，见下面的分支。
                 float pluginReserve = 0f;
                 if (Renderer.CompositeModeEnabled)
                 {
@@ -621,14 +639,17 @@ namespace NotchPeninsula
                     // 所以先量原生（不含插件）、定好预算，随后算含插件的总宽时就会按它放行。
                     Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - Renderer.GetCompositeNativeWidth(_media));
                 }
-                else if (!isToastActive && !isClipboardActive && !detailOpen)
+                else if (!isToastActive && !isClipboardActive && !detailOpen
+                    && !(currentActive && Renderer.IsMediaExpanded))
                 {
                     Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - nativeWidth);
                     pluginReserve = Renderer.GetPluginRowReserve();
                 }
                 else
                 {
-                    // 通知 / 剪贴板 / 详情页：整块岛体被接管，本帧不给插件行任何宽度
+                    // 通知 / 剪贴板 / 详情页 / 媒体控制面板展开：整块岛体被接管，本帧不给插件行任何宽度。
+                    // 媒体面板（右键展开）尤其明显：那是 320×130 的独立面板，再塞一行插件
+                    // 会把面板与岛体一起撑宽，所以展开期间插件行整体隐藏（收起后自动恢复）。
                     Renderer.SetPluginRowBudget(0f);
                 }
 
@@ -987,7 +1008,9 @@ namespace NotchPeninsula
                             _media.EndDrag();
                             Win32.ReleaseCapture();
                         }
-                        Renderer.IsMediaExpanded = false;
+                        // 🧩 鼠标移走**不收起**媒体面板（用户 2026-09-19 要求）：
+                        //    原来这里是 `Renderer.IsMediaExpanded = false`，移走即折叠。
+                        //    现在收起只认「点击岛外」（见 Render 里的统一判定），鼠标单纯移开不管。
                         break;
                     }
 
