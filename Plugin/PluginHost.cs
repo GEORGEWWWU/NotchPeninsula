@@ -211,6 +211,22 @@ public sealed class PluginHost
         lock (_lock) _widgetsVersion++;
     }
 
+    /// <summary>
+    /// 本帧插件行的总可用宽度（含与原生内容之间的 16px 间距）。转发到渲染侧的预算字段——
+    /// 它由 NotchWindow 每帧按「岛体总长上限 − 原生内容本帧占用宽度」写入，
+    /// 组合模式则由 <c>GetCompositeWidth</c> 内部按同一规则写入。
+    ///
+    /// 注意这是**整行**预算；某个插件实际能用多少还取决于它排在第几位，
+    /// 插件应通过 <see cref="ScopedPluginHost"/> 拿 <see cref="GetPluginRowBudgetFor"/> 的结果。
+    /// </summary>
+    public float GetPluginRowBudget() => Renderer.GetPluginRowBudget();
+
+    /// <summary>
+    /// 某个插件处的**剩余**可用宽度：「不显示这个插件时，它所在位置还剩多少长度」。
+    /// 按组件从左到右的放行优先级，扣掉排在它前面的插件已占的宽度（含间距）。
+    /// </summary>
+    public float GetPluginRowBudgetFor(string pluginId) => Renderer.GetPluginRowRemaining(pluginId);
+
     /// <summary>为某个插件创建绑定其 Id 的宿主视图（设置持久化自动加前缀）。</summary>
     public IPluginHost CreateScopedHost(string pluginId) => new ScopedPluginHost(this, pluginId);
 
@@ -527,6 +543,8 @@ public sealed class ScopedPluginHost : IPluginHost
     public IDisposable ScheduleRefresh(TimeSpan interval, Action callback) => _host.ScheduleRefresh(_pluginId, interval, callback);
     public void RequestRedraw() { /* 常驻 60FPS 渲染下为空操作，事件驱动化预留 */ }
     public void InvalidateWidgetLayout() => _host.InvalidateWidgetLayout();
+    /// <summary>本插件所在位置的**剩余**可用宽度（已扣掉排在它前面的插件占用）——见 PluginHost.GetPluginRowBudgetFor。</summary>
+    public float GetPluginRowBudget() => _host.GetPluginRowBudgetFor(_pluginId);
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
     public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(title, width, height);

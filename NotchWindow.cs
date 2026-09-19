@@ -601,7 +601,10 @@ namespace NotchPeninsula
                             ? Renderer.MeasureCurrentLyricWidth(_media.Title)
                             : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
 
-                    nativeWidth = Math.Max(nativeWidth, textWidth + 115f);
+                    // 🎵 文本区长度封顶（MEDIA_TEXT_MAX_WIDTH）：长标题 / 长歌词不再把岛体无限撑宽，
+                    //    否则右侧的律动频谱与播放按钮会被顶到很偏的位置，插件行也彻底没余量。
+                    //    超出部分由渲染侧既有的文字遮罩做渐隐截断，视觉上是自然淡出而不是硬切。
+                    nativeWidth = Math.Max(nativeWidth, Math.Min(textWidth, Renderer.MEDIA_TEXT_MAX_WIDTH) + 115f);
                 }
                 nativeWidth = Math.Min(nativeWidth, Renderer.MAX_ISLAND_WIDTH); // 岛体总长上限，窄屏也不会被撑破
 
@@ -657,6 +660,10 @@ namespace NotchPeninsula
 
                     expectedTargetHeight = currentActive ? (Renderer.IsMediaExpanded ? Renderer.GetExpandedHeight(_media) : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT;
                 }
+
+                // 🧩 把目标宽度交给渲染侧：它据此把「插件行预留」按动画进度等比缩放，
+                //    免得岛体还没长到时候，原生内容（媒体文字 / 频谱 / 播放按钮）先被全额预留挤扁。
+                Renderer.IslandTargetWidth = expectedTargetWidth;
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
@@ -1081,7 +1088,8 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
-                        // 🧩 先把右键广播给坐标命中的插件组件（插件可借此实现自定义行为）
+                        // 🧩 岛内右键的优先级：详情页收起 → 媒体标题展开媒体控制 → 插件组件广播 → 设置窗口。
+                        //    （前两步都是「原生区域」，插件组件占的是岛体右侧独立预留区，几何上不重叠）
                         if (_currentToast == null)
                         {
                             // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
@@ -1093,7 +1101,20 @@ namespace NotchPeninsula
 
                             int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                             int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                            string? detailWidget = Renderer.DispatchPluginRightClick(rx, ry - 12f * _currentStyleProgress);
+                            float rtY = 12f * _currentStyleProgress;
+
+                            // 🎵 折叠态右键媒体标题 → 直接展开媒体控制面板（消费这次右键，不弹设置窗口）。
+                            //    展开交互模式（MediaInteractionMode == 1）下左键点空白处本就能展开，这里是给
+                            //    「直接交互模式 / 左键被插件拿走」准备的等价入口；组合模式固定为直接交互不适用。
+                            //    命中区由渲染侧「本帧真的画了标题文本」才登记，所以待机 / 通知 / 剪贴板 / 展开态都不会误判。
+                            if (_media.IsActive && !Renderer.IsMediaExpanded && !Renderer.CompositeModeEnabled
+                                && Renderer.HitMediaTitle(rx, ry - rtY))
+                            {
+                                Renderer.IsMediaExpanded = true;
+                                return (IntPtr)0;
+                            }
+
+                            string? detailWidget = Renderer.DispatchPluginRightClick(rx, ry - rtY);
 
                             // 主机默认行为：命中的组件提供了详情页 → 在灵动岛展开该组件的详情页（消费这次右键，不弹设置窗口）
                             if (detailWidget != null)
