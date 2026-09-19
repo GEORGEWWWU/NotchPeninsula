@@ -74,6 +74,19 @@ namespace NotchPeninsula
         /// </summary>
         public const float MAX_ISLAND_WIDTH = 800f;
 
+        /// <summary>
+        /// 媒体控制器「按文本自适应」时，文本部分最多算多宽。
+        ///
+        /// 媒体控制器会按标题 / 歌手 / 歌词的长度把岛体撑宽（封顶 <see cref="MAX_ISLAND_WIDTH"/>），
+        /// 但长文本会把岛体吃满：右侧的律动频谱 / 播放按钮（<c>right - 90 … right - 20</c>）
+        /// 被顶到很偏的位置，同时一点余量都不给插件行留。
+        ///
+        /// 这里给**文本区**单独定一个上限，超出的部分交给既有的文字遮罩做渐隐截断 ——
+        /// 岛体不再被长标题无限撑大，频谱与按钮的位置始终稳定，插件行也有机会显示。
+        /// 默认约 30 个汉字；想完整显示更长的标题就调大它（总宽仍受 <see cref="MAX_ISLAND_WIDTH"/> 约束）。
+        /// </summary>
+        public static float MEDIA_TEXT_MAX_WIDTH = 480f;
+
         // 计算Toast消息自适应宽度，限制最大宽度（与岛体总长上限一致）
         public static float GetToastAutoWidth()
         {
@@ -217,11 +230,26 @@ namespace NotchPeninsula
         public static bool TimelineVisible(MediaController media)
             => IsMediaExpanded && MediaInteractionMode == 1 && !CompositeModeEnabled && media.HasTimeline;
 
-        // 展开态高度：有时间轴时加高 28px，保证进度条与底部按钮互不侵占
-        public static float GetExpandedHeight(MediaController media) => media.HasTimeline ? 158f : 130f;
+        // 展开态高度：只有在「本帧真的会画时间轴」时才为它加高 28px 留位。
+        // 直接交互模式下时间轴不画（见 TimelineVisible），右键展开出的媒体面板因此回到 130，
+        // 不会在封面与底部按钮之间多出一段空档。调用方仅在 IsMediaExpanded 时取值。
+        public static float GetExpandedHeight(MediaController media) => TimelineVisible(media) ? 158f : 130f;
 
         public static bool HitTimeline(float x, float y)
             => _tlBarX2 > _tlBarX1 && x >= _tlBarX1 - 8f && x <= _tlBarX2 + 8f && Math.Abs(y - _tlBarY) <= 13f;
+
+        // ==================== 🎵 折叠态媒体标题区（右键展开媒体控制） ====================
+        // 与时间轴同一套「真的画了才登记、帧首统一作废」的做法：折叠布局每帧画出歌名/歌手/歌词文本时才登记命中区，
+        // 于是 HitMediaTitle 返回 true 天然等价于「这一帧标题文本在屏幕上且位置已知」。
+        // 组合模式与展开态都不登记（组合模式固定为直接交互、展开态本来就在展开），因此不会误触发。
+        private static SKRect _mediaTitleHit = default;
+
+        /// <summary>
+        /// 折叠态媒体标题（歌名 / 歌手 / 歌词文本）的命中判定，坐标与 <see cref="Draw"/> 内部一致（不含灵动岛下沉的 topY）。
+        /// 只有本帧真的画了标题文本才可能返回 true；没命中就是普通区域（右键照旧打开设置窗口）。
+        /// </summary>
+        public static bool HitMediaTitle(float x, float y)
+            => _mediaTitleHit.Width > 0f && _mediaTitleHit.Contains(x, y);
 
         // 鼠标 x → 0~1 落点比例（与 HitTimeline 共用同一套坐标）
         public static float TimelineRatio(float x)
@@ -410,6 +438,95 @@ namespace NotchPeninsula
             return _pluginRowReserve;
         }
 
+        /// <summary>
+        /// 岛体宽度弹簧动画的**目标**宽度（由 NotchWindow 每帧写入）。
+        /// 取值只用于把「插件预留区」按动画进度等比缩放，见 <see cref="GetScaledPluginReserve"/>。
+        /// </summary>
+        public static float IslandTargetWidth { get; set; }
+
+        /// <summary>
+        /// 本帧插件行的预留宽度，**按岛体宽度动画进度等比缩放**。
+        ///
+        /// 为什么需要缩放：岛体宽度是弹簧动画过来的，而插件预留是「目标值」。
+        /// 动画途中岛体还没长到目标宽度，此时若按全额扣掉预留，原生内容
+        /// （媒体标题 / 歌词 / 律动频谱 / 播放按钮）就会被临时挤到左边一窄条里，
+        /// 直到动画结束才恢复 —— 表现出来就是「一刷新，频谱和按钮闪没了」。
+        ///
+        /// 按 <c>当前宽度 / 目标宽度</c> 缩放后，预留跟着岛体一起长出来，
+        /// 原生内容在整个动画过程中都有地方放。动画完成（或目标宽度未知）时系数为 1，即全额。
+        /// </summary>
+        private static float GetScaledPluginReserve(float currentWidth)
+        {
+            float reserve = GetPluginRowReserve();
+            if (reserve <= 0f) return 0f;
+
+            float target = IslandTargetWidth;
+            if (target > 1f && currentWidth < target)
+                reserve *= Math.Max(0f, currentWidth / target);
+            return reserve;
+        }
+
+        /// <summary>
+        /// 本帧插件行的可用宽度（含与原生内容之间的 16px 间距）——即「岛体总长上限 − 原生内容本帧占用宽度」。
+        ///
+        /// 这是**整行**的总预算。某个插件实际能用多少还要看它排在第几位，
+        /// 见 <see cref="GetPluginRowRemaining"/>。
+        ///
+        /// 返回 <c>0</c> 表示本帧插件行被完全接管（通知 / 剪贴板 / 详情页）；
+        /// 返回 <see cref="float.PositiveInfinity"/> 表示宿主尚未算过（启动首帧）。
+        /// </summary>
+        public static float GetPluginRowBudget() => _pluginRowBudget;
+
+        /// <summary>
+        /// 某个插件处的**剩余**可用宽度：按组件从左到右的放行优先级，
+        /// 累加排在它前面的插件已经占掉的宽度（含间距），从整行预算里减掉，剩下的就是它的。
+        ///
+        /// 语义就是「不显示这个插件时，它所在位置还剩多少长度」——插件拿它来判断
+        /// 「我这条内容放不放得下」：放不下就别报那个宽度上来（宿主会把整个组件隐藏），
+        /// 换一条短的更划算。
+        ///
+        /// 说明：
+        /// · <paramref name="pluginId"/> 为 null（宿主自身无插件上下文）时退回整行预算。
+        /// · 本插件自己的组件不参与扣减——「不显示它时」的剩余，自然不该被它自己占掉。
+        /// · 只统计**本帧被放行**的组件；没放行的组件本来就不占宽度，不该算在别人头上。
+        /// · 不改动任何状态、不触发重测（快照由 NotchWindow 每帧刷新），渲染线程与后台线程都可安全调用。
+        /// </summary>
+        public static float GetPluginRowRemaining(string? pluginId)
+        {
+            if (pluginId == null) return _pluginRowBudget;
+
+            lock (_pluginSnapshotLock)
+            {
+                var widgets = _pluginWidgets;
+                var widths = _pluginWidths;
+                var broken = _pluginBroken;
+                var visible = _pluginVisible;
+                if (widgets == null || widths == null || broken == null) return _pluginRowBudget;
+                if (widths.Length != widgets.Length || broken.Length != widgets.Length) return _pluginRowBudget;
+
+                float budget = _pluginRowBudget;
+                if (float.IsInfinity(budget)) return budget;
+
+                var host = Plugins.PluginManager.Instance.Host;
+                float used = 0f;
+
+                for (int i = 0; i < widgets.Length; i++)
+                {
+                    // 走到本插件的第一个组件：它左边（更高优先级）占掉的就是别人的，剩下的全归它
+                    if (host.TryGetWidgetPlugin(widgets[i].Id, out var pid)
+                        && string.Equals(pid, pluginId, StringComparison.OrdinalIgnoreCase))
+                        return Math.Max(0f, budget - used);
+
+                    if (broken[i] || widths[i] <= 0f) continue;
+                    if (visible == null || i >= visible.Length || !visible[i]) continue; // 没放行的不占宽
+                    used += PLUGIN_GAP + widths[i];
+                }
+
+                // 快照里找不到本插件的组件（刚注册还没刷新等）→ 退回整行预算，宁可给宽也别给 0
+                return Math.Max(0f, budget - used);
+            }
+        }
+
         /// <summary>把岛内逻辑坐标 (x,y) 的左键事件分发给插件组件；命中并处理返回 true。</summary>
         public static bool DispatchPluginLeftClick(float x, float y)
         {
@@ -489,7 +606,7 @@ namespace NotchPeninsula
         public static float GetMediaRight(float windowWidth, float currentWidth, bool toastActive)
         {
             if (CompositeModeEnabled && _compositeMediaRight > 0f) return _compositeMediaRight;
-            return (windowWidth + currentWidth) / 2f - (toastActive ? 0f : GetPluginRowReserve());
+            return (windowWidth + currentWidth) / 2f - (toastActive ? 0f : GetScaledPluginReserve(currentWidth));
         }
 
         /// <summary>刷新插件组件快照（版本变化时才分配 + 测量一次），返回是否存在可渲染组件。</summary>
@@ -1093,6 +1210,9 @@ namespace NotchPeninsula
                 // 📋 剪贴板「打开」按钮热区帧首作废：本帧不画就等于命中区不存在
                 _clipboardOpenHit = default;
 
+                // 🎵 折叠态媒体标题热区帧首作废：本帧没画标题（待机 / 展开态 / 组合模式）就等于不存在
+                _mediaTitleHit = default;
+
                 float left = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）
                 float islandRight = left + currentWidth;
@@ -1101,7 +1221,7 @@ namespace NotchPeninsula
                 //    插件也不受原生功能影响，始终稳定显示在岛体最右侧。
                 // 🧩 组合模式下插件已被并入「内容顺序表」，与原生模块一起混排（宽度计在 GetCompositeWidth 内），
                 //    因此不再单独占用右侧预留区；其他模式仍是整行贴在原生内容右侧。
-                float pluginReserve = toast == null && !CompositeModeEnabled ? GetPluginRowReserve() : 0f;
+                float pluginReserve = toast == null && !CompositeModeEnabled ? GetScaledPluginReserve(currentWidth) : 0f;
                 // 原生内容的右边界（插件预留区之前）；pluginReserve == 0 时与岛体右边界相同
                 float right = islandRight - pluginReserve;
                 // 组合模式媒体模块右边界（每帧由媒体模块绘制时刷新）；非组合模式置 -1 表示不适用
@@ -1751,6 +1871,17 @@ namespace NotchPeninsula
                                 DrawKaraoke(canvas, _cachedMediaDisplay, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                             }
 
+                            // 🎵 折叠态标题热区（右键展开媒体控制面板，见 NotchWindow 的 WM_RBUTTONDOWN）：
+                            //    右边界 = 文字遮罩起点，保证「标题文字占的那一段」才响应，右侧频谱/按钮区仍归设置窗口。
+                            //    下方两个模式的 maskEnd 计算与此处共用同一组常量，改动时需同步。
+                            float titleOcc = MediaInteractionMode == 0 ? (isHovered ? 95f : 45f) : (bars != null ? 45f : 15f);
+                            float titleMaskEnd = right - titleOcc + 5f;
+                            float titleW = CachedMediaTextWidth();
+                            if (titleW <= 0f) titleW = _textPaint.MeasureText(_cachedMediaDisplay); // 缓存未命中（刚换字体）兜底
+                            float titleEnd = Math.Min(textX + titleW, titleMaskEnd);
+                            if (titleEnd > textX)
+                                _mediaTitleHit = new SKRect(textX - 4f, 0f, titleEnd + 4f, currentHeight);
+
                             if (MediaInteractionMode == 0) // 直接交互模式
                             {
                                 float rightOccupiedWidth = isHovered ? 95f : 45f;
@@ -2092,6 +2223,17 @@ namespace NotchPeninsula
             || (cp >= 0x2B00 && cp <= 0x2BFF)     // 杂项符号与箭头
             || (cp >= 0xFE00 && cp <= 0xFE0F)     // 变体选择符
             || cp == 0x200D || cp == 0x20E3;
+
+        /// <summary>
+        /// 折叠态媒体文本的绘制宽度（逐字字体回退后的真实总宽），直接读 <see cref="DrawKaraoke"/> 刚建好的 run 缓存，
+        /// 稳态下不产生任何额外测量。缓存未命中（刚换字体 / 刚换歌的那一帧）返回 0，调用方自行兜底。
+        /// </summary>
+        private static float CachedMediaTextWidth()
+        {
+            if (_krKey0.Text == _cachedMediaDisplay) return _krKey0.Width;
+            if (_krKey1.Text == _cachedMediaDisplay) return _krKey1.Width;
+            return 0f;
+        }
 
         /// <summary>
         /// 命中原有的卡拉OK run 缓存则直接复用（不重建、不测量）。命中与否由 <see cref="DrawKaraoke"/> 侧同一套 key 决定。
