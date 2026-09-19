@@ -13,6 +13,12 @@ namespace NotchPeninsula
         public static MediaController? Instance { get; private set; }
         internal static string TargetPlatform = "other"; // 默认通用媒体
         internal static bool IsMediaControlEnabled = true; // 媒体开关
+        // 通用媒体下的会话匹配方式：false = 自动匹配（只接管正在播放的会话），true = 手动指定软件
+        internal static bool IsManualSessionMatch = false;
+        // 手动模式锁定的目标软件，直接存 SMTC 的 SourceAppUserModelId
+        internal static string ManualSessionAppId = "";
+        // 系统当前是否存在任何 SMTC 会话（设置界面据此清空「手动选择软件」选项框）
+        internal static bool HasActiveSessions { get; private set; }
         internal static bool IsLyricsEnabled = true;
         internal static bool IsKaraokeEnabled = true;
         // 翻译歌词：开启后把当前句的译文作为第二行画在原文下方（仅在有译文时生效）
@@ -110,6 +116,12 @@ namespace NotchPeninsula
 
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _currentSession;
+
+        // 已挂上播放状态监听的会话（按 AppID 记账）。
+        // 自动匹配的接管结果依赖播放状态，而会话表变更事件不会因播放/暂停触发 ——
+        // 所以给系统里每个会话都挂一份监听，任何一个开始播放都能立刻重新挑选接管目标。
+        private readonly Dictionary<string, GlobalSystemMediaTransportControlsSession> _watchedSessions = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _watcherLock = new();
         private bool _isBilibiliSession;  // 通用模式下当前会话是否为 bilibili，用于隐藏 Artist
         private bool _isPotPlayerSession; // 当前会话是否为 PotPlayer，无歌名/歌手时隐藏文本
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
@@ -138,26 +150,113 @@ namespace NotchPeninsula
             if (_manager != null) await UpdateSession(_manager);
         }
 
+        /// <summary>
+        /// 当前所有可接管的 SMTC 会话 AppID（去重、保持系统顺序，全局屏蔽的软件不列出），
+        /// 供设置界面「手动选择软件」下拉直接展示原始 AppID。只在用户展开下拉时调用一次，不做任何后台轮询。
+        /// </summary>
+        public string[] GetAvailableAppIds()
+        {
+            if (_manager == null) return Array.Empty<string>();
+            try
+            {
+                var sessions = _manager.GetSessions();
+                var ids = new List<string>(sessions.Count);
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    string id = sessions[i].SourceAppUserModelId ?? "";
+                    if (id.Length > 0 && !IsGloballyBlockedApp(id) && !ids.Contains(id)) ids.Add(id);
+                }
+                return ids.ToArray();
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        // 会话当前是否处于播放中：严格等于 SMTC 的 Playing，暂停 / 停止都算「未播放」。
+        // 手动模式下不关心，自动匹配时用来把未播放的会话排除在接管之外。
+        private static bool IsSessionPlaying(GlobalSystemMediaTransportControlsSession session)
+        {
+            try
+            {
+                return session.GetPlaybackInfo()?.PlaybackStatus
+                    == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private async Task UpdateSession(GlobalSystemMediaTransportControlsSessionManager manager)
         {
             GlobalSystemMediaTransportControlsSession? newSession = null;
 
+            // 单遍扫描会话表：统计「是否存在可接管的 SMTC 会话」（全局屏蔽的软件不算），
+            // 设置界面据此决定「手动选择软件」选项框是否要清空；列表同时也供下面挑选复用。
+            var sessions = manager.GetSessions();
+            bool hasActiveSessions = false;
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                string id = sessions[i].SourceAppUserModelId ?? "";
+                if (id.Length == 0 || IsGloballyBlockedApp(id)) continue;
+                hasActiveSessions = true;
+            }
+            HasActiveSessions = hasActiveSessions;
+
+            // 让每个会话的播放状态变化都能触发重新挑选（接管目标依赖「谁在放」）
+            SyncPlaybackWatchers(sessions);
+
             // 如果总开关打开，执行精确的平台过滤
             if (IsMediaControlEnabled)
             {
-                // 单遍扫描直接选出目标会话：索引遍历避免枚举器分配，
-                // 全程 OrdinalIgnoreCase 比较，不再 ToLower 出临时字符串。
-                var sessions = manager.GetSessions();
-                for (int i = 0; i < sessions.Count; i++)
+                // 通用媒体 + 手动模式：直接锁定指定 AppID 的会话，不受平台规则与播放状态影响
+                // （全局屏蔽的软件除外，手动也不允许锁定它）
+                if (TargetPlatform == "other" && IsManualSessionMatch && ManualSessionAppId.Length > 0)
                 {
-                    var s = sessions[i];
-                    string id = s.SourceAppUserModelId ?? "";
-                    if (id.Length == 0) continue;
+                    for (int i = 0; i < sessions.Count; i++)
+                    {
+                        string id = sessions[i].SourceAppUserModelId ?? "";
+                        if (IsGloballyBlockedApp(id)) continue;
+                        if (string.Equals(id, ManualSessionAppId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            newSession = sessions[i];
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    // 单遍扫描直接选出目标会话：索引遍历避免枚举器分配，
+                    // 全程 OrdinalIgnoreCase 比较，不再 ToLower 出临时字符串。
+                    // 通用媒体的自动匹配（下文「播放/未播放」均指 SMTC 的 Playing / Paused）：
+                    //   1) 正在播放的 Just Solo 直接锁定，压过同时播放的其它会话；
+                    //   2) Just Solo 未播放（暂停）时，谁在播放就显示谁；
+                    //   3) 全都没在播放时兜底显示 Just Solo（系统里没有 justsolo 会话才退而求其次）。
+                    bool skipPaused = TargetPlatform == "other";
+                    GlobalSystemMediaTransportControlsSession? pausedFallback = null;
+                    int pausedFallbackRank = 0;
+                    for (int i = 0; i < sessions.Count; i++)
+                    {
+                        var s = sessions[i];
+                        string id = s.SourceAppUserModelId ?? "";
+                        if (id.Length == 0) continue;
 
-                    int rank = SessionRank(id);
-                    if (rank == 0) continue;                  // 不关心的会话，零成本跳过
-                    if (rank == 3) { newSession = s; break; }  // 最高优先，立即锁定
-                    if (newSession == null) newSession = s;    // 备选，继续往后找更高优先的
+                        int rank = SessionRank(id);
+                        if (rank == 0) continue;                  // 不看好的会话，零成本跳过
+                        if (skipPaused && !IsSessionPlaying(s))
+                        {
+                            // 未播放（暂停）的会话不参与接管，只作为「全都没在播放」时的兜底。
+                            // 兜底按 rank 取最高，justsolo 的 rank 最高，所以全暂停时会回到 justsolo。
+                            if (rank > pausedFallbackRank) { pausedFallbackRank = rank; pausedFallback = s; }
+                            continue;
+                        }
+
+                        if (rank == 3) { newSession = s; break; }  // 正在播放的 Just Solo 压过一切，立即锁定
+                        if (newSession == null) newSession = s;    // 备选，继续往后扫，遇到 Just Solo 会被顶掉
+                    }
+                    if (newSession == null) newSession = pausedFallback;
                 }
             }
 
@@ -169,7 +268,7 @@ namespace NotchPeninsula
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
             _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
 
-            // Just Solo 专属歌词通道：仅通用模式下检测到 justsolo 会话时才连接 LyricServer
+            // Just Solo 专属歌词通道：只有「当前接管的会话就是 justsolo」时才连接 LyricServer
             UpdateJustSoloConnection();
 
             // 如果目标会话没变，只需刷新属性，避免重复订阅事件浪费内存
@@ -193,17 +292,16 @@ namespace NotchPeninsula
             if (_currentSession != null)
             {
                 // 切换前，必须先解绑旧会话的事件，防止幽灵对象吃内存
+                // （播放状态监听由 SyncPlaybackWatchers 统一挂载到所有会话，这里只管媒体属性）
                 _currentSession.MediaPropertiesChanged -= OnMediaPropertiesChanged;
-                _currentSession.PlaybackInfoChanged -= OnPlaybackInfoChanged;
             }
 
             _currentSession = newSession;
 
             if (_currentSession != null)
             {
-                // 绑定新会话事件
+                // 绑定新会话事件（播放状态监听见 SyncPlaybackWatchers）
                 _currentSession.MediaPropertiesChanged += OnMediaPropertiesChanged;
-                _currentSession.PlaybackInfoChanged += OnPlaybackInfoChanged;
 
                 await RefreshProperties();
                 IsActive = true;
@@ -219,22 +317,75 @@ namespace NotchPeninsula
             }
         }
 
+        // 把播放状态监听同步到系统里现存的每一个会话：新增的挂上，消失的解绑。
+        // 全程同步执行（无 await），只用一个对象锁挡住并发刷新导致的重复订阅。
+        private void SyncPlaybackWatchers(IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions)
+        {
+            lock (_watcherLock)
+            {
+                // 已经消失的会话：解绑，否则系统会把事件发给幽灵对象
+                if (_watchedSessions.Count > 0)
+                {
+                    List<string>? stale = null;
+                    foreach (var kv in _watchedSessions)
+                    {
+                        bool alive = false;
+                        for (int i = 0; i < sessions.Count; i++)
+                        {
+                            if (string.Equals(sessions[i].SourceAppUserModelId, kv.Key, StringComparison.OrdinalIgnoreCase))
+                            {
+                                alive = true;
+                                break;
+                            }
+                        }
+                        if (!alive) (stale ??= new List<string>()).Add(kv.Key);
+                    }
+
+                    if (stale != null)
+                    {
+                        foreach (string key in stale)
+                        {
+                            _watchedSessions[key].PlaybackInfoChanged -= OnPlaybackInfoChanged;
+                            _watchedSessions.Remove(key);
+                        }
+                    }
+                }
+
+                // 新出现的会话：挂上监听
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    string id = sessions[i].SourceAppUserModelId ?? "";
+                    if (id.Length == 0 || _watchedSessions.ContainsKey(id)) continue;
+                    sessions[i].PlaybackInfoChanged += OnPlaybackInfoChanged;
+                    _watchedSessions[id] = sessions[i];
+                }
+            }
+        }
+
         // 会话优先级：3 = 立即锁定，2 = 备选（仅通用模式），0 = 忽略。
         // 抽成纯函数既让扫描循环极简，也让优先级规则能脱离 WinRT 做无头验证。
         private static int SessionRank(string id)
         {
+            // 抖音：全局屏蔽，任何平台模式、任何匹配方式下都不接管它（justsolo 例外，见 IsGloballyBlockedApp）
+            if (IsGloballyBlockedApp(id)) return 0;
+
             // 浏览器媒体：只认浏览器 SMTC 会话，其余进程一律不接管
             if (TargetPlatform == "browser")
                 return MediaLogoProvider.IsBrowser(id) ? 3 : 0;
 
-            // 通用模式：抖音(justsolo)最高优先，其余非抖音会话只作备选
+            // 通用模式：Just Solo 最高优先 —— 它在播放时直接压过同时播放的其它会话，其余会话只作备选
             if (TargetPlatform == "other")
-                return id.Contains("justsolo", StringComparison.OrdinalIgnoreCase) ? 3
-                     : id.Contains("douyin", StringComparison.OrdinalIgnoreCase) ? 0 : 2;
+                return id.Contains("justsolo", StringComparison.OrdinalIgnoreCase) ? 3 : 2;
 
-            if (id.Contains("douyin", StringComparison.OrdinalIgnoreCase)) return 0; // 全局拉黑抖音
             return MatchesTargetPlatform(id) ? 3 : 0;
         }
+
+        // 全局屏蔽的软件：所有模式（含手动指定）下都不接管，也不出现在手动选择列表里。
+        // 抖音的 SMTC 会话会长期挂着干扰接管，所以直接拉黑而不是靠优先级规避。
+        // justsolo 单独放行：优先级判断上它排在抖音屏蔽之前，不能被连带屏蔽掉。
+        private static bool IsGloballyBlockedApp(string id) =>
+            id.Contains("douyin", StringComparison.OrdinalIgnoreCase)
+            && !id.Contains("justsolo", StringComparison.OrdinalIgnoreCase);
 
         // 目标平台与会话 AppID 的匹配规则（单一数据源）。
         // browser 模式在上游已单独分流，这里只管具体应用；未列出的平台走 ID 直配。
@@ -247,10 +398,11 @@ namespace NotchPeninsula
             _ => id.Contains(TargetPlatform, StringComparison.OrdinalIgnoreCase),
         };
 
-        // 依据当前会话与平台模式，维护 Just Solo LyricServer 的连接
+        // 依据当前接管的会话，维护 Just Solo LyricServer 的连接：
+        //   只有「当前显示的就是 justsolo」才连；切到别的会话、justsolo 会话消失、关掉媒体控制或换平台都断开。
         private void UpdateJustSoloConnection()
         {
-            bool shouldConnect = TargetPlatform == "other" && _isJustSoloSession;
+            bool shouldConnect = IsMediaControlEnabled && TargetPlatform == "other" && _isJustSoloSession;
 
             if (shouldConnect)
             {
@@ -391,7 +543,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 获取 Just Solo LyricServer 推送的实时频谱（12 频段，低频→高频）。
-        /// 返回 false 表示不可用（未连接 / 服务端版本过低 / 无数据），调用方应回退到本地音频采集。
+        /// 返回 false 表示不可用（未连接 / 服务端版本过低 / 已暂停），调用方应回退到本地音频采集。
         /// </summary>
         public bool TryGetSoloSpectrum(out float[] bands) => _justSoloLyric.TryGetSpectrum(out bands);
 
@@ -402,7 +554,18 @@ namespace NotchPeninsula
 
         private async void OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
         {
-            await RefreshProperties();
+            // 通用媒体的自动匹配完全跟随「谁在播放」，所以来自任何会话的播放/暂停都要重挑一次：
+            // 尤其是接管中的那个会话自己暂停时（「都未播放就回到 justsolo」），必须重新选，
+            // 只刷属性会让界面停在那个已经暂停的会话上。
+            if (_manager != null && IsMediaControlEnabled && TargetPlatform == "other" && !IsManualSessionMatch)
+            {
+                await UpdateSession(_manager);
+                return;
+            }
+
+            // 手动模式与具体平台模式的接管目标不受播放状态影响，事件来自接管会话时刷新属性即可
+            if (string.Equals(sender.SourceAppUserModelId, _currentAppId, StringComparison.OrdinalIgnoreCase))
+                await RefreshProperties();
         }
 
         private async Task FetchLyricsAsync(string title, string artist, long durationSec)
@@ -787,7 +950,7 @@ namespace NotchPeninsula
                 return;
             }
 
-            // Just Solo LyricServer 直连歌词优先（仅通用模式下检测到 justsolo 会话时才会处于连接状态）
+            // Just Solo LyricServer 直连歌词优先（只有当前显示 justsolo 时才会处于连接状态）
             // 译文来自协议里的 translation 字段，由客户端负责上下两行分开画
             if (_justSoloLyric.TryGetCurrentLyric(LyricDelayOffset, out string soloText, out string soloTrans, out float soloProgress))
             {
