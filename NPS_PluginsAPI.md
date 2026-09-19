@@ -12,7 +12,6 @@
 
 - **组件**（Widget）：显示在灵动岛主区域里的一段内容，可点击。
 - **详情页**（DetailPage）：右键某个组件后展开的更详细内容页。
-- **设置页**（SettingsPage）：在设置窗口里出现的、属于你这个插件的配置区域。
 - **刷新定时器**（ScheduleRefresh）：程序按指定时间间隔在后台调用你的代码，比如每 30 秒更新一次数据。
 - **提醒**（PostReminder）：弹出灵动岛顶部那种几秒钟的提示消息。
 - **自定义窗口**（CreateWindow）：你自己独立于灵动岛的一个可绘制、可被鼠标和键盘操作的小窗口。
@@ -314,9 +313,10 @@ dotnet build HelloPlugin.csproj -c Debug
 
 **提醒（PostReminder）**：`host.PostReminder(new ReminderData { Title = ..., Body = ..., Duration = ... })` 弹出一条几秒钟的灵动岛顶部提示。`ReminderData` 里 `IconPath` 可以配图标图片路径（可选），`OnClick` 可以配点击后的回调（可选）。适合做“数据更新了”“事件已提醒”这类反馈。
 
-**持久化设置（GetSetting / SetSetting）**：插件自己的配置存在 Windows 注册表里，程序会自动给每个插件的配置 key 加上 `Plugin.<你的Id>.` 前缀，所以你和其他插件不会互相覆盖。`GetSetting(key, 默认值)` 读，`SetSetting(key, value)` 写，存的是字符串。组件加载时在 `OnActivate` 里读回，运行时用 `host.SettingsChanged` 事件监听设置被改动（比如用户在设置页里改了配置）。这是让插件“记住上次状态”的机制，示例图里的开关就是用这套实现的。
+**持久化设置（GetSetting / SetSetting）**：插件自己的配置存在 Windows 注册表里，程序会自动给每个插件的配置 key 加上 `Plugin.<你的Id>.` 前缀，所以你和其他插件不会互相覆盖。`GetSetting(key, 默认值)` 读，`SetSetting(key, value)` 写，存的是字符串。组件加载时在 `OnActivate` 里读回，运行时用 `host.SettingsChanged` 事件监听配置被改动（`SetSetting` 写入后触发）。这是让插件“记住上次状态”的机制，示例图里的开关就是用这套实现的。
 
-**设置页（ISettingsPage）**：想让用户在程序设置窗口配置你的插件，就实现这个接口并 `host.RegisterSettingsPage(...)`。它只需要声明一个标题和一组控件，程序负责绘制和持久化。控件有三种：`ToggleSetting`（开/关）、`ChoiceSetting`（单选）、`NumberSetting`（数字）。程序把控件的变化存进注册表，会触发 `SettingsChanged` 事件，你的插件订阅后就能立刻响应。**注意：目前主程序还没有真正渲染设置页，注册了也不会显示（暂未开放）**，机制先写好，等接线补齐就能直接用。
+> **想让用户配置你的插件？** 程序**不提供**「在设置窗口里给插件一块配置区域」的能力（相关接口未接线，注册了也不会显示）。
+> 需要配置项就用上面这套自己存、自己做 UI：最省事的做法是把配置做成**详情页**里的内容（右键组件展开，见第七节），或者用 `CreateWindow` 开一个独立小窗口。
 
 **详情页（IDetailPage）**：右键组件展开的详细内容页。在组件的 `DetailPage` 属性里返回一个实现 `IDetailPage` 的对象即可（没有就返回 `null`，右键就只会打开设置窗口）。它的方法和组件类似：`MeasureWidth` / `MeasureHeight` 报尺寸、`Draw` 画内容、`HitTest` / `OnAction` 处理点击，只是画面更大，可以展示更多信息或做成一个小设置面板。**已开放**：右键组件后灵动岛会按你报的尺寸整块展开成详情页，展开 / 收起都带和原生一致的弹簧动画；岛内左键会按 `HitTest` 命中的动作名回调 `OnAction`。约定与细节见第七节。
 
@@ -390,7 +390,7 @@ dotnet build HelloPlugin.csproj -c Debug
 
 7. **给资源一个清理机会。** 如果插件申请了定时器、线程、句柄等，让入口类实现 `IDisposable` 并在 `Dispose` 里释放。程序卸载插件时会调用它，这样热重载（升级插件）时旧代码才能真正被回收干净。
 
-8. **组件不注册就不会显示。** 你在 `Initialize` 里 `new` 了组件对象还不够，必须 `host.RegisterWidget(...)` 把组件交给程序。同样的，设置页要 `RegisterSettingsPage`、二级内容要 `RegisterSecondaryWidget`。
+8. **组件不注册就不会显示。** 你在 `Initialize` 里 `new` 了组件对象还不够，必须 `host.RegisterWidget(...)` 把组件交给程序。同样的，二级内容要 `RegisterSecondaryWidget`。
 
 看完这些、再对照示例代码动手写一遍，你就能做出自己的灵动岛插件了。遇到问题可以从“插件中心”看每个插件的加载状态和错误信息，多数加载失败（缺依赖、框架不符、没实现入口类）都会在那里给出提示。
 
@@ -402,10 +402,10 @@ dotnet build HelloPlugin.csproj -c Debug
 
 **入口类 `INotchPlugin`**（每个插件唯一必须实现的接口）
 - 属性：`Id` / `DisplayName` / `Version`，用来标识插件并在列表里展示。
-- 方法：`void Initialize(IPluginHost host)`，程序加载后调用，在这里注册组件、设置页，并申请定时刷新等。
+- 方法：`void Initialize(IPluginHost host)`，程序加载后调用，在这里注册组件、申请定时刷新等。
 
 **宿主 `IPluginHost`**（`Initialize` 注入给你的对象，插件向程序请求全部服务的通道）
-- 注册：`RegisterWidget(IWidget)`（已开放，注册后渲染侧真正绘制）/ `RegisterSecondaryWidget(ISecondaryWidget)`（暂未开放，注册后无界面绘制）/ `RegisterSettingsPage(ISettingsPage)`（暂未开放，注册后设置窗口尚未渲染）。
+- 注册：`RegisterWidget(IWidget)`（已开放，注册后渲染侧真正绘制）/ `RegisterSecondaryWidget(ISecondaryWidget)`（暂未开放，注册后无界面绘制）。
 - 主题：`RenderTheme CurrentTheme { get; }` 取当前帧主题快照。
 - 提醒：`void PostReminder(ReminderData)`。
 - 设置持久化：`string GetSetting(string key, string fallback)` / `void SetSetting(string key, string value)`，键会自动加 `Plugin.<你的Id>.` 前缀隔离，不会互相覆盖；`event Action? SettingsChanged` 在设置被写入后触发。
@@ -445,10 +445,6 @@ dotnet build HelloPlugin.csproj -c Debug
 - `float MeasureWidth()` / `float MeasureHeight()` / `void Draw(SKCanvas, SKRect, WidgetFrame)` / `WidgetHit HitTest(float, float, SKRect)` / `void OnAction(string? action, float x, float y)`。
 - 尺寸由插件决定，宿主只把宽裁剪到 `180 ~ 1000`、高裁剪到 `48 ~ 480`；右键组件展开，鼠标离开岛体（约 0.9s 后）/ 岛内再右键 / 点击岛外都会收起，`OpenDetailPage` / `CloseDetailPage` 也可用。细节见第七节。
 
-**设置页 `ISettingsPage` / `ICustomSettingsPage`**（程序设置窗口里属于插件的区域）（暂未开放）
-- 声明式：`string Title` + `IReadOnlyList<SettingControl> Controls`。控件有三种：`ToggleSetting`（开/关）、`ChoiceSetting`（单选）、`NumberSetting`（数字），各自带默认值，注册后设置窗口目前尚未渲染它们。
-- 自定义式：实现 `ICustomSettingsPage` 可自己绘制整个设置页，提供 `MeasureHeight()`、`Draw(SKCanvas, SKRect, RenderTheme)`、`OnMouseDown/Move/Up(float, float)`。一个设置页可以同时实现 `ISettingsPage` 和 `ICustomSettingsPage`（暂未开放）。
-
 **自定义窗口 `IPluginWindow`**（`CreateWindow` 的返回值）
 - `SetDraw(Action<SKCanvas, int, int>)` 设置绘制回调；`SetMouse(down, move, up)` 设置鼠标三个事件；`SetKey(Action<char>)` 设置键盘字符；`RequestRedraw()` 请求重绘；`Close()` 关闭。
 
@@ -460,4 +456,4 @@ dotnet build HelloPlugin.csproj -c Debug
 
 **提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标路径）、`Duration`（时长，默认 4 秒）、`OnClick`（可选点击回调）。
 
-一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick`（右键则展开 `DetailPage`，详情页自己的 `HitTest` / `OnAction` 接管岛内左键）→ 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的是主显示组件、详情页、定时刷新、提醒、设置持久化和自定义窗口；设置页、副显示组件这两类接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。
+一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick`（右键则展开 `DetailPage`，详情页自己的 `HitTest` / `OnAction` 接管岛内左键）→ 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的是主显示组件、详情页、定时刷新、提醒、设置持久化和自定义窗口；副显示组件接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。
