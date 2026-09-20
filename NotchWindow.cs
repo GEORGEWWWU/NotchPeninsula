@@ -755,10 +755,18 @@ namespace NotchPeninsula
                                   && !_isManuallyExpanded && !Renderer.IsMediaExpanded && !isToastActive
                                   && !isClipboardActive && !Renderer.HasActiveDetailPage;
 
-                // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
-                // Y 轴的隐藏位移量必须加上灵动岛专属的下沉高度，否则藏不进屏幕
+                // Y 轴的位移量必须基于「岛体自身的高度」计算，不能写死待机高度：
+                // 媒体控制器 / 组合模式会把岛体撑到 MEDIA_HEIGHT(35)，若仍按 BASE_HEIGHT(29) 算，
+                // 就会多露出 (35 - 29) = 6px 的尾巴 —— 待机露 4px、媒体模式露 10px，
+                // 全屏看视频时正好挡视野。（用户 2026-09-20 反馈）
+                // 取 `Math.Min(_currentHeight, _targetHeight)` =「尺寸动画结束后岛体的高度」：
+                //   · 岛体正在**长高**（媒体刚接管）时取当前值 → 露出尾巴恒为 4px；
+                //   · 岛体正在**收缩**（收起 320×130 的媒体展开面板 / 关闭插件详情页）时取目标值，
+                //     否则会按旧的大高度算出一个很深的位移，把岛体先弹飞再落回。
+                // 隐藏位移量还必须加上灵动岛专属的下沉高度，否则藏不进屏幕。
                 float currentTopY = 12f * _currentStyleProgress;
-                float expectedTargetY = shouldHide ? -((Renderer.BASE_HEIGHT + currentTopY - 4) * _dpiScale) : 0f;
+                float settledHeight = Math.Min(_currentHeight, _targetHeight);
+                float expectedTargetY = shouldHide ? -((settledHeight + currentTopY - 4) * _dpiScale) : 0f;
 
                 if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
