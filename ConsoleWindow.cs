@@ -11,8 +11,18 @@ namespace NotchPeninsula
     {
         private static ConsoleWindow? _instance;
         private readonly IntPtr _hwnd;
+        private IntPtr _backdropHwnd;
         private static readonly Win32.WndProc _staticWndProc = StaticWndProc;
         private static bool _classRegistered = false;
+
+        private enum BackdropMaterialMode
+        {
+            SolidDark,
+            Acrylic,
+            Mica
+        }
+
+        private BackdropMaterialMode _backdropMode = BackdropMaterialMode.SolidDark;
 
         private const int WIDTH = 600;
         private const int HEIGHT = 660;
@@ -224,13 +234,19 @@ namespace NotchPeninsula
             {
                 _instance._isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
                 _instance.Render();
+                if (_instance._backdropHwnd != IntPtr.Zero)
+                    Win32.ShowWindow(_instance._backdropHwnd, Win32.SW_RESTORE);
                 Win32.ShowWindow(_instance._hwnd, Win32.SW_RESTORE);
+                _instance.SyncBackdropToContent();
                 Win32.SetForegroundWindow(_instance._hwnd);
             }
         }
 
         private ConsoleWindow()
         {
+            // 先挂到静态实例上：CreateWindowEx 期间系统可能立刻发 WM_PAINT/WM_CREATE，
+            // 如果此时 StaticWndProc 还看不到实例，初次打开就只会看到“空的模糊底板”。
+            _instance = this;
             _isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
             _customValues[0] = Renderer.STANDBY_WIDTH;
             _customValues[1] = Renderer.BASE_HEIGHT;
@@ -311,13 +327,34 @@ namespace NotchPeninsula
             int screenWidth = Screen.PrimaryScreen?.Bounds.Width ?? 1920;
             int screenHeight = Screen.PrimaryScreen?.Bounds.Height ?? 1080;
 
+            int left = (screenWidth - _scaledWidth) / 2;
+            int top = (screenHeight - _scaledHeight) / 2;
+            IntPtr hInstance = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero;
+
+            // 采用“双窗口”结构：
+            // 1) 背景窗：普通 DWM HWND，只负责 Acrylic / Mica 材质；
+            // 2) 内容窗：继续使用 layered + UpdateLayeredWindow，负责 Skia 前景 UI。
+            // 这样既能拿到真实背景材质，又能保留前景的 per-pixel alpha，不会再把历史帧叠进客户区造成残影。
+            _backdropHwnd = Win32.CreateWindowEx(
+                Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
+                "NotchConsoleClass", "NotchPeninsulaBackdrop",
+                Win32.WS_POPUP | Win32.WS_VISIBLE,
+                left, top,
+                _scaledWidth, _scaledHeight,
+                IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
+            );
+
+            ApplyRoundedRegion(_backdropHwnd);
+            TryEnableBackdropMaterial();
+            ApplyBackdropPalette();
+
             _hwnd = Win32.CreateWindowEx(
-                Win32.WS_EX_LAYERED,
+                Win32.WS_EX_LAYERED | Win32.WS_EX_TOOLWINDOW,
                 "NotchConsoleClass", "NotchPeninsula",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
-                (screenWidth - _scaledWidth) / 2, (screenHeight - _scaledHeight) / 2, // 使用物理尺寸居中
+                left, top,
                 _scaledWidth, _scaledHeight,
-                IntPtr.Zero, IntPtr.Zero, System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero, IntPtr.Zero
+                IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
             );
 
             for (int i = 0; i < 8; i++)
@@ -348,6 +385,162 @@ namespace NotchPeninsula
                 _savedStandbyWidth = -1f;
 
             Render();
+        }
+
+        private void ApplyRoundedRegion(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero)
+                return;
+
+            int radius = Math.Max(12, (int)MathF.Round(8f * _dpiScale * 2f));
+            IntPtr region = Win32.CreateRoundRectRgn(0, 0, _scaledWidth + 1, _scaledHeight + 1, radius, radius);
+            if (region != IntPtr.Zero)
+            {
+                _ = Win32.SetWindowRgn(hwnd, region, true);
+            }
+        }
+
+        private void SyncBackdropToContent()
+        {
+            if (_backdropHwnd == IntPtr.Zero || _hwnd == IntPtr.Zero)
+                return;
+
+            if (!Win32.GetWindowRect(_hwnd, out var rect))
+                return;
+
+            int width = rect.Right - rect.Left;
+            int height = rect.Bottom - rect.Top;
+            _ = Win32.SetWindowPos(_backdropHwnd, IntPtr.Zero, rect.Left, rect.Top, width, height, 0);
+        }
+
+        private void ApplyBackdropPalette()
+        {
+            if (_backdropMode == BackdropMaterialMode.SolidDark)
+            {
+                _bgPaint.Color = new SKColor(32, 32, 32);
+                _titleBarPaint.Color = new SKColor(40, 40, 40);
+                _cardBg.Color = new SKColor(255, 255, 255, 8);
+                _cardBorder.Color = new SKColor(255, 255, 255, 15);
+                _menuBg.Color = new SKColor(40, 40, 40);
+                _menuBorder.Color = new SKColor(80, 80, 80);
+                _globalBorderPaint.Color = new SKColor(60, 60, 60);
+                return;
+            }
+
+            bool mica = _backdropMode == BackdropMaterialMode.Mica;
+            _bgPaint.Color = mica ? new SKColor(22, 22, 22, 164) : new SKColor(18, 18, 18, 112);
+            _titleBarPaint.Color = mica ? new SKColor(28, 28, 28, 188) : new SKColor(22, 22, 22, 136);
+            _cardBg.Color = new SKColor(255, 255, 255, mica ? (byte)18 : (byte)22);
+            _cardBorder.Color = new SKColor(255, 255, 255, mica ? (byte)30 : (byte)38);
+            _menuBg.Color = mica ? new SKColor(26, 26, 26, 210) : new SKColor(22, 22, 22, 172);
+            _menuBorder.Color = new SKColor(255, 255, 255, mica ? (byte)28 : (byte)34);
+            _globalBorderPaint.Color = new SKColor(255, 255, 255, mica ? (byte)34 : (byte)40);
+        }
+
+        private void TryEnableBackdropMaterial()
+        {
+            TrySetDarkMode();
+            TryExtendFrameIntoClientArea();
+            TrySetRoundedCornerPreference();
+
+            // 用户这次要先看“有没有真实背景模糊”。
+            // Mica 在很多 Win11 机器上更像带噪点的深色底，不像明显模糊；
+            // 所以设置窗口实验优先尝试 Acrylic，失败再回退到 Win11 的 Mica。
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763) && TryEnableAcrylicBackdrop())
+            {
+                _backdropMode = BackdropMaterialMode.Acrylic;
+                return;
+            }
+
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621) && TryEnableSystemBackdropMica())
+            {
+                _backdropMode = BackdropMaterialMode.Mica;
+                return;
+            }
+
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) && TryEnableLegacyMica())
+            {
+                _backdropMode = BackdropMaterialMode.Mica;
+                return;
+            }
+
+            _backdropMode = BackdropMaterialMode.SolidDark;
+        }
+
+        private void TrySetDarkMode()
+        {
+            int enabled = 1;
+            int size = Marshal.SizeOf<int>();
+            if (_backdropHwnd == IntPtr.Zero) return;
+            _ = Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, size);
+            _ = Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref enabled, size);
+        }
+
+        private void TrySetRoundedCornerPreference()
+        {
+            if (_backdropHwnd == IntPtr.Zero) return;
+            int rounded = Win32.DWMWCP_ROUND;
+            _ = Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_WINDOW_CORNER_PREFERENCE, ref rounded, Marshal.SizeOf<int>());
+        }
+
+        private void TryExtendFrameIntoClientArea()
+        {
+            if (_backdropHwnd == IntPtr.Zero) return;
+            var margins = new Win32.MARGINS { cxLeftWidth = -1, cxRightWidth = -1, cyTopHeight = -1, cyBottomHeight = -1 };
+            _ = Win32.DwmExtendFrameIntoClientArea(_backdropHwnd, ref margins);
+        }
+
+        private bool TryEnableSystemBackdropMica()
+        {
+            if (_backdropHwnd == IntPtr.Zero) return false;
+            int backdrop = Win32.DWMSBT_MAINWINDOW;
+            return Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, Marshal.SizeOf<int>()) == 0;
+        }
+
+        private bool TryEnableLegacyMica()
+        {
+            if (_backdropHwnd == IntPtr.Zero) return false;
+            int enabled = 1;
+            return Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_MICA_EFFECT, ref enabled, Marshal.SizeOf<int>()) == 0;
+        }
+
+        private bool TryEnableAcrylicBackdrop()
+        {
+            var accent = new Win32.ACCENT_POLICY
+            {
+                AccentState = Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND,
+                AccentFlags = 0,
+                // 这个 tint 故意比上一版更浅：上一版 alpha 太高，视觉更像“深色底板”而不是背景模糊。
+                GradientColor = ColorToAbgr(0x8C, 0x14, 0x14, 0x14),
+                AnimationId = 0
+            };
+
+            IntPtr accentPtr = Marshal.AllocHGlobal(Marshal.SizeOf<Win32.ACCENT_POLICY>());
+            try
+            {
+                Marshal.StructureToPtr(accent, accentPtr, false);
+                var data = new Win32.WINDOWCOMPOSITIONATTRIBDATA
+                {
+                    Attribute = Win32.WCA_ACCENT_POLICY,
+                    Data = accentPtr,
+                    SizeOfData = Marshal.SizeOf<Win32.ACCENT_POLICY>()
+                };
+                if (_backdropHwnd == IntPtr.Zero) return false;
+                return Win32.SetWindowCompositionAttribute(_backdropHwnd, ref data) != 0;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(accentPtr);
+            }
+        }
+
+        private static uint ColorToAbgr(byte a, byte r, byte g, byte b)
+        {
+            return ((uint)a << 24) | ((uint)b << 16) | ((uint)g << 8) | r;
         }
 
         private void UpdateValueString(int index)
@@ -407,15 +600,39 @@ namespace NotchPeninsula
 
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
-            if (_instance != null && hwnd == _instance._hwnd)
-                return _instance.InstanceWndProc(hwnd, msg, wParam, lParam);
+            if (_instance != null)
+            {
+                bool initializingContent = _instance._hwnd == IntPtr.Zero;
+                if (initializingContent || hwnd == _instance._hwnd || hwnd == _instance._backdropHwnd)
+                    return _instance.InstanceWndProc(hwnd, msg, wParam, lParam);
+            }
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
         }
 
         private IntPtr InstanceWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            bool isBackdropWindow = hwnd == _backdropHwnd && _backdropHwnd != IntPtr.Zero;
+            if (isBackdropWindow)
+            {
+                switch (msg)
+                {
+                    case Win32.WM_PAINT:
+                        IntPtr backdropDc = Win32.BeginPaint(hwnd, out var backdropPs);
+                        if (backdropDc != IntPtr.Zero)
+                            Win32.EndPaint(hwnd, ref backdropPs);
+                        return IntPtr.Zero;
+                    case Win32.WM_NCHITTEST:
+                        return (IntPtr)Win32.HTTRANSPARENT;
+                }
+                return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+            }
+
             switch (msg)
             {
+                case Win32.WM_MOVE:
+                    SyncBackdropToContent();
+                    break;
+
                 case Win32.WM_MOUSEMOVE:
                     int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                     int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
@@ -853,8 +1070,21 @@ namespace NotchPeninsula
                 case Win32.WM_LBUTTONDOWN:
                     int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
-                    if (_closeHovered) Win32.DestroyWindow(hwnd);
-                    else if (_minHovered) Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
+                    if (_closeHovered)
+                    {
+                        if (_backdropHwnd != IntPtr.Zero)
+                        {
+                            Win32.DestroyWindow(_backdropHwnd);
+                            _backdropHwnd = IntPtr.Zero;
+                        }
+                        Win32.DestroyWindow(hwnd);
+                    }
+                    else if (_minHovered)
+                    {
+                        if (_backdropHwnd != IntPtr.Zero)
+                            Win32.ShowWindow(_backdropHwnd, Win32.SW_MINIMIZE);
+                        Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
+                    }
                     else if (clickY <= TITLE_BAR_HEIGHT)
                     {
                         Win32.ReleaseCapture();
@@ -1295,7 +1525,16 @@ namespace NotchPeninsula
                     }
                     break;
 
+                case Win32.WM_PAINT:
+                    return IntPtr.Zero;
+
                 case Win32.WM_DESTROY:
+                    if (_backdropHwnd != IntPtr.Zero)
+                    {
+                        IntPtr backdrop = _backdropHwnd;
+                        _backdropHwnd = IntPtr.Zero;
+                        Win32.DestroyWindow(backdrop);
+                    }
                     _instance = null;
                     break;
 
@@ -2541,46 +2780,75 @@ namespace NotchPeninsula
             }
 
             canvas.DrawRoundRect(new SKRect(0.5f, 0.5f, WIDTH - 0.5f, HEIGHT - 0.5f), cornerRadius, cornerRadius, _globalBorderPaint);
-            UpdateWindow(surface.PeekPixels());
+            UpdateLayeredContentWindow(surface.PeekPixels());
         }
 
-        private unsafe void UpdateWindow(SKPixmap pixmap)
+        private unsafe void UpdateLayeredContentWindow(SKPixmap pixmap)
         {
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
+            if (screenDc == IntPtr.Zero)
+                return;
+
             IntPtr memDc = Win32.CreateCompatibleDC(screenDc);
-            var bmi = new Win32.BITMAPINFO
+            if (memDc == IntPtr.Zero)
             {
-                bmiHeader = new Win32.BITMAPINFOHEADER
+                _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
+                return;
+            }
+
+            try
+            {
+                var bmi = new Win32.BITMAPINFO
                 {
-                    biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(),
-                    biWidth = _scaledWidth,
-                    biHeight = -_scaledHeight,
-                    biPlanes = 1,
-                    biBitCount = 32,
-                    biCompression = 0
+                    bmiHeader = new Win32.BITMAPINFOHEADER
+                    {
+                        biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(),
+                        biWidth = _scaledWidth,
+                        biHeight = -_scaledHeight,
+                        biPlanes = 1,
+                        biBitCount = 32,
+                        biCompression = 0
+                    }
+                };
+
+                IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
+                if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
+                    return;
+
+                IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
+                try
+                {
+                    long bytes = (long)_scaledWidth * _scaledHeight * 4;
+                    Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
+
+                    var ptSrc = new Win32.POINT(0, 0);
+                    var ptDst = new Win32.POINT(0, 0);
+                    Win32.GetWindowRect(_hwnd, out var rect);
+                    ptDst.x = rect.Left;
+                    ptDst.y = rect.Top;
+
+                    var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
+                    var blend = new Win32.BLENDFUNCTION
+                    {
+                        BlendOp = Win32.AC_SRC_OVER,
+                        BlendFlags = 0,
+                        SourceConstantAlpha = 255,
+                        AlphaFormat = Win32.AC_SRC_ALPHA
+                    };
+
+                    Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
                 }
-            };
-
-            IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
-            IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
-
-            long bytes = (long)_scaledWidth * _scaledHeight * 4;
-            Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
-
-            var ptSrc = new Win32.POINT(0, 0);
-            var ptDst = new Win32.POINT(0, 0);
-            Win32.GetWindowRect(_hwnd, out var rect);
-            ptDst.x = rect.Left;
-            ptDst.y = rect.Top;
-
-            var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
-            var blend = new Win32.BLENDFUNCTION { BlendOp = Win32.AC_SRC_OVER, SourceConstantAlpha = 255, AlphaFormat = Win32.AC_SRC_ALPHA };
-
-            Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
-            Win32.SelectObject(memDc, hOldBitmap);
-            Win32.DeleteObject(hBitmap);
-            Win32.DeleteDC(memDc);
-            _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
+                finally
+                {
+                    Win32.SelectObject(memDc, hOldBitmap);
+                    Win32.DeleteObject(hBitmap);
+                }
+            }
+            finally
+            {
+                Win32.DeleteDC(memDc);
+                _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
+            }
         }
 
         public static void UpdateAutoStartState(bool enable)

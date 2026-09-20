@@ -9,13 +9,16 @@ namespace NotchPeninsula
         public const int WS_EX_TOPMOST = 0x00000008;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
         public const int WS_EX_LAYERED = 0x00080000;
+        public const int WS_EX_NOACTIVATE = 0x08000000;
 
+        public const int WM_MOVE = 0x0003;
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
         public const int WM_LBUTTONUP = 0x0202;
         public const int WM_MOUSELEAVE = 0x02A3;
         public const int WM_SETCURSOR = 0x0020;
         public const int WM_CLOSE = 0x0010;
+        public const int WM_PAINT = 0x000F;
         public const int IDC_HAND = 32649; // Windows 原生手型指针常量
 
         public const byte AC_SRC_OVER = 0x00;
@@ -55,6 +58,60 @@ namespace NotchPeninsula
             public byte SourceConstantAlpha;
             public byte AlphaFormat;
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PAINTSTRUCT
+        {
+            public IntPtr hdc;
+            public bool fErase;
+            public RECT rcPaint;
+            public bool fRestore;
+            public bool fIncUpdate;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+            public byte[] rgbReserved;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MARGINS
+        {
+            public int cxLeftWidth;
+            public int cxRightWidth;
+            public int cyTopHeight;
+            public int cyBottomHeight;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct ACCENT_POLICY
+        {
+            public int AccentState;
+            public int AccentFlags;
+            public uint GradientColor;
+            public int AnimationId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WINDOWCOMPOSITIONATTRIBDATA
+        {
+            public int Attribute;
+            public IntPtr Data;
+            public int SizeOfData;
+        }
+
+        public const int ACCENT_DISABLED = 0;
+        public const int ACCENT_ENABLE_GRADIENT = 1;
+        public const int ACCENT_ENABLE_TRANSPARENTGRADIENT = 2;
+        public const int ACCENT_ENABLE_BLURBEHIND = 3;
+        public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+        public const int ACCENT_ENABLE_HOSTBACKDROP = 5;
+
+        public const int WCA_ACCENT_POLICY = 19;
+        public const int DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
+        public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+        public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        public const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+        public const int DWMWA_MICA_EFFECT = 1029;
+        public const int DWMWCP_ROUND = 2;
+        public const int DWMSBT_MAINWINDOW = 2;
 
         // 核心修复1：指定 CharSet.Unicode 让字符串正确传递给 Windows
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -134,6 +191,12 @@ namespace NotchPeninsula
             IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize,
             IntPtr hdcSrc, ref POINT pprSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
 
+        [DllImport("msimg32.dll", SetLastError = true)]
+        public static extern bool AlphaBlend(
+            IntPtr hdcDest, int xoriginDest, int yoriginDest, int wDest, int hDest,
+            IntPtr hdcSrc, int xoriginSrc, int yoriginSrc, int wSrc, int hSrc,
+            BLENDFUNCTION blendFunction);
+
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -150,6 +213,22 @@ namespace NotchPeninsula
         public static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
 
         [DllImport("user32.dll")]
+        public static extern IntPtr BeginPaint(IntPtr hWnd, out PAINTSTRUCT lpPaint);
+
+        [DllImport("user32.dll")]
+        public static extern bool EndPaint(IntPtr hWnd, ref PAINTSTRUCT lpPaint);
+
+        [DllImport("user32.dll")]
+        public static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
+
+        [DllImport("user32.dll")]
+        public static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
+
+        public const uint RDW_INVALIDATE = 0x0001;
+        public const uint RDW_UPDATENOW = 0x0100;
+        public const uint RDW_ERASE = 0x0004;
+
+        [DllImport("user32.dll")]
         public static extern IntPtr GetDC(IntPtr hWnd);
 
         [DllImport("user32.dll")]
@@ -163,6 +242,9 @@ namespace NotchPeninsula
 
         [DllImport("gdi32.dll")]
         public static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect, int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
 
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
@@ -197,6 +279,9 @@ namespace NotchPeninsula
         public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
         [DllImport("user32.dll")]
+        public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+
+        [DllImport("user32.dll")]
         public static extern bool DestroyWindow(IntPtr hWnd);
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
@@ -208,6 +293,15 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINDOWCOMPOSITIONATTRIBDATA data);
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS pMarInset);
 
         [DllImport("user32.dll")]
         public static extern uint GetDpiForWindow(IntPtr hwnd);
