@@ -148,7 +148,10 @@ namespace NotchPeninsula
         // 硬件检测模式切换前的待机宽度快照（用于切回时恢复）
         private float _savedStandbyWidth = -1f;
         private float[] _customValues = new float[8];
-        private static readonly float[] _defaultCustomValues = [130f, 34f, 250f, 40f, 260f, 55f, 1.0f, 12f];
+        // 「恢复默认」用的出厂值，顺序 = [待机宽, 待机高, 媒体宽, 媒体高, 通知宽, 通知高, DPI, 底部圆角]。
+        // ⚠️ 这三个地方必须同步改，否则「恢复默认」和首次安装会给出不同的值：
+        //    ① 本数组 ② Program.LoadSettings 里 key.GetValue 的兜底值 ③ Renderer 的字段初值
+        private static readonly float[] _defaultCustomValues = [125f, 29f, 250f, 35f, 260f, 55f, 1.0f, 12f];
         private readonly string[] _valStrCache = new string[8];
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
         private int _hoveredOpacityIndex = -1;
@@ -864,7 +867,7 @@ namespace NotchPeninsula
                         if (_hoveredResetIndex != -1)
                         {
                             updateIdx = _hoveredResetIndex;
-                            float[] defaultVals = { 130f, 34f, 250f, 40f, 260f, 55f, 1.0f, 12f };
+                            float[] defaultVals = { 125f, 29f, 250f, 35f, 260f, 55f, 1.0f, 12f };
                             _customValues[updateIdx] = defaultVals[updateIdx];
 
                             // 重置时如果处于硬件监控，拦截至最小限制
@@ -876,7 +879,7 @@ namespace NotchPeninsula
 
                             // 重置待机宽度时，同步更新快照，防止切回时恢复到旧值
                             if (updateIdx == 0)
-                                _savedStandbyWidth = -1f; // 清除快照，切回时用默认130
+                                _savedStandbyWidth = -1f; // 清除快照，切回时用默认125
 
                             // 完整模式重置消息通知尺寸时，同样拦截至完整模式最小限制，避免缩得放不下应用名
                             if (Renderer.IsToastFullMode)
@@ -1101,7 +1104,7 @@ namespace NotchPeninsula
                         // 离开硬件检测：恢复用户之前的宽度
                         else if (previousMode == 2 && Renderer.StandbyDisplayMode != 2)
                         {
-                            float restoreWidth = _savedStandbyWidth > 0f ? _savedStandbyWidth : 130f;
+                            float restoreWidth = _savedStandbyWidth > 0f ? _savedStandbyWidth : 125f;
                             Renderer.STANDBY_WIDTH = restoreWidth;
                             _customValues[0] = restoreWidth;
                             Program.SaveSetting("Custom_StandbyW", restoreWidth);

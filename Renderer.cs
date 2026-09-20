@@ -8,10 +8,10 @@ namespace NotchPeninsula
     public static class Renderer
     {
         // 1. 布局核心参数 (改为无锁动态变量)
-        private static volatile float _standbyWidth = 130f;
-        private static volatile float _baseHeight = 34f;
+        private static volatile float _standbyWidth = 125f;
+        private static volatile float _baseHeight = 29f;
         private static volatile float _mediaWidth = 250f;
-        private static volatile float _mediaHeight = 40f;
+        private static volatile float _mediaHeight = 35f;
         private static volatile float _toastWidth = 260f;
         private static volatile float _toastHeight = 55f;
         private static volatile float _globalDpi = 1.0f;
