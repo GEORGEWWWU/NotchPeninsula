@@ -717,11 +717,36 @@ namespace NotchPeninsula
                     }
 
                     bool newIsHoveringDisabledArea = false;
-                    // 当处于“显示设置(1)”或“交互设置(3)”且开启了组合模式时，拦截特定卡片区域的指针
-                    if (_selectedTab == 1 && Renderer.CompositeModeEnabled && x >= 200 && x <= WIDTH - 20 && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 360)
-                        newIsHoveringDisabledArea = true;
-                    else if (_selectedTab == 3 && Renderer.CompositeModeEnabled && x >= 200 && x <= WIDTH - 20 && y >= TITLE_BAR_HEIGHT + 84 && y <= TITLE_BAR_HEIGHT + 146)
-                        newIsHoveringDisabledArea = true;
+                    // 「禁止」指针区域 —— 判据必须与 Render() 里对应卡片的 disabled **完全同源**，
+                    // 否则就会出现「明明能点、却显示禁止指针」。
+                    // ⚠️ 这些 y 区间是手写的，卡片一挪动就必须同步改（踩过一次：
+                    //    自动隐藏卡片从两行加高到三行后，「媒体交互方式」卡片从 yOffset 84 挪到了 208，
+                    //    这里没跟着改，禁止区域就压在了「暂停播放后自动隐藏」那一行上 ——
+                    //    导致不管该开关是否被禁用，hover 上去都是禁止指针）。
+                    if (x >= 200 && x <= WIDTH - 20)
+                    {
+                        if (_selectedTab == 1 && Renderer.CompositeModeEnabled
+                            && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 360)  // 待机显示内容卡片
+                        {
+                            newIsHoveringDisabledArea = true;
+                        }
+                        else if (_selectedTab == 3)
+                        {
+                            // 与 Render() tab 3 的 disabled 判据同源（改那边记得改这边）
+                            bool autoHideDisabled = Renderer.PassthroughModeEnabled;
+                            bool subToggleDisabled = autoHideDisabled || !NotchWindow.IsAutoHideEnabled;
+
+                            if (Renderer.CompositeModeEnabled
+                                && y >= TITLE_BAR_HEIGHT + 208 && y <= TITLE_BAR_HEIGHT + 270)  // 媒体交互方式卡片
+                                newIsHoveringDisabledArea = true;
+                            else if (autoHideDisabled
+                                && y >= TITLE_BAR_HEIGHT + 12 && y <= TITLE_BAR_HEIGHT + 198)   // 自动隐藏卡片整卡（穿透模式下三行全禁用）
+                                newIsHoveringDisabledArea = true;
+                            else if (subToggleDisabled
+                                && y >= TITLE_BAR_HEIGHT + 74 && y <= TITLE_BAR_HEIGHT + 198)   // 两个附属开关行（需先开启「自动隐藏」）
+                                newIsHoveringDisabledArea = true;
+                        }
+                    }
 
                     if (newIsHoveringDisabledArea != _isHoveringDisabledArea) _isHoveringDisabledArea = newIsHoveringDisabledArea;
 
@@ -2026,7 +2051,7 @@ namespace NotchPeninsula
                 DrawToggleRow(136, "全屏自动隐藏",
                     isAutoHideDisabled ? "穿透模式下禁止自动隐藏"
                         : !NotchWindow.IsAutoHideEnabled ? "需先开启「自动隐藏」"
-                        : "检测到全屏视频 / 游戏时隐藏（与上一项只开一个）",
+                        : "检测到全屏视频 / 游戏时隐藏",
                     NotchWindow.IsFullscreenAutoHideEnabled,
                     !isFsHideDisabled && _fsHideToggleHovered,
                     isFsHideDisabled);
