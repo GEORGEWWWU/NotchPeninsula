@@ -72,7 +72,19 @@ namespace NotchPeninsula
         private const string AppName = "NotchPeninsula";
         private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
-        public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关
+        public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关（**用户的偏好**，不等于真的生效）
+
+        /// <summary>
+        /// 自动隐藏**实际是否生效**。穿透模式下强制失效。
+        ///
+        /// 设置面板在穿透模式开启时会把「自动隐藏」开关置灰并**显示为关闭**（副标题：穿透模式下禁止自动隐藏），
+        /// 运行时必须和这个承诺完全一致 —— 否则就会出现「开关显示已关、岛体却还在躲」。
+        /// 判据必须与设置面板用的是同一个（`Renderer.PassthroughModeEnabled`），别再各写一份。
+        ///
+        /// 注意这里**不销毁用户偏好**：`IsAutoHideEnabled` 原样保留，关掉穿透模式后自动隐藏会自动回来。
+        /// 所有「自动隐藏要不要生效」的判断都请读这个属性，不要直接读 `IsAutoHideEnabled`。
+        /// </summary>
+        public static bool IsAutoHideEffective => IsAutoHideEnabled && !Renderer.PassthroughModeEnabled;
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
         // 📋 剪贴板链接监听（事件驱动，仅在复制时读一次剪贴板，稳态零占用）
         private readonly ClipboardMonitor _clipboardMonitor = new ClipboardMonitor();
@@ -573,8 +585,10 @@ namespace NotchPeninsula
                 }
 
 
-                // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏
-                bool shouldHide = IsAutoHideEnabled && !_media.IsActive && !_isManuallyExpanded && !isToastActive
+                // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏。
+                // 用 IsAutoHideEffective 而不是 IsAutoHideEnabled —— 穿透模式下必须真的不隐藏，
+                // 与设置面板里「自动隐藏开关置灰且显示为关闭」保持一致。
+                bool shouldHide = IsAutoHideEffective && !_media.IsActive && !_isManuallyExpanded && !isToastActive
                                   && !isClipboardActive && !Renderer.HasActiveDetailPage;
 
                 // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
@@ -1075,7 +1089,10 @@ namespace NotchPeninsula
 
                         RaiseWindowClicked(cx, cy, "main-window");
 
-                        if (IsAutoHideEnabled && !_media.IsActive && _currentY < -5f)
+                        // 「点击已隐藏的岛体把它唤回来」。同样要用 IsAutoHideEffective：
+                        // 穿透模式下 auto-hide 已失效，但刚开启穿透时岛体可能还在 350ms 的回滑动画里
+                        // （_currentY 仍 < -5），此时点击不应被当成「唤醒」，否则会莫名锁上 _isManuallyExpanded。
+                        if (IsAutoHideEffective && !_media.IsActive && _currentY < -5f)
                         {
                             _isManuallyExpanded = true;
                             return (IntPtr)0;
