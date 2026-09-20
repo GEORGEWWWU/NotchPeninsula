@@ -28,7 +28,9 @@ namespace NotchPeninsula
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
         // 🔤 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
-        private const float FONT_CARD_Y = 300f;        // 卡片相对标题栏的纵向偏移
+        // 📐 通用设置页卡片顺序（2026-09-20 调整后）：
+        //    开机自启 12 | 窗口置顶 84 | 通知卡片（两行）156..280 | 剪贴板链接检测 290 | 切换灵动岛字体 362
+        private const float FONT_CARD_Y = 362f;        // 卡片相对标题栏的纵向偏移
         private const float FONT_BTN_H = 26f;          // 按钮高度
         private const float FONT_BTN_Y = FONT_CARD_Y + 18f;
         private const float FONT_RESET_W = 56f;        // [重置] 按钮宽度
@@ -58,6 +60,7 @@ namespace NotchPeninsula
         private bool _toggleHovered = false;
         private bool _toastToggleHovered = false;
         private bool _topmostToggleHovered = false;
+        private bool _clipboardToggleHovered = false; // 📋「剪贴板链接检测」（2026-09-20 从交互设置搬到通用设置）
         // 灵动岛字体切换状态（字体本身由 FontConfig 统一持有）
         private bool _fontPickHovered = false;
         private bool _fontResetHovered = false;
@@ -68,7 +71,6 @@ namespace NotchPeninsula
         private bool _fsHideToggleHovered = false;    // 「全屏自动隐藏」——自动隐藏卡片的第三行
         private bool _mediaExpToggleHovered = false;
         private bool _passToggleHovered = false;
-        private bool _clipboardToggleHovered = false;
 
         // 媒体设置状态
         private bool _mediaToggleHovered = false;
@@ -512,24 +514,31 @@ namespace NotchPeninsula
 
                     if (_selectedTab == 0) // 通用设置
                     {
+                        // ⚠️ 本段的 y 值必须与下面 tab 0 的渲染保持同步
+                        //    （通知卡片是两行高：行1 开关 +176..+196、行2 下拉 +233..+265；
+                        //      剪贴板卡片 +310；字体按钮见 FONT_BTN_Y）
                         // 开机自启
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newToggleHovered = true;
-                        // 窗口置顶开关（与消息通知整组互换位置后上移到第 2 张卡）
+                        // 窗口置顶开关
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                             newTopmostToggleHovered = true;
 
-                        // 系统消息通知开关
+                        // 🔔 通知卡片第 1 行：系统消息通知开关
                         if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196)
                             newToastToggleHovered = true;
-                        // 消息通知内容下拉（复用现有下拉控件样式）
-                        if (!_toastModeDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 240 && y <= TITLE_BAR_HEIGHT + 272)
+                        // 🔔 通知卡片第 2 行：消息通知内容下拉（复用现有下拉控件样式）
+                        if (!_toastModeDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 233 && y <= TITLE_BAR_HEIGHT + 265)
                             newToastModeDropdownHovered = true;
                         if (_toastModeDropdownOpen)
                         {
-                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 274 && y < TITLE_BAR_HEIGHT + 274 + _toastModeOptions.Length * 26)
-                                newHoveredToastModeIndex = (y - (TITLE_BAR_HEIGHT + 274)) / 26;
+                            if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 267 && y < TITLE_BAR_HEIGHT + 267 + _toastModeOptions.Length * 26)
+                                newHoveredToastModeIndex = (y - (TITLE_BAR_HEIGHT + 267)) / 26;
                         }
+
+                        // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬到这里）
+                        if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 310 && y <= TITLE_BAR_HEIGHT + 330)
+                            newClipboardToggleHovered = true;
 
                         // 切换灵动岛字体：[选择字体…] 与 [重置] 两个按钮
                         if (y >= TITLE_BAR_HEIGHT + FONT_BTN_Y && y <= TITLE_BAR_HEIGHT + FONT_BTN_Y + FONT_BTN_H)
@@ -646,7 +655,7 @@ namespace NotchPeninsula
                     else if (_selectedTab == 3) // 交互设置
                     {
                         // ⚠️ 本段的 y 值必须与下面 tab 3 的渲染保持同步
-                        //    （自动隐藏卡片是三行高：行1 +32、行2 +94、行3 +156；其余三张卡 +228 / +300 / +372）
+                        //    （自动隐藏卡片是三行高：行1 +32、行2 +94、行3 +156；其余两张卡 +228 / +300）
                         // 自动隐藏（穿透模式下禁止）
                         if (!Renderer.PassthroughModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
@@ -664,8 +673,6 @@ namespace NotchPeninsula
                             newMediaExpToggleHovered = true;
                         // 使用局部变量，防止状态死锁
                         newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 300 && y <= TITLE_BAR_HEIGHT + 320;
-                        // 📋 剪贴板链接检测
-                        newClipboardToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 372 && y <= TITLE_BAR_HEIGHT + 392;
                     }
                     else if (_selectedTab == 6) // 插件中心
                     {
@@ -1683,28 +1690,40 @@ namespace NotchPeninsula
                 DrawToggleCard(12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
                 // 窗口置顶（与下方消息通知整组互换位置）
                 DrawToggleCard(84, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
-                DrawToggleCard(156, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
+                // 🔔 「系统消息通知」与「消息通知内容」**合并为一张两行卡片**（2026-09-20）：
+                //    两者都是通知选项，拆成两张卡显得零碎。
+                //    卡片高 124（yOffset 156..280），行1 +156（开关 +176..+196）、
+                //    行2 +218（下拉 +233..+265），中间一条分隔线（+214）点明主从关系。
+                //    ⚠️ 改这里的数值时必须同步改上面 tab 0 的悬停热区
+                //    （当前 +176..+196 / +233..+265 / +310..+330）。
+                var notifyCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 156, WIDTH - 20, TITLE_BAR_HEIGHT + 280);
+                canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBorder);
 
-                // 消息通知内容下拉卡（完整时展示应用名并拉大通知尺寸）
-                var toastModeCard = new SKRect(200, TITLE_BAR_HEIGHT + 228, WIDTH - 20, TITLE_BAR_HEIGHT + 290);
-                canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBg);
-                canvas.DrawRoundRect(toastModeCard, 6, 6, _cardBorder);
-                canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 254, _uiTextPaint);
+                DrawToggleRow(156, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
+
+                canvas.DrawLine(216, TITLE_BAR_HEIGHT + 214, WIDTH - 36, TITLE_BAR_HEIGHT + 214, _separatorPaint);
+
+                // 行2：消息通知内容下拉（完整时展示应用名并拉大通知尺寸）
+                canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 244, _uiTextPaint);
                 string toastModeDesc = _selectedToastModeIndex switch
                 {
                     2 => "完整显示应用名、发送者与消息主体",
                     1 => "右侧展示“现在”与应用名",
                     _ => "仅显示发送者与消息主体"
                 };
-                canvas.DrawText(toastModeDesc, 216, TITLE_BAR_HEIGHT + 274, _subTextPaint);
+                canvas.DrawText(toastModeDesc, 216, TITLE_BAR_HEIGHT + 264, _subTextPaint);
 
-                float tmdW = 110, tmdX = WIDTH - 140, tmdY = TITLE_BAR_HEIGHT + 240, tmdH = 32;
+                float tmdW = 110, tmdX = WIDTH - 140, tmdY = TITLE_BAR_HEIGHT + 233, tmdH = 32;
                 var tmdRect = new SKRect(tmdX, tmdY, tmdX + tmdW, tmdY + tmdH);
                 _dynamicFillPaint.Color = _toastModeDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8);
                 canvas.DrawRoundRect(tmdRect, 4, 4, _dynamicFillPaint);
                 canvas.DrawText(_toastModeOptions[_selectedToastModeIndex], tmdX + 10, tmdY + 21, _uiTextPaint);
                 canvas.DrawLine(tmdX + tmdW - 20, tmdY + 14, tmdX + tmdW - 15, tmdY + 19, _chevronPaint);
                 canvas.DrawLine(tmdX + tmdW - 15, tmdY + 19, tmdX + tmdW - 10, tmdY + 14, _chevronPaint);
+
+                // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
+                DrawToggleCard(290, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
 
                 // 切换灵动岛字体：选中字体文件后立即热替换岛内全部文本字体（默认系统字体，不做任何改动）
                 var fontCard = new SKRect(200, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - 20, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);
@@ -2020,7 +2039,8 @@ namespace NotchPeninsula
                 //    所以卡片底要单独画成三行高（186px，yOffset 12..198），再用 DrawToggleRow 画三行内容。
                 //    三行 yOffset 12 / 74 / 136（行距 62），行间各一条分隔线，让「附属」关系一眼可见。
                 //    两个附属开关**互斥**（见点击处理），所以两行看起来是「二选一」的一组。
-                //    ⚠️ 改这里的数值时必须同步改上面 tab 3 的悬停热区（当前 +32/+94/+156/+228/+300/+372）。
+                //    ⚠️ 改这里的数值时必须同步改上面 tab 3 的悬停热区（当前 +32/+94/+156/+228/+300）。
+                //    （「剪贴板链接检测」已于 2026-09-20 搬到「通用设置」，这里只剩三张卡）
                 bool isAutoHideDisabled = Renderer.PassthroughModeEnabled;
                 var autoHideCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 198);
                 canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
@@ -2063,8 +2083,6 @@ namespace NotchPeninsula
                     isMediaExpDisabled);
 
                 DrawToggleCard(280, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
-
-                DrawToggleCard(352, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
             }
             else if (_selectedTab == 4)
             {
@@ -2464,7 +2482,7 @@ namespace NotchPeninsula
             // 消息通知内容下拉菜单（通用设置）
             if (_selectedTab == 0 && _toastModeDropdownOpen)
             {
-                float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 274; float dW = 110; float dH = _toastModeOptions.Length * 26;
+                float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 267; float dW = 110; float dH = _toastModeOptions.Length * 26;
                 var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
                 canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
                 canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
