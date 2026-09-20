@@ -112,7 +112,13 @@ namespace NotchPeninsula
 
         // 当前会话是否不具备歌词能力（浏览器 / 视频类 / PotPlayer）：它们没有可用的歌词时间轴，
         // 既不该显示歌词，也不该污染歌词进度。三处判断共用一份定义，避免规则漂移。
-        private bool IsNonLyricSession => _isBilibiliSession || _isBrowserSession || _isPotPlayerSession;
+        //
+        // 例外：用户在设置里手动锁定的软件越过全部自动判定（含浏览器判定），一律按普通媒体源
+        // 走歌词校验 —— 用户明确指定了它，就不该再被「进程名带 edge / chrome」这种猜测否掉。
+        // 否则 msedgewebview2（Pake / Tauri 等 WebView2 套壳播放器）会被当成浏览器直接掐掉歌词，
+        // 手动选择等于白选。手动锁定的判据见 _isManualLockedSession。
+        private bool IsNonLyricSession =>
+            !_isManualLockedSession && (_isBilibiliSession || _isBrowserSession || _isPotPlayerSession);
 
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _currentSession;
@@ -125,6 +131,10 @@ namespace NotchPeninsula
         private bool _isBilibiliSession;  // 通用模式下当前会话是否为 bilibili，用于隐藏 Artist
         private bool _isPotPlayerSession; // 当前会话是否为 PotPlayer，无歌名/歌手时隐藏文本
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
+        // 当前接管的会话是不是「用户在设置里手动锁定」的那一个。
+        // 手动锁定的会话不参与任何自动分类的歌词拦截（见 IsNonLyricSession）：
+        // 用户手动选了它，就必须按普通媒体源走歌词校验，校验命中就正常加载歌词。
+        private bool _isManualLockedSession;
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
 
@@ -189,6 +199,11 @@ namespace NotchPeninsula
             }
         }
 
+        // 是否处于「用户手动锁定某个软件」的接管模式：通用媒体 + 手动匹配 + 已选定 AppID。
+        // 会话挑选与「越过后台自动判定」两处共用它，避免规则漂移。
+        private static bool IsManualLockActive =>
+            IsMediaControlEnabled && TargetPlatform == "other" && IsManualSessionMatch && ManualSessionAppId.Length > 0;
+
         private async Task UpdateSession(GlobalSystemMediaTransportControlsSessionManager manager)
         {
             GlobalSystemMediaTransportControlsSession? newSession = null;
@@ -213,7 +228,7 @@ namespace NotchPeninsula
             {
                 // 通用媒体 + 手动模式：直接锁定指定 AppID 的会话，不受平台规则与播放状态影响
                 // （全局屏蔽的软件除外，手动也不允许锁定它）
-                if (TargetPlatform == "other" && IsManualSessionMatch && ManualSessionAppId.Length > 0)
+                if (IsManualLockActive)
                 {
                     for (int i = 0; i < sessions.Count; i++)
                     {
@@ -263,8 +278,17 @@ namespace NotchPeninsula
             // 命中 bilibili / PotPlayer / 浏览器 会话时打标记，供刷新时应用文本显示策略
             bool wasNonLyric = IsNonLyricSession;
             _currentAppId = newSession?.SourceAppUserModelId ?? "";
+
+            // 手动锁定的会话必须真的是用户选中的那个 AppID 才算数 ——
+            // 否则「手动选了 A、系统里只有 B」时会错误地放行 B 的自动判定。
+            // 判定只做一次字符串比较，不落在 60FPS 路径上。
+            _isManualLockedSession = IsManualLockActive && newSession != null
+                && string.Equals(_currentAppId, ManualSessionAppId, StringComparison.OrdinalIgnoreCase);
+
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
             _isPotPlayerSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "PotPlayer");
+            // 浏览器标记照常保留：它同时还驱动网页标题清理（CleanBrowserTitle）。
+            // 手动锁定会话的歌词拦截已由 IsNonLyricSession 单独豁免，不受这里影响。
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
             _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
 
