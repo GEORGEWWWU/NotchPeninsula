@@ -234,10 +234,11 @@ namespace NotchPeninsula
             {
                 _instance._isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
                 _instance.Render();
-                if (_instance._backdropHwnd != IntPtr.Zero)
-                    Win32.ShowWindow(_instance._backdropHwnd, Win32.SW_RESTORE);
+                // 先把内容窗从任务栏还原回前台，再把材质窗重新亮出来并对齐到内容窗后面。
+                // 材质窗不能走 SW_RESTORE —— 它是无标题 popup，被「还原」过一次就会把
+                // 窗口标题当成标题栏文字画在左上角。
                 Win32.ShowWindow(_instance._hwnd, Win32.SW_RESTORE);
-                _instance.SyncBackdropToContent();
+                _instance.ShowBackdrop();
                 Win32.SetForegroundWindow(_instance._hwnd);
             }
         }
@@ -335,9 +336,13 @@ namespace NotchPeninsula
             // 1) 背景窗：普通 DWM HWND，只负责 Acrylic / Mica 材质；
             // 2) 内容窗：继续使用 layered + UpdateLayeredWindow，负责 Skia 前景 UI。
             // 这样既能拿到真实背景材质，又能保留前景的 per-pixel alpha，不会再把历史帧叠进客户区造成残影。
+            // ⚠️ 背景窗标题必须留空：它用 DwmExtendFrameIntoClientArea 把整个客户区做成了玻璃，
+            //    DWM 会把它当成「有标题栏的窗口」，最小化再还原时会把窗口标题直接画在客户区左上角
+            //    （就是那个 "NotchPeninsulaBackdrop" 残影）。标题为空 → 无字可画。
+            //    并且它永远不要走 SW_MINIMIZE，只走 SW_HIDE / SW_SHOWNOACTIVATE（见 HideBackdrop / ShowBackdrop）。
             _backdropHwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
-                "NotchConsoleClass", "NotchPeninsulaBackdrop",
+                "NotchConsoleClass", string.Empty,
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
                 left, top,
                 _scaledWidth, _scaledHeight,
@@ -348,10 +353,14 @@ namespace NotchPeninsula
             TryEnableBackdropMaterial();
             ApplyBackdropPalette();
 
+            // ⚠️ 内容窗刻意用 WS_EX_APPWINDOW 而不是 WS_EX_TOOLWINDOW：
+            //    工具窗（TOOLWINDOW）没有任务栏按钮，最小化时 Windows 只会把它画成
+            //    「桌面左下角、浮在任务栏之上的小标题条」——既进不了任务栏，也没有入口点回来。
+            //    换成 APPWINDOW 后最小化就是正常进任务栏，点任务栏按钮即可还原。
             _hwnd = Win32.CreateWindowEx(
-                Win32.WS_EX_LAYERED | Win32.WS_EX_TOOLWINDOW,
+                Win32.WS_EX_LAYERED | Win32.WS_EX_APPWINDOW,
                 "NotchConsoleClass", "NotchPeninsula",
-                Win32.WS_POPUP | Win32.WS_VISIBLE,
+                Win32.WS_POPUP | Win32.WS_VISIBLE | Win32.WS_MINIMIZEBOX,
                 left, top,
                 _scaledWidth, _scaledHeight,
                 IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
@@ -415,6 +424,31 @@ namespace NotchPeninsula
             // 背景窗必须永远压在内容窗后面；之前传 IntPtr.Zero 会把 backdrop 提到 Z 序顶部，
             // 拖动时就只剩一块亚克力空板把内容盖住。
             _ = Win32.SetWindowPos(_backdropHwnd, _hwnd, rect.Left, rect.Top, width, height, Win32.SWP_NOACTIVATE);
+        }
+
+        // 材质窗只能「藏」，不能「最小化」。
+        // 它是个无标题 WS_POPUP：走 SW_MINIMIZE 会被 Windows 当成普通窗口最小化，
+        // 于是在桌面左下角任务栏之上留一条小标题条；还原之后这条标题条还会糊在窗口左上角。
+        private void HideBackdrop()
+        {
+            if (_backdropHwnd == IntPtr.Zero) return;
+            Win32.ShowWindow(_backdropHwnd, Win32.SW_HIDE);
+        }
+
+        // 还原 / 唤醒时把材质窗重新亮出来，并压回内容窗正下方（不能激活，否则会抢焦点）
+        private void ShowBackdrop()
+        {
+            if (_backdropHwnd == IntPtr.Zero || _hwnd == IntPtr.Zero) return;
+            Win32.ShowWindow(_backdropHwnd, Win32.SW_SHOWNOACTIVATE);
+            SyncBackdropToContent();
+        }
+
+        // 最小化 = 藏材质窗 + 内容窗进任务栏（内容窗是 WS_EX_APPWINDOW，所以有任务栏按钮）
+        private void MinimizeToTaskbar()
+        {
+            if (_hwnd == IntPtr.Zero) return;
+            HideBackdrop();
+            Win32.ShowWindow(_hwnd, Win32.SW_MINIMIZE);
         }
 
         private void ApplyBackdropPalette()
@@ -636,6 +670,30 @@ namespace NotchPeninsula
             {
                 case Win32.WM_MOVE:
                     SyncBackdropToContent();
+                    break;
+
+                // 最小化 / 还原：材质窗跟着内容窗一起藏 / 亮。
+                // 任务栏按钮的「点击最小化」走 WM_SYSCOMMAND(SC_MINIMIZE)，这里自己兜住，
+                // 免得 DefWindowProc 在某些样式组合下把它吞掉。
+                case Win32.WM_SYSCOMMAND:
+                    if ((wParam.ToInt32() & 0xFFF0) == Win32.SC_MINIMIZE)
+                    {
+                        MinimizeToTaskbar();
+                        return IntPtr.Zero;
+                    }
+                    break;
+
+                case Win32.WM_SIZE:
+                    if (wParam.ToInt32() == Win32.SIZE_MINIMIZED)
+                    {
+                        HideBackdrop();
+                    }
+                    else if (_hwnd != IntPtr.Zero)
+                    {
+                        // 从任务栏还原回来：材质窗重新亮出来并对齐，再重绘一帧前景
+                        ShowBackdrop();
+                        Render();
+                    }
                     break;
 
                 case Win32.WM_MOUSEMOVE:
@@ -1086,9 +1144,7 @@ namespace NotchPeninsula
                     }
                     else if (_minHovered)
                     {
-                        if (_backdropHwnd != IntPtr.Zero)
-                            Win32.ShowWindow(_backdropHwnd, Win32.SW_MINIMIZE);
-                        Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
+                        MinimizeToTaskbar();
                     }
                     else if (clickY <= TITLE_BAR_HEIGHT)
                     {

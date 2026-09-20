@@ -6,18 +6,24 @@ namespace NotchPeninsula
     {
         public const int WS_POPUP = unchecked((int)0x80000000);
         public const int WS_VISIBLE = 0x10000000;
+        public const int WS_MINIMIZEBOX = 0x00020000;
         public const int WS_EX_TOPMOST = 0x00000008;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
+        public const int WS_EX_APPWINDOW = 0x00040000;
         public const int WS_EX_LAYERED = 0x00080000;
         public const int WS_EX_NOACTIVATE = 0x08000000;
 
         public const int WM_MOVE = 0x0003;
+        public const int WM_SIZE = 0x0005;
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
         public const int WM_LBUTTONUP = 0x0202;
         public const int WM_MOUSELEAVE = 0x02A3;
         public const int WM_SETCURSOR = 0x0020;
         public const int WM_CLOSE = 0x0010;
+        public const int WM_SYSCOMMAND = 0x0112;
+        public const int SC_MINIMIZE = 0xF020;
+        public const int SIZE_MINIMIZED = 1;
         public const int WM_PAINT = 0x000F;
         public const int IDC_HAND = 32649; // Windows 原生手型指针常量
 
@@ -28,6 +34,8 @@ namespace NotchPeninsula
         public const int WM_RBUTTONDOWN = 0x0204;
         public const int WM_NCLBUTTONDOWN = 0x00A1;
         public const int HTCAPTION = 2;
+        public const int SW_HIDE = 0;
+        public const int SW_SHOWNOACTIVATE = 4;
         public const int SW_MINIMIZE = 6;
         public const int SW_RESTORE = 9;
         public const int WM_DESTROY = 0x0002;
