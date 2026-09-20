@@ -835,12 +835,16 @@ namespace NotchPeninsula
                     if (Renderer.IsTranslationLineVisible(_media))
                         textWidth = Math.Max(textWidth, Renderer.MeasureLyricTranslationWidth(_media.CurrentLyricTranslation));
 
-                    // 🎵 文本区长度封顶（MEDIA_TEXT_MAX_WIDTH）：长标题 / 长歌词不再把岛体无限撑宽，
-                    //    否则右侧的律动频谱与播放按钮会被顶到很偏的位置，插件行也彻底没余量。
-                    //    超出部分由渲染侧既有的文字遮罩做渐隐截断，视觉上是自然淡出而不是硬切。
-                    nativeWidth = Math.Max(nativeWidth, Math.Min(textWidth, Renderer.MEDIA_TEXT_MAX_WIDTH) + 115f);
+                    // 🎵 文本区长度**不再单独封顶**（2026-09-20 用户要求「媒体控制器的长度放开，多长都无所谓」）。
+                    //    原先这里夹了一个 MEDIA_TEXT_MAX_WIDTH（480 ≈ 27 个汉字），长歌词先撞到它 →
+                    //    超出部分被文字渐隐遮罩截断，而且原生内容宽度被钉在 595，
+                    //    插件行预算 = 800 − 595 = 205 被吃光 → 装不下的插件**整帧不显示**
+                    //    （用户反馈：「多的插件在灵动岛上就直接不显示了」「这个长度只显示这个插件，
+                    //      另一个长度只显示另一个插件」）。
+                    //    现在只受下面的 MAX_ISLAND_WIDTH（已放宽到 1920）约束，真实歌词行远达不到。
+                    nativeWidth = Math.Max(nativeWidth, textWidth + 115f);
                 }
-                nativeWidth = Math.Min(nativeWidth, Renderer.MAX_ISLAND_WIDTH); // 岛体总长上限，窄屏也不会被撑破
+                nativeWidth = Math.Min(nativeWidth, Renderer.MAX_ISLAND_WIDTH); // 岛体总长上限（1920），窄屏也不会被撑破
 
                 // 🧩 插件行取舍：按「组件声明的所需宽度能否完整落进剩余空间」判定。
                 //    每个组件通过 IWidget.MeasureWidth 声明「完整显示我的内容需要多宽」，

@@ -114,40 +114,33 @@ namespace NotchPeninsula
             return _textPaint.MeasureText(text);
         }
         /// <summary>
-        /// 岛体总长度上限：与消息弹窗（Toast）的最大长度保持一致。
-        /// Toast / 剪贴板面板的自适应宽度、组合模式总宽、以及插件行的取舍都以它封顶。
+        /// 岛体总长度上限：Toast / 剪贴板面板的自适应宽度、组合模式总宽、以及插件行的取舍都以它封顶。
+        ///
+        /// <para>
+        /// <b>2026-09-20 由 800 放开到 1920（用户要求）</b>：用户原话「必须放开最大长度，灵动岛本体哪怕
+        /// 宽度 max=1920 都无所谓，宁愿灵动岛超长溢出屏幕都不要被裁切」。
+        /// 旧的 800 是「怕挤压到右边的插件」而设的，但实际效果是**长歌词被裁切**，
+        /// 而且插件行预算（= 本值 − 原生内容宽度）被长歌词吃光后，插件会**直接整帧不显示**
+        /// （不是被压缩，是彻底消失），体验很差 —— 这个顾虑被证明完全没必要。
+        /// </para>
+        ///
+        /// <para>
+        /// 1920 是**本体**的上限（≈ 106 个汉字，任何真实歌词行都远达不到）。
+        /// 它同时也是窗口内容区的下限来源：<see cref="WINDOW_WIDTH"/> 必须 ≥ 本值，
+        /// 否则岛体超出窗口的部分会被窗口边缘裁掉（那就又变成裁切了）。
+        /// 岛体允许溢出屏幕 —— 窗口比屏幕宽是合法的，透明像素照常鼠标穿透。
+        /// </para>
         /// </summary>
-        public const float MAX_ISLAND_WIDTH = 800f;
+        public const float MAX_ISLAND_WIDTH = 1920f;
 
-        /// <summary>
-        /// 媒体控制器「按文本自适应」时，文本部分最多算多宽。
-        ///
-        /// 媒体控制器会按标题 / 歌手 / 歌词的长度把岛体撑宽（封顶 <see cref="MAX_ISLAND_WIDTH"/>），
-        /// 但长文本会把岛体吃满：右侧的律动频谱 / 播放按钮（<c>right - 90 … right - 20</c>）
-        /// 被顶到很偏的位置，同时一点余量都不给插件行留。
-        ///
-        /// 这里给**文本区**单独定一个上限，超出的部分交给既有的文字遮罩做渐隐截断 ——
-        /// 岛体不再被长标题无限撑大，频谱与按钮的位置始终稳定，插件行也有机会显示。
-        /// 默认约 30 个汉字；想完整显示更长的标题就调大它（总宽仍受 <see cref="MAX_ISLAND_WIDTH"/> 约束）。
-        /// </summary>
-        public static float MEDIA_TEXT_MAX_WIDTH = 480f;
-
-        /// <summary>
-        /// 组合模式下媒体模块（缩略图 + 文本 + 频谱/按钮）的占宽上限。
-        ///
-        /// 组合模式是**固定宽度**而不是自适应：一旦媒体块超长，整行原生模块就会顶破
-        /// <see cref="MAX_ISLAND_WIDTH"/>，而 <see cref="GetCompositeWidth"/> 末尾是
-        /// <c>Math.Clamp(…, 60f, MAX_ISLAND_WIDTH)</c> —— 超出的部分会在右侧被硬裁，
-        /// 最先牺牲的正是排在后面的频谱与播放按钮（以及可能出现的一切右侧内容）。
-        ///
-        /// 所以这里直接给模块占宽封顶：<see cref="MeasureMediaBlockWidth"/> 按它夹，
-        /// 文本超出部分由 <c>DrawMediaModule</c> 里那层渐隐遮罩自然截断，
-        /// 频谱、按钮与右侧插件的位置因此始终可预期。
-        ///
-        /// 默认 460 ≈ 缩略图 32 + 间距 10 + 文本 340（约 21 个汉字）+ 12 + 频谱 21.2
-        /// + 锚点后的 45（非悬停按钮/频谱区）。
-        /// </summary>
-        public static float CompositeMediaMaxWidth = 460f;
+        // ⛔ 2026-09-20 用户明确要求「媒体控制器的长度也放开，多长都无所谓」，因此删掉了两个上限常量：
+        //    · MEDIA_TEXT_MAX_WIDTH（默认 480 ≈ 27 个汉字）—— 非组合模式的媒体文本区上限
+        //    · CompositeMediaMaxWidth（默认 460 ≈ 21 个汉字）—— 组合模式媒体模块的占宽上限
+        //    这两个才是「歌词一长就被裁切」的真正元凶（它们都比 MAX_ISLAND_WIDTH 小得多，长歌词先撞到它们），
+        //    而且把原生内容宽度钉死/压低后，插件行预算（= MAX_ISLAND_WIDTH − 原生宽度）被吃光，
+        //    装不下的插件会**整帧不显示**（不是压缩，是彻底消失）。
+        //    ⚠️ 不要再以「防止挤压插件」为由把它们加回来 —— 插件该不该显示由插件行预算决定，
+        //       而岛体该多长就多长（上限见 MAX_ISLAND_WIDTH）。
 
         /// <summary>
         /// Toast 文本右边界与渐隐遮罩起点之间的兜底余量（逻辑像素）。
@@ -1061,9 +1054,17 @@ namespace NotchPeninsula
         }
 
         // 动态计算最大边界，防止因刘海变大导致出界
-        // 将透明原生窗口的基础画布拓宽至 1200f，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
+        // 将透明原生窗口的基础画布拓宽，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
         // 🧩 插件详情页展开时，底层缓冲必须容得下详情页尺寸（+80 / +45 是原有的四周留白）
-        public static float WINDOW_WIDTH => Math.Max(1200f, Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))) + 80f);
+        // ⚠️ 2026-09-20：岛体总长上限放宽到 MAX_ISLAND_WIDTH(1920) 后，窗口内容区**必须**跟着 ≥ 它 ——
+        //    岛体是水平居中画的（islandLeft = (WINDOW_WIDTH - currentWidth) / 2），
+        //    只要 currentWidth > WINDOW_WIDTH，islandLeft 就变成负数，超出窗口的那部分会被窗口边缘硬裁，
+        //    等于又绕回「被裁切」。所以这里把 MAX_ISLAND_WIDTH 也纳入下限。
+        //    窗口比屏幕宽是允许的（岛体可以溢出屏幕，用户明确接受）；透明像素照常鼠标穿透，
+        //    位置换算（logX / ptDst.x）都已经带上了「窗口居中于显示器」的偏移量，无需另行处理。
+        public static float WINDOW_WIDTH => Math.Max(1200f,
+            Math.Max(MAX_ISLAND_WIDTH,
+                Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))))) + 80f;
         public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT))) + 45f);
 
         public const int OUTER_R = 14;
@@ -2652,10 +2653,10 @@ namespace NotchPeninsula
         /// <summary>
         /// 媒体模块在组合模式下的占宽（缩略图 + 文本 + 间距 + 频谱）。
         ///
-        /// <b>按 <see cref="CompositeMediaMaxWidth"/> 封顶</b>：组合模式是固定宽度布局，
-        /// 超长的标题/歌词若照实计宽，会把整行原生模块顶破 <see cref="MAX_ISLAND_WIDTH"/>，
-        /// 末尾的 <c>Math.Clamp</c> 就会把右侧（频谱 / 播放按钮 / 后面的插件）硬裁掉。
-        /// 封顶之后超出部分由绘制侧的渐隐遮罩截断，宽度与绘制口径一致。
+        /// <b>不封顶</b>（2026-09-20 删掉了原先的 <c>CompositeMediaMaxWidth</c>）：用户要求媒体控制器长度全放开，
+        /// 文本按真实内容计宽，超出部分只受 <see cref="MAX_ISLAND_WIDTH"/> 约束（而它已放宽到 1920）。
+        /// 组合模式总宽仍由 <see cref="GetCompositeWidth"/> 收口，且插件行预算是「总长上限 − 原生总宽」，
+        /// 所以本值变大只会让岛体变长、不会把插件挤没（前提是原生总宽还没吃满总长上限）。
         /// </summary>
         private static float MeasureMediaBlockWidth(MediaController? media)
         {
@@ -2670,8 +2671,7 @@ namespace NotchPeninsula
                 textWidth = Math.Max(textWidth, _textPaint.MeasureText(media!.CurrentLyricTranslation) * LYRIC_TRANS_SCALE);
 
             float thumbW = media?.Thumbnail != null ? 32f : 0f;
-            float full = thumbW + textWidth + 12f + 21.2f;
-            return Math.Min(full, CompositeMediaMaxWidth);
+            return thumbW + textWidth + 12f + 21.2f;
         }
 
         /// <summary>
