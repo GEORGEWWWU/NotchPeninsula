@@ -357,6 +357,8 @@ namespace NotchPeninsula
                 IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
             );
 
+            SyncBackdropToContent();
+
             for (int i = 0; i < 8; i++)
             {
                 UpdateValueString(i);
@@ -410,7 +412,9 @@ namespace NotchPeninsula
 
             int width = rect.Right - rect.Left;
             int height = rect.Bottom - rect.Top;
-            _ = Win32.SetWindowPos(_backdropHwnd, IntPtr.Zero, rect.Left, rect.Top, width, height, 0);
+            // 背景窗必须永远压在内容窗后面；之前传 IntPtr.Zero 会把 backdrop 提到 Z 序顶部，
+            // 拖动时就只剩一块亚克力空板把内容盖住。
+            _ = Win32.SetWindowPos(_backdropHwnd, _hwnd, rect.Left, rect.Top, width, height, Win32.SWP_NOACTIVATE);
         }
 
         private void ApplyBackdropPalette()
@@ -429,7 +433,8 @@ namespace NotchPeninsula
 
             bool mica = _backdropMode == BackdropMaterialMode.Mica;
             _bgPaint.Color = mica ? new SKColor(22, 22, 22, 164) : new SKColor(18, 18, 18, 112);
-            _titleBarPaint.Color = mica ? new SKColor(28, 28, 28, 188) : new SKColor(22, 22, 22, 136);
+            // 标题栏不再单独盖一层深色底，否则顶栏会像“第二块面板”把亚克力吃掉。
+            _titleBarPaint.Color = SKColors.Transparent;
             _cardBg.Color = new SKColor(255, 255, 255, mica ? (byte)18 : (byte)22);
             _cardBorder.Color = new SKColor(255, 255, 255, mica ? (byte)30 : (byte)38);
             _menuBg.Color = mica ? new SKColor(26, 26, 26, 210) : new SKColor(22, 22, 22, 172);
@@ -1772,8 +1777,9 @@ namespace NotchPeninsula
             clipPath.AddRoundRect(windowRect, cornerRadius, cornerRadius);
             canvas.ClipPath(clipPath, SKClipOperation.Intersect, true);
 
-            // 标题栏区
-            canvas.DrawRect(0, 0, WIDTH, TITLE_BAR_HEIGHT, _titleBarPaint);
+            // 标题栏区：纯暗色模式仍保留传统顶栏；材质模式下不再额外盖一整块底色，让亚克力/云母连续透过。
+            if (_backdropMode == BackdropMaterialMode.SolidDark)
+                canvas.DrawRect(0, 0, WIDTH, TITLE_BAR_HEIGHT, _titleBarPaint);
 
             float textX = 14f;
             if (_appIconBitmap != null)
