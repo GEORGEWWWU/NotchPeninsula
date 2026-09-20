@@ -9,6 +9,10 @@ namespace NotchPeninsula
     /// 其它程序以独占模式占用输出设备时，捕获流会被系统断开；这里用常驻看门狗轮询做健康检查
     /// （单次约 0.04µs，基本免费）并在判定失效时限速重建捕获（单次约 7ms），同时订阅 Core Audio
     /// 事件在音频环境变化时立即复核，因此恢复延迟通常在 1 个检查周期内。
+    ///
+    /// 另有一条独立的失效判据：**切换系统默认输出设备**（扬声器 ⇄ 耳机 ⇄ HDMI 等）。
+    /// 这种切换不会断开旧设备的 Loopback 流 —— 旧设备依然存在、依然在送静音帧，
+    /// 所以「流是否还活着」永远发现不了它，必须主动比对默认端点 ID，否则只能重启软件才生效。
     /// </summary>
     public class AudioAnalyzer : IDisposable
     {
@@ -20,6 +24,9 @@ namespace NotchPeninsula
         private const int RestartAttemptIntervalMs = 1000;
         // Loopback 捕获即使静音也会持续送帧，超过该时长没有数据即认为流已失效
         private const double DataSilenceTimeoutMs = 1500d;
+        // 兜底比对默认输出设备的周期：正常情况下 Core Audio 的默认设备变更通知是即时可靠的，
+        // 这个轮询只防「通知收不到」（订阅失败 / 驱动不上报），10s 一次 COM 查询的开销可以忽略。
+        private const int DeviceProbeIntervalMs = 10000;
 
         private float[] _frontBars = new float[5];
         private float[] _backBars = new float[5];
@@ -38,6 +45,15 @@ namespace NotchPeninsula
         private WasapiLoopbackCapture? _capture;
         private volatile bool _restartingCapture; // 本类主动释放旧捕获时，忽略其停止回调
         private long _lastDataTicks;              // 最后一次收到音频数据（含静音帧）的时间
+
+        // ===== 默认输出设备跟踪 =====
+        // 当前捕获实际绑定在哪个输出端点上（构造捕获前记录，见 TryStartCapture 注释）。
+        private volatile string _capturedDeviceId = "";
+        // 默认输出设备「可能变了」的序号：收到 Core Audio 通知、或兜底轮询到点时 +1。
+        // 用递增序号而不是 bool 标记，是为了让「读取序号 → 查询设备 → 记录已查」之间的竞态
+        // 不会吞掉一次变更：中途又来一次通知会把序号再推高，下一轮自然还会重新查。
+        private int _deviceChangeEpoch;
+        private int _deviceCheckedEpoch;
 
         private readonly ManualResetEventSlim _checkSignal = new(false); // 事件催促看门狗立即复核
         private readonly CancellationTokenSource _shutdown = new();
@@ -110,6 +126,12 @@ namespace NotchPeninsula
                 WasapiLoopbackCapture? capture = null;
                 try
                 {
+                    // 先记下「现在」的默认输出设备，再构造捕获。
+                    // 顺序不能反：WasapiLoopbackCapture() 内部会自己再查一次默认端点并绑定它，
+                    // 所以构造之后记录的 ID 可能比实际绑定的更新 —— 那样设备切换就会被漏判
+                    // （记的是新设备、绑的是旧设备，一比对反而「一致」）。
+                    // 反过来先记录则只会偏旧，最多多重建一次，是安全的方向。
+                    _capturedDeviceId = TryGetDefaultRenderDeviceId();
                     capture = new WasapiLoopbackCapture(); // 默认捕获系统主混音输出
                     ConfigureBands(capture.WaveFormat);
 
@@ -161,7 +183,14 @@ namespace NotchPeninsula
                 _restartingCapture = false;
             }
 
-            _sessionControl = null; // 旧会话随捕获一并销毁
+            // 旧会话随捕获一并销毁：先摘掉事件订阅再丢引用。
+            // （切换输出设备后重建会走到这里，不摘的话每次重建都会在已消失的会话上留一份订阅。）
+            var session = _sessionControl;
+            _sessionControl = null;
+            if (session != null)
+            {
+                try { session.UnRegisterEventClient(_sessionEvents); } catch { }
+            }
         }
 
         /// <summary>
@@ -188,6 +217,11 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 捕获流本身是否健康。**不含**「默认输出设备是否被切换」这一条 ——
+        /// 那一条单独判定（见 <see cref="IsCapturedDeviceStillDefault"/>），
+        /// 因为它必须优先于重建限速，不能和流失效混在一起被限速吃掉。
+        /// </summary>
         private bool IsCaptureAlive()
         {
             var capture = _capture;
@@ -200,13 +234,69 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 常驻看门狗：健康时每 500ms 做一次约 0.04µs 的检查；判定失效后重建捕获（约 7ms/次），
-        /// 重建之间至少间隔 2s；被 Core Audio 事件唤醒时跳过限速，立即重建。
+        /// 默认输出设备是否仍是当前捕获绑定的那一个。
+        /// 平时零开销：没有变更通知就直接返回 true，不做任何 COM 查询；
+        /// 只有序号被推进（收到通知 / 兜底轮询到点）后才真的去查一次默认端点。
+        ///
+        /// ⚠️ 调用它会「消费」掉当前序号，所以**调用方必须保证：返回 false 时一定会真的去重建**。
+        /// 否则这次变更判定就被吃掉了，要等下一个通知 / 10s 兜底轮询才会再发现。
+        /// </summary>
+        private bool IsCapturedDeviceStillDefault()
+        {
+            int epoch = Volatile.Read(ref _deviceChangeEpoch);
+            if (epoch == _deviceCheckedEpoch) return true;
+
+            string current = TryGetDefaultRenderDeviceId();
+            Volatile.Write(ref _deviceCheckedEpoch, epoch);
+
+            // 查不到（无输出设备 / 枚举器失效）时不要误判成「设备变了」，
+            // 否则会退化成每秒重建一次的循环；这种情况交给静音超时去兜底。
+            if (current.Length == 0) return true;
+
+            return string.Equals(current, _capturedDeviceId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>读取当前默认输出（渲染）端点 ID；失败返回空串。</summary>
+        private string TryGetDefaultRenderDeviceId()
+        {
+            try
+            {
+                var enumerator = _enumerator;
+                if (enumerator == null) return "";
+
+                // 只取 ID，用完即弃；这个 MMDevice 包装对象不交给任何长生命周期使用者
+                using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                return device.ID ?? "";
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"读取默认输出设备失败: {ex.Message}");
+                return "";
+            }
+        }
+
+        /// <summary>
+        /// 收到「默认输出设备变更」通知：推进序号并唤醒看门狗立即复核。
+        /// 注意这里不直接判定「变了」—— 只改「通信」角色时默认端点其实没动，
+        /// 交给看门狗真去查一次 ID 后再决定要不要重建，避免无谓地打断一次捕获。
+        /// </summary>
+        private void OnDefaultRenderDeviceChanged()
+        {
+            Interlocked.Increment(ref _deviceChangeEpoch);
+            EnsureCaptureAlive();
+        }
+
+        /// <summary>
+        /// 常驻看门狗：健康时每 500ms 做一次约 0.04µs 的检查（外加每 10s 一次默认设备比对）；
+        /// 判定失效后重建捕获（约 7ms/次），重建之间至少间隔 <see cref="RestartAttemptIntervalMs"/>；
+        /// 被 Core Audio 事件唤醒时跳过限速立即重建；**默认输出设备被切换时同样跳过限速**——
+        /// 那是低频的用户操作，不需要也不能等（等的话这次判定就被限速吃掉了）。
         /// </summary>
         private void WatchdogLoop()
         {
             bool recovering = false;
             long nextAttemptTicks = 0;
+            long nextDeviceProbeTicks = DateTime.UtcNow.Ticks + DeviceProbeIntervalMs * TimeSpan.TicksPerMillisecond;
 
             while (!_shutdownToken.IsCancellationRequested)
             {
@@ -216,7 +306,20 @@ namespace NotchPeninsula
                     _checkSignal.Reset();
                     if (_shutdownToken.IsCancellationRequested) break; // 退出前不再动捕获
 
-                    if (IsCaptureAlive())
+                    // 兜底轮询：万一默认设备变更通知没送到，也保证 10s 内一定能发现切换
+                    if (DateTime.UtcNow.Ticks >= nextDeviceProbeTicks)
+                    {
+                        Interlocked.Increment(ref _deviceChangeEpoch);
+                        nextDeviceProbeTicks = DateTime.UtcNow.Ticks + DeviceProbeIntervalMs * TimeSpan.TicksPerMillisecond;
+                    }
+
+                    // 两条独立的失效理由：① 默认输出设备被切换 ② 捕获流本身断了。
+                    // ① 必须单独拿出来判定 —— 旧设备的 Loopback 在切换后往往还活着，
+                    //    只看 ② 永远发现不了切换；而且 ① 一旦成立就**必须**重建，
+                    //    不能被下面的限速 continue 掉（否则这次判定被消费、白等一轮）。
+                    bool deviceChanged = !IsCapturedDeviceStillDefault();
+
+                    if (!deviceChanged && IsCaptureAlive())
                     {
                         if (recovering)
                         {
@@ -229,11 +332,14 @@ namespace NotchPeninsula
                     if (!recovering)
                     {
                         recovering = true;
-                        Logger.Info("音频捕获已断开，等待设备释放后自动恢复");
+                        Logger.Info(deviceChanged
+                            ? "默认输出设备已切换，正在重建音频捕获"
+                            : "音频捕获已断开，等待设备释放后自动恢复");
                     }
 
-                    // 无事件催促时按最小间隔限速，避免独占期间反复重建捕获
-                    if (!signaled && DateTime.UtcNow.Ticks < nextAttemptTicks) continue;
+                    // 无事件催促时按最小间隔限速，避免独占期间反复重建捕获。
+                    // 设备切换是低频的用户操作，不受限速约束，立即跟随。
+                    if (!signaled && !deviceChanged && DateTime.UtcNow.Ticks < nextAttemptTicks) continue;
 
                     ReleaseCapture();
                     TryStartCapture(isRetry: true);
@@ -329,7 +435,9 @@ namespace NotchPeninsula
             public void OnPropertyValueChanged(string deviceId, PropertyKey key) => owner.EnsureCaptureAlive();
             public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
             {
-                if (flow == DataFlow.Render) owner.EnsureCaptureAlive();
+                // 只关心输出方向；role 不筛，因为这里只是「催一次复核」，
+                // 真正判定交给 owner 去比对端点 ID（只改通信设备时不会误重建）。
+                if (flow == DataFlow.Render) owner.OnDefaultRenderDeviceChanged();
             }
         }
 
