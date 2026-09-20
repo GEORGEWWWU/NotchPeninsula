@@ -38,13 +38,21 @@ namespace NotchPeninsula
         private const float FONT_RESET_X = WIDTH - 36 - FONT_RESET_W;
         private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
 
-        // 🎚 媒体设置页「匹配方式」行（渲染与鼠标命中必须使用同一组坐标）
+        // 🎚 媒体设置页「目标媒体平台 + 匹配方式」合并卡片（渲染与鼠标命中必须使用同一组坐标）
+        // 📐 媒体设置页卡片顺序（2026-09-20 合并后）：
+        //    媒体控制 12..74 | 合并卡片（两行）84..208 | 歌词设置 222..398
+        //    合并卡片：第 1 行「目标媒体平台」行首 84、分隔线 142、第 2 行「匹配方式」行首 146（行距 62）
+        // ⚠️ 第 1 行下拉框 +96..+128 的命中判定写在 WM_MOUSEMOVE 的 tab 2 段里（+98..+128），
+        //    第 2 行选项框/下拉菜单命中直接读下面的 MATCH_ROW_Y / MATCH_MENU_Y —— 改这里即两侧同时生效。
+        private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + 84f;    // 合并卡片顶部
+        private const float PLATFORM_ROW2_Y = TITLE_BAR_HEIGHT + 146f;   // 第 2 行「匹配方式」行首
+        private const float LYRIC_CARD_Y = TITLE_BAR_HEIGHT + 222f;      // 歌词设置卡片顶部
         private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
         private const float MATCH_BOX_H = 32f;
         private const float MATCH_MODE_X = 340f;       // 左框：自动匹配 / 手动选择软件
         private const float MATCH_APP_X = 460f;        // 右框：手动模式下的目标软件
-        private const float MATCH_ROW_Y = TITLE_BAR_HEIGHT + 168f;   // 选项框顶部
-        private const float MATCH_MENU_Y = TITLE_BAR_HEIGHT + 202f;  // 下拉菜单顶部
+        private const float MATCH_ROW_Y = TITLE_BAR_HEIGHT + 158f;   // 选项框顶部（= 第 2 行行首 +12）
+        private const float MATCH_MENU_Y = TITLE_BAR_HEIGHT + 192f;  // 下拉菜单顶部（= 选项框底 +2）
         private const float MATCH_MENU_RIGHT = 570f;   // 软件菜单右边界
         private const float APP_MENU_W = 280f;         // 软件菜单宽度
 
@@ -599,7 +607,8 @@ namespace NotchPeninsula
                         if (!anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newMediaToggleHovered = true;
 
-                        // 下拉菜单
+                        // 下拉菜单（合并卡片第 1 行「目标媒体平台」；框体 +96..+128，命中内缩 2px）
+                        // ⚠️ 必须与 Render() 里 tab 2 的 `dY = TITLE_BAR_HEIGHT + 96` / `dH = 32` 保持同步
                         if (!anyPopupOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
                             newDropdownHovered = true;
 
@@ -609,7 +618,8 @@ namespace NotchPeninsula
                                 newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
                         }
 
-                        // 匹配方式：仅通用媒体可选；右框只在手动模式下可选
+                        // 匹配方式（合并卡片第 2 行）：仅通用媒体可选；右框只在手动模式下可选
+                        // 坐标全部来自 MATCH_ROW_Y / MATCH_MENU_Y，与 Render() 同源
                         bool matchRowEnabled = MediaController.TargetPlatform == "other";
                         newMatchModeDropdownHovered = !anyPopupOpen && matchRowEnabled
                             && x >= MATCH_MODE_X && x <= MATCH_MODE_X + MATCH_BOX_W && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H;
@@ -629,7 +639,8 @@ namespace NotchPeninsula
                                 newHoveredAppIndex = (int)((y - MATCH_MENU_Y) / 26);
                         }
 
-                        float lyricY = TITLE_BAR_HEIGHT + 232;
+                        // 歌词设置卡片（坐标常量与 Render() 同源）
+                        float lyricY = LYRIC_CARD_Y;
                         bool newLyricToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
                         bool newTransToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 77 && y <= lyricY + 97);
                         bool newKaraokeToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 117 && y <= lyricY + 137);
@@ -1890,8 +1901,14 @@ namespace NotchPeninsula
             {
                 DrawToggleCard(12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
 
-                var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + 84, WIDTH - 20, TITLE_BAR_HEIGHT + 146);
-                canvas.DrawRoundRect(cardRect, 6, 6, _cardBg); canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+                // 🎚 合并卡片：「目标媒体平台」+「匹配方式」共用一张卡（两行 × 62 = 124 高，84..208）
+                //    第 1 行行首 84 / 分隔线 142（行首 +58）/ 第 2 行行首 146（行距 62）
+                //    ⚠️ 本段所有 y 值必须与 WM_MOUSEMOVE 的 tab 2 命中段保持同步（见字段区的坐标常量注释）
+                var platformCardRect = new SKRect(200, PLATFORM_CARD_Y, WIDTH - 20, PLATFORM_CARD_Y + 124);
+                canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBorder);
+
+                // ── 第 1 行：目标媒体平台 ──
                 canvas.DrawText("目标媒体平台", 216, TITLE_BAR_HEIGHT + 110, _uiTextPaint);
                 canvas.DrawText(MediaController.TargetPlatform == "browser" ? "仅接管浏览器内的播放会话" : "多平台共存时，优先截获并接管的平台",
                     216, TITLE_BAR_HEIGHT + 130, _subTextPaint);
@@ -1905,18 +1922,17 @@ namespace NotchPeninsula
                 canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, _chevronPaint);
                 canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, _chevronPaint);
 
-                // 匹配方式卡片：仅「通用媒体」下可选，其余平台整行置灰
+                // 两行之间的分隔线
+                canvas.DrawLine(216, TITLE_BAR_HEIGHT + 142, WIDTH - 36, TITLE_BAR_HEIGHT + 142, _separatorPaint);
+
+                // ── 第 2 行：匹配方式（仅「通用媒体」下可选，其余平台整行置灰）──
                 bool matchEnabled = MediaController.TargetPlatform == "other";
                 bool appBoxEnabled = matchEnabled && MediaController.IsManualSessionMatch;
-                float matchCardY = TITLE_BAR_HEIGHT + 156;
-                var matchCardRect = new SKRect(200, matchCardY, WIDTH - 20, matchCardY + 62);
-                canvas.DrawRoundRect(matchCardRect, 6, 6, _cardBg);
-                canvas.DrawRoundRect(matchCardRect, 6, 6, _cardBorder);
                 _uiTextPaint.Color = matchEnabled ? SKColors.White : new SKColor(100, 100, 100);
-                canvas.DrawText("匹配方式", 216, matchCardY + 26, _uiTextPaint);
+                canvas.DrawText("匹配方式", 216, PLATFORM_ROW2_Y + 26, _uiTextPaint);
                 _uiTextPaint.Color = SKColors.White;
                 _subTextPaint.Color = matchEnabled ? new SKColor(170, 170, 170) : new SKColor(80, 80, 80);
-                canvas.DrawText("自动匹配或手动指定", 216, matchCardY + 46, _subTextPaint);
+                canvas.DrawText("自动匹配或手动指定", 216, PLATFORM_ROW2_Y + 46, _subTextPaint);
                 _subTextPaint.Color = new SKColor(170, 170, 170);
 
                 float moX = MATCH_MODE_X, appX = MATCH_APP_X, mBoxY = MATCH_ROW_Y, mBoxW = MATCH_BOX_W, mBoxH = MATCH_BOX_H;
@@ -1949,8 +1965,8 @@ namespace NotchPeninsula
                 canvas.DrawLine(appX + mBoxW - 15, mBoxY + 19, appX + mBoxW - 10, mBoxY + 14, _chevronPaint);
                 _chevronPaint.Color = new SKColor(150, 150, 150);
 
-                // 歌词设置卡片
-                float lyricY = TITLE_BAR_HEIGHT + 232;
+                // 歌词设置卡片（合并卡片 208 底 + 14 间距；与 WM_MOUSEMOVE 的 lyricY 同源）
+                float lyricY = LYRIC_CARD_Y;
                 var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 176);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
