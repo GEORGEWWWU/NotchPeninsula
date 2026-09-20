@@ -204,26 +204,18 @@ namespace NotchPeninsula
             BuildTextRuns(_lastClipboardUrl, _textPaint, _semiBoldTypeface, _cachedClipboardRuns, out _cachedClipboardTextWidth);
         }
 
-        // 📋 剪贴板链接面板：左「icon」+ 中间链接 + 右「打开」按钮（尺寸与媒体控制器同款）
+        // 📋 剪贴板链接面板：左「链接图标」+ 中间链接 + 右「打开」按钮（尺寸与媒体控制器同款）
         private static void DrawClipboard(SKCanvas canvas, string url, float left, float right, float currentHeight, float textOffsetY)
         {
-            EnsureClipboardIconsLoaded();
             EnsureClipboardTextCache(url);
 
-            // 左侧 icon（与 Toast 图标同款圆角裁切）
+            // 左侧「链接」图标：细线条矢量路径，颜色跟随主题的纯黑 / 纯白。
+            // （原先是 data/image/clipboard.png 位图 + 圆角裁切，现改为矢量直绘：任意 DPI 都锐利、
+            //   不再有位图缩放的毛边，也不再需要裁切路径。）
             float iconSize = 20f;
             float iconX = left + 14f;
             float iconY = (currentHeight - iconSize) / 2f + textOffsetY;
-            if (_clipboardIcon != null)
-            {
-                var iconRect = new SKRect(iconX, iconY, iconX + iconSize, iconY + iconSize);
-                canvas.Save();
-                _clipPath.Rewind();
-                _clipPath.AddRoundRect(iconRect, 4, 4);
-                canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                canvas.DrawBitmap(_clipboardIcon, iconRect, _highQualitySampling);
-                canvas.Restore();
-            }
+            DrawSvgPath(canvas, _clipboardLinkPaint, iconX, iconY, _clipboardLinkPath, iconSize / ClipboardIconCanvas);
 
             // 右侧「打开」按钮布局（先算坐标，按钮本体在文本之后绘制，保证永远压在最上层不被遮挡）
             float btnSize = 22f;
@@ -260,42 +252,7 @@ namespace NotchPeninsula
             canvas.Restore(); // 结束文本裁剪区
 
             // 按钮最后绘制：即使动画中途岛体宽度暂时不足，按钮也完整可见可点
-            if (_openLinkIcon != null)
-            {
-                var btnRect = new SKRect(btnLeft, btnTop, btnRight, btnTop + btnSize);
-                canvas.DrawBitmap(_openLinkIcon, btnRect, _highQualitySampling);
-            }
-        }
-
-        private static void EnsureClipboardIconsLoaded()
-        {
-            if (_clipboardIconsLoaded) return;
-            try
-            {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string clipPath = Path.Combine(baseDir, "data", "image", "clipboard.png");
-                string openPath = Path.Combine(baseDir, "data", "image", "open_the_link.png");
-                _clipboardIcon ??= TryDecode(clipPath);
-                _openLinkIcon ??= TryDecode(openPath);
-                // 两张都就绪才标记完成；若文件缺失/解码失败，下一帧继续重试，避免一次失败后永久空白
-                _clipboardIconsLoaded = _clipboardIcon != null && _openLinkIcon != null;
-            }
-            catch (Exception ex) { Logger.Error("加载剪贴板图标失败", ex); }
-        }
-
-        private static SKBitmap? TryDecode(string path)
-        {
-            try
-            {
-                if (!File.Exists(path)) return null;
-                using var s = File.OpenRead(path);
-                return SKBitmap.Decode(s);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"加载图标失败: {path}", ex);
-                return null;
-            }
+            DrawSvgPath(canvas, _clipboardOpenPaint, btnLeft, btnTop, _clipboardOpenPath, btnSize / ClipboardIconCanvas);
         }
 
         public static bool IsMediaExpanded = false;
@@ -1128,6 +1085,71 @@ namespace NotchPeninsula
         private static readonly SKPath _prevPath = CreatePrevPath();
         private static readonly SKPath _nextPath = CreateNextPath();
 
+        // ==================== 📋 剪贴板面板图标（纯矢量，无位图） ====================
+        // 原先用 data/image/clipboard.png + open_the_link.png 两张位图，现已整体改为矢量直绘：
+        // 任意 DPI 都锐利、不再有位图缩放的毛边，也不再需要圆角裁切路径。
+        // 颜色一律跟随主题的**纯黑 / 纯白**（每帧由 Draw 写入 _currentTextColor + 透明度），
+        // 所以深色主题下是纯白、浅色主题下是纯黑，双色自适应。
+        // 统一 24×24 设计画布，绘制时按目标像素尺寸等比缩放。
+        private const float ClipboardIconCanvas = 24f;
+
+        // 左图标：细线条（2px / 24 画布 ≈ 目标尺寸下 1.7px），圆头圆角
+        private static readonly SKPaint _clipboardLinkPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 2f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
+        // 右图标：实心圆底（箭头是圆底上的镂空，所以整条路径是 Fill 单色）
+        private static readonly SKPaint _clipboardOpenPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
+
+        private static readonly SKPath _clipboardLinkPath = CreateClipboardLinkPath();
+        private static readonly SKPath _clipboardOpenPath = CreateClipboardOpenPath();
+
+        /// <summary>
+        /// 左图标「链接」：两个链环（回形针式胶囊）沿对角线错开咬合。
+        /// 这是「链接」最通用的图形语言 —— 两个等长细胶囊交叠，一眼就能读出是链接而不是文字/复制。
+        /// </summary>
+        private static SKPath CreateClipboardLinkPath()
+        {
+            var path = new SKPath();
+            // 14.6×5.8 的细长胶囊，两个中心沿对角线错开 9.2 —— 这个比例下两环咬合量刚好：
+            // 再靠近（如 13.4 宽 / 错开 6.6）中间会糊成一坨，再拉开就断成两个不相干的椭圆。
+            path.AddPath(ClipboardCapsule(14.6f, 5.8f, 7.4f, 7.4f));
+            path.AddPath(ClipboardCapsule(14.6f, 5.8f, 16.6f, 16.6f));
+            return path;
+        }
+
+        /// <summary>
+        /// 胶囊（体育场形）轮廓：先在原点造形，再整体旋转 45° 后平移到 (cx, cy)。
+        /// ⚠️ 矩阵顺序是 `Concat(平移, 旋转)` = 「先旋转、再平移」，写反了链环会被绕原点转到画布外。
+        /// </summary>
+        private static SKPath ClipboardCapsule(float w, float h, float cx, float cy)
+        {
+            var path = new SKPath();
+            path.AddRoundRect(new SKRect(-w / 2f, -h / 2f, w / 2f, h / 2f), h / 2f, h / 2f);
+            path.Transform(SKMatrix.Concat(SKMatrix.CreateTranslation(cx, cy), SKMatrix.CreateRotationDegrees(45f)));
+            return path;
+        }
+
+        /// <summary>
+        /// 右图标「打开链接」：实心圆底 + 指向右上角的箭头。
+        /// 箭头不是叠画上去的第二种颜色，而是**圆底上的镂空**（圆底减去箭头描边轮廓的布尔差集）——
+        /// 整条路径只有一种颜色，主题反相时自动跟着变，也不需要知道岛体底色。
+        /// </summary>
+        private static SKPath CreateClipboardOpenPath()
+        {
+            var disc = new SKPath();
+            disc.AddCircle(12f, 12f, 10.5f);
+
+            // 折角箭头：斜杆 + 右上角的两笔折角（横臂、竖臂）
+            var arrow = new SKPath();
+            arrow.MoveTo(7f, 17f); arrow.LineTo(17f, 7f);
+            arrow.MoveTo(7f, 7f); arrow.LineTo(17f, 7f); arrow.LineTo(17f, 17f);
+
+            // 把描边展开成填充轮廓，再与圆底做差集
+            using var stroke = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 2.2f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
+            using var arrowFill = new SKPath();
+            stroke.GetFillPath(arrow, arrowFill);
+
+            return disc.Op(arrowFill, SKPathOp.Difference) ?? disc;
+        }
+
         // 🚀 PNG 图标缓存替换 SVG
         private static SKBitmap? _defaultAppIcon;
         private static SKBitmap? _qqIcon;
@@ -1298,9 +1320,6 @@ namespace NotchPeninsula
         private static string _lastClipboardUrl = "";
         private static float _cachedClipboardTextWidth = 0f;
         private static SKRect _clipboardOpenHit;   // 本帧「打开」按钮命中区，帧首作废
-        private static SKBitmap? _clipboardIcon;
-        private static SKBitmap? _openLinkIcon;
-        private static bool _clipboardIconsLoaded;
 
         public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f, string? clipboardUrl = null)
         {
@@ -1393,6 +1412,8 @@ namespace NotchPeninsula
                 _timePaint.Color = currentA;
                 _datePaint.Color = subA;
                 _mediaIconPaint.Color = currentA;
+                _clipboardLinkPaint.Color = currentA; // 📋 剪贴板图标同为矢量：跟着主题色 + 透明度走
+                _clipboardOpenPaint.Color = currentA;
                 _barPaint.Color = currentA;
                 _highQualitySampling.Color = SKColors.White.WithAlpha(alpha); // 同步作用于图片图标
 
