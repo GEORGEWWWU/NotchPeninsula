@@ -64,6 +64,7 @@ namespace NotchPeninsula
         private string _fontHint = ""; // 加载失败时在卡片副标题上直接提示，避免弹窗打断操作
         // 交互设置状态
         private bool _autoHideToggleHovered = false;
+        private bool _pauseHideToggleHovered = false; // 「暂停播放后自动隐藏」——自动隐藏卡片的第二行
         private bool _mediaExpToggleHovered = false;
         private bool _passToggleHovered = false;
         private bool _clipboardToggleHovered = false;
@@ -161,7 +162,7 @@ namespace NotchPeninsula
         private int _scaledHeight;
         // 预设媒体平台数组
         private static readonly (string Id, string Name)[] _platforms = [
-            ("other", "通用媒体"),
+            ("other", "自动媒体"),
             ("browser", "浏览器媒体"),
             ("netease", "网易云音乐"),
             ("qqmusic", "QQ音乐"),
@@ -480,6 +481,7 @@ namespace NotchPeninsula
                     bool newTopmostToggleHovered = false;
                     bool newMediaToggleHovered = false;
                     bool newAutoHideToggleHovered = false;
+                    bool newPauseHideToggleHovered = false; // 「暂停播放后自动隐藏」
                     bool newDropdownHovered = false;
                     int newHoveredDropdownIndex = -1;
                     bool newMatchModeDropdownHovered = false;
@@ -641,16 +643,23 @@ namespace NotchPeninsula
                     }
                     else if (_selectedTab == 3) // 交互设置
                     {
+                        // ⚠️ 本段的 y 值必须与下面 tab 3 的渲染保持同步
+                        //    （自动隐藏卡片是两行高：行1 +32、行2 +94；其余三张卡 +162 / +234 / +306）
                         // 自动隐藏（穿透模式下禁止）
                         if (!Renderer.PassthroughModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                             newAutoHideToggleHovered = true;
+                        // 🎵 暂停播放后自动隐藏（自动隐藏卡片的第二行）
+                        // 可用性 = 自动隐藏已开启 且 非穿透模式；不可用时不给 hover（避免「灰着还能点」）
+                        if (!Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled
+                            && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
+                            newPauseHideToggleHovered = true;
                         // 媒体交互模式
-                        if (!Renderer.CompositeModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
+                        if (!Renderer.CompositeModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 162 && y <= TITLE_BAR_HEIGHT + 182)
                             newMediaExpToggleHovered = true;
                         // 使用局部变量，防止状态死锁
-                        newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196;
+                        newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 234 && y <= TITLE_BAR_HEIGHT + 254;
                         // 📋 剪贴板链接检测
-                        newClipboardToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 268;
+                        newClipboardToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 306 && y <= TITLE_BAR_HEIGHT + 326;
                     }
                     else if (_selectedTab == 6) // 插件中心
                     {
@@ -714,6 +723,7 @@ namespace NotchPeninsula
                         newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
                         newToastToggleHovered != _toastToggleHovered || newTopmostToggleHovered != _topmostToggleHovered ||
                         newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
+                        newPauseHideToggleHovered != _pauseHideToggleHovered ||
                         newDropdownHovered != _dropdownHovered ||
                         newMatchModeDropdownHovered != _matchModeDropdownHovered ||
                         newHoveredMatchModeIndex != _hoveredMatchModeIndex ||
@@ -747,6 +757,7 @@ namespace NotchPeninsula
                         _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
                         _toastToggleHovered = newToastToggleHovered;
                         _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
+                        _pauseHideToggleHovered = newPauseHideToggleHovered;
                         _dropdownHovered = newDropdownHovered;
                         _hoveredDropdownIndex = newHoveredDropdownIndex;
                         _matchModeDropdownHovered = newMatchModeDropdownHovered;
@@ -1034,6 +1045,23 @@ namespace NotchPeninsula
                         // 保存自动隐藏开关
                         Program.SaveSetting("AutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0);
 
+                        // 🎵 级联关闭：自动隐藏是父开关，关掉它时附属的「暂停播放后自动隐藏」必须一起关，
+                        //    否则会留下「自动隐藏已关、岛体却因暂停而躲」的矛盾状态。
+                        //    （反向不级联：重新开启自动隐藏**不会**自动打开附属开关，保持「默认关闭」。）
+                        if (!NotchWindow.IsAutoHideEnabled && NotchWindow.IsPauseAutoHideEnabled)
+                        {
+                            NotchWindow.IsPauseAutoHideEnabled = false;
+                            Program.SaveSetting("PauseAutoHide", 0);
+                        }
+
+                        Render();
+                    }
+                    else if (_pauseHideToggleHovered && !Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled)
+                    {
+                        // 🎵 「暂停播放后自动隐藏」：可用前提是自动隐藏已开启且非穿透模式
+                        //    （与 hover 判定同源，双保险，防止状态不同步时被点到）
+                        NotchWindow.IsPauseAutoHideEnabled = !NotchWindow.IsPauseAutoHideEnabled;
+                        Program.SaveSetting("PauseAutoHide", NotchWindow.IsPauseAutoHideEnabled ? 1 : 0);
                         Render();
                     }
                     else if (_mediaExpToggleHovered)
@@ -1473,7 +1501,14 @@ namespace NotchPeninsula
                 var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + yOffset, WIDTH - 20, TITLE_BAR_HEIGHT + yOffset + 62);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+                DrawToggleRow(yOffset, title, sub, state, hovered, disabled);
+            }
 
+            // 只画「一行开关」的内容（标题 / 副标题 / 右侧开关），**不画卡片底**。
+            // 拆出来是为了让「自动隐藏」那张卡片能在同一个卡片底里放两行（主开关 + 附属开关）。
+            // 单行内容的位置（标题 +26 / 副标题 +46 / 开关 +20..+40）与原来完全一致，所以既有调用方行为不变。
+            void DrawToggleRow(float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
+            {
                 _uiTextPaint.Color = disabled ? new SKColor(100, 100, 100) : SKColors.White;
                 canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + 26, _uiTextPaint);
                 _uiTextPaint.Color = SKColors.White;
@@ -1915,19 +1950,41 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 3)
             {
+                // 🎵 「自动隐藏」与它的附属开关「暂停播放后自动隐藏」**共用同一张卡片**，
+                //    所以卡片底要单独画成两行高（120px，yOffset 12..132），再用 DrawToggleRow 画两行内容。
+                //    两行 yOffset 12 / 74（行距 62），中间一条分隔线，让「附属」关系一眼可见。
+                //    ⚠️ 改这里的数值时必须同步改上面 tab 3 的悬停热区（当前 +32/+94/+162/+234/+306）。
                 bool isAutoHideDisabled = Renderer.PassthroughModeEnabled;
-                DrawToggleCard(12, "自动隐藏", isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "当鼠标离开时自动隐藏刘海",
+                var autoHideCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 132);
+                canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBorder);
+
+                DrawToggleRow(12, "自动隐藏", isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "当焦点离开时自动隐藏刘海",
                     NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered, isAutoHideDisabled);
 
+                canvas.DrawLine(216, TITLE_BAR_HEIGHT + 70, WIDTH - 36, TITLE_BAR_HEIGHT + 70, _separatorPaint);
+
+                // 附属开关的可用性 = 自动隐藏已开启 且 非穿透模式。
+                // 两者任一不满足都置灰并**显示为关闭** —— 与「自动隐藏」在穿透模式下置灰显示为关闭的既有约定一致，
+                // 免得出现「开关看着是开的、却怎么都不生效」的困惑。
+                bool isPauseHideDisabled = isAutoHideDisabled || !NotchWindow.IsAutoHideEnabled;
+                DrawToggleRow(74, "暂停播放后自动隐藏",
+                    isAutoHideDisabled ? "穿透模式下禁止自动隐藏"
+                        : !NotchWindow.IsAutoHideEnabled ? "需先开启「自动隐藏」"
+                        : "媒体暂停播放时，也把刘海藏起来",
+                    NotchWindow.IsPauseAutoHideEnabled,
+                    !isPauseHideDisabled && _pauseHideToggleHovered,
+                    isPauseHideDisabled);
+
                 bool isMediaExpDisabled = Renderer.CompositeModeEnabled;
-                DrawToggleCard(84, "媒体交互方式", isMediaExpDisabled ? "组合模式下固定为直接交互" : "开启为展开交互，关闭为直接交互",
+                DrawToggleCard(142, "媒体交互方式", isMediaExpDisabled ? "组合模式下固定为直接交互" : "开启为展开交互，关闭为直接交互",
                     isMediaExpDisabled ? false : (Renderer.MediaInteractionMode == 1),
                     !isMediaExpDisabled && _mediaExpToggleHovered,
                     isMediaExpDisabled);
 
-                DrawToggleCard(156, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+                DrawToggleCard(214, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
 
-                DrawToggleCard(228, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
+                DrawToggleCard(286, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
             }
             else if (_selectedTab == 4)
             {

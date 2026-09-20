@@ -24,6 +24,16 @@ namespace NotchPeninsula
                     FontConfig.Restore(key.GetValue("CustomFontPath", "") as string);
 
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
+                    // 🎵 「暂停播放后自动隐藏」是自动隐藏的附属扩展，默认关。
+                    // 依赖关系：自动隐藏关掉时它必须也是关的 —— 否则会出现「自动隐藏开关显示关闭、
+                    // 岛体却因为暂停而躲起来」的矛盾状态。这里顺手把注册表也修正掉（自愈），
+                    // 保证「内存态 / 注册表 / 面板显示」三者永远一致。
+                    NotchWindow.IsPauseAutoHideEnabled = (int)key.GetValue("PauseAutoHide", 0) != 0;
+                    if (!NotchWindow.IsAutoHideEnabled && NotchWindow.IsPauseAutoHideEnabled)
+                    {
+                        NotchWindow.IsPauseAutoHideEnabled = false;
+                        key.SetValue("PauseAutoHide", 0);
+                    }
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
                     MediaController.IsKaraokeEnabled = (int)key.GetValue("KaraokeEnabled", 1) != 0;
                     MediaController.TargetPlatform = (string)key.GetValue("TargetPlatform", "other") ?? "other";

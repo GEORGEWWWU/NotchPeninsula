@@ -85,6 +85,40 @@ namespace NotchPeninsula
         /// 所有「自动隐藏要不要生效」的判断都请读这个属性，不要直接读 `IsAutoHideEnabled`。
         /// </summary>
         public static bool IsAutoHideEffective => IsAutoHideEnabled && !Renderer.PassthroughModeEnabled;
+
+        /// <summary>
+        /// 「暂停播放后自动隐藏」开关（**用户的偏好**）。是自动隐藏的附属扩展功能，默认关闭。
+        /// 语义：媒体会话还在（岛体本来会因为 `_media.IsActive` 而拒绝隐藏），但**没有在播放**
+        /// （SMTC 处于暂停 / 停止）时，允许继承自动隐藏逻辑把岛体藏起来。
+        /// </summary>
+        public static bool IsPauseAutoHideEnabled = false;
+
+        /// <summary>
+        /// 「暂停播放后自动隐藏」**实际是否生效**。判据 = 自身开关 且 <see cref="IsAutoHideEffective"/>。
+        ///
+        /// 之所以直接挂在 <see cref="IsAutoHideEffective"/> 上而不是各写一份，是因为它天然继承了两条既有约束：
+        ///   1. 自动隐藏关掉时它一并失效（设置面板也会连带把开关关掉并置灰）；
+        ///   2. 穿透模式下自动隐藏强制失效 → 它也强制失效，与设置面板「两个开关都置灰」的承诺一致。
+        /// 所有「暂停后要不要隐藏」的判断都请读这个属性。
+        /// </summary>
+        public static bool IsPauseAutoHideEffective => IsPauseAutoHideEnabled && IsAutoHideEffective;
+
+        /// <summary>
+        /// 「当前媒体状态是否阻止自动隐藏」。**这是自动隐藏判定的单一真源**，
+        /// <c>shouldHide</c>（藏不藏）与 <c>WM_LBUTTONDOWN</c> 的唤醒分支（点了能不能唤回）**必须共用它**。
+        ///
+        /// 历史坑：唤醒分支原先自己写死 `!_media.IsActive`。加了「暂停后隐藏」之后，岛体会在
+        /// `_media.IsActive == true`（暂停中）的情况下藏起来，而唤醒分支仍要求 `!_media.IsActive`，
+        /// 结果就是**藏得下去、点不回来**。所以两边一律读这个属性。
+        ///
+        /// 取值：
+        ///   · 没有媒体会话 → false（不阻止，正常自动隐藏）
+        ///   · 有会话 且 未开启「暂停后隐藏」 → true（阻止；这就是原来的 `!_media.IsActive` 行为）
+        ///   · 有会话 且 已开启 且 **正在播放** → true（阻止，播放中必须显示）
+        ///   · 有会话 且 已开启 且 **暂停/停止** → false（不阻止 → 允许隐藏，本功能的目的）
+        /// </summary>
+        private bool MediaBlocksAutoHide =>
+            _media.IsActive && !(IsPauseAutoHideEffective && !_media.IsPlaying);
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
         // 📋 剪贴板链接监听（事件驱动，仅在复制时读一次剪贴板，稳态零占用）
         private readonly ClipboardMonitor _clipboardMonitor = new ClipboardMonitor();
@@ -632,7 +666,19 @@ namespace NotchPeninsula
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏。
                 // 用 IsAutoHideEffective 而不是 IsAutoHideEnabled —— 穿透模式下必须真的不隐藏，
                 // 与设置面板里「自动隐藏开关置灰且显示为关闭」保持一致。
-                bool shouldHide = IsAutoHideEffective && !_media.IsActive && !_isManuallyExpanded && !isToastActive
+                // 🎵 媒体那一项改读 MediaBlocksAutoHide：开启「暂停播放后自动隐藏」后，
+                //    暂停中的媒体不再阻止隐藏（这正是本功能的目的）。播放中仍然阻止。
+                // ⚠️ Toast 的 `!isToastActive` 必须原样保留 —— Toast 是「系统主动弹出且需要用户交互」的，
+                //    任何自动隐藏开关都不能把它压掉。剪贴板与插件详情页同理。
+                // 🖐 `!_media.IsDragging` 是给「暂停后隐藏」配的保护：部分播放器在 seek 期间会短暂上报
+                //    Paused，若不挡住就会在用户拖进度条拖到一半时把面板抽走。
+                //    只在媒体激活时才可能为 true，所以对原有「无媒体」路径零影响。
+                // 注：`_isManuallyExpanded` 依旧优先 —— 用户主动点顶部细边唤醒出来的岛体，暂停也不会被收走
+                //    （要收就点岛外，走 CollapseAllExpanded）。这是「手动展开优先」的既有语义，刻意保留。
+                // 同理 `!Renderer.IsMediaExpanded`：用户主动点开的媒体展开面板，不能因为他按了暂停就被抽走。
+                //    鼠标离开岛体时 CollapseExpandedPanels() 会把它收掉，那时才轮到自动隐藏接手。
+                bool shouldHide = IsAutoHideEffective && !MediaBlocksAutoHide && !_media.IsDragging
+                                  && !_isManuallyExpanded && !Renderer.IsMediaExpanded && !isToastActive
                                   && !isClipboardActive && !Renderer.HasActiveDetailPage;
 
                 // Y 轴的位移量基于 MAX_WINDOW_HEIGHT 计算
@@ -1123,7 +1169,10 @@ namespace NotchPeninsula
                         // 「点击已隐藏的岛体把它唤回来」。同样要用 IsAutoHideEffective：
                         // 穿透模式下 auto-hide 已失效，但刚开启穿透时岛体可能还在 350ms 的回滑动画里
                         // （_currentY 仍 < -5），此时点击不应被当成「唤醒」，否则会莫名锁上 _isManuallyExpanded。
-                        if (IsAutoHideEffective && !_media.IsActive && _currentY < -5f)
+                        // ⚠️ 媒体那一项必须读 MediaBlocksAutoHide，**不能**再写死 `!_media.IsActive`：
+                        //    开启「暂停播放后自动隐藏」时岛体是**在媒体会话存活的状态下**藏起来的，
+                        //    写死 `!_media.IsActive` 会导致「藏得下去、点不回来」。必须与 shouldHide 同源。
+                        if (IsAutoHideEffective && !MediaBlocksAutoHide && _currentY < -5f)
                         {
                             _isManuallyExpanded = true;
                             // 🎯 屏蔽掉「本次按键」引发的岛外点击收起判定。用户点的是屏幕顶边（y≈0），
