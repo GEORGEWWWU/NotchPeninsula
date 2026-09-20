@@ -405,6 +405,21 @@ namespace NotchPeninsula
         private const float PLUGIN_GAP = 16f;
 
         /// <summary>
+        /// 原生内容区在任何情况下都要保住的最小宽度（**常量**，故意不跟原生内容实际所需宽度挂钩）。
+        ///
+        /// 只在「岛体宽度动画途中装不下两侧插件组」时用来给插件组按比例让位 ——
+        /// 不设这个下限的话会算出负的原生内容区宽度，把文字遮罩与播放按钮翻到文字左边。
+        ///
+        /// ⚠️ 为什么必须是常量、不能换成「本帧原生内容真实所需宽度」：
+        ///    原生内容所需宽度（换歌词 / 换标题时）与目标宽度是**同一刻跳变**的，而 currentWidth
+        ///    还停在旧目标上。拿它当下限 → 换歌词那一帧立刻判定「装不下」→ 原生内容区从 320
+        ///    一步拉到 512、插件整行被裁掉 —— 这就是又一次跳变（实测首帧 18px、全程 24px）。
+        ///    常量下限则只在「岛体比插件行还窄」的极端瞬态才介入，换歌词时完全不介入，
+        ///    边界只跟着岛体边缘平滑移动。用户 2026-09-20 反馈的「闪现」正是要保证这一点。
+        /// </summary>
+        private const float MIN_NATIVE_AREA = 80f;
+
+        /// <summary>
         /// 设置本帧插件行的宽度预算（含与原生内容之间的 16px 间距）。
         ///
         /// 判定权在 NotchWindow：只有它知道原生内容（媒体控制器 / 长歌词自适应 / 硬件占用）
@@ -496,34 +511,6 @@ namespace NotchPeninsula
         {
             if (!RefreshPluginWidgets()) return 0f;
             return _pluginRowReserve;
-        }
-
-        /// <summary>
-        /// 岛体宽度弹簧动画的**目标**宽度（由 NotchWindow 每帧写入）。
-        /// 取值只用于把「插件预留区」按动画进度等比缩放，见 <see cref="GetScaledPluginReserve"/>。
-        /// </summary>
-        public static float IslandTargetWidth { get; set; }
-
-        /// <summary>
-        /// 本帧插件行的预留宽度，**按岛体宽度动画进度等比缩放**。
-        ///
-        /// 为什么需要缩放：岛体宽度是弹簧动画过来的，而插件预留是「目标值」。
-        /// 动画途中岛体还没长到目标宽度，此时若按全额扣掉预留，原生内容
-        /// （媒体标题 / 歌词 / 律动频谱 / 播放按钮）就会被临时挤到左边一窄条里，
-        /// 直到动画结束才恢复 —— 表现出来就是「一刷新，频谱和按钮闪没了」。
-        ///
-        /// 按 <c>当前宽度 / 目标宽度</c> 缩放后，预留跟着岛体一起长出来，
-        /// 原生内容在整个动画过程中都有地方放。动画完成（或目标宽度未知）时系数为 1，即全额。
-        /// </summary>
-        private static float GetScaledPluginReserve(float currentWidth)
-        {
-            float reserve = GetPluginRowReserve();
-            if (reserve <= 0f) return 0f;
-
-            float target = IslandTargetWidth;
-            if (target > 1f && currentWidth < target)
-                reserve *= Math.Max(0f, currentWidth / target);
-            return reserve;
         }
 
         /// <summary>
@@ -660,13 +647,90 @@ namespace NotchPeninsula
         public static float CompositeMediaRight => _compositeMediaRight;
 
         /// <summary>
-        /// 媒体模块右边界：组合模式用它渲染时的真实位置（插件可能被排到媒体右边），
-        /// 其他模式按「岛体右边界 - 插件预留区」推算，与原有命中逻辑保持一致。
+        /// 媒体模块右边界：优先用渲染时记下的真实值（<c>_compositeMediaRight</c>），
+        /// 它同时覆盖「组合模式」与「非组合模式 + 有插件预留」两种情况 —— 插件被排到原生内容左边时，
+        /// 媒体右边界就是岛体右边界，下面的换算公式会算出偏左的错误位置。
+        /// 还没渲染过（启动首帧 / 整块岛体被通知接管）时才退回按「岛体右边界 − 插件预留」推算。
         /// </summary>
         public static float GetMediaRight(float windowWidth, float currentWidth, bool toastActive)
         {
-            if (CompositeModeEnabled && _compositeMediaRight > 0f) return _compositeMediaRight;
-            return (windowWidth + currentWidth) / 2f - (toastActive ? 0f : GetScaledPluginReserve(currentWidth));
+            if (_compositeMediaRight > 0f) return _compositeMediaRight;
+            return (windowWidth + currentWidth) / 2f - (toastActive ? 0f : GetPluginRowReserve());
+        }
+
+        // ================= 🧩 非组合模式下的插件左右分组 =================
+        // 背景：组合模式靠「内容顺序表」把原生模块与插件混排；非组合模式同一时刻只显示一个原生模块
+        //       （媒体激活 → 媒体；否则按待机显示模式 → 时间日期 / 硬件占用 / 空），所以插件相对它
+        //       只有「排左边」和「排右边」两种位置，同样是查同一张顺序表得出。
+
+        /// <summary>
+        /// 非组合模式下「本帧原生内容」对应的内置模块 Id（同一时刻最多一个）；没有原生内容时返回 null。
+        /// </summary>
+        private static string? GetNativeBuiltinId(bool mediaActive)
+        {
+            if (mediaActive) return Plugins.BuiltinWidgets.Media;
+            if (StandbyDisplayMode == 0) return Plugins.BuiltinWidgets.Clock;
+            if (StandbyDisplayMode == 2) return Plugins.BuiltinWidgets.Hardware;
+            return null; // 空白待机：没有原生内容，插件行独占整岛（沿用「整行贴右侧」）
+        }
+
+        /// <summary>某个 Id 在「内容显示顺序表」里的位置；-1 表示尚未登记。</summary>
+        private static int OrderIndexOf(string? id)
+        {
+            if (string.IsNullOrEmpty(id)) return -1;
+            var order = Plugins.PluginManager.Instance.Host.ContentOrder;
+            for (int i = 0; i < order.Count; i++)
+                if (string.Equals(order[i], id, StringComparison.OrdinalIgnoreCase)) return i;
+            return -1;
+        }
+
+        /// <summary>
+        /// 某个组件相对原生模块的左右归属：-1 = 排在原生内容左边，+1 = 右边。
+        /// 没有原生内容、或组件所属插件还没进顺序表时一律返回 +1（贴右侧），与引入顺序表之前的行为一致。
+        /// </summary>
+        private static int GetWidgetSide(string widgetId, int nativeOrderIndex)
+        {
+            if (nativeOrderIndex < 0) return 1;
+            var host = Plugins.PluginManager.Instance.Host;
+            if (!host.TryGetWidgetPlugin(widgetId, out var pid) || string.IsNullOrEmpty(pid)) return 1;
+            int idx = OrderIndexOf(pid);
+            return idx >= 0 && idx < nativeOrderIndex ? -1 : 1;
+        }
+
+        /// <summary>
+        /// 按「内容显示顺序表」把本帧可见的插件组件分成左右两组，返回两组的**内容宽度**
+        /// （各组件宽度之和 + 组内 16px 间距，不含与原生内容之间的间距）。
+        /// 只统计被预算放行的组件 —— 与绘制、宽度累加的口径严格一致，宽度才不会与绘制脱节。
+        /// </summary>
+        private static void MeasurePluginSides(int nativeOrderIndex, out float leftWidth, out float rightWidth)
+        {
+            leftWidth = 0f;
+            rightWidth = 0f;
+
+            Plugins.IWidget[]? widgets;
+            float[]? widths;
+            bool[]? broken;
+            bool[]? visible;
+            // 在同一把锁内取齐快照，避免 UI 线程正好重建快照时读到长度不一致的数组
+            lock (_pluginSnapshotLock)
+            {
+                widgets = _pluginWidgets;
+                widths = _pluginWidths;
+                broken = _pluginBroken;
+                visible = _pluginVisible;
+            }
+            if (widgets == null || widths == null || broken == null) return;
+            if (widths.Length != widgets.Length || broken.Length != widgets.Length) return;
+
+            for (int i = 0; i < widgets.Length; i++)
+            {
+                if (broken[i] || widths[i] <= 0f) continue;
+                if (visible == null || i >= visible.Length || !visible[i]) continue; // 没放行的不占宽，也不绘制
+                if (GetWidgetSide(widgets[i].Id, nativeOrderIndex) < 0)
+                    leftWidth = leftWidth > 0f ? leftWidth + PLUGIN_GAP + widths[i] : widths[i];
+                else
+                    rightWidth = rightWidth > 0f ? rightWidth + PLUGIN_GAP + widths[i] : widths[i];
+            }
         }
 
         /// <summary>刷新插件组件快照（版本变化时才分配 + 测量一次），返回是否存在可渲染组件。</summary>
@@ -1338,19 +1402,70 @@ namespace NotchPeninsula
                 // 📋 剪贴板「打开」按钮热区帧首作废：本帧不画就等于命中区不存在
                 _clipboardOpenHit = default;
 
-                float left = (WINDOW_WIDTH - currentWidth) / 2f;
+                // 岛体物理左边界（背景形状 / 裁剪范围以它为准）
+                float islandLeft = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）
-                float islandRight = left + currentWidth;
-                // 🧩 插件行独立占据岛体最右侧：为它预留宽度，原生内容右边界相应内收。
-                //    这样无论待机显示什么内容、媒体是否激活、是否组合模式，原生布局都保持原样不受影响，
-                //    插件也不受原生功能影响，始终稳定显示在岛体最右侧。
-                // 🧩 组合模式下插件已被并入「内容顺序表」，与原生模块一起混排（宽度计在 GetCompositeWidth 内），
-                //    因此不再单独占用右侧预留区；其他模式仍是整行贴在原生内容右侧。
-                float pluginReserve = toast == null && !CompositeModeEnabled ? GetScaledPluginReserve(currentWidth) : 0f;
-                // 原生内容的右边界（插件预留区之前）；pluginReserve == 0 时与岛体右边界相同
-                float right = islandRight - pluginReserve;
-                // 组合模式媒体模块右边界（每帧由媒体模块绘制时刷新）；非组合模式置 -1 表示不适用
-                _compositeMediaRight = CompositeModeEnabled ? right : -1f;
+                float islandRight = islandLeft + currentWidth;
+                // 🧩 插件行的位置：
+                //   · 组合模式：插件已并入「内容顺序表」，与原生模块一起混排（宽度计在 GetCompositeWidth 内），
+                //     不单独占用预留区；
+                //   · 非组合模式：同样遵守这张顺序表 —— 排在「本帧原生模块」之前的插件画在原生内容**左边**，
+                //     之后的画在右边。原生内容的左右边界据此内收，所以插件显示与否、排在哪一边，
+                //     都不会影响原生功能本身。
+                //     （2026-09-20 修复：此前非组合模式无条件把整行插件贴在岛体最右侧、完全不读顺序表，
+                //       导致「插件中心」的 ← / → 只在组合模式下有效。）
+                // ⚠️ 这里必须用**未缩放**的预留（GetPluginRowReserve，而不是 GetScaledPluginReserve）。
+                //    缩放版把预留按「当前宽度 / 目标宽度」缩小，而岛体宽度是弹簧动画过来的：
+                //    媒体控制器长度一变（换歌词 / 换标题 → 目标宽度变大），缩放系数立刻掉下来，
+                //    原生内容边界与插件行就会整体挪一下再挪回去 —— 表现出来就是「闪现一下又闪回来」。
+                //    （用户 2026-09-20 反馈；组合模式不走这条路径，所以只有媒体控制器会出现。）
+                //    改用未缩放值后，插件行与原生内容的边界只跟着岛体边缘平滑移动，不再有跳变。
+                float pluginReserve = toast == null && !CompositeModeEnabled ? GetPluginRowReserve() : 0f;
+                // 原生内容本帧对应的内置模块（非组合模式同一时刻最多显示一个原生模块）
+                string? nativeBuiltinId = CompositeModeEnabled ? null : GetNativeBuiltinId(media.IsActive);
+                int nativeOrderIndex = OrderIndexOf(nativeBuiltinId);
+                // 两侧插件组：内容宽度（各组件宽度 + 组内 16px 间距）与占位宽度（再加与原生内容之间的间距）
+                float leftGroupW = 0f, rightGroupW = 0f;
+                float leftPluginBlock = 0f;
+                float rightPluginBlock = pluginReserve;
+                if (pluginReserve > 0f)
+                {
+                    MeasurePluginSides(nativeOrderIndex, out leftGroupW, out rightGroupW);
+                    leftPluginBlock = leftGroupW > 0f ? leftGroupW + PLUGIN_GAP : 0f;
+                    rightPluginBlock = rightGroupW > 0f ? rightGroupW + PLUGIN_GAP : 0f;
+                    // 兜底让位：岛体宽度还在弹簧动画途中时（currentWidth < 目标宽度），
+                    // 本帧可能装不下「原生内容 + 两侧插件组」（典型：通知收起后插件行重新出现，
+                    // 岛体才 260 而插件行要 400）。此时插件组按比例让位，给原生内容留出 MIN_NATIVE_AREA。
+                    //
+                    // ⚠️ 判定阈值用**常量** MIN_NATIVE_AREA，不能换成「本帧原生内容所需宽度」——
+                    //    后者与目标宽度同一刻跳变，而 currentWidth 还停在旧目标上，
+                    //    换歌词那一帧就会误判「装不下」而把原生内容区一步拉宽（又是一次跳变）。
+                    //    常量下限下：稳态（currentWidth == nativeWidth + reserve）永远不触发，
+                    //    换歌词（reserve 不变、只有目标宽度变大）也不触发 —— 边界只跟着岛体边缘平滑移动。
+                    // 让位系数 k 随 currentWidth 连续变化（totalBlock 在预留不变时是常量），
+                    // 不会引入新的跳变；收窄后的区间由绘制侧裁剪落实（见下方 ClipRect），
+                    // 于是左右两组绝不会在岛体中间叠在一起，插件是随岛体长大从两侧滑入的。
+                    // ⚠️ 只在「本帧确有原生内容」时才介入：空白待机（nativeBuiltinId == null）时
+                    //    原生内容区本来就是空的，没有东西会被负宽度翻面。
+                    if (nativeBuiltinId != null)
+                    {
+                        float totalBlock = leftPluginBlock + rightPluginBlock;
+                        float maxBlock = Math.Max(0f, currentWidth - MIN_NATIVE_AREA);
+                        if (totalBlock > maxBlock + 0.5f) // 0.5px 容差：稳态下不会触发，别被浮点误差误判
+                        {
+                            float k = maxBlock / totalBlock;
+                            leftPluginBlock *= k;
+                            rightPluginBlock *= k;
+                        }
+                    }
+                }
+                // 原生内容的左右边界（扣除两侧插件组）；没有插件时与岛体边界完全相同
+                float left = islandLeft + leftPluginBlock;
+                float right = islandRight - rightPluginBlock;
+                // 媒体模块右边界（每帧刷新，供 UI 线程判定媒体按钮 / 悬停命中）：
+                // 组合模式与「非组合 + 有插件预留」都要用渲染时的真实值 —— 插件被排到原生内容左边时，
+                // 媒体右边界就是岛体右边界，旧的换算公式会算出偏左的错误位置。
+                _compositeMediaRight = CompositeModeEnabled || pluginReserve > 0f ? right : -1f;
                 int btnPrevX = (int)right - 90;
                 int btnPlayX = (int)right - 60;
                 int btnNextX = (int)right - 30;
@@ -1379,10 +1494,10 @@ namespace NotchPeninsula
                 float w = 0.70710678f;
 
                 // 纯数学变形算法：全部使用 ConicTo 替换 QuadTo 强制生成完美圆形弧度
-                _bgPath.MoveTo(left + rTopX, 0);
-                _bgPath.ConicTo(left, 0, left, rTopY, w);
-                _bgPath.LineTo(left, currentHeight - rBottom);
-                _bgPath.ConicTo(left, currentHeight, left + rBottom, currentHeight, w);
+                _bgPath.MoveTo(islandLeft + rTopX, 0);
+                _bgPath.ConicTo(islandLeft, 0, islandLeft, rTopY, w);
+                _bgPath.LineTo(islandLeft, currentHeight - rBottom);
+                _bgPath.ConicTo(islandLeft, currentHeight, islandLeft + rBottom, currentHeight, w);
                 _bgPath.LineTo(islandRight - rBottom, currentHeight);
                 _bgPath.ConicTo(islandRight, currentHeight, islandRight, currentHeight - rBottom, w);
                 _bgPath.LineTo(islandRight, rTopY);
@@ -1962,7 +2077,8 @@ namespace NotchPeninsula
 
                             // 3. 底部放大媒体控件
                             float btnY = currentHeight - 34f;
-                            float centerX = left + currentWidth / 2f;
+                            // 居中于「原生内容区」而非整岛：插件行被排到左边时内容区整体右移，按钮要跟着走
+                            float centerX = (left + right) / 2f;
                             float scale = 1.6f;
                             float playBtnY = btnY - 1.6f;
 
@@ -2112,8 +2228,8 @@ namespace NotchPeninsula
                         float cpuGroupW = cpuTagW + gapBetweenLabelAndPct + cpuPctW;
                         float ramGroupW = ramTagW + gapBetweenLabelAndPct + ramPctW;
                         float totalContentW = cpuGroupW + gapBetweenCpuAndRam + ramGroupW;
-                        // 居中以「原生内容区」为准（扣除插件预留），插件行不参与居中计算
-                        float centerX = left + (currentWidth - pluginReserve) / 2f;
+                        // 居中以「原生内容区」为准（扣除两侧插件组），插件行不参与居中计算
+                        float centerX = (left + right) / 2f;
                         float startX = centerX - totalContentW / 2f;
                         float cpuBarW = cpuGroupW;
                         float ramBarW = ramGroupW;
@@ -2160,12 +2276,45 @@ namespace NotchPeninsula
                     }
                 } // 硬件占用检测 if 结束的大括号
 
-                // ================= 🧩 插件组件行（非组合模式：整行贴在原生内容右侧） =================
+                // ================= 🧩 插件组件行（非组合模式） =================
                 // 组合模式下插件已并入「内容顺序表」跟原生模块混排（见上方组合模式分支），这里只处理其余模式：
                 // 待机(时间日期/空白/硬件)、媒体激活、媒体展开……原生内容一律不感知插件，插件也不影响原生布局。
+                // 与组合模式一样遵守顺序表：排在原生模块之前的插件画在原生内容左边，之后的画在右边。
                 if (!CompositeModeEnabled && pluginReserve > 0f)
                 {
-                    DrawPluginWidgets(canvas, null, right + 16f, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
+                    if (leftPluginBlock > 0f)
+                    {
+                        // 左侧：从岛体左边缘的内边距起，按顺序表次序逐个插件向右排。
+                        // 只画「排在原生模块之前」的插件 —— 原生模块本身在它自己的位置由上面的原生分支绘制。
+                        // 起点直接锚在岛体左边缘（而不是从 nativeLeft 倒推），这样岛体宽度做动画时
+                        // 插件行只跟着边缘一起平移，不会自己额外挪动。
+                        // ✂️ 裁剪到 [islandLeft, left]：稳态下这个区间恰好 == 「左侧插件组 + 与原生内容的间距」，
+                        //    裁剪等于没裁（零视觉影响）；只有岛体还在变宽的瞬态（leftPluginBlock 被按比例
+                        //    让位收窄）才真的切到 —— 于是左右两组绝不会在岛体中间叠在一起，
+                        //    插件是随岛体长大从两侧滑入的。
+                        var leftOrder = Plugins.PluginManager.Instance.Host.ContentOrder;
+                        canvas.Save();
+                        canvas.ClipRect(new SKRect(islandLeft, 0f, left, currentHeight));
+                        float lx = islandLeft + PLUGIN_GAP;
+                        for (int i = 0; i < nativeOrderIndex && i < leftOrder.Count; i++)
+                        {
+                            string item = leftOrder[i];
+                            if (Plugins.BuiltinWidgets.IsBuiltin(item)) continue;
+                            lx = DrawPluginWidgets(canvas, item, lx, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
+                        }
+                        canvas.Restore();
+                    }
+                    // 右侧：整行兜底 —— 左侧已画过的组件带 drawn 标记不会重复，
+                    // 还没进顺序表的组件（例如直接 RegisterWidget 注册的测试组件）也在这里补上。
+                    // 同样锚在岛体右边缘（rightGroupW == 0 说明一个右侧组件都没有，直接跳过），
+                    // 并同样裁剪到 [right, islandRight]（与左侧对称，理由同上）。
+                    if (rightGroupW > 0f)
+                    {
+                        canvas.Save();
+                        canvas.ClipRect(new SKRect(right, 0f, islandRight, currentHeight));
+                        DrawPluginWidgets(canvas, null, islandRight - rightGroupW, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
+                        canvas.Restore();
+                    }
                 }
 
                 // === 下方原本旧版残留的 _wakePath 绘制代码已被彻底删除 ===

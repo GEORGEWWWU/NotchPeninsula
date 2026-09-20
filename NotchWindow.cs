@@ -900,9 +900,12 @@ namespace NotchPeninsula
                     expectedTargetHeight = currentActive ? (Renderer.IsMediaExpanded ? Renderer.GetExpandedHeight(_media) : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT;
                 }
 
-                // 🧩 把目标宽度交给渲染侧：它据此把「插件行预留」按动画进度等比缩放，
-                //    免得岛体还没长到时候，原生内容（媒体文字 / 频谱 / 播放按钮）先被全额预留挤扁。
-                Renderer.IslandTargetWidth = expectedTargetWidth;
+                // 🧩 注意：**不要**再把目标宽度喂给渲染侧去「按动画进度缩放插件行预留」。
+                //    那个做法（曾用 Renderer.IslandTargetWidth + GetScaledPluginReserve）会在
+                //    媒体控制器长度变化时把预留瞬间缩小：换歌词 / 换标题 → 目标宽度变大 →
+                //    缩放系数从 1 掉下来 → 插件行与原生内容边界整体挪一下再挪回去，
+                //    表现就是「插件闪现回原位又闪回来」。用户 2026-09-20 反馈，已整套删除。
+                //    现在预留一律用未缩放值，边界只跟着岛体边缘平滑移动。
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;

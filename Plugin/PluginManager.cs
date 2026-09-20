@@ -115,6 +115,9 @@ public sealed class PluginManager
             CleanShadowRoot();
             Directory.CreateDirectory(PluginsRoot);
             Refresh();
+            // 顺序表还原发生在 Load() 内部第一次 EnsureOrder()（见 Load 里的调用）：
+            // 那时 Refresh() 已经把所有插件（含禁用/加载失败的）都登记进 _entries，
+            // 所以保存的顺序能按 Key 原样还原，与「插件是否加载成功」无关。
             foreach (var e in Entries)
                 if (!_disabled.Contains(e.Key) && e.State != PluginState.Loaded)
                     Load(e);
@@ -234,6 +237,17 @@ public sealed class PluginManager
                 _orderMigrated = true;
                 foreach (var raw in _rawOrder)
                 {
+                    // ⚠️ 原生模块（builtin.clock / hardware / media）**不在** _entries 里，
+                    //    必须原样保留。此前这里只按插件条目查找，导致注册表里保存的顺序中
+                    //    三个原生模块被整批丢弃，紧接着第 ② 步又把它们补回**最前面**，
+                    //    用户调好的插件位置每次重启都会被冲掉（表现：调好的 #1 重启后回到 #4）。
+                    //    （用户 2026-09-20 反馈「插件调整位置后没有记忆化」）
+                    if (Plugins.BuiltinWidgets.IsBuiltin(raw))
+                    {
+                        if (!ContainsOrder(raw)) { _order.Add(raw); changed = true; }
+                        continue;
+                    }
+
                     var matched = FindEntryByKeyOrId(raw);
                     if (matched == null || string.IsNullOrEmpty(matched.Key)) continue;
                     if (ContainsOrder(matched.Key)) continue;

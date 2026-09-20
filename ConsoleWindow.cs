@@ -689,12 +689,15 @@ namespace NotchPeninsula
                         // 上行（名称）无交互目标，仅下行按钮可点击
                         float listY = topY + 110;
                         int rows = Math.Min(_pluginView.Count, 7);
-                        if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
+                        // ⚠️ 这里的行起点必须与 Render() 里的 `listY + 64` 严格一致
+                        //    （2026-09-20 加「顺序：…」那一行时把渲染下移了 20px，热区漏改 →
+                        //      整行交互热区整体上移 20px，按钮全部点不到）
+                        if (x >= 216 && x <= WIDTH - 36 && y >= listY + 64)
                         {
-                            int idx = (int)((y - (listY + 44)) / 56);
+                            int idx = (int)((y - (listY + 64)) / 56);
                             if (idx >= 0 && idx < rows)
                             {
-                                float rowY = listY + 44 + idx * 56;
+                                float rowY = listY + 64 + idx * 56;
                                 // 下行按钮区（rowY+22 .. rowY+48）
                                 if (y >= rowY + 22 && y <= rowY + 48)
                                 {
@@ -2289,6 +2292,10 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
                 canvas.DrawText($"已安装插件 ({_pluginView.Count})", 216, listY + 26, _uiTextPaint);
+                // 「显示顺序」一览：← / → 调整的就是这张表里的位置。原生模块与插件同处一表，
+                // 把它直接画出来，用户就不会再疑惑「岛上只看得见两个内容，插件为什么是 #4」。
+                canvas.DrawText(TruncateText("顺序：" + DescribeContentOrder(), _subTextPaint, WIDTH - 36 - 216),
+                    216, listY + 46, _subTextPaint);
 
                 const int maxRows = 7;
                 // 上行：名称独占整行，可延展至卡片右边界外侧
@@ -2297,12 +2304,12 @@ namespace NotchPeninsula
                 float infoTextMax = PLUGIN_SORT_LEFT_X - 216 - 8;     // 信息止于排序三角之前
 
                 if (_pluginView.Count == 0)
-                    canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 66, _subTextPaint);
+                    canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 86, _subTextPaint);
 
                 for (int i = 0; i < Math.Min(_pluginView.Count, maxRows); i++)
                 {
                     var entry = _pluginView[i];
-                    float rowY = listY + 44 + i * 56;      // 行高 56，不上行名称独占，下行按钮全部一行排列
+                    float rowY = listY + 64 + i * 56;      // 行高 56，上行名称独占，下行按钮全部一行排列
                     if (i > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
 
                     // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
@@ -2324,8 +2331,12 @@ namespace NotchPeninsula
                     {
                         sub = "已禁用 · " + entry.Key;
                     }
+                    // 位置 = 在「内容显示顺序表」里的次序。这张表里同时住着三个原生模块
+                    // （时间日期 / 硬件占用 / 媒体控制器），所以即便岛上当前只显示了两个内容，
+                    // 插件也可能是 #4 —— 列表卡片顶部那行「顺序：…」把整张表摊开，一眼就能对上。
                     int pos = PluginManager.Instance.GetOrderIndex(entry);
-                    if (pos > 0) sub += $" · #{pos}";
+                    int total = PluginManager.Instance.Order.Count;
+                    if (pos > 0) sub += total > 0 ? $" · #{pos}/{total}" : $" · #{pos}";
                     _subTextPaint.Color = subColor;
                     float infoBaseline = rowY + 40;
                     canvas.DrawText(TruncateText(sub, _subTextPaint, infoTextMax), 216, infoBaseline, _subTextPaint);
