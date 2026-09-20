@@ -461,41 +461,12 @@ namespace NotchPeninsula
 
                 // 判断当前 Toast 是否处于激活期
                 isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
-                // 实时穿透与 0% 透明度智能判定
-                if (Renderer.PassthroughModeEnabled)
-                {
-                    float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                    float topY = 12f * _currentStyleProgress;
-
-                    // 因为开启穿透后系统收不到鼠标消息，必须用 GetCursorPos 底层轮询
-                    Win32.GetCursorPos(out var pt);
-                    float logX = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
-                    float logY = (pt.y - _cachedMonitorY - _currentY) / _dpiScale;
-                    bool isOverNotch = logX >= left && logX <= left + _currentWidth && logY >= topY && logY <= topY + _currentHeight;
-
-                    // 如果处于唤醒状态，但鼠标点击了本体外任意地方，立刻进入睡眠
-                    if (_isPassthroughAwake && !isOverNotch && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
-                        _isPassthroughAwake = false;
-
-                    // 当处于睡眠状态且鼠标悬停时，目标透明度为 0f（0%），系统会自动让其完全物理穿透！
-                    float targetAlpha = 1.0f;
-                    if (!_isPassthroughAwake && isOverNotch) targetAlpha = 0.0f;
-
-                    Renderer.PassthroughAlpha += (targetAlpha - Renderer.PassthroughAlpha) * 0.18f;
-
-                    // 解决极小浮点数(0.001f)未彻底归零，导致 Windows 底层未将窗口判定为全透明，从而导致穿透卡顿的问题
-                    if (Renderer.PassthroughAlpha < 0.01f) Renderer.PassthroughAlpha = 0f;
-                    if (Renderer.PassthroughAlpha > 0.99f) Renderer.PassthroughAlpha = 1f;
-                }
-                else
-                {
-                    Renderer.PassthroughAlpha = 1.0f;
-                    _isPassthroughAwake = false;
-                }
-                if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
 
                 // 📋 级别调度（消息队列，零额外分配）：系统通知 > 剪贴板链接 > 媒体控制器
                 // 开关关闭时立即收起正在展示的链接并清空排队槽位
+                // ⚠️ 本块必须排在下面的穿透判定**之前**：穿透逻辑要读本帧的 isClipboardActive
+                //    （Toast 的 isToastActive 在更上面就已算好）来决定是否临时退出穿透（见下），
+                //    排在后面会慢一帧、且与渲染状态不同步。
                 if (!IsClipboardEnabled)
                 {
                     _clipboardUrl = null;
@@ -517,6 +488,44 @@ namespace NotchPeninsula
                 // 剪贴板激活期判定 + 超时清理
                 isClipboardActive = _clipboardUrl != null && DateTime.Now < _clipboardEndTime;
                 if (!isClipboardActive && _clipboardUrl != null) { _clipboardUrl = null; _clipboardEndTime = default; }
+
+                // 实时穿透与 0% 透明度智能判定
+                if (Renderer.PassthroughModeEnabled)
+                {
+                    float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                    float topY = 12f * _currentStyleProgress;
+
+                    // 因为开启穿透后系统收不到鼠标消息，必须用 GetCursorPos 底层轮询
+                    Win32.GetCursorPos(out var pt);
+                    float logX = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
+                    float logY = (pt.y - _cachedMonitorY - _currentY) / _dpiScale;
+                    bool isOverNotch = logX >= left && logX <= left + _currentWidth && logY >= topY && logY <= topY + _currentHeight;
+
+                    // 如果处于唤醒状态，但鼠标点击了本体外任意地方，立刻进入睡眠
+                    if (_isPassthroughAwake && !isOverNotch && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
+                        _isPassthroughAwake = false;
+
+                    // 当处于睡眠状态且鼠标悬停时，目标透明度为 0f（0%），系统会自动让其完全物理穿透！
+                    // 例外：**系统主动弹出的内容展示期间临时禁用穿透** —— 剪贴板链接面板与 Toast 通知。
+                    // 二者的共同点是「弹出时机不由用户决定、且本身需要被看见和点击」：一旦悬停就变透明，
+                    // 用户既看不到也点不到，靠唤醒按钮也救不回来（剪贴板面板只停 3s，来不及先点唤醒；
+                    // 唤醒按钮本身又挡在左边缘）。内容一结束（点开 / 超时 / 被通知挤下）穿透自动恢复 ——
+                    // 不需要任何额外状态：两个 is*Active 标志位都由本帧的调度逻辑维护。
+                    float targetAlpha = 1.0f;
+                    if (!_isPassthroughAwake && isOverNotch && !isClipboardActive && !isToastActive) targetAlpha = 0.0f;
+
+                    Renderer.PassthroughAlpha += (targetAlpha - Renderer.PassthroughAlpha) * 0.18f;
+
+                    // 解决极小浮点数(0.001f)未彻底归零，导致 Windows 底层未将窗口判定为全透明，从而导致穿透卡顿的问题
+                    if (Renderer.PassthroughAlpha < 0.01f) Renderer.PassthroughAlpha = 0f;
+                    if (Renderer.PassthroughAlpha > 0.99f) Renderer.PassthroughAlpha = 1f;
+                }
+                else
+                {
+                    Renderer.PassthroughAlpha = 1.0f;
+                    _isPassthroughAwake = false;
+                }
+                if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
 
                 // 🧩 展开态的收起策略（用户 2026-09-19 要求）：**只要鼠标离开灵动岛，展开的面板就自动收缩**。
                 //    · 主触发在 WM_MOUSELEAVE（见下）：系统按「岛体可见形状」派发，零延迟 ——
