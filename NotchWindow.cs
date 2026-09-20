@@ -316,6 +316,20 @@ namespace NotchPeninsula
             catch (Exception ex) { Error("[剪贴板] 打开链接失败", ex); }
         }
 
+        /// <summary>
+        /// 穿透唤醒按钮的命中判定（逻辑坐标）。
+        /// 位置算式的唯一真源在渲染侧（<see cref="Renderer.WakeButtonX"/> / <see cref="Renderer.WAKE_BTN_SIZE"/>），
+        /// 这里只补上岛体的垂直偏移。**鼠标移动（手型指针）与左键按下（唤醒）必须共用它** ——
+        /// 之前两处各写一份算式，改位置时漏了一处，结果按钮移到了中心、hover 却没有小手。
+        /// </summary>
+        private bool HitWakeButton(int mx, int my)
+        {
+            float x = Renderer.WakeButtonX;
+            float y = 12f * _currentStyleProgress + (_currentHeight - Renderer.WAKE_BTN_SIZE) / 2f;
+            return mx >= x && mx <= x + Renderer.WAKE_BTN_SIZE
+                   && my >= y && my <= y + Renderer.WAKE_BTN_SIZE;
+        }
+
         #endregion
 
         public void Run()
@@ -508,8 +522,8 @@ namespace NotchPeninsula
                     // 当处于睡眠状态且鼠标悬停时，目标透明度为 0f（0%），系统会自动让其完全物理穿透！
                     // 例外：**系统主动弹出的内容展示期间临时禁用穿透** —— 剪贴板链接面板与 Toast 通知。
                     // 二者的共同点是「弹出时机不由用户决定、且本身需要被看见和点击」：一旦悬停就变透明，
-                    // 用户既看不到也点不到，靠唤醒按钮也救不回来（剪贴板面板只停 3s，来不及先点唤醒；
-                    // 唤醒按钮本身又挡在左边缘）。内容一结束（点开 / 超时 / 被通知挤下）穿透自动恢复 ——
+                    // 用户既看不到也点不到，靠唤醒按钮也救不回来 —— 面板只停 3s，
+                    // 等你去点唤醒按钮时它已经消失了。内容一结束（点开 / 超时 / 被通知挤下）穿透自动恢复 ——
                     // 不需要任何额外状态：两个 is*Active 标志位都由本帧的调度逻辑维护。
                     float targetAlpha = 1.0f;
                     if (!_isPassthroughAwake && isOverNotch && !isClipboardActive && !isToastActive) targetAlpha = 0.0f;
@@ -928,13 +942,10 @@ namespace NotchPeninsula
                         Renderer.UpdatePluginMouse(mx, my);
                         float hitTopY = 12f * _currentStyleProgress;
 
-                        // 1. 最高优先级拦截：精准计算唤醒按钮垂直居中热区，解决没有手型指针的问题
+                        // 1. 最高优先级拦截：唤醒按钮热区（位置真源在 Renderer.WakeButtonX，与渲染共用）
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
                         {
-                            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                            float wakeBtnY = hitTopY + (_currentHeight - 36f) / 2f;
-
-                            if (mx >= left && mx <= left + 36 && my >= wakeBtnY && my <= wakeBtnY + 36)
+                            if (HitWakeButton(mx, my))
                             {
                                 _isCursorOverIcon = true;
                                 break; // 击中唤醒按钮，直接切小手并短路
@@ -1056,15 +1067,10 @@ namespace NotchPeninsula
                         float hitTopY = 12f * _currentStyleProgress;
 
                         // 完美对齐渲染中心点，精准拦截唤醒点击
-                        if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
+                        if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake && HitWakeButton(cx, cy))
                         {
-                            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                            float wakeBtnY = hitTopY + (_currentHeight - 36f) / 2f;
-                            if (cx >= left && cx <= left + 36 && cy >= wakeBtnY && cy <= wakeBtnY + 36)
-                            {
-                                _isPassthroughAwake = true;
-                                return (IntPtr)0;
-                            }
+                            _isPassthroughAwake = true;
+                            return (IntPtr)0;
                         }
 
                         RaiseWindowClicked(cx, cy, "main-window");

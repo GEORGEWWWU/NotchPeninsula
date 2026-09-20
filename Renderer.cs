@@ -46,15 +46,60 @@ namespace NotchPeninsula
         public static bool PassthroughModeEnabled = false; // 穿透模式总开关
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
-        private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true }; // 极简线条画笔
+        // 唤醒按钮：**面性（实心）底座 + 线条图标**。原先的「两个同心圆」是线条图形，既单薄又看不出可点击；
+        // 现在底座换成深色圆角芯片（面性、有实体感），图标换成「两个线条折角箭头指向对角」。
+        // 试错记录：实心三角头 + 实心杆太笨重（否）；鼠标指针 —— 屏幕上本来就有真指针，多一个很怪（否）。
+        // 芯片在深色桌面上几乎隐形，此时退化成一枚白色折角箭头，同样成立；
+        // 浅色桌面上则靠深色芯片立住对比（纯白图形落在白色壁纸上会直接消失）。
+        private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 2.8f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round, IsAntialias = true }; // 折角箭头（线条）
+        private static readonly SKPaint _wakeChipPaint = new SKPaint { Color = SKColors.Black.WithAlpha(WakeChipAlpha), Style = SKPaintStyle.Fill, IsAntialias = true }; // 芯片底色
         private static readonly SKPaint _wakeHitPaint = new SKPaint { Style = SKPaintStyle.Fill }; // 隐形物理热区底板
         private static readonly SKPath _wakePath = CreateWakePath();
+        private static readonly SKPath _wakeChipPath = CreateWakeChipPath();
 
+        // 芯片基准不透明度（0-255）。再深一点会显得像一块实心补丁，再浅一点在浅色壁纸上就撑不住对比。
+        private const byte WakeChipAlpha = 158;
+
+        // 穿透唤醒按钮的边长（逻辑坐标）。
+        public const float WAKE_BTN_SIZE = 36f;
+
+        // 穿透唤醒按钮的水平位置 —— **唯一真源**。岛体本身水平居中，所以化简后
+        // `(WINDOW_WIDTH - 岛宽)/2 + (岛宽 - 36)/2` 就等于 `(WINDOW_WIDTH - 36)/2`，与岛宽无关。
+        // 渲染 / 鼠标命中 / 手型指针三处必须都用它，别再各算一份 ——
+        // 之前三处各写了一份，改位置时漏掉 WM_MOUSEMOVE 那处，
+        // 结果按钮移到中心了、手型指针还留在左边缘（即「hover 按钮没有小手」）。
+        public static float WakeButtonX => (WINDOW_WIDTH - WAKE_BTN_SIZE) / 2f;
+
+        // 芯片：36×36 画布内缩 5px 的 26×26 圆角方块，圆角与岛体语言保持一致
+        private static SKPath CreateWakeChipPath()
+        {
+            var path = new SKPath();
+            path.AddRoundRect(new SKRect(5f, 5f, 31f, 31f), 8f, 8f);
+            return path;
+        }
+
+        // 唤醒按钮图标：**两个线条折角箭头指向对角**（就是 `>` `>` 那种 V 形折角，不带杆）。
+        // 每个箭头只画折角两笔：尖角落在对角方向，一臂竖直、一臂水平，各自延伸到画布中线 ——
+        // 这样两臂与画布中线对齐，视觉重心稳，不会显得偏。不带杆是刻意的：中间留白让图标变轻，
+        // 也避免两段斜线连成一根粗斜杠（那样就认不出是箭头了）。
+        // 尺寸：尖角距画布中心 6.5（即 (24.5, 11.5)），臂长也是 6.5，尖角离芯片边缘 6.5 ——
+        // 之前用的 8.5 太大、离边缘只有 4.5，缩到 6.5 后四周留白舒服了。
+        // 左下折角是右上折角关于画布中心 (18,18) 的点对称，所以两组坐标互为 36-x / 36-y。
+        // 线条用 Stroke 画笔绘制（2.8px、圆头圆角），坐标同样烘焙进路径。
         private static SKPath CreateWakePath()
         {
             var path = new SKPath();
-            path.AddCircle(18f, 18f, 8f); // 外圈
-            path.AddCircle(18f, 18f, 3f); // 核心唤醒点
+
+            // 右上折角：尖角 (24.5, 11.5)，两臂各 6.5，分别落到横竖中线
+            path.MoveTo(24.50f, 18.00f);  // 竖直臂末端（落在水平中线）
+            path.LineTo(24.50f, 11.50f);  // 尖角
+            path.LineTo(18.00f, 11.50f);  // 水平臂末端（落在垂直中线）
+
+            // 左下折角：上面的点对称
+            path.MoveTo(11.50f, 18.00f);
+            path.LineTo(11.50f, 24.50f);
+            path.LineTo(18.00f, 24.50f);
+
             return path;
         }
 
@@ -2113,16 +2158,24 @@ namespace NotchPeninsula
                     // 核心逻辑：2倍速急速消失。只要本体浮现到一半（Alpha>0.5），按钮立刻彻底消失，绝不拖泥带水
                     byte wakeAlpha = (byte)(Math.Max(0f, 1f - PassthroughAlpha * 2f) * 255);
 
-                    float wakeBtnY = (currentHeight - 36f) / 2f; // 对齐内部垂直居中
+                    float wakeBtnY = (currentHeight - WAKE_BTN_SIZE) / 2f; // 对齐内部垂直居中
+                    // 水平居中：唤醒按钮落在整个岛体的正中心，不再贴左边缘。
+                    // X 走 Renderer.WakeButtonX（唯一真源），NotchWindow 的命中判定与手型指针共用它。
+                    float wakeBtnX = WakeButtonX;
 
                     // 垫底一块 Alpha=1 的隐形纯黑热区！肉眼完全不可见，但足以 100% 截断 Windows 物理穿透事件
                     _wakeHitPaint.Color = SKColors.Black.WithAlpha(1);
-                    canvas.DrawRect(left, wakeBtnY, 36f, 36f, _wakeHitPaint);
+                    canvas.DrawRect(wakeBtnX, wakeBtnY, WAKE_BTN_SIZE, WAKE_BTN_SIZE, _wakeHitPaint);
 
                     if (wakeAlpha > 0)
                     {
+                        // 芯片先铺底、白色箭头压在上面。芯片不透明度跟随同一个 wakeAlpha 等比缩放，
+                        // 保证它与本体淡出节奏完全同步，不会出现「岛已透明、芯片还实心」的割裂感。
+                        _wakeChipPaint.Color = SKColors.Black.WithAlpha((byte)(WakeChipAlpha * wakeAlpha / 255));
+                        DrawSvgPath(canvas, _wakeChipPaint, wakeBtnX, wakeBtnY, _wakeChipPath);
+
                         _wakePaint.Color = SKColors.White.WithAlpha(wakeAlpha);
-                        DrawSvgPath(canvas, _wakePaint, left, wakeBtnY, _wakePath);
+                        DrawSvgPath(canvas, _wakePaint, wakeBtnX, wakeBtnY, _wakePath);
                     }
                 }
 
