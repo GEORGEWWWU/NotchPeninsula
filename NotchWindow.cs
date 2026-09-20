@@ -104,21 +104,87 @@ namespace NotchPeninsula
         public static bool IsPauseAutoHideEffective => IsPauseAutoHideEnabled && IsAutoHideEffective;
 
         /// <summary>
-        /// 「当前媒体状态是否阻止自动隐藏」。**这是自动隐藏判定的单一真源**，
-        /// <c>shouldHide</c>（藏不藏）与 <c>WM_LBUTTONDOWN</c> 的唤醒分支（点了能不能唤回）**必须共用它**。
+        /// 「全屏自动隐藏」开关（**用户的偏好**）。自动隐藏的附属扩展功能，默认关闭。
+        /// 语义：检测到有全屏应用在跑（全屏视频 / 全屏游戏，含独占模式 D3D）时，**无条件**让位隐藏，
+        /// 哪怕音乐正在播放 —— 全屏场景下岛体压在顶上就是纯打扰。
         ///
-        /// 历史坑：唤醒分支原先自己写死 `!_media.IsActive`。加了「暂停后隐藏」之后，岛体会在
-        /// `_media.IsActive == true`（暂停中）的情况下藏起来，而唤醒分支仍要求 `!_media.IsActive`，
-        /// 结果就是**藏得下去、点不回来**。所以两边一律读这个属性。
-        ///
-        /// 取值：
-        ///   · 没有媒体会话 → false（不阻止，正常自动隐藏）
-        ///   · 有会话 且 未开启「暂停后隐藏」 → true（阻止；这就是原来的 `!_media.IsActive` 行为）
-        ///   · 有会话 且 已开启 且 **正在播放** → true（阻止，播放中必须显示）
-        ///   · 有会话 且 已开启 且 **暂停/停止** → false（不阻止 → 允许隐藏，本功能的目的）
+        /// 与 <see cref="IsPauseAutoHideEnabled"/> **互斥**：面板上只允许开一个，开启一个会自动关掉另一个。
+        /// 理由：两者都是「放宽允许隐藏的条件」，同时开着只会让「到底因为哪条才藏的」变得难以预期。
         /// </summary>
-        private bool MediaBlocksAutoHide =>
-            _media.IsActive && !(IsPauseAutoHideEffective && !_media.IsPlaying);
+        public static bool IsFullscreenAutoHideEnabled = false;
+
+        /// <summary>
+        /// 「全屏自动隐藏」**实际是否生效**。与暂停隐藏同样直接挂在 <see cref="IsAutoHideEffective"/> 上，
+        /// 天然继承「自动隐藏关闭即失效」与「穿透模式强制压制」两条既有约束，不用各写一份。
+        /// </summary>
+        public static bool IsFullscreenAutoHideEffective => IsFullscreenAutoHideEnabled && IsAutoHideEffective;
+
+        // ==================== 全屏检测（「全屏自动隐藏」专用） ====================
+        // 轻量化的三个关键：
+        //   1. 只调**一次** Win32（SHQueryUserNotificationState），不自己枚举窗口比对显示器矩形；
+        //   2. **节流**：最多每 0.8s 探一次 —— 全屏切换是秒级事件，不需要 16ms 级延迟；
+        //   3. **功能没开就一次系统调用都不发**，直接把缓存压回 false。
+        // 探测与消费都在渲染循环线程上，所以缓存不需要加锁。
+        private static bool _isFullscreenCached;
+        private static DateTime _fullscreenProbeAt = DateTime.MinValue;
+        private const double FullscreenProbeIntervalSeconds = 0.8;
+
+        /// <summary>
+        /// 节流刷新全屏检测缓存。由渲染循环在算 <c>shouldHide</c> 之前调用一次。
+        /// 唤醒点击分支只**读**缓存（<see cref="IsFullscreenHideActive"/>），不重复探测。
+        /// </summary>
+        private static void TickFullscreenProbe()
+        {
+            // 功能没开（或自动隐藏关了 / 穿透模式压着）就彻底不探测，顺手把缓存压回 false，
+            // 免得残留上一次的 true 让「刚关掉开关岛体还躲着」。
+            if (!IsFullscreenAutoHideEffective) { _isFullscreenCached = false; return; }
+
+            var now = DateTime.UtcNow;
+            if ((now - _fullscreenProbeAt).TotalSeconds < FullscreenProbeIntervalSeconds) return;
+            _fullscreenProbeAt = now;
+
+            _isFullscreenCached = false;
+            try
+            {
+                // 返回 HRESULT：非 0 表示查询失败，out 值不可信 → 保持 false。
+                // 这里刻意**静默** catch（不写日志）：本方法每 0.8s 跑一次，一旦失败会持续失败，
+                // 打日志等于把日志刷爆；而且失败时「当成没有全屏」是安全的一侧（岛体保持原样，不会乱躲）。
+                if (Win32.SHQueryUserNotificationState(out int state) != 0) return;
+
+                _isFullscreenCached = state == Win32.QUNS_BUSY                    // 全屏应用 / 演示文稿设置
+                                   || state == Win32.QUNS_RUNNING_D3D_FULL_SCREEN // 独占模式全屏 D3D
+                                   || state == Win32.QUNS_PRESENTATION_MODE;      // 演示文稿模式
+            }
+            catch { _isFullscreenCached = false; }
+        }
+
+        /// <summary>「全屏自动隐藏」此刻是否真的在起作用（开关生效 且 缓存里检测到全屏）。</summary>
+        private static bool IsFullscreenHideActive => IsFullscreenAutoHideEffective && _isFullscreenCached;
+
+        /// <summary>
+        /// 「现在允许自动隐藏吗」——**自动隐藏判定的单一真源**。
+        /// <c>shouldHide</c>（藏不藏）与 <c>WM_LBUTTONDOWN</c> 的唤醒分支（点了能不能唤回）**必须共用它**，
+        /// 否则就会出现「藏得下去、点不回来」。
+        ///
+        /// 三种模式**互斥**（面板上只允许开一个），共同点都是「放宽允许隐藏的条件」：
+        ///   · 普通自动隐藏：没有媒体会话 → 允许
+        ///   · 暂停播放后自动隐藏：媒体**暂停 / 停止**时 → 允许（原本是「媒体激活即一律不隐藏」）
+        ///   · 全屏自动隐藏：检测到全屏应用 → **无条件允许**（正在播放也要让位，这正是它的用途）
+        ///
+        /// 历史坑：唤醒分支曾自己写死 `!_media.IsActive`。加了「暂停后隐藏」之后，岛体会在
+        /// `_media.IsActive == true`（暂停中）的状态下藏起来，写死的判据就变成「藏得下去、点不回来」。
+        /// 所以两边一律读这里，别再各写一份。
+        /// </summary>
+        private bool CanAutoHideNow
+        {
+            get
+            {
+                if (!IsAutoHideEffective) return false;   // 未开启 / 穿透模式压制
+                if (IsFullscreenHideActive) return true;  // 全屏优先：播放中也要让位
+                if (_media.IsActive) return IsPauseAutoHideEffective && !_media.IsPlaying;
+                return true;                              // 无媒体会话 → 普通自动隐藏
+            }
+        }
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
         // 📋 剪贴板链接监听（事件驱动，仅在复制时读一次剪贴板，稳态零占用）
         private readonly ClipboardMonitor _clipboardMonitor = new ClipboardMonitor();
@@ -663,21 +729,29 @@ namespace NotchPeninsula
                 }
 
 
+                // 🖥 全屏检测：节流刷新缓存（功能没开时这个方法直接返回，零系统调用）。
+                //    必须在下面读 CanAutoHideNow 之前调用，否则会用到上一帧的旧值。
+                TickFullscreenProbe();
+
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏。
                 // 用 IsAutoHideEffective 而不是 IsAutoHideEnabled —— 穿透模式下必须真的不隐藏，
                 // 与设置面板里「自动隐藏开关置灰且显示为关闭」保持一致。
-                // 🎵 媒体那一项改读 MediaBlocksAutoHide：开启「暂停播放后自动隐藏」后，
-                //    暂停中的媒体不再阻止隐藏（这正是本功能的目的）。播放中仍然阻止。
+                // 🎵 「允许隐藏」这一项统一由 CanAutoHideNow 回答（三模式单一真源）：
+                //    普通 / 暂停播放后 / 全屏时，三者互斥，都是「放宽允许隐藏的条件」。
+                //    它已经含 IsAutoHideEffective，所以这里不再重复写。
                 // ⚠️ Toast 的 `!isToastActive` 必须原样保留 —— Toast 是「系统主动弹出且需要用户交互」的，
-                //    任何自动隐藏开关都不能把它压掉。剪贴板与插件详情页同理。
+                //    任何自动隐藏开关都不能把它压掉。**全屏时也一样**：用户开这个功能的初衷就是
+                //    「既能不被打扰、又不漏通知」，所以全屏下收到消息岛体照样要弹出来。
+                //    剪贴板与插件详情页同理。
                 // 🖐 `!_media.IsDragging` 是给「暂停后隐藏」配的保护：部分播放器在 seek 期间会短暂上报
                 //    Paused，若不挡住就会在用户拖进度条拖到一半时把面板抽走。
                 //    只在媒体激活时才可能为 true，所以对原有「无媒体」路径零影响。
-                // 注：`_isManuallyExpanded` 依旧优先 —— 用户主动点顶部细边唤醒出来的岛体，暂停也不会被收走
+                // 注：`_isManuallyExpanded` 依旧优先 —— 用户主动点顶部细边唤醒出来的岛体，不会被自动收走
                 //    （要收就点岛外，走 CollapseAllExpanded）。这是「手动展开优先」的既有语义，刻意保留。
-                // 同理 `!Renderer.IsMediaExpanded`：用户主动点开的媒体展开面板，不能因为他按了暂停就被抽走。
+                //    全屏场景同理：真在全屏里点了顶边唤回，就说明他想看，别立刻又藏回去。
+                // 同理 `!Renderer.IsMediaExpanded`：用户主动点开的媒体展开面板，不该被暂停 / 全屏抽走。
                 //    鼠标离开岛体时 CollapseExpandedPanels() 会把它收掉，那时才轮到自动隐藏接手。
-                bool shouldHide = IsAutoHideEffective && !MediaBlocksAutoHide && !_media.IsDragging
+                bool shouldHide = CanAutoHideNow && !_media.IsDragging
                                   && !_isManuallyExpanded && !Renderer.IsMediaExpanded && !isToastActive
                                   && !isClipboardActive && !Renderer.HasActiveDetailPage;
 
@@ -1166,13 +1240,14 @@ namespace NotchPeninsula
 
                         RaiseWindowClicked(cx, cy, "main-window");
 
-                        // 「点击已隐藏的岛体把它唤回来」。同样要用 IsAutoHideEffective：
-                        // 穿透模式下 auto-hide 已失效，但刚开启穿透时岛体可能还在 350ms 的回滑动画里
-                        // （_currentY 仍 < -5），此时点击不应被当成「唤醒」，否则会莫名锁上 _isManuallyExpanded。
-                        // ⚠️ 媒体那一项必须读 MediaBlocksAutoHide，**不能**再写死 `!_media.IsActive`：
-                        //    开启「暂停播放后自动隐藏」时岛体是**在媒体会话存活的状态下**藏起来的，
-                        //    写死 `!_media.IsActive` 会导致「藏得下去、点不回来」。必须与 shouldHide 同源。
-                        if (IsAutoHideEffective && !MediaBlocksAutoHide && _currentY < -5f)
+                        // 「点击已隐藏的岛体把它唤回来」。
+                        // ⚠️ 判据必须与 shouldHide 同源，一律读 CanAutoHideNow：
+                        //    它已经含 IsAutoHideEffective（穿透模式下 auto-hide 已失效，但刚开启穿透时岛体可能
+                        //    还在回滑动画里、_currentY 仍 < -5，此时点击不该被当成「唤醒」而莫名锁上手动展开），
+                        //    也含「暂停后隐藏」与「全屏时隐藏」两种放宽模式 —— 写死 `!_media.IsActive`
+                        //    会导致那两种模式下「藏得下去、点不回来」。
+                        //    `_currentY < -5f` 是「确实已经藏起来了」的兜底闸门。
+                        if (CanAutoHideNow && _currentY < -5f)
                         {
                             _isManuallyExpanded = true;
                             // 🎯 屏蔽掉「本次按键」引发的岛外点击收起判定。用户点的是屏幕顶边（y≈0），

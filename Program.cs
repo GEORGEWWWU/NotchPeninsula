@@ -24,15 +24,24 @@ namespace NotchPeninsula
                     FontConfig.Restore(key.GetValue("CustomFontPath", "") as string);
 
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
-                    // 🎵 「暂停播放后自动隐藏」是自动隐藏的附属扩展，默认关。
-                    // 依赖关系：自动隐藏关掉时它必须也是关的 —— 否则会出现「自动隐藏开关显示关闭、
-                    // 岛体却因为暂停而躲起来」的矛盾状态。这里顺手把注册表也修正掉（自愈），
-                    // 保证「内存态 / 注册表 / 面板显示」三者永远一致。
+                    // 🎵🖥 两个附属开关（暂停播放后 / 全屏时）都是自动隐藏的扩展，默认关，且**互斥**。
+                    // 依赖关系：自动隐藏关掉时它们必须也是关的 —— 否则会出现「自动隐藏开关显示关闭、
+                    // 岛体却因为暂停/全屏而躲起来」的矛盾状态。
+                    // 这里顺手把注册表也修正掉（自愈），保证「内存态 / 注册表 / 面板显示」三者永远一致。
                     NotchWindow.IsPauseAutoHideEnabled = (int)key.GetValue("PauseAutoHide", 0) != 0;
-                    if (!NotchWindow.IsAutoHideEnabled && NotchWindow.IsPauseAutoHideEnabled)
+                    NotchWindow.IsFullscreenAutoHideEnabled = (int)key.GetValue("FullscreenAutoHide", 0) != 0;
+                    if (!NotchWindow.IsAutoHideEnabled)
                     {
-                        NotchWindow.IsPauseAutoHideEnabled = false;
-                        key.SetValue("PauseAutoHide", 0);
+                        // 父开关关着 → 两个附属一律清零
+                        if (NotchWindow.IsPauseAutoHideEnabled) { NotchWindow.IsPauseAutoHideEnabled = false; key.SetValue("PauseAutoHide", 0); }
+                        if (NotchWindow.IsFullscreenAutoHideEnabled) { NotchWindow.IsFullscreenAutoHideEnabled = false; key.SetValue("FullscreenAutoHide", 0); }
+                    }
+                    else if (NotchWindow.IsPauseAutoHideEnabled && NotchWindow.IsFullscreenAutoHideEnabled)
+                    {
+                        // 互斥自愈：两者同时为真（手改注册表 / 旧版本遗留）时只保留「暂停播放后」，
+                        // 与面板上「先点谁留谁」的直觉一致，且结果是确定的、不会每次启动都变。
+                        NotchWindow.IsFullscreenAutoHideEnabled = false;
+                        key.SetValue("FullscreenAutoHide", 0);
                     }
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
                     MediaController.IsKaraokeEnabled = (int)key.GetValue("KaraokeEnabled", 1) != 0;

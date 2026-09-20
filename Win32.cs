@@ -338,5 +338,27 @@ namespace NotchPeninsula
         /// <summary>对话框出错时的扩展错误码；用户正常取消时返回 0。</summary>
         [DllImport("comdlg32.dll")]
         public static extern uint CommDlgExtendedError();
+
+        // ==================== 全屏检测（「全屏自动隐藏」用） ====================
+        // SHQueryUserNotificationState 是**系统自己的**「现在该不该打扰用户」判定，一次调用就拿到答案，
+        // 不用自己 GetForegroundWindow + GetWindowRect + 比对显示器矩形（那套还要处理多显示器与边界误差）。
+        // 而且它和「Windows 要不要压掉 Toast」用的是同一套标准，不会出现两套判据打架。
+        //
+        // 覆盖的场景正好是我们要的全部：
+        //   · 全屏视频（浏览器全屏 / 播放器全屏）→ QUNS_BUSY
+        //   · 全屏游戏（无边框全屏）           → QUNS_BUSY
+        //   · 全屏游戏（独占模式 D3D）         → QUNS_RUNNING_D3D_FULL_SCREEN（矩形比对会漏掉这类）
+        //   · 演示文稿模式                     → QUNS_BUSY / QUNS_PRESENTATION_MODE
+        // ⚠️ 返回的是 **HRESULT（0 = S_OK）**，非 0 时 out 值不可信，调用方必须先看返回值。
+        [DllImport("shell32.dll")]
+        public static extern int SHQueryUserNotificationState(out int pquns);
+
+        public const int QUNS_NOT_PRESENT = 1;             // 屏保 / 锁屏 / 非活动的快速用户切换会话
+        public const int QUNS_BUSY = 2;                    // 全屏应用运行中，或应用了演示文稿设置
+        public const int QUNS_RUNNING_D3D_FULL_SCREEN = 3; // 独占模式的全屏 Direct3D 应用
+        public const int QUNS_PRESENTATION_MODE = 4;       // 演示文稿模式
+        public const int QUNS_ACCEPTS_NOTIFICATIONS = 5;   // 无上述状态，可以自由发通知
+        public const int QUNS_QUIET_TIME = 6;              // 新用户首次登录 / 升级后的静默期
+        public const int QUNS_APP = 7;                     // Windows 应用商店应用运行中（与全屏无关）
     }
 }
