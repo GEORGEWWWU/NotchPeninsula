@@ -15,6 +15,11 @@ namespace NotchPeninsula
 
         public const int WM_MOVE = 0x0003;
         public const int WM_SIZE = 0x0005;
+        public const int WM_ACTIVATE = 0x0006;   // 窗口被激活 / 失活（wParam 低 16 位是 WA_*）
+        public const int WA_INACTIVE = 0;
+        public const int WA_ACTIVE = 1;
+        public const int WA_CLICKACTIVE = 2;
+        public const int WM_TIMER = 0x0113;
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
         public const int WM_LBUTTONUP = 0x0202;
@@ -298,6 +303,14 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        // 一次性延迟回调：材质（accent）需要在窗口「显示 + 激活」之后再补一次，
+        // 而 DWM 的合成初始化是异步的，所以用一个短定时器做兜底重贴。
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetTimer(IntPtr hWnd, IntPtr nIDEvent, uint uElapse, IntPtr lpTimerFunc);
+
+        [DllImport("user32.dll")]
+        public static extern bool KillTimer(IntPtr hWnd, IntPtr uIDEvent);
 
         [DllImport("user32.dll")]
         public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);

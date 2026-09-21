@@ -12,6 +12,9 @@ namespace NotchPeninsula
         private static ConsoleWindow? _instance;
         private readonly IntPtr _hwnd;
         private IntPtr _backdropHwnd;
+
+        // 「显示 / 激活之后延迟补一次材质」用的一次性定时器 id（只在本窗口内用，取个不会撞号的值）
+        private static readonly IntPtr BACKDROP_REFRESH_TIMER_ID = new IntPtr(0x4E50); // "NP"
         private static readonly Win32.WndProc _staticWndProc = StaticWndProc;
         private static bool _classRegistered = false;
 
@@ -240,6 +243,10 @@ namespace NotchPeninsula
                 Win32.ShowWindow(_instance._hwnd, Win32.SW_RESTORE);
                 _instance.ShowBackdrop();
                 Win32.SetForegroundWindow(_instance._hwnd);
+                // 显示 / 激活会让 DWM 重新初始化这扇窗口的合成，把之前贴上的 accent 冲掉，
+                // 所以「Show → Activate」之后必须再补一次材质（详见 ReapplyBackdropMaterial）。
+                // 随后的 WM_ACTIVATE 还会补一次，并挂一个延迟兜底。
+                _instance.ReapplyBackdropMaterial();
             }
         }
 
@@ -543,14 +550,22 @@ namespace NotchPeninsula
             return Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_MICA_EFFECT, ref enabled, Marshal.SizeOf<int>()) == 0;
         }
 
+        // 亚克力的 tint（ABGR）：alpha 不能为 0，否则只剩模糊没有底色。
+        // 这个 tint 故意比上一版更浅：上一版 alpha 太高，视觉更像“深色底板”而不是背景模糊。
+        private static readonly uint ACRYLIC_TINT = ColorToAbgr(0x8C, 0x14, 0x14, 0x14); // 0x8C141414
+
         private bool TryEnableAcrylicBackdrop()
+            => ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, ACRYLIC_TINT);
+
+        private bool ApplyAccentPolicy(int accentState, uint gradientColor)
         {
+            if (_backdropHwnd == IntPtr.Zero) return false;
+
             var accent = new Win32.ACCENT_POLICY
             {
-                AccentState = Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND,
+                AccentState = accentState,
                 AccentFlags = 0,
-                // 这个 tint 故意比上一版更浅：上一版 alpha 太高，视觉更像“深色底板”而不是背景模糊。
-                GradientColor = ColorToAbgr(0x8C, 0x14, 0x14, 0x14),
+                GradientColor = gradientColor,
                 AnimationId = 0
             };
 
@@ -564,7 +579,6 @@ namespace NotchPeninsula
                     Data = accentPtr,
                     SizeOfData = Marshal.SizeOf<Win32.ACCENT_POLICY>()
                 };
-                if (_backdropHwnd == IntPtr.Zero) return false;
                 return Win32.SetWindowCompositionAttribute(_backdropHwnd, ref data) != 0;
             }
             catch
@@ -574,6 +588,44 @@ namespace NotchPeninsula
             finally
             {
                 Marshal.FreeHGlobal(accentPtr);
+            }
+        }
+
+        // ⚠️ 唤醒 / 重新激活时「重新贴一次材质」，这是本窗口最容易被忽略的一步。
+        //
+        // 症状：右键岛体打开设置窗口时亚克力正常；点别的窗口让设置窗口失焦，再把设置窗口
+        //       唤到前台，背景直接变成全透明（前景还在，但背后能看穿到桌面），亚克力没了。
+        //
+        // 根因：Acrylic 是靠 SetWindowCompositionAttribute 把「accent 策略」挂在材质窗上的
+        //       一次性状态，而不是窗口样式。窗口每经历一次 show / activate（点任务栏、
+        //       Alt+Tab、从最小化还原、SetForegroundWindow 重新拉前台），DWM 都会重新
+        //       初始化这扇窗口的合成，把之前贴的 accent 冲掉；而 DwmExtendFrameIntoClientArea
+        //       留下的「整块客户区即玻璃」还在，于是材质窗就成了一块纯透明的洞 —— 正是看到的现象。
+        //       微软文档给出的稳定时序本来就是「GlassFrame → Show → Activate → 贴 accent」，
+        //       accent 排在最后正是因为前面的步骤会覆盖它。
+        //
+        // 所以：任何一次重新显示 / 重新激活之后，都必须补贴一次材质。
+        // 注意这里只重贴材质层，不重调 DwmExtendFrameIntoClientArea —— 玻璃框属于窗口初始化，
+        // 换肤/重贴时再调反而会把材质弄没。
+        private void ReapplyBackdropMaterial()
+        {
+            if (_backdropHwnd == IntPtr.Zero)
+                return;
+
+            switch (_backdropMode)
+            {
+                case BackdropMaterialMode.Acrylic:
+                    Logger.Debug($"重贴亚克力材质: {(ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, ACRYLIC_TINT) ? "ok" : "fail")}");
+                    break;
+
+                case BackdropMaterialMode.Mica:
+                    if (!TryEnableSystemBackdropMica())
+                        TryEnableLegacyMica();
+                    break;
+
+                // SolidDark 是自绘的实色外观，没有系统材质可补
+                default:
+                    break;
             }
         }
 
@@ -690,9 +742,33 @@ namespace NotchPeninsula
                     }
                     else if (_hwnd != IntPtr.Zero)
                     {
-                        // 从任务栏还原回来：材质窗重新亮出来并对齐，再重绘一帧前景
+                        // 从任务栏还原回来：材质窗重新亮出来并对齐，补贴一次材质，再重绘一帧前景。
+                        // （还原同样会让 DWM 重建合成、冲掉 accent，见 ReapplyBackdropMaterial）
                         ShowBackdrop();
+                        ReapplyBackdropMaterial();
                         Render();
+                    }
+                    break;
+
+                // 重新激活（点任务栏、Alt+Tab、从别的程序切回来、SetForegroundWindow 拉前台）：
+                // 材质窗重新亮出来 + 重新贴一次材质，否则背景会变成全透明（亚克力丢失）。
+                case Win32.WM_ACTIVATE:
+                    if ((wParam.ToInt32() & 0xFFFF) != Win32.WA_INACTIVE && _hwnd != IntPtr.Zero)
+                    {
+                        ShowBackdrop();
+                        ReapplyBackdropMaterial();
+                        // DWM 的合成初始化是异步的，紧贴 WM_ACTIVATE 补的这一次仍可能被随后的
+                        // 初始化覆盖，所以再挂一个短定时器，等激活流程彻底走完再补一次兜底。
+                        Win32.SetTimer(hwnd, BACKDROP_REFRESH_TIMER_ID, 150, IntPtr.Zero);
+                    }
+                    break;
+
+                case Win32.WM_TIMER:
+                    if (wParam == BACKDROP_REFRESH_TIMER_ID)
+                    {
+                        Win32.KillTimer(hwnd, BACKDROP_REFRESH_TIMER_ID);
+                        ReapplyBackdropMaterial();
+                        return IntPtr.Zero;
                     }
                     break;
 
