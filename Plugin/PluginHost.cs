@@ -259,8 +259,15 @@ public sealed class PluginHost
             ProcessName = "PluginReminder",
             NotificationId = (uint)Environment.TickCount
         };
+        // 图标（可选）：本地路径 / 图片链接 / data:image base64 / 内置别名，见 ToastIconProvider。
+        // 同样走 DetachString 拷到宿主堆，避免长期持有插件 loader heap 上的字符串。
+        string iconSpec = DetachString(reminder.IconPath);
+
         Logger.Info($"[PluginHost] 插件提醒已投递: {toast.Title} — {toast.Body}");
         ReminderPosted?.Invoke(toast);
+
+        // 解析放后台：先按默认图标弹出来，解析完由 Renderer 下一帧自动换图
+        ToastIconProvider.ResolveInBackground(iconSpec, bmp => toast.CustomIcon = bmp);
     }
 
     /// <summary>

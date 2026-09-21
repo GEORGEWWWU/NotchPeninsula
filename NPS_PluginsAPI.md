@@ -311,7 +311,11 @@ dotnet build HelloPlugin.csproj -c Debug
 
 **定时刷新（ScheduleRefresh）**：`host.ScheduleRefresh(interval, 回调)` 让程序每隔一段时间在后台线程调用你的回调（最小间隔 100 毫秒）。回调里更新你自己的数据即可，渲染线程会自动读到最新值，无需手动触发重绘。它返回一个 `IDisposable`，`Dispose` 就停止刷新。适合做“每 5 分钟拉一次课表”“每 30 秒轮询一次状态”这类事情。注意回调在后台线程运行，更新数据时要保证渲染线程的安全读取（用 `volatile`、`Interlocked` 或 `lock`）。示例如第五节和示例代码里的 `_seconds`。
 
-**提醒（PostReminder）**：`host.PostReminder(new ReminderData { Title = ..., Body = ..., Duration = ... })` 弹出一条几秒钟的灵动岛顶部提示。`ReminderData` 里 `IconPath` 可以配图标图片路径（可选），`OnClick` 可以配点击后的回调（可选）。适合做“数据更新了”“事件已提醒”这类反馈。
+**提醒（PostReminder）**：`host.PostReminder(new ReminderData { Title = ..., Body = ..., Duration = ... })` 弹出一条几秒钟的灵动岛顶部提示。`ReminderData` 里 `IconPath` 可以配图标（可选），`OnClick` 可以配点击后的回调（可选）。适合做“数据更新了”“事件已提醒”这类反馈。
+
+> `IconPath` 虽然叫 Path，实际接受四种写法，程序会按前缀自动识别：本地文件路径（`C:/icons/a.png`）、图片链接（`https://...`，下载后缓存）、内联图（`data:image/png;base64,...`）、内置别名（`"qq"` / `"bilibili"` / `"chrome"` / `"edge"` / `"potplayer"` / `"windows"`）。
+> 想让某个 App 名也能当别名用，把 `wechat-icon.png` 这样的文件丢进程序目录的 `data/image/` 即可（`<别名>-icon.*` 或 `<别名>-logo.*`）。
+> 图标是异步解析的：提醒会先用默认图标弹出来，解析完成后自动换图。任何一步失败都静默回退到默认图标。
 
 **持久化设置（GetSetting / SetSetting）**：插件自己的配置存在 Windows 注册表里，程序会自动给每个插件的配置 key 加上 `Plugin.<你的Id>.` 前缀，所以你和其他插件不会互相覆盖。`GetSetting(key, 默认值)` 读，`SetSetting(key, value)` 写，存的是字符串。组件加载时在 `OnActivate` 里读回，运行时用 `host.SettingsChanged` 事件监听配置被改动（`SetSetting` 写入后触发）。这是让插件“记住上次状态”的机制，示例图里的开关就是用这套实现的。
 
@@ -454,6 +458,6 @@ dotnet build HelloPlugin.csproj -c Debug
 
 **命中模型 `WidgetHit`**——`readonly record struct WidgetHit(string? Action)`。`Action` 由组件自己定义（如 `"toggle"` / `"next"`），未命中用 `WidgetHit.None`，`IsHit` 判断是否命中。`OnLeftClick` 收到的动作名就是这里返回的。
 
-**提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标路径）、`Duration`（时长，默认 4 秒）、`OnClick`（可选点击回调）。
+**提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标：本地路径 / 图片链接 / `data:image` base64 / 内置别名，见第六节）、`Duration`（时长，默认 4 秒）、`OnClick`（可选点击回调）。
 
 一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick`（右键则展开 `DetailPage`，详情页自己的 `HitTest` / `OnAction` 接管岛内左键）→ 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的是主显示组件、详情页、定时刷新、提醒、设置持久化和自定义窗口；副显示组件接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。

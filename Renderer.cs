@@ -1561,10 +1561,14 @@ namespace NotchPeninsula
                     var iconRect = new SKRect(toastIconX, toastIconY, toastIconX + iconSize, toastIconY + iconSize);
 
                     EnsureIconsLoaded();
-                    SKBitmap? targetIcon = null;
 
-                    if (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
-                        toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase))
+                    // 发送端自带的自定义图标优先（HTTP 消息 / 插件提醒，见 ToastIconProvider）；
+                    // 没带或还没解析完（异步）就退回原有的 QQ → 默认图标判定。
+                    SKBitmap? targetIcon = toast.CustomIcon;
+
+                    if (targetIcon == null &&
+                        (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
+                         toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase)))
                     {
                         targetIcon = _qqIcon;
                     }

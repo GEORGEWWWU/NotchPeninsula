@@ -2,6 +2,7 @@ using Windows.UI.Notifications;
 using Windows.UI.Notifications.Management;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using SkiaSharp;
 
 namespace NotchPeninsula
 {
@@ -77,9 +78,16 @@ namespace NotchPeninsula
                                 string title = root.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
                                 string body = root.TryGetProperty("subtitle", out var s) ? s.GetString() ?? "" : "";
 
-                                Logger.Info($"[HTTP接口] 收到发送端消息推送到灵动岛 -> 类型: {appName}, 标题: {title}, 内容: {body}");
+                                // 自定义图标（可选）：图片链接 / data:image base64 / 本地文件路径 / 内置别名，
+                                // 识别规则见 ToastIconProvider。顺带兼容 iconUrl 这个常见写法。
+                                // 这里用容错读取：发送端把 icon 写成数字/对象时只忽略图标，不能让整条消息丢掉。
+                                string iconSpec = ReadStringProp(root, "icon");
+                                if (string.IsNullOrWhiteSpace(iconSpec))
+                                    iconSpec = ReadStringProp(root, "iconUrl");
 
-                                OnToastDetected?.Invoke(new ToastData
+                                Logger.Info($"[HTTP接口] 收到发送端消息推送到灵动岛 -> 类型: {appName}, 标题: {title}, 内容: {body}, 图标: {ToastIconProvider.Describe(iconSpec)}");
+
+                                var toast = new ToastData
                                 {
                                     AppName = appName,
                                     Title = title,
@@ -87,7 +95,13 @@ namespace NotchPeninsula
                                     ProcessName = "PostForwarder",
                                     // 赋予动态 ID，强制让 Renderer 更新文本缓存
                                     NotificationId = (uint)Environment.TickCount
-                                });
+                                };
+
+                                OnToastDetected?.Invoke(toast);
+
+                                // 图标放后台解析：先用默认图标把消息弹出来，解析完 Renderer 下一帧自动换图。
+                                // 这样下载图片既不会延迟消息弹出，也不会拖慢这次 HTTP 响应。
+                                ToastIconProvider.ResolveInBackground(iconSpec, bmp => toast.CustomIcon = bmp);
                             }
 
                             ctx.Response.StatusCode = 200;
@@ -108,6 +122,24 @@ namespace NotchPeninsula
             catch (Exception ex)
             {
                 Logger.Error("[HTTP接口] 端口监听启动失败 (可能被占用)", ex);
+            }
+        }
+
+        /// <summary>
+        /// 容错地读一个字符串字段：字段缺失、类型不对（数字 / 对象 / 数组）都返回空串，
+        /// 而不是抛异常把整条消息丢掉。
+        /// </summary>
+        private static string ReadStringProp(System.Text.Json.JsonElement root, string name)
+        {
+            try
+            {
+                return root.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? v.GetString() ?? string.Empty
+                    : string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
             }
         }
 
@@ -268,6 +300,21 @@ namespace NotchPeninsula
         public UserNotification? InternalNotification { get; set; }
         // best-effort process name for display
         public string ProcessName { get; set; } = "";
+
+        private SKBitmap? _customIcon;
+
+        /// <summary>
+        /// 发送端自带的自定义图标（HTTP 消息 / 插件提醒）。
+        /// 为 null 时 Renderer 走原有的 ProcessName / AppName 判定。
+        ///
+        /// 解析是异步的，所以这个属性可能在后台线程被赋值 —— 用 Volatile 保证渲染线程
+        /// 不会读到「半构造」的引用。Renderer 每帧都会重新读它，赋值后下一帧即生效。
+        /// </summary>
+        public SKBitmap? CustomIcon
+        {
+            get => Volatile.Read(ref _customIcon);
+            set => Volatile.Write(ref _customIcon, value);
+        }
     }
     
     public class ToastMessage
