@@ -180,24 +180,43 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 
 ```text
 NotchPeninsula/
-├── Program.cs                  # 程序入口，单例启动与配置读写
-├── NotchWindow.cs              # 主窗口逻辑、动画、托盘、消息队列调度
-├── Renderer.cs                 # UI 渲染与材质绘制（时间/硬件/媒体/歌词/通知/剪贴板）
-├── MediaController.cs          # 媒体会话识别、歌词与卡拉 OK
-├── MediaLogoProvider.cs        # 媒体平台站标与 LOGO 管理
-├── JustSoloLyricClient.cs      # Just Solo LyricServer 歌词客户端
-├── AudioAnalyzer.cs            # WASAPI Loopback 音频频谱分析
-├── Audio.cs                    # NAudio 音频底层适配
-├── SystemSettingManager.cs     # 系统音量控制
-├── ClipboardMonitor.cs         # 剪贴板链接监听
-├── FontConfig.cs               # 灵动岛字体统一配置中心
-├── LyricsFont.cs               # 歌词字体
-├── ConsoleWindow.cs            # 设置窗口（个性化/通用/显示/媒体/交互/插件/关于）
-├── UpdateManager.cs            # GitHub 版本检测与更新弹窗
-├── toast.cs                    # Toast 通知监听
-├── appactivator.cs             # 通过 AUMID 激活应用
-├── Win32.cs                    # Win32 API 封装
-├── Logger.cs                   # 日志
+├── Core/                       # 程序骨架与系统底层
+│   ├── Program.cs              # 程序入口，单例启动与配置读写
+│   ├── NotchWindow.cs          # 主窗口逻辑、动画、托盘、消息队列调度
+│   ├── Win32.cs                # Win32 API 封装
+│   ├── SystemSettingManager.cs # 系统音量控制
+│   ├── UpdateManager.cs        # GitHub 版本检测与更新弹窗
+│   └── Logger.cs               # 日志
+├── Render/                     # 渲染与字体
+│   ├── Renderer.cs             # 岛体渲染主流程：尺寸/主题/模式参数 + Draw() 主流程
+│   ├── Renderer.Layout.cs      # 岛体内容布局：组合模式混排 / 非组合模式原生布局 / 穿透唤醒按钮
+│   ├── Renderer.Plugin.cs      # 插件行绘制与详情页（命中、预算、顺序表）
+│   ├── Renderer.Toast.cs       # 通知 Toast 与剪贴板面板
+│   ├── Renderer.Media.cs       # 媒体/歌词/卡拉OK/时间轴/硬件统计
+│   ├── Renderer.Paint.cs       # 画笔池、字体、矢量路径与图标资源
+│   ├── FontConfig.cs           # 灵动岛字体统一配置中心
+│   └── LyricsFont.cs           # 歌词字体
+├── Media/                      # 媒体、音频与歌词
+│   ├── MediaController.cs      # 媒体会话识别、歌词与卡拉 OK
+│   ├── MediaLogoProvider.cs    # 媒体平台站标与 LOGO 管理
+│   ├── JustSoloLyricClient.cs  # Just Solo LyricServer 歌词客户端
+│   ├── AudioAnalyzer.cs        # WASAPI Loopback 音频频谱分析
+│   └── Audio.cs                # NAudio 音频底层适配
+├── UI/                         # 自绘窗口
+│   ├── ConsoleWindow.cs        # 设置窗口：状态字段、构造、窗口生命周期、消息泵、渲染主流程
+│   ├── ConsoleWindow.Render.cs # 设置窗口绘制：侧边栏、各页签、下拉浮层与控件绘制
+│   ├── ConsoleWindow.WndProc.cs# 设置窗口悬停命中（整窗热区）
+│   ├── ConsoleWindow.Click.cs  # 设置窗口点击分派（顺序敏感的 if/else 链）
+│   ├── ConsoleWindow.Backdrop.cs # 亚克力/云母材质与窗口壳（材质窗、圆角、最小化）
+│   ├── ConsoleWindow.Plugin.cs # 插件中心与设置项辅助逻辑
+│   ├── ConsoleWindow.Settings.cs # 尺寸/通知内容/字体等设置项的读写
+│   ├── ConsoleWindow.Paint.cs  # 设置窗口画笔池
+│   └── TrayMenuWindow.cs       # 托盘菜单
+├── Notify/                     # 消息通知通道
+│   ├── Toast.cs                # 系统 Toast 监听 + 本地 HTTP 推送接口
+│   ├── ToastIconProvider.cs    # 通知图标解析（内置别名 / 链接 / base64 / 本地路径）
+│   ├── ClipboardMonitor.cs     # 剪贴板链接监听
+│   └── AppActivator.cs         # 通过 AUMID 激活应用
 ├── Plugin/                     # 插件系统（API、宿主、加载器、管理、窗口、布局）
 ├── data/image/                 # 平台 logo / 图标资源
 ├── NPS_PluginsAPI.md           # 插件开发文档
@@ -207,6 +226,9 @@ NotchPeninsula/
 ├── LICENSE                     # Apache 2.0
 └── README.md                   # 项目说明
 ```
+
+> 目录只是物理分类，**所有源码仍在 `namespace NotchPeninsula` 下**（C# 命名空间与文件夹无关）。
+> 移动/重命名文件不会影响类型引用，插件 DLL 也不受影响。
 
 ## 构建与运行
 

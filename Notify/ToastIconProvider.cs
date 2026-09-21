@@ -160,7 +160,7 @@ namespace NotchPeninsula
                 if (path.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
                     path = new Uri(path).LocalPath;
 
-                // 历史包袱：HTTP 入口为修「非法转义」会把反斜杠统一加倍（见 toast.cs）。
+                // 历史包袱：HTTP 入口为修「非法转义」会把反斜杠统一加倍（见 Notify/Toast.cs）。
                 // 发送端若按标准 JSON 写 \\，解析出来就是双反斜杠路径，这里兜一下。
                 // 最省事的写法是直接用正斜杠（C:/icons/a.png），Windows 一样认。
                 if (!File.Exists(path) && path.Contains(@"\\"))
