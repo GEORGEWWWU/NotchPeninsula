@@ -70,7 +70,6 @@ namespace NotchPeninsula
         private bool _wasUsingSoloSpectrum; // 上一帧是否在用 LyricServer 频谱，用于感知独占播放结束
         private readonly System.Windows.Forms.NotifyIcon _notifyIcon; // 托盘与自启常量
         private const string AppName = "NotchPeninsula";
-        private static System.Windows.Forms.ToolStripMenuItem? _autoStartItem; // 提权为静态，方便全局同步
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
         public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关（**用户的偏好**，不等于真的生效）
 
@@ -275,6 +274,7 @@ namespace NotchPeninsula
 
         public NotchWindow()
         {
+            _instanceForExit = this; // 托盘"退出"回调需要一条静态可达的引用链
             audio = new SystemSettingsManager();
             _dispatcher = Dispatcher.CurrentDispatcher;
             _media = new MediaController();
@@ -327,47 +327,24 @@ namespace NotchPeninsula
             _renderTimer.Elapsed += (s, e) => RenderLoop();
             _renderTimer.Start();
 
-            // 🛠️ 托盘图标与右键菜单
+            // 🛠️ 托盘图标与右键菜单（自绘纯色菜单，见 TrayMenuWindow）
             // 1. 先实例化托盘对象，防止闭包捕获到未初始化的变量
             _notifyIcon = new System.Windows.Forms.NotifyIcon();
-
-            var contextMenu = new System.Windows.Forms.ContextMenuStrip();
-
-            // 打开设置选项
-            var settingsItem = new System.Windows.Forms.ToolStripMenuItem("打开设置");
-            settingsItem.Click += (s, e) => ConsoleWindow.Toggle();
-            contextMenu.Items.Add(settingsItem);
-
-            // 开机自启选项
-            _autoStartItem = new System.Windows.Forms.ToolStripMenuItem("开机自启");
-            _autoStartItem.CheckOnClick = true;
-            _autoStartItem.Checked = IsAutoStartEnabled();
-            // 触发时，告诉核心逻辑“这来自托盘(true)”
-            _autoStartItem.CheckedChanged += (s, e) => ToggleAutoStart(_autoStartItem.Checked, true);
-
-            // 添加到菜单时使用 _autoStartItem
-            contextMenu.Items.Add(_autoStartItem);
-
-            // 退出选项
-            var exitItem = new System.Windows.Forms.ToolStripMenuItem("退出");
-            exitItem.Click += (s, e) => {
-                // 增加判空，彻底消除警告并保证绝对安全
-                if (_notifyIcon != null)
-                {
-                    _notifyIcon.Visible = false;
-                    _notifyIcon.Dispose();
-                }
-                Info("程序退出");
-                _audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
-                Environment.Exit(0);
-            };
-
-            contextMenu.Items.Add(exitItem);
 
             // 2. 最后再给托盘对象的各项属性赋值
             _notifyIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Process.GetCurrentProcess().MainModule!.FileName);
             _notifyIcon.Text = "NotchPeninsula";
-            _notifyIcon.ContextMenuStrip = contextMenu;
+
+            // 右键弹自绘菜单；左键沿用系统默认行为（这里不接管）
+            // 坐标锚点用鼠标位置，比托盘图标矩形更稳（NotifyIcon 拿不到图标 rect）
+            _notifyIcon.MouseUp += (s, e) =>
+            {
+                if (e.Button != System.Windows.Forms.MouseButtons.Right) return;
+
+                Win32.GetCursorPos(out var pt);
+                TrayMenuWindow.Show(pt.x, pt.y, ConsoleWindow.Toggle, ExitApplication);
+            };
+
             _notifyIcon.Visible = true;
             _currentVolume = audio.GetSystemVolume();
             Debug($"初始音量读取完成，当前音量：{_currentVolume:F2}");
@@ -391,6 +368,36 @@ namespace NotchPeninsula
             aud.Start();
         }
         private void audioVolumeChanged() => Debug($"音量改变{_currentVolume:F2}");
+
+        /// <summary>
+        /// 自绘托盘菜单「退出」项的执行体。原封不动搬自旧的 ToolStripMenuItem 闭包，
+        /// 顺序很重要：先摘掉托盘图标，再停音频看门狗，最后才 Exit。
+        /// </summary>
+        private static void ExitApplication()
+        {
+            try
+            {
+                if (_instanceForExit?._notifyIcon != null)
+                {
+                    _instanceForExit._notifyIcon.Visible = false;
+                    _instanceForExit._notifyIcon.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                Error("释放托盘图标失败", ex);
+            }
+
+            Info("程序退出");
+            _instanceForExit?._audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
+            Environment.Exit(0);
+        }
+
+        /// <summary>
+        /// 供静态退出/托盘回调使用的实例引用。
+        /// NotchWindow 本身是实例类，但托盘回调是静态语义，需要一条稳定的引用链。
+        /// </summary>
+        private static NotchWindow? _instanceForExit;
         #region 监听
         private async System.Threading.Tasks.Task InitializeListenerAsync()
         {
@@ -541,11 +548,13 @@ namespace NotchPeninsula
             }
 
             // 极速双向同步逻辑
-            if (!sourceIsTray && _autoStartItem != null)
+            if (!sourceIsTray)
             {
-                _autoStartItem.Checked = enable;
+                // 设置面板改的 → 把自绘托盘菜单的 ✅ 对齐，
+                // 这样下次右键弹出（或菜单正开着）看到的就是真实状态
+                TrayMenuWindow.SyncAutoStart(enable);
             }
-            else if (sourceIsTray)
+            else
             {
                 ConsoleWindow.UpdateAutoStartState(enable);
             }

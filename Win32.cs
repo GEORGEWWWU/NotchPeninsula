@@ -32,6 +32,7 @@ namespace NotchPeninsula
         public const int ULW_ALPHA = 0x00000002;
         public const int DIB_RGB_COLORS = 0;
         public const int WM_RBUTTONDOWN = 0x0204;
+        public const int WM_RBUTTONUP = 0x0205;
         public const int WM_NCLBUTTONDOWN = 0x00A1;
         public const int HTCAPTION = 2;
         public const int SW_HIDE = 0;
@@ -40,6 +41,16 @@ namespace NotchPeninsula
         public const int SW_RESTORE = 9;
         public const int WM_DESTROY = 0x0002;
         public const int WM_CLIPBOARDUPDATE = 0x031D; // 剪贴板内容变化系统消息
+        public const int WM_MOUSEHOVER = 0x02A1;
+        public const int WM_CAPTURECHANGED = 0x0215;  // 鼠标捕获被抢占/释放
+        public const int WM_KEYDOWN = 0x0100;
+        public const int VK_ESCAPE = 0x1B;
+        public const int VK_RBUTTON = 0x02;
+        public const int VK_LBUTTON = 0x01;
+        public const int SWP_SHOWWINDOW = 0x0040;
+
+        // 自绘托盘菜单的内部私有消息（WM_APP 之后的自定义区间，绝不会和系统消息撞号）
+        public const int WM_TRAYMENU_CLOSE = 0x8000 + 0x101;       // 请求销毁菜单窗口
         public const uint CF_UNICODETEXT = 13;         // 剪贴板 Unicode 文本格式
 
         [StructLayout(LayoutKind.Sequential)]
@@ -220,6 +231,8 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
 
+        public const uint TME_LEAVE = 0x00000002; // 订阅 WM_MOUSELEAVE（系统只发一次，进窗后需重新申请）
+
         [DllImport("user32.dll")]
         public static extern IntPtr BeginPaint(IntPtr hWnd, out PAINTSTRUCT lpPaint);
 
@@ -358,6 +371,24 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
+
+        // ==================== 多显示器工作区（自绘托盘菜单防止出屏） ====================
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+        }
+
+        public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
         // ==================== 剪贴板监听 ====================
         [DllImport("user32.dll", SetLastError = true)]
