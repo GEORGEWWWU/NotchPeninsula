@@ -39,10 +39,93 @@ namespace NotchPeninsula
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
         // 🔤 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
-        // 📐 通用设置页卡片顺序（2026-09-20 调整后）：
-        //    开机自启 12 | 窗口置顶 84 | 通知卡片（两行）156..280 | 剪贴板链接检测 290 | 切换灵动岛字体 362
+        // 📐 通用设置页卡片顺序（2026-09-22 重构为「两张提示音子卡片」后）：
+        //    开机自启 12 | 窗口置顶 84 | 系统消息通知卡 156..300 | 消息提示音卡 310..426
+        //    | 剪贴板链接检测 436 | 切换灵动岛字体 510
+        //
+        //  ① 系统消息通知卡（高 144）：行1 开关（开关热区 +176..+196）、分隔线 +226、
+        //     行2「消息通知内容」标题 +245 / 描述 +265 / 下拉 +272..+304。
+        //     ⚠️ 卡片底部必须 ≥ 下拉底部 +8，否则下拉会越过卡片下沿、压到下一张卡的标题上。
+        //  ② 消息提示音卡（高 116）：行1 提示音开关（开关热区 +330..+350）；
+        //     行2「提示音」下拉 +370..+402 + 音量下拉 + [试听][重置]；行3 说明 +426。
+        //     ⚠️ 提示音卡的两行共用同一个纵向区间（+358..+390）：
+        //        「音量」下拉必须**接在「提示音」下拉右边**，绝不能顶到卡片左边界去和标签重叠 ——
+        //        上一版就是因为下拉框没算宽度、x 停在 330 而和左侧文字叠在一起，被判定为「按钮全部错乱」。
+        //     ⚠️ 所有控件右边界一律 `WIDTH - 36`（卡片内右侧留白），横向绝不铺满整卡。
+        //    ⚠️ 改这里的数值时必须同步改 OnMouseMove 的 tab 0 段与 RenderDropdowns 的浮层锚点。
 
-        private const float FONT_CARD_Y = 362f;        // 卡片相对标题栏的纵向偏移
+        /// <summary>卡片内右侧内边距：所有右对齐控件的右边界都锚到这里。</summary>
+        private const float CARD_PAD_RIGHT = 36f;
+
+        // ---- ① 系统消息通知卡 ----
+
+        /// <summary>「消息通知内容」下拉顶部偏移（相对标题栏）。</summary>
+        private const float TOAST_MODE_ROW_Y = 272f;
+
+        private const float TOAST_MODE_ROW_H = 32f;
+
+        /// <summary>通知内容下拉：贴着卡片右边界，宽 110。</summary>
+        private const float TOAST_MODE_CTRL_W = 110f;
+
+        private const float TOAST_MODE_CTRL_X = WIDTH - CARD_PAD_RIGHT - TOAST_MODE_CTRL_W;
+
+        /// <summary>系统消息通知卡底部偏移（= 卡片顶 156 + 高度 144）。
+        /// ⚠️ 必须 ≥ TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 8，否则通知内容下拉会越过卡片下沿。</summary>
+        private const float TOAST_CARD_BOTTOM = 300f;
+
+        // ---- ② 消息提示音卡 ----
+
+        /// <summary>提示音卡顶部偏移（相对标题栏）。= 通知卡底 + 10 间隙。</summary>
+        private const float SOUND_CARD_Y = 310f;
+
+        /// <summary>提示音卡高度（两行内容 + 说明）。</summary>
+        private const float SOUND_CARD_H = 116f;
+
+        /// <summary>提示音卡第 1 行开关中心的纵向偏移。</summary>
+        private const float SOUND_TOGGLE_ROW_Y = 334f;
+
+        /// <summary>
+        /// 提示音两行的纵向区间（提示音下拉 / 音量下拉 / 按钮共用，保证视觉齐平）。
+        /// </summary>
+        private const float SOUND_ROW_Y = 374f;
+
+        private const float SOUND_ROW_H = 32f;
+
+        /// <summary>
+        /// 提示音行「从右往左」排版时用的横向间隙。**整行必须刚好塞进卡片内容区**
+        /// （216 .. WIDTH-36，共 348px），所以每个宽度都是按实测文本宽度抠出来的：
+        /// 最长选项「手表提示（watchOS）」132.9px + 左右内边距与箭头 ≈ 156。
+        /// ⚠️ 改任一宽度都要重算总和，加起来超过 348 就会像上一版那样怼出卡片左边界。
+        /// </summary>
+        private const float SOUND_ROW_GAP = 12f;
+
+        /// <summary>[重置] 与 [试听] 按钮（从右往左排，右边界锚卡片内边界）。</summary>
+        private const float SOUND_BTN_H = 26f;
+
+        private const float SOUND_BTN_Y = SOUND_ROW_Y + 3f;
+
+        private const float SOUND_BTN_GAP = 6f;
+
+        private const float SOUND_BTN_W = 46f;
+
+        private const float SOUND_RESET_X = WIDTH - CARD_PAD_RIGHT - SOUND_BTN_W;
+
+        private const float SOUND_PREVIEW_X = SOUND_RESET_X - SOUND_BTN_GAP - SOUND_BTN_W;
+
+        /// <summary>「音量」下拉：接在按钮组左边。60px 足够放「100%」+箭头，再多就是浪费。</summary>
+        private const float SOUND_VOL_W = 58f;
+
+        private const float SOUND_VOL_X = SOUND_PREVIEW_X - SOUND_ROW_GAP - SOUND_VOL_W;
+
+        /// <summary>「提示音」下拉：从卡片左内边距起排，右边界正好贴住音量下拉。</summary>
+        private const float SOUND_CTRL_X = 216f;
+
+        private const float SOUND_CTRL_W = SOUND_VOL_X - SOUND_ROW_GAP - SOUND_CTRL_X;
+
+        /// <summary>第 3 行的小字说明（音频来源 / 时长体积上限）的纵向偏移。</summary>
+        private const float SOUND_HINT_Y = SOUND_ROW_Y + SOUND_ROW_H + 24f;
+
+        private const float FONT_CARD_Y = 510f;        // 卡片相对标题栏的纵向偏移
 
         private const float FONT_BTN_H = 26f;          // 按钮高度
 
@@ -170,6 +253,43 @@ namespace NotchPeninsula
         private float _savedToastW = -1f; // 切到完整模式前的用户消息宽度快照
 
         private float _savedToastH = -1f; // 切到完整模式前的用户消息高度快照
+
+        // 🎵 消息提示音状态（值本身存在 ToastSoundConfig 静态类里，这里只放 UI 交互态）
+        private bool _toastSoundDropdownOpen = false;
+
+        private bool _toastSoundDropdownHovered = false;
+
+        private int _hoveredToastSoundIndex = -1;
+
+        /// <summary>
+        /// 提示音下拉浮层的**滚动首行**。列表是动态扫目录来的（可能 40 项），
+        /// 浮层高度被 RenderDropdownList 钳制在窗口内，超出的行靠这个偏移滚动查看。
+        /// </summary>
+        private int _dropdownScroll = 0;
+
+        /// <summary>
+        /// 提示音下拉浮层「本次绘制」的可视行数与首行（由命中检测每帧刷新）。
+        /// 点击时要靠它把屏幕行号换算成真实索引，别直接用 (y-menuTop)/26。
+        /// </summary>
+        internal int _dropdownVisibleRows = 0;
+        internal int _dropdownFirstRow = 0;
+
+        /// <summary>「音量」下拉的展开 / 悬停 / 命中项（与提示音下拉互斥，见 CloseAllDropdowns）。</summary>
+        private bool _soundVolumeDropdownOpen = false;
+
+        private bool _soundVolumeDropdownHovered = false;
+
+        private int _hoveredSoundVolumeIndex = -1;
+
+        /// <summary>提示音开关（真正的布尔值存在 ToastSoundConfig.IsEnabled，这里只是镜像 + 悬停态）。</summary>
+        private bool _soundToggleHovered = false;
+
+        /// <summary>提示音文件失效时的红色提示（空串表示无错）。</summary>
+        private string _soundHint = "";
+
+        private bool _soundResetHovered = false;
+
+        private bool _soundPreviewHovered = false;
 
         private bool _lyricToggleHovered = false;
 
@@ -320,6 +440,14 @@ namespace NotchPeninsula
 
             // 消息通知内容模式（0=缩略, 1=完整）
             _selectedToastModeIndex = Renderer.IsToastFullMode ? 2 : (Renderer.IsToastCompactMode ? 1 : 0);
+
+            // 🎵 提示音：列表与选中值已由 Program.LoadSettings（RefreshBuiltins → Restore）恢复过，
+            //    这里只需把「自定义路径失效」的原因取出来显示在卡片上。
+            //    RefreshBuiltins 幂等且只扫顶层 wav，这里再调一次是为了让「先开设置窗口、
+            //    再往 data\sound 丢文件」的场景也能在打开窗口时就看到新文件。
+            ToastSoundConfig.RefreshBuiltins();
+            if (ToastSoundConfig.SelectedIndex == ToastSoundConfig.CustomIndex)
+                ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out _soundHint);
 
             if (!_classRegistered)
             {
@@ -541,6 +669,26 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDOWN:
                     OnLeftButtonDown(hwnd, (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale));
+                    break;
+
+                // 🖱 滚轮：只服务于提示音下拉浮层（列表是动态扫目录来的，条目数不封顶）。
+                //    每格 120 → 滚动 3 行；滚动后立即重绘，并与命中检测共用同一套钳制算法。
+                case Win32.WM_MOUSEWHEEL:
+                    if (_toastSoundDropdownOpen)
+                    {
+                        int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                        int totalOpts = ToastSoundConfig.OptionCount;
+                        int menuTop = (int)(TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H + 2);
+                        int maxRows = Math.Max(1, (HEIGHT - 12 - menuTop) / 26);
+                        int visible = Math.Min(totalOpts, maxRows);
+                        int maxFirst = Math.Max(0, totalOpts - visible);
+                        if (maxFirst > 0)
+                        {
+                            _dropdownScroll = Math.Clamp(_dropdownScroll - delta / 120 * 3, 0, maxFirst);
+                            Render();
+                        }
+                        return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
+                    }
                     break;
 
                 case Win32.WM_PAINT:

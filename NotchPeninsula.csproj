@@ -41,6 +41,26 @@
 		<Content Include="data\image\potplayer-logo.jpg" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\qq-icon.png" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\wintoast-icon.png" CopyToOutputDirectory="PreserveNewest" />
+		<!-- 🔔 内置通知提示音：只引用 data\sound 下的文件，用户自选的音频不会复制进来。
+		     列表由 ToastSoundConfig.RefreshBuiltins() 扫描目录动态生成 ——
+		     往 data\sound 里丢新的 .wav 就能出现在设置里，不需要改这里的 csproj。
+		     ⚠️ 但**新文件必须在这里登记一行**，否则发布后不会拷进输出目录。
+		     显示名可在 data\sound\sound.json 里覆盖（缺失则用文件名）。 -->
+		<Content Include="data\sound\sound.json" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Tri-Tone.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Airdrop.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\NewMail.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Nano.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Complete.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Ding.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Aurora.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Bamboo.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Synth.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\WeChat.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\QQ.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\QQClassic.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\QQLegacy.wav" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="data\sound\Telegram.wav" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 	<ItemGroup>

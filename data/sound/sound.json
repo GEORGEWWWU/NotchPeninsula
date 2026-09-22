@@ -1,0 +1,20 @@
+{
+  "_comment": "提示音显示名映射。键 = data/sound 下不带扩展名的文件名，值 = 设置界面里显示的名字。删掉本文件也行，那样就直接用文件名当显示名。往目录里丢新的 .wav 会自动出现在下拉菜单中，不需要改代码。",
+
+  "Tri-Tone":   "三全音（iPhone）",
+  "Airdrop":    "隔空投送（iPhone）",
+  "NewMail":    "新邮件（iPhone）",
+  "Nano":       "手表提示（watchOS）",
+  "Complete":   "完成（iPhone）",
+  "Ding":       "叮（iPhone）",
+  "Aurora":     "极光（iPhone）",
+  "Bamboo":     "竹韵（iPhone）",
+  "Synth":      "合成器（iPhone）",
+
+  "WeChat":     "微信（桌面端）",
+  "QQ":         "QQ（桌面端）",
+  "QQClassic":  "QQ（经典咳咳）",
+  "QQLegacy":   "QQ（滴滴滴）",
+
+  "Telegram":   "Telegram"
+}

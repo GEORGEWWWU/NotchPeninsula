@@ -22,6 +22,9 @@ namespace NotchPeninsula
         public const int WM_TIMER = 0x0113;
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
+
+        /// <summary>滚轮消息：wParam 高字是 ±120 的整数倍，低字是按键状态；lParam 是屏幕坐标。</summary>
+        public const int WM_MOUSEWHEEL = 0x020A;
         public const int WM_LBUTTONUP = 0x0202;
         public const int WM_MOUSELEAVE = 0x02A3;
         public const int WM_SETCURSOR = 0x0020;

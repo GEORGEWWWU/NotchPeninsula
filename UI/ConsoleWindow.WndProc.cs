@@ -106,6 +106,13 @@ namespace NotchPeninsula
             int newHoveredMonitorDropdownIndex = -1;
             bool newToastModeDropdownHovered = false;
             int newHoveredToastModeIndex = -1;
+            bool newToastSoundDropdownHovered = false;
+            int newHoveredToastSoundIndex = -1;
+            bool newSoundVolumeDropdownHovered = false;
+            int newHoveredSoundVolumeIndex = -1;
+            bool newSoundToggleHovered = false;
+            bool newSoundPreviewHovered = false;
+            bool newSoundResetHovered = false;
             bool newCompositeToggleHover = false;
             bool newCompDateTimeHover = false;
             bool newCompHardwareHover = false;
@@ -121,9 +128,8 @@ namespace NotchPeninsula
 
             if (_selectedTab == 0) // 通用设置
             {
-                // ⚠️ 本段的 y 值必须与下面 tab 0 的渲染保持同步
-                //    （通知卡片是两行高：行1 开关 +176..+196、行2 下拉 +233..+265；
-                //      剪贴板卡片 +310；字体按钮见 FONT_BTN_Y）
+                // ⚠️ 本段所有 y 值必须与 RenderTabGeneral 严格同源，坐标常量一律用上面的 const，
+                //    不要再手写数字 —— 上一版就是手写 y 值 + 常量没右对齐，导致整片热区错位。
                 // 开机自启
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newToggleHovered = true;
@@ -131,20 +137,78 @@ namespace NotchPeninsula
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                     newTopmostToggleHovered = true;
 
-                // 🔔 通知卡片第 1 行：系统消息通知开关
+                // 🔔 系统消息通知卡第 1 行：开关
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196)
                     newToastToggleHovered = true;
-                // 🔔 通知卡片第 2 行：消息通知内容下拉（复用现有下拉控件样式）
-                if (!_toastModeDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 233 && y <= TITLE_BAR_HEIGHT + 265)
+
+                // 🔔 系统消息通知卡第 2 行：消息通知内容下拉
+                if (!_toastModeDropdownOpen
+                    && x >= TOAST_MODE_CTRL_X && x <= TOAST_MODE_CTRL_X + TOAST_MODE_CTRL_W
+                    && y >= TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y && y <= TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H)
                     newToastModeDropdownHovered = true;
                 if (_toastModeDropdownOpen)
                 {
-                    if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 267 && y < TITLE_BAR_HEIGHT + 267 + _toastModeOptions.Length * 26)
-                        newHoveredToastModeIndex = (y - (TITLE_BAR_HEIGHT + 267)) / 26;
+                    float menuTop = TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 2;
+                    if (x >= TOAST_MODE_CTRL_X && x <= TOAST_MODE_CTRL_X + TOAST_MODE_CTRL_W
+                        && y >= menuTop && y < menuTop + _toastModeOptions.Length * 26)
+                        newHoveredToastModeIndex = (int)((y - menuTop) / 26);
                 }
 
-                // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬到这里）
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 310 && y <= TITLE_BAR_HEIGHT + 330)
+                // 🎵 消息提示音卡第 1 行：提示音开关
+                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y + 20)
+                    newSoundToggleHovered = true;
+
+                // 🎵 第 2 行：提示音下拉（浮层展开时底层不吃指针，避免误触浮窗底下的框）
+                if (!_toastSoundDropdownOpen
+                    && x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
+                    && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H)
+                    newToastSoundDropdownHovered = true;
+                if (_toastSoundDropdownOpen)
+                {
+                    float menuTop = TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H + 2;
+                    // 🔻 与 RenderDropdownList 的钳制/滚动保持同源：先把当前可视行数算出来
+                    int totalOpts = ToastSoundConfig.OptionCount;
+                    int maxRows = Math.Max(1, (int)((HEIGHT - 12 - menuTop) / 26));
+                    int visible = Math.Min(totalOpts, maxRows);
+                    int first = 0;
+                    if (totalOpts > visible)
+                    {
+                        first = Math.Clamp(_dropdownScroll, 0, totalOpts - visible);
+                        int sel = ToastSoundConfig.SelectedIndex;
+                        if (sel >= 0 && (sel < first || sel >= first + visible))
+                            first = Math.Clamp(sel - visible / 2, 0, totalOpts - visible);
+                    }
+                    _dropdownVisibleRows = visible;
+                    _dropdownFirstRow = first;
+                    if (x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
+                        && y >= menuTop && y < menuTop + visible * 26)
+                        newHoveredToastSoundIndex = first + (int)((y - menuTop) / 26);
+                }
+
+                // 🎵 音量下拉：只在选了具体音源时接受指针（与绘制侧的置灰判据同源）
+                bool soundReady = ToastSoundConfig.SelectedIndex > 0;
+                if (soundReady && !_soundVolumeDropdownOpen
+                    && x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
+                    && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H)
+                    newSoundVolumeDropdownHovered = true;
+                if (soundReady && _soundVolumeDropdownOpen)
+                {
+                    float menuTop = TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H + 2;
+                    if (x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
+                        && y >= menuTop && y < menuTop + ToastSoundConfig.VolumeOptions.Length * 26)
+                        newHoveredSoundVolumeIndex = (int)((y - menuTop) / 26);
+                }
+
+                // 🎵 第 2 行右侧按钮组：[试听] [重置]（同样只在有具体音源时接受指针）
+                if (soundReady && y >= TITLE_BAR_HEIGHT + SOUND_BTN_Y && y <= TITLE_BAR_HEIGHT + SOUND_BTN_Y + SOUND_BTN_H)
+                {
+                    if (x >= SOUND_PREVIEW_X && x <= SOUND_PREVIEW_X + SOUND_BTN_W) newSoundPreviewHovered = true;
+                    if (x >= SOUND_RESET_X && x <= SOUND_RESET_X + SOUND_BTN_W) newSoundResetHovered = true;
+                }
+
+                // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬到这里；提示音子卡片加出来后整组下移）
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 456 && y <= TITLE_BAR_HEIGHT + 476)
                     newClipboardToggleHovered = true;
 
                 // 切换灵动岛字体：[选择字体…] 与 [重置] 两个按钮
@@ -391,6 +455,13 @@ namespace NotchPeninsula
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
                 newHoveredToastModeIndex != _hoveredToastModeIndex ||
+                newToastSoundDropdownHovered != _toastSoundDropdownHovered ||
+                newHoveredToastSoundIndex != _hoveredToastSoundIndex ||
+                newSoundVolumeDropdownHovered != _soundVolumeDropdownHovered ||
+                newHoveredSoundVolumeIndex != _hoveredSoundVolumeIndex ||
+                newSoundToggleHovered != _soundToggleHovered ||
+                newSoundPreviewHovered != _soundPreviewHovered ||
+                newSoundResetHovered != _soundResetHovered ||
                 newCompositeToggleHover != _compositeToggleHovered ||
                 newCompDateTimeHover != _compDateTimeHovered ||
                 newCompHardwareHover != _compHardwareHovered ||
@@ -430,6 +501,13 @@ namespace NotchPeninsula
                 _hoveredMonitorDropdownIndex = newHoveredMonitorDropdownIndex;
                 _toastModeDropdownHovered = newToastModeDropdownHovered;
                 _hoveredToastModeIndex = newHoveredToastModeIndex;
+                _toastSoundDropdownHovered = newToastSoundDropdownHovered;
+                _hoveredToastSoundIndex = newHoveredToastSoundIndex;
+                _soundVolumeDropdownHovered = newSoundVolumeDropdownHovered;
+                _hoveredSoundVolumeIndex = newHoveredSoundVolumeIndex;
+                _soundToggleHovered = newSoundToggleHovered;
+                _soundPreviewHovered = newSoundPreviewHovered;
+                _soundResetHovered = newSoundResetHovered;
                 _compositeToggleHovered = newCompositeToggleHover;
                 _compDateTimeHovered = newCompDateTimeHover;
                 _compHardwareHovered = newCompHardwareHover;

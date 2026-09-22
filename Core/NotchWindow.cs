@@ -413,6 +413,33 @@ namespace NotchPeninsula
             _pollingTimer.Start();
         }
 
+        /// <summary>
+        /// 🎵 在消息真正上岛时投递提示音。
+        ///
+        /// 三个入口（系统通知 / HTTP 推送 / 插件提醒）共用这一个方法，保证行为一致：
+        /// - 总开关「系统消息通知」关着 → 不响（HTTP 分支本身不受总开关拦截，这里补齐判定）；
+        /// - 提示音开关「消息提示音」关着 → 不响（默认就是关的，想听要用户主动开）；
+        /// - 用户选了「无」→ 不响；
+        /// - 路径失效 / 超限 → 静默不响，绝不影响消息本身的展示。
+        ///
+        /// 入队是纯内存操作，几乎零耗时，不会拖慢渲染线程或 HTTP 响应。
+        /// </summary>
+        private static void PlayToastSound()
+        {
+            try
+            {
+                if (!IsToastEnabled) return;              // 通知总开关关闭 → 提示音一起静默
+                if (!ToastSoundConfig.IsEnabled) return;  // 提示音自己的开关关闭（默认关）
+                string? path = ToastSoundConfig.ResolveCurrentPath();
+                if (path == null) return;
+                ToastSoundPlayer.Enqueue(path, ToastSoundConfig.VolumePercent);
+            }
+            catch (Exception ex)
+            {
+                Error("[提示音] 投递异常", ex);
+            }
+        }
+
         private void OnToastDetected(ToastData toast)
         {
             if (toast == null) return;
@@ -421,6 +448,7 @@ namespace NotchPeninsula
 
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
+            PlayToastSound();
         }
 
         /// <summary>插件通过 IPluginHost.PostReminder 投递的提醒，复用现有 Toast 展示通道。</summary>
@@ -434,6 +462,7 @@ namespace NotchPeninsula
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4);
             clicked_info = false;
+            PlayToastSound();
         }
 
         /// <summary>剪贴板识别到链接：级别低于系统通知、高于媒体控制器，通知展示期间先排队等待。</summary>

@@ -58,6 +58,19 @@ namespace NotchPeninsula
                     Renderer.IsToastFullMode = toastContentMode == 2;
                     Renderer.IsToastCompactMode = toastContentMode == 1;
 
+                    // 🎵 通知提示音
+                    //    ① 先扫目录 —— 下拉列表是**动态加载**的，列表内容取决于 data\sound 里实际有哪些 wav。
+                    //       必须在 Restore 之前扫，否则恢复索引时 OptionCount 还是 0，会把有效索引误判成越界。
+                    //    ② 再 Restore：与字体同一套「恢复 + 失效自动回落」语义。
+                    //       提示音开关默认**关闭**、默认选「无」(index 0)，也就是默认完全安静；
+                    //       自定义音频丢失时会自动退回「无」并把失效路径从注册表清掉，不会带着坏配置启动。
+                    ToastSoundConfig.RefreshBuiltins();
+                    ToastSoundConfig.Restore(
+                        (int)key.GetValue("ToastSoundIndex", 0),
+                        key.GetValue("ToastSoundPath", "") as string ?? "",
+                        (int)key.GetValue("ToastSoundEnabled", 0) != 0,
+                        (int)key.GetValue("ToastSoundVolume", 70));
+
                     // 读取个性化参数
                     Renderer.STANDBY_WIDTH = Convert.ToSingle(key.GetValue("Custom_StandbyW", 125f));
                     Renderer.BASE_HEIGHT = Convert.ToSingle(key.GetValue("Custom_BaseH", 29f));

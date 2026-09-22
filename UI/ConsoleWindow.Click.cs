@@ -41,6 +41,8 @@ namespace NotchPeninsula
             }
             else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex == -1) { CloseAllDropdowns(); Render(); }
             else if (_toastModeDropdownOpen && _hoveredToastModeIndex == -1) { CloseAllDropdowns(); Render(); }
+            else if (_toastSoundDropdownOpen && _hoveredToastSoundIndex == -1) { CloseAllDropdowns(); Render(); }
+            else if (_soundVolumeDropdownOpen && _hoveredSoundVolumeIndex == -1) { CloseAllDropdowns(); Render(); }
             else if (_matchModeDropdownOpen && _hoveredMatchModeIndex == -1) { CloseAllDropdowns(); Render(); }
             else if (_appDropdownOpen && _hoveredAppIndex == -1) { CloseAllDropdowns(); Render(); }
             else if (_selectedTab == 1 && _hoveredStyleIndex != -1)
@@ -71,6 +73,45 @@ namespace NotchPeninsula
                 _toastModeDropdownOpen = false;
                 Render();
             }
+            // 🎵 消息提示音：开关 / 下拉 / 音量下拉 / 两个按钮
+            //    （必须排在剪贴板、字体等通用开关分支之前，否则会被后者抢先吃掉）
+            else if (_soundToggleHovered)
+            {
+                ToastSoundConfig.IsEnabled = !ToastSoundConfig.IsEnabled;
+                Program.SaveSetting("ToastSoundEnabled", ToastSoundConfig.IsEnabled ? 1 : 0);
+                // 关闭时把还在排队的提示音清掉，避免「开关已经关了、耳朵里还在响」
+                if (!ToastSoundConfig.IsEnabled) ToastSoundPlayer.ClearQueue();
+                Render();
+            }
+            else if (_toastSoundDropdownHovered)
+            {
+                CloseAllDropdowns();
+                // 每次展开都重扫一遍目录：新丢进 data\sound 的文件不用重启就能看到
+                ToastSoundConfig.RefreshBuiltins();
+                _dropdownScroll = 0; // 重新展开时从顶部开始，让用户看到「列表有多长」
+                _toastSoundDropdownOpen = true;
+                Render();
+            }
+            else if (_toastSoundDropdownOpen && _hoveredToastSoundIndex != -1)
+            {
+                ApplyToastSound(_hoveredToastSoundIndex);
+                _toastSoundDropdownOpen = false;
+                Render();
+            }
+            else if (_soundVolumeDropdownHovered)
+            {
+                CloseAllDropdowns();
+                _soundVolumeDropdownOpen = true;
+                Render();
+            }
+            else if (_soundVolumeDropdownOpen && _hoveredSoundVolumeIndex != -1)
+            {
+                ApplyToastSoundVolume(_hoveredSoundVolumeIndex);
+                _soundVolumeDropdownOpen = false;
+                Render();
+            }
+            else if (_soundPreviewHovered) { PreviewToastSound(); }
+            else if (_soundResetHovered) { ResetToastSound(); }
             else if (_selectedTab == 2 && _matchModeDropdownHovered)
             {
                 CloseAllDropdowns();

@@ -171,6 +171,8 @@ namespace NotchPeninsula
             _dropdownOpen = false;
             _monitorDropdownOpen = false;
             _toastModeDropdownOpen = false;
+            _toastSoundDropdownOpen = false;
+            _soundVolumeDropdownOpen = false;
             _matchModeDropdownOpen = false;
             _appDropdownOpen = false;
         }

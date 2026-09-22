@@ -169,40 +169,82 @@ namespace NotchPeninsula
             DrawToggleCard(canvas, 12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
             // 窗口置顶（与下方消息通知整组互换位置）
             DrawToggleCard(canvas, 84, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
-            // 🔔 「系统消息通知」与「消息通知内容」**合并为一张两行卡片**（2026-09-20）：
-            //    两者都是通知选项，拆成两张卡显得零碎。
-            //    卡片高 124（yOffset 156..280），行1 +156（开关 +176..+196）、
-            //    行2 +218（下拉 +233..+265），中间一条分隔线（+214）点明主从关系。
-            //    ⚠️ 改这里的数值时必须同步改上面 tab 0 的悬停热区
-            //    （当前 +176..+196 / +233..+265 / +310..+330）。
-            var notifyCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 156, WIDTH - 20, TITLE_BAR_HEIGHT + 280);
+            // 🔔 「系统消息通知」+「消息通知内容」—— 一张两行卡（yOffset 156..284）
+            //    卡片高 128：行1 +156（开关 +176..+196）、分隔线 +226、
+            //    行2「消息通知内容」标题 +245 / 描述 +265 / 下拉 +272..+304。
+            //    ⚠️ 改这里的数值时必须同步改 WM_MOUSEMOVE 的 tab 0 段与 RenderDropdowns 的浮层锚点。
+            var notifyCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 156, WIDTH - 20, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
             canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBorder);
 
             DrawToggleRow(canvas, 156, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
 
-            canvas.DrawLine(216, TITLE_BAR_HEIGHT + 214, WIDTH - 36, TITLE_BAR_HEIGHT + 214, _separatorPaint);
+            canvas.DrawLine(216, TITLE_BAR_HEIGHT + 226, WIDTH - 36, TITLE_BAR_HEIGHT + 226, _separatorPaint);
 
             // 行2：消息通知内容下拉（完整时展示应用名并拉大通知尺寸）
-            canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 244, _uiTextPaint);
+            canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + 256, _uiTextPaint);
             string toastModeDesc = _selectedToastModeIndex switch
             {
                 2 => "完整显示应用名、发送者与消息主体",
                 1 => "右侧展示“现在”与应用名",
                 _ => "仅显示发送者与消息主体"
             };
-            canvas.DrawText(toastModeDesc, 216, TITLE_BAR_HEIGHT + 264, _subTextPaint);
+            canvas.DrawText(toastModeDesc, 216, TITLE_BAR_HEIGHT + 276, _subTextPaint);
 
-            float tmdW = 110, tmdX = WIDTH - 140, tmdY = TITLE_BAR_HEIGHT + 233, tmdH = 32;
-            var tmdRect = new SKRect(tmdX, tmdY, tmdX + tmdW, tmdY + tmdH);
-            _dynamicFillPaint.Color = _toastModeDropdownHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8);
-            canvas.DrawRoundRect(tmdRect, 4, 4, _dynamicFillPaint);
-            canvas.DrawText(_toastModeOptions[_selectedToastModeIndex], tmdX + 10, tmdY + 21, _uiTextPaint);
-            canvas.DrawLine(tmdX + tmdW - 20, tmdY + 14, tmdX + tmdW - 15, tmdY + 19, _chevronPaint);
-            canvas.DrawLine(tmdX + tmdW - 15, tmdY + 19, tmdX + tmdW - 10, tmdY + 14, _chevronPaint);
+            DrawDropdownBox(canvas, TOAST_MODE_CTRL_X, TOAST_MODE_ROW_Y, TOAST_MODE_CTRL_W, TOAST_MODE_ROW_H,
+                _toastModeOptions[_selectedToastModeIndex], _toastModeDropdownHovered, enabled: true);
+
+            // 🎵 「消息提示音」—— 独立子卡片（yOffset 294..410）
+            //    第 1 行：提示音开关 + 音频来源说明（默认关闭，不想被打扰的人不用管）
+            //    第 2 行：左起「提示音」信息文本 → 提示音下拉 → 音量下拉 → [试听] [重置] → 右侧小字说明
+            //    独立成卡是因为它有自己的开关与两组下拉，硬塞进通知卡会顶出一张 252px 的高卡、
+            //    控件横向铺满整卡，观感就是「溢出」。
+            var soundCardRect = new SKRect(200, TITLE_BAR_HEIGHT + SOUND_CARD_Y, WIDTH - 20, TITLE_BAR_HEIGHT + SOUND_CARD_Y + SOUND_CARD_H);
+            canvas.DrawRoundRect(soundCardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(soundCardRect, 6, 6, _cardBorder);
+
+            // 第 1 行：开关
+            string soundSub = _soundHint.Length > 0
+                ? _soundHint
+                : "新消息到达时播放提示音（默认关闭，不吃任何内存）";
+            DrawToggleRow(canvas, SOUND_TOGGLE_ROW_Y - 20, "消息提示音", soundSub,
+                ToastSoundConfig.IsEnabled, _soundToggleHovered);
+
+            // 第 2 行：提示音下拉 + 音量下拉 + 两个按钮
+            // 「音量」下拉的可用性只看「有没有具体音源」，与绘制侧置灰判据同源
+            bool soundReady = ToastSoundConfig.SelectedIndex > 0;
+
+            DrawDropdownBox(canvas, SOUND_CTRL_X, SOUND_ROW_Y, SOUND_CTRL_W, SOUND_ROW_H,
+                ToastSoundConfig.CurrentDisplayText(), _toastSoundDropdownHovered, enabled: true);
+
+            DrawDropdownBox(canvas, SOUND_VOL_X, SOUND_ROW_Y, SOUND_VOL_W, SOUND_ROW_H,
+                $"{ToastSoundConfig.VolumePercent}%", _soundVolumeDropdownHovered, enabled: soundReady);
+
+            void DrawSoundButton(bool hovered, string label, float bx, float bw, bool enabled)
+            {
+                var btn = new SKRect(bx, TITLE_BAR_HEIGHT + SOUND_BTN_Y, bx + bw, TITLE_BAR_HEIGHT + SOUND_BTN_Y + SOUND_BTN_H);
+                bool hot = enabled && hovered;
+                if (!enabled) _dynamicFillPaint.Color = new SKColor(255, 255, 255, 6);
+                else _dynamicFillPaint.Color = hot ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
+                float tw = _uiTextPaint.MeasureText(label);
+                if (!enabled) _uiTextPaint.Color = new SKColor(110, 110, 110);
+                canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + SOUND_BTN_Y + 17, _uiTextPaint);
+                if (!enabled) _uiTextPaint.Color = new SKColor(240, 240, 240);
+            }
+
+            DrawSoundButton(_soundPreviewHovered, "试听", SOUND_PREVIEW_X, SOUND_BTN_W, soundReady);
+            DrawSoundButton(_soundResetHovered, "重置", SOUND_RESET_X, SOUND_BTN_W, soundReady);
+
+            // 第 3 行：来源 / 上限的小字说明，让用户知道「为什么有些音频选不了」
+            string soundFootnote = soundReady
+                ? $"仅接受 ≤{ToastSoundConfig.MaxDurationSec:F0} 秒、≤{ToastSoundConfig.MaxFileSizeBytes / 1024 / 1024} MB 的音频；列表来自 data\\sound 目录"
+                : "把音频文件放进 data\\sound 目录即可出现在上面的列表里";
+            canvas.DrawText(TruncateText(soundFootnote, _subTextPaint, WIDTH - 20 - 216 - 12),
+                216, TITLE_BAR_HEIGHT + SOUND_HINT_Y, _subTextPaint);
 
             // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
-            DrawToggleCard(canvas, 290, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
+            DrawToggleCard(canvas, 436, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
 
             // 切换灵动岛字体：选中字体文件后立即热替换岛内全部文本字体（默认系统字体，不做任何改动）
             var fontCard = new SKRect(200, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - 20, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);
@@ -227,6 +269,32 @@ namespace NotchPeninsula
 
             DrawFontButton(_fontPickHovered, "选择字体", FONT_PICK_X, FONT_PICK_W);
             DrawFontButton(_fontResetHovered, "重置", FONT_RESET_X, FONT_RESET_W);
+        }
+
+        /// <summary>
+        /// 通用设置页的窄版下拉框。**位置与宽度全部由调用方传入**，热区直接复用同一组常数，
+        /// 不会再出现「渲染在一处、命中在另一处」的错位。
+        /// 禁用态（<paramref name="enabled"/> = false）会整体降低不透明度并画成灰色，
+        /// 与命中侧的置灰判据必须同源。
+        /// </summary>
+        private void DrawDropdownBox(SKCanvas canvas, float x, float yOffset, float w, float h,
+                                     string text, bool hovered, bool enabled)
+        {
+            var rect = new SKRect(x, TITLE_BAR_HEIGHT + yOffset, x + w, TITLE_BAR_HEIGHT + yOffset + h);
+            float bgAlpha = enabled ? (hovered ? 15 : 8) : 4;
+            _dynamicFillPaint.Color = new SKColor(255, 255, 255, (byte)bgAlpha);
+            canvas.DrawRoundRect(rect, 4, 4, _dynamicFillPaint);
+
+            if (!enabled) _uiTextPaint.Color = new SKColor(110, 110, 110);
+            canvas.DrawText(TruncateText(text, _uiTextPaint, w - 26), rect.Left + 10, rect.Top + h / 2f + 5, _uiTextPaint);
+            if (!enabled) _uiTextPaint.Color = new SKColor(240, 240, 240);
+
+            float cx = rect.Right - 18;
+            float cy = rect.MidY;
+            if (!enabled) _chevronPaint.Color = new SKColor(90, 90, 90);
+            canvas.DrawLine(cx, cy - 2.5f, cx + 5, cy + 2.5f, _chevronPaint);
+            canvas.DrawLine(cx + 5, cy + 2.5f, cx + 10, cy - 2.5f, _chevronPaint);
+            if (!enabled) _chevronPaint.Color = new SKColor(160, 160, 160);
         }
 
         // 页签：显示设置
@@ -913,6 +981,63 @@ namespace NotchPeninsula
         }
 
         // 各页签展开的下拉浮层（媒体平台 / 匹配方式 / 目标软件 / 通知内容 / 目标显示器）
+        /// <summary>
+        /// 画一个展开的下拉列表浮层。行高固定 26，与命中判定里的 <c>/ 26</c> 必须一致。
+        /// <paramref name="dimmedIndex"/> 那一项灰显（但仍可点，用于「自定义项失效」这种
+        /// 「能点进去重选、但当前值不可用」的场景）。
+        /// </summary>
+        private void RenderDropdownList(SKCanvas canvas, float x, float yOffset, float w,
+                                        string[] options, int selectedIndex, int hoveredIndex, int dimmedIndex)
+        {
+            // 🔻 浮层高度必须**钳制**在窗口内：
+            //    提示音列表是**动态加载**的（data\sound 里丢多少 wav 就有多少项），
+            //    若不做上限，16 项 = 416px 就会从提示音卡一直拖到窗口底部之外（40 项更夸张）。
+            //    这里保证「浮层底边 ≤ 窗口高 - 12」，超出部分走滚动窗口（见 _dropdownScroll）。
+            float dY = TITLE_BAR_HEIGHT + yOffset;
+            int total = options.Length;
+            int maxRows = Math.Max(1, (int)((HEIGHT - 12 - dY) / 26));
+            int visible = Math.Min(total, maxRows);
+            float listH = visible * 26;
+            var dRect = new SKRect(x, dY, x + w, dY + listH);
+            canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
+            canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
+
+            // 滚动：让选中项尽量可见（浮层刚展开时定位到当前选中行）
+            int first = 0;
+            if (total > visible)
+            {
+                first = Math.Clamp(_dropdownScroll, 0, total - visible);
+                if (selectedIndex >= 0 && (selectedIndex < first || selectedIndex >= first + visible))
+                    first = Math.Clamp(selectedIndex - visible / 2, 0, total - visible);
+            }
+
+            for (int row = 0; row < visible; row++)
+            {
+                int i = first + row;
+                float itemY = dY + row * 26;
+                if (hoveredIndex == i)
+                    canvas.DrawRoundRect(new SKRect(x + 2, itemY + 2, x + w - 2, itemY + 24), 3, 3, _tabBgSelected);
+
+                _dynamicTextPaint.Color = i == selectedIndex
+                    ? new SKColor(0, 120, 212)
+                    : (i == dimmedIndex ? new SKColor(130, 130, 130) : SKColors.White);
+                canvas.DrawText(TruncateText(options[i], _dynamicTextPaint, w - 24), x + 12, itemY + 18, _dynamicTextPaint);
+            }
+            _dynamicTextPaint.Color = SKColors.White;
+
+            // 超出可视区时在右侧画一条滚动条指示，避免用户以为「列表就这么长」
+            if (total > visible)
+            {
+                float trackH = listH - 8;
+                float thumbH = Math.Max(18, trackH * visible / total);
+                float thumbY = dY + 4 + trackH * first / Math.Max(1, total - visible);
+                _dynamicFillPaint.Color = new SKColor(255, 255, 255, 30);
+                canvas.DrawRoundRect(new SKRect(x + w - 6, dY + 4, x + w - 3, dY + 4 + trackH), 1.5f, 1.5f, _dynamicFillPaint);
+                _dynamicFillPaint.Color = new SKColor(255, 255, 255, 110);
+                canvas.DrawRoundRect(new SKRect(x + w - 6, thumbY, x + w - 3, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+            }
+        }
+
         private void RenderDropdowns(SKCanvas canvas)
         {
             if (_selectedTab == 2 && _dropdownOpen)
@@ -987,19 +1112,26 @@ namespace NotchPeninsula
             // 消息通知内容下拉菜单（通用设置）
             if (_selectedTab == 0 && _toastModeDropdownOpen)
             {
-                float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 267; float dW = 110; float dH = _toastModeOptions.Length * 26;
-                var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
-                canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
-                canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
+                RenderDropdownList(canvas, TOAST_MODE_CTRL_X, TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 2, TOAST_MODE_CTRL_W,
+                    _toastModeOptions, _selectedToastModeIndex, _hoveredToastModeIndex, dimmedIndex: -1);
+            }
 
-                for (int i = 0; i < _toastModeOptions.Length; i++)
-                {
-                    float itemY = dY + i * 26;
-                    if (_hoveredToastModeIndex == i)
-                        canvas.DrawRoundRect(new SKRect(dX + 2, itemY + 2, dX + dW - 2, itemY + 24), 3, 3, _tabBgSelected);
-                    _dynamicTextPaint.Color = i == _selectedToastModeIndex ? new SKColor(0, 120, 212) : SKColors.White;
-                    canvas.DrawText(_toastModeOptions[i], dX + 12, itemY + 18, _dynamicTextPaint);
-                }
+            // 🎵 消息提示音下拉菜单（通用设置）：无 / data\sound 里的每个 wav / 浏览音频…
+            if (_selectedTab == 0 && _toastSoundDropdownOpen)
+            {
+                RenderDropdownList(canvas, SOUND_CTRL_X, SOUND_ROW_Y + SOUND_ROW_H + 2, SOUND_CTRL_W,
+                    ToastSoundConfig.BuildOptionLabels(), ToastSoundConfig.SelectedIndex, _hoveredToastSoundIndex,
+                    dimmedIndex: ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out _)
+                        ? -1 : ToastSoundConfig.CustomIndex);
+            }
+
+            // 🎵 音量下拉菜单：档位很少（4 档），直接贴着音量框展开
+            if (_selectedTab == 0 && _soundVolumeDropdownOpen)
+            {
+                var volLabels = new string[ToastSoundConfig.VolumeOptions.Length];
+                for (int i = 0; i < volLabels.Length; i++) volLabels[i] = $"{ToastSoundConfig.VolumeOptions[i]}%";
+                RenderDropdownList(canvas, SOUND_VOL_X, SOUND_ROW_Y + SOUND_ROW_H + 2, SOUND_VOL_W,
+                    volLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex, dimmedIndex: -1);
             }
 
             // 目标显示器
