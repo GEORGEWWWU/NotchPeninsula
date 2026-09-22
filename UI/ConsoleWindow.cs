@@ -39,53 +39,118 @@ namespace NotchPeninsula
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
         // 🔤 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
-        // 📐 通用设置页卡片顺序（2026-09-22 通知卡收到 124 高之后）：
-        //    开机自启 12 | 窗口置顶 84 | 系统消息通知卡 156..280 | 消息提示音卡 290..396
-        //    | 剪贴板链接检测 406 | 切换灵动岛字体 480
+        // 📐 通用设置页卡片顺序（2026-09-22 提示音并入通知卡之后）：
+        //    开机自启 12 | 窗口置顶 84 | 系统消息通知卡 156..390（三行）| 剪贴板链接检测 400 | 切换灵动岛字体 474
         //
-        //  ① 系统消息通知卡（高 124 = 两行 × 62，与单行卡同节奏）：行1 行首 +156（开关热区 +176..+196）、
-        //     分隔线 +222、行2 行首 +218（「消息通知内容」标题 +244 / 描述 +264 / 下拉 +230..+262）。
-        //     ⚠️ 卡片下沿必须贴合内容（现留 18px），别撑高 —— 撑出来的空白会同时毁掉行 1、行 2 的观感。
-        //  ② 消息提示音卡（高 106）：行1 提示音开关（开关热区 +314..+334）；
-        //     行2「提示音」下拉 +354..+386 + 音量下拉 + [试听][重置]。
-        //     卡片内**没有**说明行 —— 「仅接受 ≤N 秒 / ≤N MB」是实现细节，不该出现在界面上；
-        //     真有超限的音频，选中时会通过开关行的红色副标题给出具体原因（_soundHint）。
-        //     ⚠️ 提示音卡的两行共用同一个纵向区间（+358..+390）：
-        //        「音量」下拉必须**接在「提示音」下拉右边**，绝不能顶到卡片左边界去和标签重叠 ——
-        //        上一版就是因为下拉框没算宽度、x 停在 330 而和左侧文字叠在一起，被判定为「按钮全部错乱」。
+        //  🔔 系统消息通知卡 = **一张三行卡 + 一行提示音设置**，把通知本体与它的两个附属设置放在一起：
+        //     行1「系统消息通知」总开关（开关热区 +176..+196）    ← 主体
+        //     行2「消息通知内容」下拉（+230..+262）              ← 附属（管内容）
+        //     行3「消息提示音」开关（开关热区 +300..+320）        ← 附属（管声音）
+        //     行4「提示音」下拉 + 音量下拉 + [试听][重置]（+354..+386）← 行3 的设置行，无开关
+        //     ⚠️ 提示音**是通知的附属设置**，必须和通知在同一张卡里 —— 拆成两张独立卡会让层级关系丢失。
+        //     ⚠️ 卡片下沿必须贴合内容（现距内容底 374 留 30px），别撑高。
+        //     ⚠️ 行 4 是全页唯一「4 控件并排」的行，控件加间隙正好占满整个内容区；
+        //        因此左侧标签须单独预留空间（SOUND_CTRL_X 由标签宽度派生），且该行不放描述文字。
         //     ⚠️ 所有控件右边界一律 `WIDTH - 36`（卡片内右侧留白），横向绝不铺满整卡。
-        //    ⚠️ 改这里的数值时必须同步改 OnMouseMove 的 tab 0 段与 RenderDropdowns 的浮层锚点。
+        //     ⚠️ 改这里的数值时必须同步改 OnMouseMove 的 tab 0 段与 RenderDropdowns 的浮层锚点。
 
         /// <summary>卡片内右侧内边距：所有右对齐控件的右边界都锚到这里。</summary>
         private const float CARD_PAD_RIGHT = 36f;
 
-        // ---- ① 系统消息通知卡 ----
+        // ---- ① 系统消息通知卡（三行 + 一行附属设置）----
         //
-        // 布局节奏：**两行 = 2 × 62 = 124px，与所有单行卡（62px）同一节奏。**
-        //   · 行 1 行首 156（= 与单行卡完全一致的内部位移：标题 +26 / 副标题 +46 / 开关 +20..+40）
-        //   · 行 2 行首 218（= 行 1 行首 + 62）
-        //   · 分隔线 222（= 行 2 行首 + 4，夹在两行留白的中线上）
-        //   · 卡片 156..280
+        // 布局节奏：**行距恒为 62px**，与全页所有单行卡同一节奏。
+        //   · 行 1「系统消息通知」行首 156
+        //   · 行 2「消息通知内容」行首 218 = 行 1 + 62
+        //   · 行 3「消息提示音」  行首 280 = 行 2 + 62
+        //   · 行 4「提示音设置」  行首 342 = 行 3 + 62
+        //   · 分隔线放在每一对行之间：+222、+284
+        //   · 卡片 156..404（248 = 4 × 62）
         //
-        // ⚠️ 历史坑：卡片曾被撑到 320（164px 高），而两行内容只用到 280 —— 多出的 40px 先表现为
-        //    「分隔线到行 2 之间一大块空白」，把分隔线往下挪之后空白又跑到行 1 下面。
-        //    **空白总量不变，挪分割线是治不好的** —— 唯一正解是把卡片收到贴合内容。
-        //    改这张卡的任何坐标，都要回头确认「内容底 ≤ 卡片下沿，且余量 ≤ 20px」。
+        // ⚠️ 历史坑：卡片曾被撑到 320 而内容只用到 292 —— 多出的 28px 先表现为「分隔线到行 2
+        //    之间一大块空白」，把分隔线往下挪之后空白又跑到行 1 下面。
+        //    **空白总量不变，挪分割线是治不好的** —— 唯一正解是让卡片贴合内容。
+        //    判据：`卡片下沿 - 内容底` 必须落在 [8, 20]。
 
-        /// <summary>「消息通知内容」行 2 行首偏移（= 行 1 行首 156 + 行距 62）。</summary>
-        private const float TOAST_ROW2_Y = 218f;
+        /// <summary>「系统消息通知」总开关（行 1）行首偏移。</summary>
+        private const float TOAST_ROW1_Y = 156f;
 
-        /// <summary>行 1 与行 2 之间的分隔线（= 行 2 行首 + 4）。</summary>
+        /// <summary>「消息通知内容」行 2 行首偏移（= 行 1 行首 + 行距 62）。</summary>
+        private const float TOAST_ROW2_Y = TOAST_ROW1_Y + 62f;
+
+        /// <summary>行 1 与行 2 之间的分隔线（= 行 2 行首 + 4，落在行 1 内容底 202 与行 2 控件顶 230 之间）。</summary>
         private const float TOAST_SEP_Y = TOAST_ROW2_Y + 4f;
 
-        /// <summary>「消息通知内容」行 2 标题基线（= 行 2 行首 + 26，与单行卡一致）。</summary>
-        private const float TOAST_ROW2_TITLE_Y = TOAST_ROW2_Y + 26f;
+        // ============================================================
+        //  ★ 行内纵向锚点（全页唯一真源，2026-09-22 第四次返工后定稿）
+        //
+        //  目标：**「左侧标签」与「右侧控件」同心对齐** —— 标签的墨迹中线
+        //        和右排控件（开关轨道 / 下拉框 / 按钮）的中心落在同一条水平线上。
+        //
+        //  ── 返工史（前三轮都错在「拿什么当对齐参照」）────────────────
+        //    第 1 轮：四行各写各的基线偏移 —— +26 / +33 / +26 / +21。
+        //    第 2 轮：改成「标签基线 = 框顶 + h/2 + 5」，即跟着**框内文字**走。
+        //             ❌ 错：框内文字在框里本身偏下，把行外标签也拖下去了。
+        //    第 3 轮：改成「所有行统一基线 = 行首 + 26」。
+        //             ❌ 错：26 是**开关行**的基线（配 20px 高轨道），
+        //                下拉框有 32px 高，标签相对框就飘到上面去了 —— 用户「现在太靠上了」。
+        //    第 4 轮（本版）：统一成 **「墨迹中线 == 控件中心」**，偏移 = ROW_ANCHOR_Y + 5.5 = 35.5。
+        //
+        //  ── 为什么一个偏移能同时适配「20px 轨道」和「32px 框」────────────────
+        //    因为 ROW_DROPDOWN_TOP 已经取 14，使**框中心**（14+16）恰好等于
+        //    **开关轨道中心**（20+10），两者都 = 行首 + 30 = ROW_ANCHOR_Y。
+        //    所以「控件中心」这个参照在两类行里是同一个数，标签自然也只需要一个偏移。
+        //
+        //  ⚠️ 直接把 `ROW_ANCHOR_Y`(30) 当基线是错的 —— 基线与墨迹中线差 5.5px。
+        //  ⚠️ 改字号 / 改字体族必须重新标定 TEXT_INK_MID_OFFSET。
+        // ============================================================
 
-        /// <summary>「消息通知内容」行 2 描述基线（= 行 2 行首 + 46，与单行卡一致）。</summary>
-        private const float TOAST_ROW2_DESC_Y = TOAST_ROW2_Y + 46f;
+        /// <summary>行内纵向锚点：每行「右侧控件中心」的相对偏移（开关轨道与下拉框共用这个中心）。</summary>
+        private const float ROW_ANCHOR_Y = 30f;
 
-        /// <summary>「消息通知内容」下拉顶部偏移（= 行 2 行首 + 12，与单行卡开关同一位）。</summary>
-        private const float TOAST_MODE_ROW_Y = TOAST_ROW2_Y + 12f;
+        /// <summary>
+        /// 13px 字号的墨迹几何（实测标定，Microsoft YaHei UI）：
+        /// 绘制基线 y 之上 11px 到基线处是墨迹，即 `top = 基线-11`、`bot = 基线`、`中线 = 基线-5.5`。
+        /// 由「墨迹中线 = ROW_ANCHOR_Y」反解得 `基线 = 行首 + ROW_ANCHOR_Y + 5.5`。
+        /// ⚠️ 换字号 / 换字体族必须重新标定这个 5.5。
+        /// </summary>
+        private const float TEXT_INK_MID_OFFSET = 5.5f;
+
+        /// <summary>
+        /// **左侧文字统一基线偏移** = 行首 + `ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET`（= 30 + 5.5 = **35.5**）。
+        ///
+        /// 含义：让「标签墨迹中线」与「右侧控件中心」落在同一条水平线上 —— 即**同心对齐**。
+        /// 所有行（开关行、下拉行、纯标签行）一律用它，不许各写各的。
+        ///
+        /// ⚠️ 不能用 `ROW_ANCHOR_Y` 直接当基线（那会让文字整体上浮 5.5px），
+        ///    因为「基线」与「墨迹中线」差着 `TEXT_INK_MID_OFFSET`。
+        /// ⚠️ 曾经写成 `ROW_ANCHOR_Y - 4`（= 26）：那是把「文字基线」当成「视觉中心」用，
+        ///    结果标签比控件中心高 9.5px，用户看到「提示音」飘在框上方。2026-09-22 返工第四轮就是这个。
+        /// </summary>
+        private const float ROW_TEXT_BASELINE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET;   // = 35.5
+
+        /// <summary>
+        /// 下拉框（h=32）的框顶偏移：要让框中心落在 `行首 + ROW_ANCHOR_Y`，
+        /// 即 `框顶 + 16 = 30` → **框顶 = 行首 + 14**（与开关轨道同中心）。
+        /// ⚠️ 不是 +12（旧值，中心 28，比开关低 2px）也不是 0（旧值，中心 16，比开关高 14px）。
+        /// </summary>
+        private const float ROW_DROPDOWN_TOP = 14f;
+
+        /// <summary>
+        /// 下拉行「框内文字」相对框顶的基线偏移 = `DrawDropdownBox` 的 `h/2 + 5`。
+        /// ⚠️ 这是**框自己内部**的排版参数，只用于把框内文字摆正在框里，
+        ///     **绝不可拿它当「框外标签的对齐口径」**（2026-09-22 就是这么治错的）。
+        /// </summary>
+        private const float DROPDOWN_TEXT_BASELINE = 21f;
+
+        /// <summary>「消息通知内容」行 2 标题基线（= 行首 + 统一文字基线偏移，不再跟随框顶）。</summary>
+        private const float TOAST_ROW2_TITLE_Y = TOAST_ROW2_Y + ROW_TEXT_BASELINE;
+
+        /// <summary>「消息通知内容」行 2 描述基线（= 标题下移 20）。</summary>
+        private const float TOAST_ROW2_DESC_Y = TOAST_ROW2_TITLE_Y + 20f;
+
+        /// <summary>「消息通知内容」下拉框顶偏移（= 行 2 行首 + 14，与开关轨道同中心）。</summary>
+        private const float TOAST_MODE_ROW_Y = TOAST_ROW2_Y + ROW_DROPDOWN_TOP;
 
         private const float TOAST_MODE_ROW_H = 32f;
 
@@ -94,28 +159,62 @@ namespace NotchPeninsula
 
         private const float TOAST_MODE_CTRL_X = WIDTH - CARD_PAD_RIGHT - TOAST_MODE_CTRL_W;
 
-        /// <summary>系统消息通知卡底部偏移（= 卡片顶 156 + 高度 124 = 两行 × 62）。
-        /// 下拉底 = TOAST_MODE_ROW_Y + 32 = 262，距卡片下沿留 18px。
-        /// ⚠️ 必须 ≥ TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 8，否则通知内容下拉会越过卡片下沿。</summary>
-        private const float TOAST_CARD_BOTTOM = 280f;
+        // ---- 行 3 / 行 4：消息提示音（通知卡的附属设置，不是独立卡片）----
 
-        // ---- ② 消息提示音卡 ----
+        /// <summary>「消息提示音」行 3 行首偏移（= 行 2 行首 + 62）。
+        /// 行 3 的标题 +26 / 副标题 +46 / 标题文本由 `DrawToggleRow` 按相对偏移自行计算，无需额外常量。</summary>
+        private const float SOUND_ROW3_Y = TOAST_ROW2_Y + 62f;
 
-        /// <summary>提示音卡顶部偏移（相对标题栏）。= 通知卡底 280 + 10 间隙。</summary>
-        private const float SOUND_CARD_Y = 290f;
+        /// <summary>行 2 与行 3 之间的分隔线（= 行 3 行首 + 4，落在行 2 内容底 262 与行 3 控件顶 300 之间）。</summary>
+        private const float SOUND_SEP_Y = SOUND_ROW3_Y + 4f;
 
-        /// <summary>提示音卡高度（两行内容，无说明行）。</summary>
-        private const float SOUND_CARD_H = 106f;
+        /// <summary>开关轨道的几何：高 20，中心即行内锚点。开关行用它画轨道，命中判定也用它。</summary>
+        private const float TOGGLE_TRACK_H = 20f;
 
-        /// <summary>提示音卡第 1 行开关中心的纵向偏移。</summary>
-        private const float SOUND_TOGGLE_ROW_Y = 314f;
+        /// <summary>「消息提示音」开关（行 3）的轨道顶（= 行 3 行首 + ROW_ANCHOR_Y - 轨道半高）。</summary>
+        private const float SOUND_TOGGLE_ROW_Y = SOUND_ROW3_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f;
 
-        /// <summary>
-        /// 提示音两行的纵向区间（提示音下拉 / 音量下拉 / 按钮共用，保证视觉齐平）。
+        /// <summary>「系统消息通知」总开关（行 1）的轨道顶。</summary>
+        private const float TOAST_TOGGLE_ROW_Y = TOAST_ROW1_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f;
+
+        /// <summary>提示音设置行（行 4）行首偏移（= 行 3 行首 + 62）。
+        /// 行 4 没有开关，是行 3 的附属设置：左起标签，右起「提示音」下拉 + 音量下拉 + [试听][重置]。</summary>
+        private const float SOUND_ROW_Y = SOUND_ROW3_Y + 62f;
+
+        /// <summary>行 4 标题基线（= 行首 + 统一文字基线偏移 ROW_TEXT_BASELINE = 行首 + 35.5）。
+        ///
+        /// ⚠️ 曾经取「框顶 + 21」（= 行首 + 21，跟着**框内文字**走）：那是把行外标签
+        ///    当成框内文字对齐，框内文字本身在框里偏下（`DrawDropdownBox` 画在框顶 + h/2 + 5），
+        ///    跟着它走会把标签拖到框中心下方 9.5px —— 用户反馈「太靠下」。
+        ///    后来又反向过正写成 26（行首 + 26），又「太靠上」。
+        ///    现在行 4 的标签墨迹中线与行 4 下拉框 / 按钮中心**同心**（实测均为 404.0）。
+        /// 行 4 只有左侧一个短标签、无描述（空间被 4 个控件占满，放不下第二行文字）。
         /// </summary>
-        private const float SOUND_ROW_Y = 354f;
+        private const float SOUND_ROW_TITLE_Y = SOUND_ROW_Y + ROW_TEXT_BASELINE;
 
         private const float SOUND_ROW_H = 32f;
+
+        /// <summary>
+        /// 行 4 三个下拉框 / 两个按钮共用的**框顶**偏移 = 行首 + ROW_DROPDOWN_TOP（= 行 4 行首 + 14）。
+        ///
+        /// ⚠️ 不要再把框顶直接写成 `SOUND_ROW_Y`（行首本身）：那会让框中心落在行首 + 16，
+        ///    比同一行的标签墨迹中心（行首 + 30）高 14px，视觉上就是「提示音三个字和右边按钮不齐」。
+        ///    2026-09-22 用户点名的「子卡片顶部再加 5px padding」本质就是要把这一段往下压。
+        /// ✅ 所有「框/按钮的顶」都走本常量，「行首」只用来说明行从哪儿起（命中判定、浮层锚点用行首）。
+        /// </summary>
+        private const float SOUND_BOX_Y = SOUND_ROW_Y + ROW_DROPDOWN_TOP;
+
+        /// <summary>系统消息通知卡底部偏移。
+        ///
+        /// ⚠️ **不能用「行数 × 62」硬套**：62 是「行首到行首」的行距，不是「行首到卡底」的间距。
+        ///    卡片底 = 行 4 控件底 + 收尾留白。行 4 控件占 +14..+46（框顶 14 + 高 32），
+        ///    所以底 = 342 + 46 + 16 = 404。
+        ///    收尾留白取 16px，与单行卡「开关轨底 40 → 卡底 62」的 22px 观感相当
+        ///    （控件比文字矮，留白可以略小）。
+        ///    ⚠️ 曾经写成 404（硬套 4×62 = 248）时是巧合相等，后来框顶上移才暴露不对；
+        ///       现在这一版的 404 是**从 SOUND_BOX_Y 推出来的**，不是硬套。
+        ///    判据：`TOAST_CARD_BOTTOM - (SOUND_BOX_Y + SOUND_ROW_H)` 应落在 [12, 20]。</summary>
+        private const float TOAST_CARD_BOTTOM = SOUND_BOX_Y + SOUND_ROW_H + 16f;
 
         /// <summary>
         /// 提示音行「从右往左」排版时用的横向间隙。**整行必须刚好塞进卡片内容区**
@@ -125,10 +224,11 @@ namespace NotchPeninsula
         /// </summary>
         private const float SOUND_ROW_GAP = 12f;
 
-        /// <summary>[重置] 与 [试听] 按钮（从右往左排，右边界锚卡片内边界）。</summary>
+        /// <summary>[重置] 与 [试听] 按钮（从右往左排，右边界锚卡片内边界）。
+        /// 按钮高 26，要让中心也落在 `行首 + ROW_ANCHOR_Y`，则顶 = 框顶 + (框高 32 - 按钮高 26) / 2 = 框顶 + 3。</summary>
         private const float SOUND_BTN_H = 26f;
 
-        private const float SOUND_BTN_Y = SOUND_ROW_Y + 3f;
+        private const float SOUND_BTN_Y = SOUND_BOX_Y + (SOUND_ROW_H - SOUND_BTN_H) / 2f;
 
         private const float SOUND_BTN_GAP = 6f;
 
@@ -138,17 +238,42 @@ namespace NotchPeninsula
 
         private const float SOUND_PREVIEW_X = SOUND_RESET_X - SOUND_BTN_GAP - SOUND_BTN_W;
 
-        /// <summary>「音量」下拉：接在按钮组左边。60px 足够放「100%」+箭头，再多就是浪费。</summary>
+        /// <summary>「音量」下拉：接在按钮组左边。58px 足够放「100%」+箭头，再多就是浪费。</summary>
         private const float SOUND_VOL_W = 58f;
 
         private const float SOUND_VOL_X = SOUND_PREVIEW_X - SOUND_ROW_GAP - SOUND_VOL_W;
 
-        /// <summary>「提示音」下拉：从卡片左内边距起排，右边界正好贴住音量下拉。</summary>
-        private const float SOUND_CTRL_X = 216f;
+        /// <summary>行 4 左侧标签「提示音」的起始 x（与其它行一致，锚卡片左内边距）。</summary>
+        private const float SOUND_LABEL_X = 216f;
 
+        /// <summary>标签与「提示音」下拉之间的间隙。</summary>
+        private const float SOUND_LABEL_GAP = 8f;
+
+        /// <summary>
+        /// 「提示音」下拉左边界。
+        ///
+        /// ⚠️ 这一行是**全页唯一 4 个控件并排**的行（下拉 + 音量 + 试听 + 重置，共 340px），
+        ///    而内容区只有 348px（216..564）。所以它**不能**像其它行那样从 216 起排 ——
+        ///    那样会把左侧标签区挤成负数（216 - 8 = 208 &lt; 216），文字直接叠到下拉框上。
+        ///    这里给标签留出实测宽度（「提示音」3 字 13.5px ≈ 39px）+ 8px 间隙。
+        ///    ⚠️ 改这里要同步 `SOUND_CTRL_W`，并确认 `SOUND_LABEL_X + 标签宽 + GAP == SOUND_CTRL_X`。
+        /// </summary>
+        private const float SOUND_CTRL_X = SOUND_LABEL_X + 40f + SOUND_LABEL_GAP;
+
+        /// <summary>「提示音」下拉宽度：右边界正好贴住音量下拉。</summary>
         private const float SOUND_CTRL_W = SOUND_VOL_X - SOUND_ROW_GAP - SOUND_CTRL_X;
 
-        private const float FONT_CARD_Y = 480f;        // 卡片相对标题栏的纵向偏移
+        // ---- ② 剪贴板链接检测（通知卡之后，行首 = 通知卡底 + 标准卡片间隙 10）----
+
+        /// <summary>剪贴板链接检测卡行首 = 通知卡底 + 10。
+        /// ⚠️ 必须由 TOAST_CARD_BOTTOM 派生：通知卡高度一改（本页改过三次），这里跟着自动走。
+        ///    2026-09-22 就是因为剪贴板卡写死 400，而通知卡底从 390 长到 404，两卡直接叠在一起。</summary>
+        private const float CLIPBOARD_CARD_Y = TOAST_CARD_BOTTOM + 10f;
+
+        // ---- ③ 切换灵动岛字体（剪贴板卡之后，间隙 12）----
+
+        /// <summary>切换字体卡行首 = 剪贴板卡行首 + 62 + 12。</summary>
+        private const float FONT_CARD_Y = CLIPBOARD_CARD_Y + 62f + 12f;
 
         private const float FONT_BTN_H = 26f;          // 按钮高度
 

@@ -137,8 +137,9 @@ namespace NotchPeninsula
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                     newTopmostToggleHovered = true;
 
-                // 🔔 系统消息通知卡第 1 行：开关
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 176 && y <= TITLE_BAR_HEIGHT + 196)
+                // 🔔 系统消息通知卡行 1：总开关（轨道高 TOGGLE_TRACK_H，中心 = 行内锚点）
+                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= TITLE_BAR_HEIGHT + TOAST_TOGGLE_ROW_Y && y <= TITLE_BAR_HEIGHT + TOAST_TOGGLE_ROW_Y + TOGGLE_TRACK_H)
                     newToastToggleHovered = true;
 
                 // 🔔 系统消息通知卡第 2 行：消息通知内容下拉
@@ -154,19 +155,20 @@ namespace NotchPeninsula
                         newHoveredToastModeIndex = (int)((y - menuTop) / 26);
                 }
 
-                // 🎵 消息提示音卡第 1 行：提示音开关
+                // 🎵 行 3：消息提示音开关（轨道高 TOGGLE_TRACK_H，中心 = 行内锚点）
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y + 20)
+                    && y >= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y + TOGGLE_TRACK_H)
                     newSoundToggleHovered = true;
 
                 // 🎵 第 2 行：提示音下拉（浮层展开时底层不吃指针，避免误触浮窗底下的框）
+                // ⚠️ 命中区必须与绘制侧同一个 SOUND_BOX_Y（框顶），不能用 SOUND_ROW_Y。
                 if (!_toastSoundDropdownOpen
                     && x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
-                    && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H)
+                    && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                     newToastSoundDropdownHovered = true;
                 if (_toastSoundDropdownOpen)
                 {
-                    float menuTop = TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H + 2;
+                    float menuTop = TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H + 2;
                     // 🔻 与 RenderDropdownList 的钳制/滚动保持同源：先把当前可视行数算出来
                     int totalOpts = ToastSoundConfig.OptionCount;
                     int maxRows = Math.Max(1, (int)((HEIGHT - 12 - menuTop) / 26));
@@ -190,13 +192,13 @@ namespace NotchPeninsula
                 bool soundReady = ToastSoundConfig.SelectedIndex > 0;
                 if (soundReady && !_soundVolumeDropdownOpen
                     && x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
-                    && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H)
+                    && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                     newSoundVolumeDropdownHovered = true;
                 if (soundReady && _soundVolumeDropdownOpen)
                 {
                     // 🔻 与 RenderDropdownList(upward: true) 同源：音量列表向上展开，
-                    //    底边贴住音量框上沿 (SOUND_ROW_Y)，首行在 (menuBottom - 可视行数*26)。
-                    float anchor = TITLE_BAR_HEIGHT + SOUND_ROW_Y;
+                    //    底边贴住音量框上沿 (SOUND_BOX_Y)，首行在 (menuBottom - 可视行数*26)。
+                    float anchor = TITLE_BAR_HEIGHT + SOUND_BOX_Y;
                     int totalVol = ToastSoundConfig.VolumeOptions.Length;
                     int maxRowsV = Math.Max(1, (int)((anchor - TITLE_BAR_HEIGHT - 12) / 26));
                     int visibleV = Math.Min(totalVol, maxRowsV);
@@ -214,8 +216,10 @@ namespace NotchPeninsula
                     if (x >= SOUND_RESET_X && x <= SOUND_RESET_X + SOUND_BTN_W) newSoundResetHovered = true;
                 }
 
-                // 📋 剪贴板链接检测（= 卡片行首 406 + 开关位移 20..40）
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 426 && y <= TITLE_BAR_HEIGHT + 446)
+                // 📋 剪贴板链接检测（= 卡片行首 CLIPBOARD_CARD_Y + 开关位移 20..40）
+                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
+                    && y <= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
                     newClipboardToggleHovered = true;
 
                 // 切换灵动岛字体：[选择字体…] 与 [重置] 两个按钮

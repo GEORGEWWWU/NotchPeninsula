@@ -45,6 +45,14 @@ internal static class ToastSoundConfig
     internal static readonly int[] VolumeOptions =
         [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
+    /// <summary>
+    /// 提示音出厂默认音量（百分比）。**唯一真源** —— 字段初值、注册表读不到时的兜底、
+    /// 「重置」按钮、<see cref="VolumeIndex"/> 的异常兜底全部由它派生。
+    /// ⚠️ 曾经这里散成三个字面量：字段写 70、注册表兜底写 70、「重置」写 `VolumeOptions[1]`（其实是 10），
+    ///    导致重置后音量与出厂默认不一致。改默认值只改这一处。
+    /// </summary>
+    internal const int DefaultVolumePercent = 10;
+
     /// <summary>文件对话框的格式筛选器（支持系统解码的常见音频格式）。</summary>
     internal const string FileFilter =
         "音频文件 (*.wav;*.mp3;*.m4a;*.aac;*.wma;*.flac;*.aiff;*.aif)\0*.wav;*.mp3;*.m4a;*.aac;*.wma;*.flac;*.aiff;*.aif\0" +
@@ -91,8 +99,8 @@ internal static class ToastSoundConfig
     /// <summary>提示音总开关（默认关闭 —— 需求明确要求「默认关闭」，想听的人自己去开）。</summary>
     internal static bool IsEnabled = false;
 
-    /// <summary>播放音量百分比。</summary>
-    internal static int VolumePercent = 70;
+    /// <summary>播放音量百分比（默认 <see cref="DefaultVolumePercent"/> = 10%）。</summary>
+    internal static int VolumePercent = DefaultVolumePercent;
 
     /// <summary>
     /// 重新扫描 <c>data\sound\</c> 目录，重建内置列表。
@@ -334,14 +342,14 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>音量档位在 <see cref="VolumeOptions"/> 里的索引（用于下拉菜单选中态）。
-    /// 找不到时回落到默认的 70%，而不是数组第 1 项（0% 会静音，不能当兜底）。</summary>
+    /// 找不到时回落到 <see cref="DefaultVolumePercent"/>，而不是数组第 1 项（0% 会静音，不能当兜底）。</summary>
     internal static int VolumeIndex
     {
         get
         {
             int i = Array.IndexOf(VolumeOptions, VolumePercent);
             if (i >= 0) return i;
-            int d = Array.IndexOf(VolumeOptions, 70);
+            int d = Array.IndexOf(VolumeOptions, DefaultVolumePercent);
             return d >= 0 ? d : VolumeOptions.Length / 2;
         }
     }

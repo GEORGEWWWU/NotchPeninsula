@@ -204,13 +204,14 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>重置提示音：关掉开关、回到「无」、清掉注册表里的自定义路径并停掉队列。</summary>
+        /// <summary>重置提示音：关掉开关、回到「无」、音量回默认、清掉注册表里的自定义路径并停掉队列。</summary>
         private void ResetToastSound()
         {
             ToastSoundConfig.IsEnabled = false;
             ToastSoundConfig.SelectedIndex = 0;
             ToastSoundConfig.CustomPath = "";
-            ToastSoundConfig.VolumePercent = ToastSoundConfig.VolumeOptions[1]; // 70%
+            // ⚠️ 必须用 DefaultVolumePercent，不能写 VolumeOptions[1]（那是 10，与出厂默认是两回事）
+            ToastSoundConfig.VolumePercent = ToastSoundConfig.DefaultVolumePercent;
             Program.SaveSetting("ToastSoundEnabled", 0);
             Program.SaveSetting("ToastSoundIndex", 0);
             Program.SaveSetting("ToastSoundPath", "");

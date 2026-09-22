@@ -54,7 +54,7 @@ namespace NotchPeninsula
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsClipboardEnabled = (int)key.GetValue("ClipboardEnabled", 1) != 0;
                     NotchWindow.IsTopmostEnabled = (int)key.GetValue("TopmostEnabled", 1) != 0;
-                    int toastContentMode = (int)key.GetValue("ToastContentMode", 0); // 0=缩略, 1=紧凑, 2=完整
+                    int toastContentMode = (int)key.GetValue("ToastContentMode", 1); // 0=缩略, 1=紧凑, 2=完整
                     Renderer.IsToastFullMode = toastContentMode == 2;
                     Renderer.IsToastCompactMode = toastContentMode == 1;
 
@@ -69,7 +69,7 @@ namespace NotchPeninsula
                         (int)key.GetValue("ToastSoundIndex", 0),
                         key.GetValue("ToastSoundPath", "") as string ?? "",
                         (int)key.GetValue("ToastSoundEnabled", 0) != 0,
-                        (int)key.GetValue("ToastSoundVolume", 70));
+                        (int)key.GetValue("ToastSoundVolume", ToastSoundConfig.DefaultVolumePercent));
 
                     // 读取个性化参数
                     Renderer.STANDBY_WIDTH = Convert.ToSingle(key.GetValue("Custom_StandbyW", 125f));

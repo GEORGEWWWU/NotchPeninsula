@@ -42,22 +42,28 @@ namespace NotchPeninsula
 
         // 只画「一行开关」的内容（标题 / 副标题 / 右侧开关），**不画卡片底**。
         // 拆出来是为了让「自动隐藏」那张卡片能在同一个卡片底里放两行（主开关 + 附属开关）。
-        // 单行内容的位置（标题 +26 / 副标题 +46 / 开关 +20..+40）与原来完全一致，所以既有调用方行为不变。
+        //
+        // ⚠️ 纵向偏移必须走全页统一的常量：
+        //    标题基线 = yOffset + ROW_TEXT_BASELINE（= 行首 + 35.5，使墨迹中线 == 控件中心）
+        //    副标题   = 标题基线 + 20（保持两行文字 20px 行距，与全页节奏一致）
+        //    开关轨道 = yOffset + ROW_ANCHOR_Y ± TOGGLE_TRACK_H/2（中心 = 行首 + 30）
+        //    以前这里写死 26 / 46 / 20，与其它行各写各的，才会出现「四行四种偏移」。
         private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
         {
             _uiTextPaint.Color = disabled ? new SKColor(100, 100, 100) : SKColors.White;
-            canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + 26, _uiTextPaint);
+            canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + ROW_TEXT_BASELINE, _uiTextPaint);
             _uiTextPaint.Color = SKColors.White;
 
             // sub 为空时整行只有标题 + 开关（如「消息提示音」平时不写副标题）
             if (sub.Length > 0)
             {
                 _subTextPaint.Color = disabled ? new SKColor(80, 80, 80) : new SKColor(170, 170, 170);
-                canvas.DrawText(sub, 216, TITLE_BAR_HEIGHT + yOffset + 46, _subTextPaint);
+                canvas.DrawText(sub, 216, TITLE_BAR_HEIGHT + yOffset + ROW_TEXT_BASELINE + 20f, _subTextPaint);
                 _subTextPaint.Color = new SKColor(170, 170, 170);
             }
 
-            float tW = 42; float tH = 20; float tX = WIDTH - 20 - 16 - tW; float tY = TITLE_BAR_HEIGHT + yOffset + 20;
+            float tW = 42; float tH = TOGGLE_TRACK_H; float tX = WIDTH - 20 - 16 - tW;
+            float tY = TITLE_BAR_HEIGHT + yOffset + ROW_ANCHOR_Y - tH / 2f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
 
             if (disabled)
@@ -173,22 +179,33 @@ namespace NotchPeninsula
             DrawToggleCard(canvas, 12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
             // 窗口置顶（与下方消息通知整组互换位置）
             DrawToggleCard(canvas, 84, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
-            // 🔔 「系统消息通知」+「消息通知内容」—— 一张两行卡（yOffset 156..TOAST_CARD_BOTTOM = 280）
-            //    高度 124 = 两行 × 62，与所有单行卡同一节奏。
-            //    行1 行首 +156（标题基线 +182、副标题 +202、开关轨道 +176..+196）、
-            //    分隔线 +222、行2 行首 +218（标题 +244 / 描述 +264 / 下拉 +230..+262，右对齐 110px 宽）。
-            //    ⚠️ 卡片下沿必须贴合内容：内容底 262，卡片底 280，留 18px。别再把卡片撑高，
-            //       撑出来的空白会均匀地毁掉行 1、行 2 两侧的观感（2026-09-22 返工过两次）。
+            // 🔔 「系统消息通知」—— 一张四行卡（总开关 + 三个附属设置行），yOffset 156..TOAST_CARD_BOTTOM = 404
+            //    行距恒为 62（与全页所有单行卡同节奏），**每行共用同一个行内锚点 ROW_ANCHOR_Y = 30**：
+            //      · 左侧文字墨迹中线 = 行首 + 30   （= 基线 行首 + 26，13px 字号墨迹中线在基线之上 5.5）
+            //      · 右侧控件中心     = 行首 + 30   （开关轨道 +20..+40；下拉框高 32 则框顶 = 行首 + 14）
+            //    行1 +156「系统消息通知」开关（标题基线 +26 / 副标题 +46 / 开关轨 +176..+196）
+            //    分隔线 +TOAST_SEP_Y (222)
+            //    行2 +218「消息通知内容」（标题基线 +26 / 描述 +46 / 下拉框 +232..+264）
+            //    分隔线 +SOUND_SEP_Y (284)
+            //    行3 +280「消息提示音」开关（标题基线 +26 / 副标题 +46 / 开关轨 +300..+320）
+            //    行4 +342「提示音」下拉 + 音量下拉 + [试听][重置]（标签基线 +26 / 控件 +356..+388）
+            //
+            //    💡 提示音**是通知的附属设置**，所以和通知同卡不同行 —— 拆成两张独立卡会让层级关系丢失。
+            //       「消息通知内容」与「消息提示音」都是「系统消息通知」的子项，只是前者管内容、后者管声音。
+            //    ⚠️ 纵向对齐的唯一口径是**行内锚点**，绝不要拿「标签 vs 框内文字」当口径 ——
+            //       框内文字本身在框里偏下，跟着它走会连带把标签拖偏（2026-09-22 返工三轮的根因）。
+            //    ⚠️ 卡片下沿必须贴合内容：行 4 控件底 388，卡片底 404，留 16px。
             //    ⚠️ 改这里的数值时必须同步改 WM_MOUSEMOVE 的 tab 0 段与 RenderDropdowns 的浮层锚点。
-            var notifyCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 156, WIDTH - 20, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
+            var notifyCardRect = new SKRect(200, TITLE_BAR_HEIGHT + TOAST_ROW1_Y, WIDTH - 20, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
             canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBorder);
 
-            DrawToggleRow(canvas, 156, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
+            // ── 行 1：总开关 ──
+            DrawToggleRow(canvas, TOAST_ROW1_Y, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered);
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + TOAST_SEP_Y, WIDTH - 36, TITLE_BAR_HEIGHT + TOAST_SEP_Y, _separatorPaint);
 
-            // 行2：消息通知内容下拉（完整时展示应用名并拉大通知尺寸）
+            // ── 行 2：消息通知内容下拉（完整时展示应用名并拉大通知尺寸）──
             // 下拉框占 +230..+262，与行 1 的开关轨道（+176..+196 相对 +156 = +20..+40）同一位；
             // 标题 / 描述就是单行卡那套 +26 / +46，与整页其它行完全对齐。
             canvas.DrawText("消息通知内容", 216, TITLE_BAR_HEIGHT + TOAST_ROW2_TITLE_Y, _uiTextPaint);
@@ -203,29 +220,28 @@ namespace NotchPeninsula
             DrawDropdownBox(canvas, TOAST_MODE_CTRL_X, TOAST_MODE_ROW_Y, TOAST_MODE_CTRL_W, TOAST_MODE_ROW_H,
                 _toastModeOptions[_selectedToastModeIndex], _toastModeDropdownHovered, enabled: true);
 
-            // 🎵 「消息提示音」—— 独立子卡片（yOffset 294..410）
-            //    第 1 行：提示音开关 + 音频来源说明（默认关闭，不想被打扰的人不用管）
-            //    第 2 行：左起「提示音」信息文本 → 提示音下拉 → 音量下拉 → [试听] [重置] → 右侧小字说明
-            //    独立成卡是因为它有自己的开关与两组下拉，硬塞进通知卡会顶出一张 252px 的高卡、
-            //    控件横向铺满整卡，观感就是「溢出」。
-            var soundCardRect = new SKRect(200, TITLE_BAR_HEIGHT + SOUND_CARD_Y, WIDTH - 20, TITLE_BAR_HEIGHT + SOUND_CARD_Y + SOUND_CARD_H);
-            canvas.DrawRoundRect(soundCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(soundCardRect, 6, 6, _cardBorder);
+            canvas.DrawLine(216, TITLE_BAR_HEIGHT + SOUND_SEP_Y, WIDTH - 36, TITLE_BAR_HEIGHT + SOUND_SEP_Y, _separatorPaint);
 
-            // 第 1 行：开关（副标题保留，但**不写括号里的实现细节** ——
-            // 「（默认关闭，不吃任何内存）」那种补充说明不该出现在界面上）
-            DrawToggleRow(canvas, SOUND_TOGGLE_ROW_Y - 20, "消息提示音",
+            // ── 行 3：消息提示音开关 ──
+            // 副标题保留，但**不写括号里的实现细节**（「（默认关闭，不吃任何内存）」不该出现在界面上）；
+            // 超限的音频会在选中时通过红色副标题给出具体原因（见 _soundHint）。
+            DrawToggleRow(canvas, SOUND_ROW3_Y, "消息提示音",
                 _soundHint.Length > 0 ? _soundHint : "新消息到达时播放提示音",
                 ToastSoundConfig.IsEnabled, _soundToggleHovered);
 
-            // 第 2 行：提示音下拉 + 音量下拉 + 两个按钮
-            // 「音量」下拉的可用性只看「有没有具体音源」，与绘制侧置灰判据同源
+            // ── 行 4：提示音设置（行 3 的附属，无开关）──
+            // 左起标签「提示音」，右起「提示音」下拉 + 音量下拉 + [试听][重置]。
+            // ⚠️ 这一行是全页唯一 4 控件并排的行（下拉+音量+两按钮 = 340px），内容区只有 348px，
+            //    所以左侧**只放一个短标签、不放描述文字** —— 放不下会叠到下拉框上。
+            //    「音量」下拉的可用性只看「有没有具体音源」，与绘制侧置灰判据同源。
             bool soundReady = ToastSoundConfig.SelectedIndex > 0;
 
-            DrawDropdownBox(canvas, SOUND_CTRL_X, SOUND_ROW_Y, SOUND_CTRL_W, SOUND_ROW_H,
+            canvas.DrawText("提示音", SOUND_LABEL_X, TITLE_BAR_HEIGHT + SOUND_ROW_TITLE_Y, _uiTextPaint);
+
+            DrawDropdownBox(canvas, SOUND_CTRL_X, SOUND_BOX_Y, SOUND_CTRL_W, SOUND_ROW_H,
                 ToastSoundConfig.CurrentDisplayText(), _toastSoundDropdownHovered, enabled: true);
 
-            DrawDropdownBox(canvas, SOUND_VOL_X, SOUND_ROW_Y, SOUND_VOL_W, SOUND_ROW_H,
+            DrawDropdownBox(canvas, SOUND_VOL_X, SOUND_BOX_Y, SOUND_VOL_W, SOUND_ROW_H,
                 $"{ToastSoundConfig.VolumePercent}%", _soundVolumeDropdownHovered, enabled: soundReady);
 
             void DrawSoundButton(bool hovered, string label, float bx, float bw, bool enabled)
@@ -249,7 +265,8 @@ namespace NotchPeninsula
             // 会通过开关行的红色副标题给出具体原因（见 _soundHint）。
 
             // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
-            DrawToggleCard(canvas, 406, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
+            // 行首由 CLIPBOARD_CARD_Y 派生 = 通知卡底 + 10，通知卡长高时自动跟着走
+            DrawToggleCard(canvas, CLIPBOARD_CARD_Y, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
 
             // 切换灵动岛字体：选中字体文件后立即热替换岛内全部文本字体（默认系统字体，不做任何改动）
             var fontCard = new SKRect(200, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - 20, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);
@@ -1131,7 +1148,7 @@ namespace NotchPeninsula
             // 🎵 消息提示音下拉菜单（通用设置）：无 / data\sound 里的每个 wav / 浏览音频…
             if (_selectedTab == 0 && _toastSoundDropdownOpen)
             {
-                RenderDropdownList(canvas, SOUND_CTRL_X, SOUND_ROW_Y + SOUND_ROW_H + 2, SOUND_CTRL_W,
+                RenderDropdownList(canvas, SOUND_CTRL_X, SOUND_BOX_Y + SOUND_ROW_H + 2, SOUND_CTRL_W,
                     ToastSoundConfig.BuildOptionLabels(), ToastSoundConfig.SelectedIndex, _hoveredToastSoundIndex,
                     dimmedIndex: ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out _)
                         ? -1 : ToastSoundConfig.CustomIndex);
@@ -1143,7 +1160,7 @@ namespace NotchPeninsula
             {
                 var volLabels = new string[ToastSoundConfig.VolumeOptions.Length];
                 for (int i = 0; i < volLabels.Length; i++) volLabels[i] = $"{ToastSoundConfig.VolumeOptions[i]}%";
-                RenderDropdownList(canvas, SOUND_VOL_X, SOUND_ROW_Y, SOUND_VOL_W,
+                RenderDropdownList(canvas, SOUND_VOL_X, SOUND_BOX_Y, SOUND_VOL_W,
                     volLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex, dimmedIndex: -1,
                     upward: true);
             }
