@@ -194,10 +194,17 @@ namespace NotchPeninsula
                     newSoundVolumeDropdownHovered = true;
                 if (soundReady && _soundVolumeDropdownOpen)
                 {
-                    float menuTop = TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H + 2;
+                    // 🔻 与 RenderDropdownList(upward: true) 同源：音量列表向上展开，
+                    //    底边贴住音量框上沿 (SOUND_ROW_Y)，首行在 (menuBottom - 可视行数*26)。
+                    float anchor = TITLE_BAR_HEIGHT + SOUND_ROW_Y;
+                    int totalVol = ToastSoundConfig.VolumeOptions.Length;
+                    int maxRowsV = Math.Max(1, (int)((anchor - TITLE_BAR_HEIGHT - 12) / 26));
+                    int visibleV = Math.Min(totalVol, maxRowsV);
+                    float menuBottom = anchor - 2;
+                    float menuTopV = menuBottom - visibleV * 26;
                     if (x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
-                        && y >= menuTop && y < menuTop + ToastSoundConfig.VolumeOptions.Length * 26)
-                        newHoveredSoundVolumeIndex = (int)((y - menuTop) / 26);
+                        && y >= menuTopV && y < menuBottom)
+                        newHoveredSoundVolumeIndex = (int)((y - menuTopV) / 26);
                 }
 
                 // 🎵 第 2 行右侧按钮组：[试听] [重置]（同样只在有具体音源时接受指针）
@@ -207,8 +214,8 @@ namespace NotchPeninsula
                     if (x >= SOUND_RESET_X && x <= SOUND_RESET_X + SOUND_BTN_W) newSoundResetHovered = true;
                 }
 
-                // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬到这里；提示音子卡片加出来后整组下移）
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 456 && y <= TITLE_BAR_HEIGHT + 476)
+                // 📋 剪贴板链接检测（= 卡片行首 406 + 开关位移 20..40）
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 426 && y <= TITLE_BAR_HEIGHT + 446)
                     newClipboardToggleHovered = true;
 
                 // 切换灵动岛字体：[选择字体…] 与 [重置] 两个按钮

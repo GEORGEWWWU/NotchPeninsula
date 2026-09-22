@@ -204,17 +204,6 @@ internal static class ToastSoundConfig
         return _builtins[SelectedIndex - BuiltinOffset].Label;
     }
 
-    /// <summary>当前选中项的说明文字，画在下拉框下方。</summary>
-    internal static string CurrentDescription()
-    {
-        if (SelectedIndex <= 0) return "新消息到达时保持安静";
-        if (SelectedIndex == CustomIndex)
-            return IsUsableFile(CustomPath, out string why) ? ShortenPath(CustomPath) : why;
-
-        string file = Path.GetFileName(_builtins[SelectedIndex - BuiltinOffset].Path);
-        return $"来自 data\\sound\\{file}";
-    }
-
     /// <summary>
     /// 解析出「现在该播哪个文件」。返回 null 表示不该播（选了无 / 文件失效）。
     /// </summary>

@@ -133,6 +133,10 @@ internal static class ToastSoundPlayer
     {
         error = "";
 
+        // 🔇 音量为 0% —— 用户把音量拉到最低就是要静音。
+        //    这里直接返回，不必初始化 WASAPI、不必解码整个文件，省掉一次设备占用。
+        if (req.VolumePercent <= 0) return;
+
         WaveStream? reader = null;
         IWaveProvider? provider = null;
         WasapiOut? output = null;

@@ -39,15 +39,17 @@ namespace NotchPeninsula
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
         // 🔤 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
-        // 📐 通用设置页卡片顺序（2026-09-22 重构为「两张提示音子卡片」后）：
-        //    开机自启 12 | 窗口置顶 84 | 系统消息通知卡 156..300 | 消息提示音卡 310..426
-        //    | 剪贴板链接检测 436 | 切换灵动岛字体 510
+        // 📐 通用设置页卡片顺序（2026-09-22 通知卡收到 124 高之后）：
+        //    开机自启 12 | 窗口置顶 84 | 系统消息通知卡 156..280 | 消息提示音卡 290..396
+        //    | 剪贴板链接检测 406 | 切换灵动岛字体 480
         //
-        //  ① 系统消息通知卡（高 144）：行1 开关（开关热区 +176..+196）、分隔线 +226、
-        //     行2「消息通知内容」标题 +245 / 描述 +265 / 下拉 +272..+304。
-        //     ⚠️ 卡片底部必须 ≥ 下拉底部 +8，否则下拉会越过卡片下沿、压到下一张卡的标题上。
-        //  ② 消息提示音卡（高 116）：行1 提示音开关（开关热区 +330..+350）；
-        //     行2「提示音」下拉 +370..+402 + 音量下拉 + [试听][重置]；行3 说明 +426。
+        //  ① 系统消息通知卡（高 124 = 两行 × 62，与单行卡同节奏）：行1 行首 +156（开关热区 +176..+196）、
+        //     分隔线 +222、行2 行首 +218（「消息通知内容」标题 +244 / 描述 +264 / 下拉 +230..+262）。
+        //     ⚠️ 卡片下沿必须贴合内容（现留 18px），别撑高 —— 撑出来的空白会同时毁掉行 1、行 2 的观感。
+        //  ② 消息提示音卡（高 106）：行1 提示音开关（开关热区 +314..+334）；
+        //     行2「提示音」下拉 +354..+386 + 音量下拉 + [试听][重置]。
+        //     卡片内**没有**说明行 —— 「仅接受 ≤N 秒 / ≤N MB」是实现细节，不该出现在界面上；
+        //     真有超限的音频，选中时会通过开关行的红色副标题给出具体原因（_soundHint）。
         //     ⚠️ 提示音卡的两行共用同一个纵向区间（+358..+390）：
         //        「音量」下拉必须**接在「提示音」下拉右边**，绝不能顶到卡片左边界去和标签重叠 ——
         //        上一版就是因为下拉框没算宽度、x 停在 330 而和左侧文字叠在一起，被判定为「按钮全部错乱」。
@@ -58,9 +60,32 @@ namespace NotchPeninsula
         private const float CARD_PAD_RIGHT = 36f;
 
         // ---- ① 系统消息通知卡 ----
+        //
+        // 布局节奏：**两行 = 2 × 62 = 124px，与所有单行卡（62px）同一节奏。**
+        //   · 行 1 行首 156（= 与单行卡完全一致的内部位移：标题 +26 / 副标题 +46 / 开关 +20..+40）
+        //   · 行 2 行首 218（= 行 1 行首 + 62）
+        //   · 分隔线 222（= 行 2 行首 + 4，夹在两行留白的中线上）
+        //   · 卡片 156..280
+        //
+        // ⚠️ 历史坑：卡片曾被撑到 320（164px 高），而两行内容只用到 280 —— 多出的 40px 先表现为
+        //    「分隔线到行 2 之间一大块空白」，把分隔线往下挪之后空白又跑到行 1 下面。
+        //    **空白总量不变，挪分割线是治不好的** —— 唯一正解是把卡片收到贴合内容。
+        //    改这张卡的任何坐标，都要回头确认「内容底 ≤ 卡片下沿，且余量 ≤ 20px」。
 
-        /// <summary>「消息通知内容」下拉顶部偏移（相对标题栏）。</summary>
-        private const float TOAST_MODE_ROW_Y = 272f;
+        /// <summary>「消息通知内容」行 2 行首偏移（= 行 1 行首 156 + 行距 62）。</summary>
+        private const float TOAST_ROW2_Y = 218f;
+
+        /// <summary>行 1 与行 2 之间的分隔线（= 行 2 行首 + 4）。</summary>
+        private const float TOAST_SEP_Y = TOAST_ROW2_Y + 4f;
+
+        /// <summary>「消息通知内容」行 2 标题基线（= 行 2 行首 + 26，与单行卡一致）。</summary>
+        private const float TOAST_ROW2_TITLE_Y = TOAST_ROW2_Y + 26f;
+
+        /// <summary>「消息通知内容」行 2 描述基线（= 行 2 行首 + 46，与单行卡一致）。</summary>
+        private const float TOAST_ROW2_DESC_Y = TOAST_ROW2_Y + 46f;
+
+        /// <summary>「消息通知内容」下拉顶部偏移（= 行 2 行首 + 12，与单行卡开关同一位）。</summary>
+        private const float TOAST_MODE_ROW_Y = TOAST_ROW2_Y + 12f;
 
         private const float TOAST_MODE_ROW_H = 32f;
 
@@ -69,25 +94,26 @@ namespace NotchPeninsula
 
         private const float TOAST_MODE_CTRL_X = WIDTH - CARD_PAD_RIGHT - TOAST_MODE_CTRL_W;
 
-        /// <summary>系统消息通知卡底部偏移（= 卡片顶 156 + 高度 144）。
+        /// <summary>系统消息通知卡底部偏移（= 卡片顶 156 + 高度 124 = 两行 × 62）。
+        /// 下拉底 = TOAST_MODE_ROW_Y + 32 = 262，距卡片下沿留 18px。
         /// ⚠️ 必须 ≥ TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 8，否则通知内容下拉会越过卡片下沿。</summary>
-        private const float TOAST_CARD_BOTTOM = 300f;
+        private const float TOAST_CARD_BOTTOM = 280f;
 
         // ---- ② 消息提示音卡 ----
 
-        /// <summary>提示音卡顶部偏移（相对标题栏）。= 通知卡底 + 10 间隙。</summary>
-        private const float SOUND_CARD_Y = 310f;
+        /// <summary>提示音卡顶部偏移（相对标题栏）。= 通知卡底 280 + 10 间隙。</summary>
+        private const float SOUND_CARD_Y = 290f;
 
-        /// <summary>提示音卡高度（两行内容 + 说明）。</summary>
-        private const float SOUND_CARD_H = 116f;
+        /// <summary>提示音卡高度（两行内容，无说明行）。</summary>
+        private const float SOUND_CARD_H = 106f;
 
         /// <summary>提示音卡第 1 行开关中心的纵向偏移。</summary>
-        private const float SOUND_TOGGLE_ROW_Y = 334f;
+        private const float SOUND_TOGGLE_ROW_Y = 314f;
 
         /// <summary>
         /// 提示音两行的纵向区间（提示音下拉 / 音量下拉 / 按钮共用，保证视觉齐平）。
         /// </summary>
-        private const float SOUND_ROW_Y = 374f;
+        private const float SOUND_ROW_Y = 354f;
 
         private const float SOUND_ROW_H = 32f;
 
@@ -122,10 +148,7 @@ namespace NotchPeninsula
 
         private const float SOUND_CTRL_W = SOUND_VOL_X - SOUND_ROW_GAP - SOUND_CTRL_X;
 
-        /// <summary>第 3 行的小字说明（音频来源 / 时长体积上限）的纵向偏移。</summary>
-        private const float SOUND_HINT_Y = SOUND_ROW_Y + SOUND_ROW_H + 24f;
-
-        private const float FONT_CARD_Y = 510f;        // 卡片相对标题栏的纵向偏移
+        private const float FONT_CARD_Y = 480f;        // 卡片相对标题栏的纵向偏移
 
         private const float FONT_BTN_H = 26f;          // 按钮高度
 
