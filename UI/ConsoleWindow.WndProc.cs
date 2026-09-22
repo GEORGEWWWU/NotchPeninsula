@@ -168,24 +168,17 @@ namespace NotchPeninsula
                     newToastSoundDropdownHovered = true;
                 if (_toastSoundDropdownOpen)
                 {
-                    float menuTop = TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H + 2;
-                    // 🔻 与 RenderDropdownList 的钳制/滚动保持同源：先把当前可视行数算出来
-                    int totalOpts = ToastSoundConfig.OptionCount;
-                    int maxRows = Math.Max(1, (int)((HEIGHT - 12 - menuTop) / 26));
-                    int visible = Math.Min(totalOpts, maxRows);
-                    int first = 0;
-                    if (totalOpts > visible)
-                    {
-                        first = Math.Clamp(_dropdownScroll, 0, totalOpts - visible);
-                        int sel = ToastSoundConfig.SelectedIndex;
-                        if (sel >= 0 && (sel < first || sel >= first + visible))
-                            first = Math.Clamp(sel - visible / 2, 0, totalOpts - visible);
-                    }
+                    // 🔻 布局（浮层顶 / 可视行数 / 最大首行）与绘制、滚轮共用同一个 GetToastSoundMenuLayout。
+                    //    以前这里自己算一份、滚轮再算一份（还漏了 ROW_DROPDOWN_TOP），三处对不上，
+                    //    才会出现「滚两下就断」。
+                    GetToastSoundMenuLayout(out float menuTop, out int visible, out int maxFirst);
+                    // 首行**只认 _dropdownScroll**，不再每帧「抢回选中项」—— 那是滚轮失效的元凶。
+                    int first = Math.Clamp(_dropdownScroll, 0, maxFirst);
                     _dropdownVisibleRows = visible;
                     _dropdownFirstRow = first;
                     if (x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
-                        && y >= menuTop && y < menuTop + visible * 26)
-                        newHoveredToastSoundIndex = first + (int)((y - menuTop) / 26);
+                        && y >= menuTop && y < menuTop + visible * DROPDOWN_ROW_H)
+                        newHoveredToastSoundIndex = first + (int)((y - menuTop) / DROPDOWN_ROW_H);
                 }
 
                 // 🎵 音量下拉：只在选了具体音源时接受指针（与绘制侧的置灰判据同源）

@@ -88,8 +88,10 @@ namespace NotchPeninsula
                 CloseAllDropdowns();
                 // 每次展开都重扫一遍目录：新丢进 data\sound 的文件不用重启就能看到
                 ToastSoundConfig.RefreshBuiltins();
-                _dropdownScroll = 0; // 重新展开时从顶部开始，让用户看到「列表有多长」
                 _toastSoundDropdownOpen = true;
+                // 展开时把滚动位置定到「当前选中项可见」处；**之后滚动完全交给滚轮**，
+                // 绘制与命中都不再抢回选中项（那是「滚不动」的元凶）。
+                ScrollToastSoundMenuToSelected();
                 Render();
             }
             else if (_toastSoundDropdownOpen && _hoveredToastSoundIndex != -1)

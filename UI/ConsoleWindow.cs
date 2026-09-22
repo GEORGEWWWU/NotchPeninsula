@@ -82,52 +82,73 @@ namespace NotchPeninsula
         private const float TOAST_SEP_Y = TOAST_ROW2_Y + 4f;
 
         // ============================================================
-        //  ★ 行内纵向锚点（全页唯一真源，2026-09-22 第四次返工后定稿）
+        //  ★ 行内纵向锚点（全页唯一真源，2026-09-22 第五次返工后定稿）
         //
-        //  目标：**「左侧标签」与「右侧控件」同心对齐** —— 标签的墨迹中线
+        //  目标：**「左侧文字块」与「右侧控件」同心对齐** —— 文字块的光学中心
         //        和右排控件（开关轨道 / 下拉框 / 按钮）的中心落在同一条水平线上。
         //
-        //  ── 返工史（前三轮都错在「拿什么当对齐参照」）────────────────
+        //  ── 返工史（前四轮都错在「拿什么当对齐参照」）────────────────
         //    第 1 轮：四行各写各的基线偏移 —— +26 / +33 / +26 / +21。
         //    第 2 轮：改成「标签基线 = 框顶 + h/2 + 5」，即跟着**框内文字**走。
         //             ❌ 错：框内文字在框里本身偏下，把行外标签也拖下去了。
         //    第 3 轮：改成「所有行统一基线 = 行首 + 26」。
-        //             ❌ 错：26 是**开关行**的基线（配 20px 高轨道），
-        //                下拉框有 32px 高，标签相对框就飘到上面去了 —— 用户「现在太靠上了」。
-        //    第 4 轮（本版）：统一成 **「墨迹中线 == 控件中心」**，偏移 = ROW_ANCHOR_Y + 5.5 = 35.5。
+        //             ❌ 错：26 是**两行行**（标题+副标题）的标题基线，
+        //                单行行（行 4「提示音」）拿它当基线就飘到下拉框上面去了 —— 用户「现在太靠上了」。
+        //    第 4 轮：改成「单行墨迹中线 == 控件中心」，偏移 = 30 + 5.5 = 35.5。
+        //             ❌ 错：35.5 只对**单行行**成立。两行行照抄之后，整个文字块
+        //                （标题墨迹顶 → 副标题墨迹底）比控件中心低了 10px —— 用户
+        //                「开机自启、窗口置顶、系统消息通知、剪贴板链接检测的文字全部向下偏移」。
+        //    第 5 轮（本版）：**按「本行有几行文字」分别反解**，两个偏移都让
+        //                「文字块的光学中心」落在同一个锚点上（见下面两个常量）。
         //
-        //  ── 为什么一个偏移能同时适配「20px 轨道」和「32px 框」────────────────
+        //  ── 为什么锚点能同时适配「20px 轨道」和「32px 框」────────────────
         //    因为 ROW_DROPDOWN_TOP 已经取 14，使**框中心**（14+16）恰好等于
         //    **开关轨道中心**（20+10），两者都 = 行首 + 30 = ROW_ANCHOR_Y。
-        //    所以「控件中心」这个参照在两类行里是同一个数，标签自然也只需要一个偏移。
+        //    所以「控件中心」这个参照在两类行里是同一个数，文字只需要按行数选偏移。
         //
         //  ⚠️ 直接把 `ROW_ANCHOR_Y`(30) 当基线是错的 —— 基线与墨迹中线差 5.5px。
-        //  ⚠️ 改字号 / 改字体族必须重新标定 TEXT_INK_MID_OFFSET。
+        //  ⚠️ 单行行与两行行**必须用不同的基线常量**，这是第 3/4 轮反复翻车的根因。
+        //  ⚠️ 改字号 / 改字体族必须重新标定 TEXT_INK_MID_OFFSET 与 TEXT_INK_ASCENT。
         // ============================================================
 
-        /// <summary>行内纵向锚点：每行「右侧控件中心」的相对偏移（开关轨道与下拉框共用这个中心）。</summary>
+        /// <summary>行内纵向锚点：每行「右侧控件中心 / 左侧文字块光学中心」的相对偏移。</summary>
         private const float ROW_ANCHOR_Y = 30f;
 
         /// <summary>
         /// 13px 字号的墨迹几何（实测标定，Microsoft YaHei UI）：
         /// 绘制基线 y 之上 11px 到基线处是墨迹，即 `top = 基线-11`、`bot = 基线`、`中线 = 基线-5.5`。
-        /// 由「墨迹中线 = ROW_ANCHOR_Y」反解得 `基线 = 行首 + ROW_ANCHOR_Y + 5.5`。
-        /// ⚠️ 换字号 / 换字体族必须重新标定这个 5.5。
+        /// ⚠️ 换字号 / 换字体族必须重新标定这两个数。
         /// </summary>
         private const float TEXT_INK_MID_OFFSET = 5.5f;
 
+        /// <summary>墨迹在基线上方的高度（13px YaHei UI 实测 11px）。</summary>
+        private const float TEXT_INK_ASCENT = 11f;
+
+        /// <summary>行内「标题 → 副标题」的行距（两行文字之间的基线差）。</summary>
+        private const float ROW_SUB_OFFSET = 20f;
+
         /// <summary>
-        /// **左侧文字统一基线偏移** = 行首 + `ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET`（= 30 + 5.5 = **35.5**）。
+        /// **单行行**（只有标题、没有副标题，如通知卡行 4 的「提示音」）的标题基线偏移。
         ///
-        /// 含义：让「标签墨迹中线」与「右侧控件中心」落在同一条水平线上 —— 即**同心对齐**。
-        /// 所有行（开关行、下拉行、纯标签行）一律用它，不许各写各的。
-        ///
-        /// ⚠️ 不能用 `ROW_ANCHOR_Y` 直接当基线（那会让文字整体上浮 5.5px），
-        ///    因为「基线」与「墨迹中线」差着 `TEXT_INK_MID_OFFSET`。
-        /// ⚠️ 曾经写成 `ROW_ANCHOR_Y - 4`（= 26）：那是把「文字基线」当成「视觉中心」用，
-        ///    结果标签比控件中心高 9.5px，用户看到「提示音」飘在框上方。2026-09-22 返工第四轮就是这个。
+        /// 反解：墨迹中线 = 基线 - 5.5，令它 = 行首 + ROW_ANCHOR_Y(30)
+        /// → 基线 = 行首 + 30 + 5.5 = **行首 + 35.5**。
         /// </summary>
-        private const float ROW_TEXT_BASELINE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET;   // = 35.5
+        private const float ROW_TEXT_BASELINE_SINGLE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET;   // = 35.5
+
+        /// <summary>
+        /// **两行行**（标题 + 副标题，如「开机自启」「系统消息通知」）的**标题**基线偏移。
+        ///
+        /// 反解：文字块的墨迹范围 = [基线 - 11, 基线 + ROW_SUB_OFFSET]，
+        ///       块中线 = 基线 + (ROW_SUB_OFFSET - 11) / 2 = 基线 + 4.5，
+        ///       令块中线 = 行首 + ROW_ANCHOR_Y(30)
+        /// → 标题基线 = 行首 + 30 + 5.5 - 20 / 2 = **行首 + 25.5**，副标题 = 行首 + 45.5。
+        ///
+        /// ⚠️ 曾经把它和单行行合并成 35.5：那是拿「标题那一行的墨迹中线」去对控件中心，
+        ///    整个两行文字块因此整体下移 10px（用户 2026-09-22 点名的「文字全部向下偏移」）。
+        /// ⚠️ 也别写成 `ROW_ANCHOR_Y - 4`（= 26）：那是把「基线」当「视觉中心」，
+        ///    虽然只差 0.5px 看着没事，但语义是错的，下次改字号就会崩。
+        /// </summary>
+        private const float ROW_TEXT_BASELINE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET - ROW_SUB_OFFSET / 2f;   // = 25.5
 
         /// <summary>
         /// 下拉框（h=32）的框顶偏移：要让框中心落在 `行首 + ROW_ANCHOR_Y`，
@@ -146,8 +167,8 @@ namespace NotchPeninsula
         /// <summary>「消息通知内容」行 2 标题基线（= 行首 + 统一文字基线偏移，不再跟随框顶）。</summary>
         private const float TOAST_ROW2_TITLE_Y = TOAST_ROW2_Y + ROW_TEXT_BASELINE;
 
-        /// <summary>「消息通知内容」行 2 描述基线（= 标题下移 20）。</summary>
-        private const float TOAST_ROW2_DESC_Y = TOAST_ROW2_TITLE_Y + 20f;
+        /// <summary>「消息通知内容」行 2 描述基线（= 标题下移一个行内行距 ROW_SUB_OFFSET）。</summary>
+        private const float TOAST_ROW2_DESC_Y = TOAST_ROW2_TITLE_Y + ROW_SUB_OFFSET;
 
         /// <summary>「消息通知内容」下拉框顶偏移（= 行 2 行首 + 14，与开关轨道同中心）。</summary>
         private const float TOAST_MODE_ROW_Y = TOAST_ROW2_Y + ROW_DROPDOWN_TOP;
@@ -181,16 +202,15 @@ namespace NotchPeninsula
         /// 行 4 没有开关，是行 3 的附属设置：左起标签，右起「提示音」下拉 + 音量下拉 + [试听][重置]。</summary>
         private const float SOUND_ROW_Y = SOUND_ROW3_Y + 62f;
 
-        /// <summary>行 4 标题基线（= 行首 + 统一文字基线偏移 ROW_TEXT_BASELINE = 行首 + 35.5）。
+        /// <summary>行 4 标题基线（= 行首 + 单行行基线偏移 ROW_TEXT_BASELINE_SINGLE = 行首 + 35.5）。
         ///
-        /// ⚠️ 曾经取「框顶 + 21」（= 行首 + 21，跟着**框内文字**走）：那是把行外标签
-        ///    当成框内文字对齐，框内文字本身在框里偏下（`DrawDropdownBox` 画在框顶 + h/2 + 5），
-        ///    跟着它走会把标签拖到框中心下方 9.5px —— 用户反馈「太靠下」。
-        ///    后来又反向过正写成 26（行首 + 26），又「太靠上」。
-        ///    现在行 4 的标签墨迹中线与行 4 下拉框 / 按钮中心**同心**（实测均为 404.0）。
+        /// ⚠️ 行 4 只有「提示音」三个字、**没有副标题**，所以走**单行行**的口径：
+        ///    墨迹中线对齐行内锚点（= 行 4 下拉框 / 按钮中心，实测均为 404.0）。
+        ///    这里**不能**用两行行的 `ROW_TEXT_BASELINE`(25.5)，否则文字会飘到框上方。
+        ///    两个常量的差别就是「这一行有几行文字」，见文件头部锚点说明。
         /// 行 4 只有左侧一个短标签、无描述（空间被 4 个控件占满，放不下第二行文字）。
         /// </summary>
-        private const float SOUND_ROW_TITLE_Y = SOUND_ROW_Y + ROW_TEXT_BASELINE;
+        private const float SOUND_ROW_TITLE_Y = SOUND_ROW_Y + ROW_TEXT_BASELINE_SINGLE;
 
         private const float SOUND_ROW_H = 32f;
 
@@ -277,7 +297,8 @@ namespace NotchPeninsula
 
         private const float FONT_BTN_H = 26f;          // 按钮高度
 
-        private const float FONT_BTN_Y = FONT_CARD_Y + 18f;
+        /// <summary>按钮顶 = 卡片行首 + 行内锚点 - 按钮半高 —— 与卡片内文字块同心（不再手写 18）。</summary>
+        private const float FONT_BTN_Y = FONT_CARD_Y + ROW_ANCHOR_Y - FONT_BTN_H / 2f;
 
         private const float FONT_RESET_W = 56f;        // [重置] 按钮宽度
 
@@ -421,6 +442,51 @@ namespace NotchPeninsula
         /// </summary>
         internal int _dropdownVisibleRows = 0;
         internal int _dropdownFirstRow = 0;
+
+        /// <summary>下拉浮层的行高。绘制、命中、滚轮三处必须共用这一个数。</summary>
+        private const float DROPDOWN_ROW_H = 26f;
+
+        /// <summary>
+        /// 提示音下拉浮层的**唯一布局真源**：把「浮层顶 / 可视行数 / 最大首行」算成一套，
+        /// 供绘制（RenderDropdownList）、悬停命中（OnMouseMove）、滚轮（WM_MOUSEWHEEL）三处共用。
+        ///
+        /// ⚠️ 以前这三处各写一份，而且滚轮那份把浮层顶写成了 `SOUND_ROW_Y + SOUND_ROW_H + 2`
+        ///    （漏了 `ROW_DROPDOWN_TOP` = 14）—— 与绘制侧差 14px，可滚范围因此对不上，
+        ///    表现就是「滚两下就滚不动了」。改这里即三处同时生效。
+        /// </summary>
+        private void GetToastSoundMenuLayout(out float menuTop, out int visibleRows, out int maxFirstRow)
+        {
+            int total = ToastSoundConfig.OptionCount;
+            menuTop = TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H + 2f;
+            int maxRows = Math.Max(1, (int)((HEIGHT - 12 - menuTop) / DROPDOWN_ROW_H));
+            visibleRows = Math.Min(total, maxRows);
+            maxFirstRow = Math.Max(0, total - visibleRows);
+        }
+
+        /// <summary>
+        /// 展开提示音下拉时把滚动位置定到「当前选中项可见」处 —— **只在这一刻做一次**。
+        /// 之后滚动位置完全由滚轮决定：曾经在绘制与命中里每帧「抢回选中项」，
+        /// 结果滚轮刚滚下去、下一帧就被拉回顶部，用户看到的就是「根本滚不动」。
+        /// </summary>
+        private void ScrollToastSoundMenuToSelected()
+        {
+            GetToastSoundMenuLayout(out _, out int visible, out int maxFirst);
+            _dropdownScroll = maxFirst <= 0
+                ? 0
+                : Math.Clamp(ToastSoundConfig.SelectedIndex - visible / 2, 0, maxFirst);
+        }
+
+        /// <summary>
+        /// 按当前光标位置重算一次悬停态。滚轮不产生 WM_MOUSEMOVE ——
+        /// 滚动后光标下的行号变了，但 hover 索引还停在「滚动前」那一项，
+        /// 紧接着的点击就会选错音源（用户说的「断触」）。滚动完必须补这一下。
+        /// </summary>
+        private void SyncHoverFromCursor()
+        {
+            if (!Win32.GetCursorPos(out var pt) || !Win32.GetWindowRect(_hwnd, out var rect))
+                return;
+            OnMouseMove((int)((pt.x - rect.Left) / _dpiScale), (int)((pt.y - rect.Top) / _dpiScale), false);
+        }
 
         /// <summary>「音量」下拉的展开 / 悬停 / 命中项（与提示音下拉互斥，见 CloseAllDropdowns）。</summary>
         private bool _soundVolumeDropdownOpen = false;
@@ -820,20 +886,23 @@ namespace NotchPeninsula
                     break;
 
                 // 🖱 滚轮：只服务于提示音下拉浮层（列表是动态扫目录来的，条目数不封顶）。
-                //    每格 120 → 滚动 3 行；滚动后立即重绘，并与命中检测共用同一套钳制算法。
+                //    每格 120 → 滚动 3 行；可滚范围与绘制 / 命中共用 GetToastSoundMenuLayout。
                 case Win32.WM_MOUSEWHEEL:
                     if (_toastSoundDropdownOpen)
                     {
                         int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
-                        int totalOpts = ToastSoundConfig.OptionCount;
-                        int menuTop = (int)(TITLE_BAR_HEIGHT + SOUND_ROW_Y + SOUND_ROW_H + 2);
-                        int maxRows = Math.Max(1, (HEIGHT - 12 - menuTop) / 26);
-                        int visible = Math.Min(totalOpts, maxRows);
-                        int maxFirst = Math.Max(0, totalOpts - visible);
+                        GetToastSoundMenuLayout(out _, out _, out int maxFirst);
                         if (maxFirst > 0)
                         {
-                            _dropdownScroll = Math.Clamp(_dropdownScroll - delta / 120 * 3, 0, maxFirst);
-                            Render();
+                            int target = Math.Clamp(_dropdownScroll - delta / 120 * 3, 0, maxFirst);
+                            if (target != _dropdownScroll)
+                            {
+                                _dropdownScroll = target;
+                                // 滚轮不产生 WM_MOUSEMOVE：光标下的行号变了、hover 却还停在旧项上，
+                                // 紧接着点下去就会选错音源。这里按当前光标位置补一次命中。
+                                SyncHoverFromCursor();
+                                Render();
+                            }
                         }
                         return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
                     }

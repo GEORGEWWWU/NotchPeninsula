@@ -43,22 +43,30 @@ namespace NotchPeninsula
         // 只画「一行开关」的内容（标题 / 副标题 / 右侧开关），**不画卡片底**。
         // 拆出来是为了让「自动隐藏」那张卡片能在同一个卡片底里放两行（主开关 + 附属开关）。
         //
-        // ⚠️ 纵向偏移必须走全页统一的常量：
-        //    标题基线 = yOffset + ROW_TEXT_BASELINE（= 行首 + 35.5，使墨迹中线 == 控件中心）
-        //    副标题   = 标题基线 + 20（保持两行文字 20px 行距，与全页节奏一致）
-        //    开关轨道 = yOffset + ROW_ANCHOR_Y ± TOGGLE_TRACK_H/2（中心 = 行首 + 30）
-        //    以前这里写死 26 / 46 / 20，与其它行各写各的，才会出现「四行四种偏移」。
+        // ⚠️ 纵向偏移必须走全页统一的常量，**按本行有几行文字分别取基线**：
+        //    有副标题（两行）→ 标题基线 = yOffset + ROW_TEXT_BASELINE（= 行首 + 25.5），
+        //                      副标题 = 标题 + ROW_SUB_OFFSET（= 行首 + 45.5）；
+        //                      两行墨迹的整体中心 = 行首 + 30 = 行内锚点。
+        //    无副标题（单行）→ 标题基线 = yOffset + ROW_TEXT_BASELINE_SINGLE（= 行首 + 35.5），
+        //                      墨迹中线 = 行首 + 30 = 行内锚点。
+        //    开关轨道 = yOffset + ROW_ANCHOR_Y ± TOGGLE_TRACK_H/2（中心 = 行首 + 30）。
+        //    以前这里对两类行用同一个偏移，才会出现「两行文字整块往下掉 10px」。
         private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
         {
+            // 有副标题 → 对齐「两行文字块的中线」；没有 → 对齐「这一行文字的中线」。
+            // 两者都等于把文字块与右侧控件做成同心，卡片/行高变化时自动跟着走。
+            float titleBaseline = TITLE_BAR_HEIGHT + yOffset
+                + (sub.Length > 0 ? ROW_TEXT_BASELINE : ROW_TEXT_BASELINE_SINGLE);
+
             _uiTextPaint.Color = disabled ? new SKColor(100, 100, 100) : SKColors.White;
-            canvas.DrawText(title, 216, TITLE_BAR_HEIGHT + yOffset + ROW_TEXT_BASELINE, _uiTextPaint);
+            canvas.DrawText(title, 216, titleBaseline, _uiTextPaint);
             _uiTextPaint.Color = SKColors.White;
 
             // sub 为空时整行只有标题 + 开关（如「消息提示音」平时不写副标题）
             if (sub.Length > 0)
             {
                 _subTextPaint.Color = disabled ? new SKColor(80, 80, 80) : new SKColor(170, 170, 170);
-                canvas.DrawText(sub, 216, TITLE_BAR_HEIGHT + yOffset + ROW_TEXT_BASELINE + 20f, _subTextPaint);
+                canvas.DrawText(sub, 216, titleBaseline + ROW_SUB_OFFSET, _subTextPaint);
                 _subTextPaint.Color = new SKColor(170, 170, 170);
             }
 
@@ -272,12 +280,13 @@ namespace NotchPeninsula
             var fontCard = new SKRect(200, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - 20, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);
             canvas.DrawRoundRect(fontCard, 6, 6, _cardBg);
             canvas.DrawRoundRect(fontCard, 6, 6, _cardBorder);
-            canvas.DrawText("切换灵动岛字体", 216, TITLE_BAR_HEIGHT + FONT_CARD_Y + 26, _uiTextPaint);
+            canvas.DrawText("切换灵动岛字体", 216, TITLE_BAR_HEIGHT + FONT_CARD_Y + ROW_TEXT_BASELINE, _uiTextPaint);
 
             bool fontError = _fontHint.Length > 0;
             string fontSub = fontError ? _fontHint : $"当前：{FontConfig.DisplayName}";
             _subTextPaint.Color = fontError ? new SKColor(232, 100, 100) : new SKColor(170, 170, 170);
-            canvas.DrawText(TruncateText(fontSub, _subTextPaint, FONT_PICK_X - 216 - 8), 216, TITLE_BAR_HEIGHT + FONT_CARD_Y + 46, _subTextPaint);
+            canvas.DrawText(TruncateText(fontSub, _subTextPaint, FONT_PICK_X - 216 - 8), 216,
+                TITLE_BAR_HEIGHT + FONT_CARD_Y + ROW_TEXT_BASELINE + ROW_SUB_OFFSET, _subTextPaint);
             _subTextPaint.Color = new SKColor(170, 170, 170);
 
             void DrawFontButton(bool hovered, string label, float bx, float bw)
@@ -1004,13 +1013,18 @@ namespace NotchPeninsula
 
         // 各页签展开的下拉浮层（媒体平台 / 匹配方式 / 目标软件 / 通知内容 / 目标显示器）
         /// <summary>
-        /// 画一个展开的下拉列表浮层。行高固定 26，与命中判定里的 <c>/ 26</c> 必须一致。
+        /// 画一个展开的下拉列表浮层。行高固定 <see cref="DROPDOWN_ROW_H"/>（26），
+        /// 与命中判定、滚轮的可滚范围必须一致。
         /// <paramref name="dimmedIndex"/> 那一项灰显（但仍可点，用于「自定义项失效」这种
         /// 「能点进去重选、但当前值不可用」的场景）。
+        /// <paramref name="scrollFirst"/> 是**首行索引**，由调用方给定：
+        /// 只有提示音列表项数会超过可视区（传 <c>_dropdownScroll</c>），其余列表一律传 0。
+        /// ⚠️ 本方法**不做**「自动把选中项滚进可视区」——那件事只在展开那一刻做一次
+        ///    （见 <see cref="ScrollToastSoundMenuToSelected"/>），否则滚轮会被每帧拉回顶部。
         /// </summary>
         private void RenderDropdownList(SKCanvas canvas, float x, float yOffset, float w,
                                         string[] options, int selectedIndex, int hoveredIndex, int dimmedIndex,
-                                        bool upward = false)
+                                        bool upward = false, int scrollFirst = 0)
         {
             // 🔻 浮层高度必须**钳制**在窗口内：
             //    提示音列表是**动态加载**的（data\sound 里丢多少 wav 就有多少项），
@@ -1022,28 +1036,24 @@ namespace NotchPeninsula
             int total = options.Length;
             float availFrom = upward ? anchorY - 2 : anchorY;
             int maxRows = upward
-                ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12) / 26))
-                : Math.Max(1, (int)((HEIGHT - 12 - availFrom) / 26));
+                ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12) / DROPDOWN_ROW_H))
+                : Math.Max(1, (int)((HEIGHT - 12 - availFrom) / DROPDOWN_ROW_H));
             int visible = Math.Min(total, maxRows);
-            float listH = visible * 26;
+            float listH = visible * DROPDOWN_ROW_H;
             float dY = upward ? anchorY - 2 - listH : anchorY;
             var dRect = new SKRect(x, dY, x + w, dY + listH);
             canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
             canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
 
-            // 滚动：让选中项尽量可见（浮层刚展开时定位到当前选中行）
-            int first = 0;
-            if (total > visible)
-            {
-                first = Math.Clamp(_dropdownScroll, 0, total - visible);
-                if (selectedIndex >= 0 && (selectedIndex < first || selectedIndex >= first + visible))
-                    first = Math.Clamp(selectedIndex - visible / 2, 0, total - visible);
-            }
+            // 滚动：首行**完全由调用方给**。以前这里会在选中项跑出可视区时把 first 强行拉回
+            // 选中项附近 —— 于是滚轮刚滚下去、下一帧就被拉回顶部，用户看到的就是「滚不动」。
+            int maxFirst = Math.Max(0, total - visible);
+            int first = Math.Clamp(scrollFirst, 0, maxFirst);
 
             for (int row = 0; row < visible; row++)
             {
                 int i = first + row;
-                float itemY = dY + row * 26;
+                float itemY = dY + row * DROPDOWN_ROW_H;
                 if (hoveredIndex == i)
                     canvas.DrawRoundRect(new SKRect(x + 2, itemY + 2, x + w - 2, itemY + 24), 3, 3, _tabBgSelected);
 
@@ -1059,7 +1069,12 @@ namespace NotchPeninsula
             {
                 float trackH = listH - 8;
                 float thumbH = Math.Max(18, trackH * visible / total);
-                float thumbY = dY + 4 + trackH * first / Math.Max(1, total - visible);
+                // ⚠️ 滑块只能走「轨道高 - 滑块高」这段行程。
+                //    曾经写成 `trackH * first / maxFirst`：当滑块本身很长（可视行数接近总行数）时，
+                //    thumbY + thumbH 会一路超过轨道底边，滑块整条滑出下拉菜单往下掉 ——
+                //    用户点名的「下拉滑轨溢出菜单主体」。改这里必须保证
+                //    `thumbY + thumbH <= dY + 4 + trackH`。
+                float thumbY = dY + 4 + (trackH - thumbH) * first / Math.Max(1, maxFirst);
                 _dynamicFillPaint.Color = new SKColor(255, 255, 255, 30);
                 canvas.DrawRoundRect(new SKRect(x + w - 6, dY + 4, x + w - 3, dY + 4 + trackH), 1.5f, 1.5f, _dynamicFillPaint);
                 _dynamicFillPaint.Color = new SKColor(255, 255, 255, 110);
@@ -1148,10 +1163,14 @@ namespace NotchPeninsula
             // 🎵 消息提示音下拉菜单（通用设置）：无 / data\sound 里的每个 wav / 浏览音频…
             if (_selectedTab == 0 && _toastSoundDropdownOpen)
             {
-                RenderDropdownList(canvas, SOUND_CTRL_X, SOUND_BOX_Y + SOUND_ROW_H + 2, SOUND_CTRL_W,
+                // 浮层锚点与可滚范围都取自 GetToastSoundMenuLayout —— 绘制 / 悬停命中 / 滚轮三处同源，
+                // 不要再在这里手写 `SOUND_BOX_Y + SOUND_ROW_H + 2`。
+                GetToastSoundMenuLayout(out float soundMenuTop, out _, out _);
+                RenderDropdownList(canvas, SOUND_CTRL_X, soundMenuTop - TITLE_BAR_HEIGHT, SOUND_CTRL_W,
                     ToastSoundConfig.BuildOptionLabels(), ToastSoundConfig.SelectedIndex, _hoveredToastSoundIndex,
                     dimmedIndex: ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out _)
-                        ? -1 : ToastSoundConfig.CustomIndex);
+                        ? -1 : ToastSoundConfig.CustomIndex,
+                    scrollFirst: _dropdownScroll);
             }
 
             // 🎵 音量下拉菜单：档位多（0%~100%，10% 一档共 11 项）且控件贴近窗口下半区，
