@@ -80,13 +80,24 @@ namespace NotchPeninsula
                 ToastSoundConfig.IsEnabled = !ToastSoundConfig.IsEnabled;
                 Program.SaveSetting("ToastSoundEnabled", ToastSoundConfig.IsEnabled ? 1 : 0);
                 // 关闭时把还在排队的提示音清掉，避免「开关已经关了、耳朵里还在响」
-                if (!ToastSoundConfig.IsEnabled) ToastSoundPlayer.ClearQueue();
+                if (!ToastSoundConfig.IsEnabled)
+                {
+                    ToastSoundPlayer.ClearQueue();
+                    // 🎵 第 4 行整行是这条开关的附属：关掉它，附属设置行立刻置灰、不吃指针，
+                    //    所以这时还开着的浮层（提示音下拉 / 音量下拉）必须一起收掉，
+                    //    否则会留下一个「盖在禁用区域上、却还能点」的浮窗。
+                    CloseAllDropdowns();
+                }
                 Render();
             }
-            else if (_toastSoundDropdownHovered)
+            // 🎵 行 4 的四个控件都要求父开关「消息提示音」已打开
+            //    （判据与绘制侧置灰、命中侧不吃指针同源，见 ToastSoundConfig.IsRowEnabled）
+            else if (_toastSoundDropdownHovered && ToastSoundConfig.IsRowEnabled)
             {
                 CloseAllDropdowns();
-                // 每次展开都重扫一遍目录：新丢进 data\sound 的文件不用重启就能看到
+                // 每次展开都重扫一遍目录：新丢进 data\sound 的文件不用重启就能看到。
+                // RefreshBuiltins 内部会顺手把当前选择「按文件名身份」重新对齐一次
+                // （增删 wav 造成的位置漂移 / 索引越界都在那里自愈），所以这里不用再补。
                 ToastSoundConfig.RefreshBuiltins();
                 _toastSoundDropdownOpen = true;
                 // 展开时把滚动位置定到「当前选中项可见」处；**之后滚动完全交给滚轮**，
@@ -100,7 +111,7 @@ namespace NotchPeninsula
                 _toastSoundDropdownOpen = false;
                 Render();
             }
-            else if (_soundVolumeDropdownHovered)
+            else if (_soundVolumeDropdownHovered && ToastSoundConfig.IsSourceReady)
             {
                 CloseAllDropdowns();
                 _soundVolumeDropdownOpen = true;
@@ -112,8 +123,8 @@ namespace NotchPeninsula
                 _soundVolumeDropdownOpen = false;
                 Render();
             }
-            else if (_soundPreviewHovered) { PreviewToastSound(); }
-            else if (_soundResetHovered) { ResetToastSound(); }
+            else if (_soundPreviewHovered && ToastSoundConfig.IsSourceReady) { PreviewToastSound(); }
+            else if (_soundResetHovered && ToastSoundConfig.IsSourceReady) { ResetToastSound(); }
             else if (_selectedTab == 2 && _matchModeDropdownHovered)
             {
                 CloseAllDropdowns();
@@ -406,7 +417,9 @@ namespace NotchPeninsula
                 _dropdownOpen = false;
                 Render();
             }
-            else if (_selectedTab == 1 && _hoveredDisplayOptionIndex != -1)
+            // ⚠️ 组合模式下「待机显示内容」是置灰的（RenderTabDisplay 的 isDisabled），
+            //    这里必须同步禁用 —— 否则会出现「看着灰、光标是禁止指针、点下去却真的生效」。
+            else if (_selectedTab == 1 && !Renderer.CompositeModeEnabled && _hoveredDisplayOptionIndex != -1)
             {
                 int previousMode = Renderer.StandbyDisplayMode;
                 _selectedDisplayIndex = _hoveredDisplayOptionIndex;

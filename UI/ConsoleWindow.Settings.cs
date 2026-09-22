@@ -141,21 +141,26 @@ namespace NotchPeninsula
             if (index == ToastSoundConfig.CustomIndex) { PickToastSound(); return; }
 
             ToastSoundConfig.SelectedIndex = index;
-            Program.SaveSetting("ToastSoundIndex", index);
 
             if (index == 0)
             {
-                // 切到「无」时把自定义路径也清掉：避免残留一条指向旧文件的记忆
+                // 切到「无」时把自定义路径与内置音身份一起清掉：避免残留一条指向旧文件的记忆
                 ToastSoundConfig.CustomPath = "";
-                Program.SaveSetting("ToastSoundPath", "");
+                ToastSoundConfig.SelectedKey = "";
+                ToastSoundConfig.PersistSelection();
                 _soundHint = "";
                 ToastSoundPlayer.ClearQueue(); // 正在响的直接掐掉，别让「已选无」之后还响
             }
             else
             {
+                // 🔑 记下这条内置音的**文件名身份**。只存位置索引的话，
+                //    目录里增删一个 wav 就会让用户的选择悄悄换成另一个音。
+                ToastSoundConfig.SelectedKey = ToastSoundConfig.Builtins[index - ToastSoundConfig.BuiltinOffset].FileName;
+                ToastSoundConfig.PersistSelection();
                 _soundHint = "";
-                // 顺手把提示音开关打开 —— 用户主动选了音源，意图就是要听，
-                // 不然会陷入「选了但没声、还得自己去找那个开关」的迷惑。
+                // 顺手把提示音开关打开 —— 用户主动选了音源，意图就是要听。
+                // ⚠️ 现在第 4 行整体由父开关「消息提示音」置灰（见 IsRowEnabled），
+                //    所以正常路径下走到这里时开关必然已开，这段只是一层保险。
                 if (!ToastSoundConfig.IsEnabled)
                 {
                     ToastSoundConfig.IsEnabled = true;
@@ -177,9 +182,10 @@ namespace NotchPeninsula
                 {
                     ToastSoundConfig.CustomPath = picked;
                     ToastSoundConfig.SelectedIndex = ToastSoundConfig.CustomIndex;
-                    Program.SaveSetting("ToastSoundPath", picked);
-                    Program.SaveSetting("ToastSoundIndex", ToastSoundConfig.CustomIndex);
+                    ToastSoundConfig.SelectedKey = ""; // 自定义项没有「内置文件名身份」
+                    ToastSoundConfig.PersistSelection();
                     // 同上：选了音源就把开关打开，否则用户会以为功能坏了
+                    // （同样只是保险 —— 第 4 行在父开关关闭时是整体置灰的）
                     if (!ToastSoundConfig.IsEnabled)
                     {
                         ToastSoundConfig.IsEnabled = true;
@@ -210,11 +216,11 @@ namespace NotchPeninsula
             ToastSoundConfig.IsEnabled = false;
             ToastSoundConfig.SelectedIndex = 0;
             ToastSoundConfig.CustomPath = "";
+            ToastSoundConfig.SelectedKey = ""; // 内置音的文件名身份也要一起清
             // ⚠️ 必须用 DefaultVolumePercent，不能写 VolumeOptions[1]（那是 10，与出厂默认是两回事）
             ToastSoundConfig.VolumePercent = ToastSoundConfig.DefaultVolumePercent;
             Program.SaveSetting("ToastSoundEnabled", 0);
-            Program.SaveSetting("ToastSoundIndex", 0);
-            Program.SaveSetting("ToastSoundPath", "");
+            ToastSoundConfig.PersistSelection(); // 索引 / 文件名身份 / 自定义路径三者一次写回
             Program.SaveSetting("ToastSoundVolume", ToastSoundConfig.VolumePercent);
             ToastSoundPlayer.ClearQueue();
             _soundHint = "";
@@ -229,13 +235,17 @@ namespace NotchPeninsula
                 string? path = ToastSoundConfig.ResolveCurrentPath();
                 if (path == null)
                 {
-                    // 只有「用户明确点了试听」才值得提示；切到「无」时静默即可
+                    // 只有「用户明确点了试听」才值得提示；切到「无」时静默即可。
+                    // ⚠️ 原因必须按**当前选中的那一项**去问：内置项要看内置文件本身，
+                    //    不能拿 CustomPath 去套 —— 那样内置音缺失时会糊上
+                    //    「尚未选择音频文件」这种完全对不上的文案（见 DescribeUnavailable）。
                     if (ToastSoundConfig.SelectedIndex != 0)
-                        _soundHint = ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out string why) ? "" : why;
+                        _soundHint = ToastSoundConfig.DescribeUnavailable();
                     Render();
                     return;
                 }
                 // 试听走同一个队列：连续点几次也是依次响，不会叠成噪音
+                _soundHint = "";
                 ToastSoundPlayer.Enqueue(path, ToastSoundConfig.VolumePercent);
                 Render();
             }

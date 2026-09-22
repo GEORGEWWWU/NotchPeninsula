@@ -436,13 +436,6 @@ namespace NotchPeninsula
         /// </summary>
         private int _dropdownScroll = 0;
 
-        /// <summary>
-        /// 提示音下拉浮层「本次绘制」的可视行数与首行（由命中检测每帧刷新）。
-        /// 点击时要靠它把屏幕行号换算成真实索引，别直接用 (y-menuTop)/26。
-        /// </summary>
-        internal int _dropdownVisibleRows = 0;
-        internal int _dropdownFirstRow = 0;
-
         /// <summary>下拉浮层的行高。绘制、命中、滚轮三处必须共用这一个数。</summary>
         private const float DROPDOWN_ROW_H = 26f;
 
@@ -461,6 +454,24 @@ namespace NotchPeninsula
             int maxRows = Math.Max(1, (int)((HEIGHT - 12 - menuTop) / DROPDOWN_ROW_H));
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
+        }
+
+        /// <summary>
+        /// 「音量」下拉浮层的**唯一布局真源**（向上展开：底边贴住音量框上沿）。
+        /// 三个出参 = 浮层顶 / 浮层底 / 可视行数，绘制与命中都只认它。
+        ///
+        /// ⚠️ 算式必须与 <see cref="RenderDropdownList"/> 的 `upward: true` 分支**逐字同源**
+        ///    （`availFrom = anchorY - 2`、`maxRows = (availFrom - TITLE_BAR_HEIGHT - 12) / 行高`）。
+        ///    以前绘制侧减了那个 2、命中侧没减，两边**靠巧合**算出同一个行数（都是 13），
+        ///    只要 <see cref="SOUND_BOX_Y"/> 挪动十几像素就会立刻错位 —— 与「提示音列表滚不动」
+        ///    是同一种病：同一份布局在多处各写一份。绘制与命中现在都调本方法。
+        /// </summary>
+        private void GetVolumeMenuLayout(out float menuTop, out float menuBottom, out int visibleRows)
+        {
+            menuBottom = TITLE_BAR_HEIGHT + SOUND_BOX_Y - 2f;   // 对应 RenderDropdownList 的 anchorY - 2
+            int maxRows = Math.Max(1, (int)((menuBottom - TITLE_BAR_HEIGHT - 12f) / DROPDOWN_ROW_H));
+            visibleRows = Math.Min(ToastSoundConfig.VolumeOptions.Length, maxRows);
+            menuTop = menuBottom - visibleRows * DROPDOWN_ROW_H;
         }
 
         /// <summary>

@@ -241,13 +241,19 @@ namespace NotchPeninsula
             // 左起标签「提示音」，右起「提示音」下拉 + 音量下拉 + [试听][重置]。
             // ⚠️ 这一行是全页唯一 4 控件并排的行（下拉+音量+两按钮 = 340px），内容区只有 348px，
             //    所以左侧**只放一个短标签、不放描述文字** —— 放不下会叠到下拉框上。
-            //    「音量」下拉的可用性只看「有没有具体音源」，与绘制侧置灰判据同源。
-            bool soundReady = ToastSoundConfig.SelectedIndex > 0;
+            //    「音量」下拉的可用性由 ToastSoundConfig.IsSourceReady 给出（父开关 + 有具体音源），
+            //    与命中侧 / 点击侧**同源**，不要再在这里手写 `SelectedIndex > 0`。
+            //    🎵 第 4 行整行是「消息提示音」开关的附属：父开关关掉时整行置灰、不吃指针
+            //       （与 tab 3「自动隐藏关掉 → 两个子开关整行置灰」同一套父子约定）。
+            bool soundRowEnabled = ToastSoundConfig.IsRowEnabled;
+            bool soundReady = ToastSoundConfig.IsSourceReady;
 
+            if (!soundRowEnabled) _uiTextPaint.Color = new SKColor(100, 100, 100);
             canvas.DrawText("提示音", SOUND_LABEL_X, TITLE_BAR_HEIGHT + SOUND_ROW_TITLE_Y, _uiTextPaint);
+            if (!soundRowEnabled) _uiTextPaint.Color = SKColors.White;
 
             DrawDropdownBox(canvas, SOUND_CTRL_X, SOUND_BOX_Y, SOUND_CTRL_W, SOUND_ROW_H,
-                ToastSoundConfig.CurrentDisplayText(), _toastSoundDropdownHovered, enabled: true);
+                ToastSoundConfig.CurrentDisplayText(), _toastSoundDropdownHovered, enabled: soundRowEnabled);
 
             DrawDropdownBox(canvas, SOUND_VOL_X, SOUND_BOX_Y, SOUND_VOL_W, SOUND_ROW_H,
                 $"{ToastSoundConfig.VolumePercent}%", _soundVolumeDropdownHovered, enabled: soundReady);
@@ -262,7 +268,10 @@ namespace NotchPeninsula
                 float tw = _uiTextPaint.MeasureText(label);
                 if (!enabled) _uiTextPaint.Color = new SKColor(110, 110, 110);
                 canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + SOUND_BTN_Y + 17, _uiTextPaint);
-                if (!enabled) _uiTextPaint.Color = new SKColor(240, 240, 240);
+                // ⚠️ 恢复色必须是 _uiTextPaint 的**基准色** SKColors.White，不能写 (240,240,240)：
+                //    这一行之后还要画「剪贴板链接检测」「切换灵动岛字体」两张卡的标题，
+                //    残留的 240 会把它们一起压暗（置灰态下必现，因为 enabled=false 才会走这里）。
+                if (!enabled) _uiTextPaint.Color = SKColors.White;
             }
 
             DrawSoundButton(_soundPreviewHovered, "试听", SOUND_PREVIEW_X, SOUND_BTN_W, soundReady);
@@ -318,7 +327,9 @@ namespace NotchPeninsula
 
             if (!enabled) _uiTextPaint.Color = new SKColor(110, 110, 110);
             canvas.DrawText(TruncateText(text, _uiTextPaint, w - 26), rect.Left + 10, rect.Top + h / 2f + 5, _uiTextPaint);
-            if (!enabled) _uiTextPaint.Color = new SKColor(240, 240, 240);
+            // ⚠️ 恢复基准色 SKColors.White（不是 240）—— 本方法后面还要画同帧的其它卡片标题，
+            //    残留色会把它们一起压暗。当前唯一会传 enabled:false 的调用方是提示音行。
+            if (!enabled) _uiTextPaint.Color = SKColors.White;
 
             float cx = rect.Right - 18;
             float cy = rect.MidY;
@@ -1024,7 +1035,7 @@ namespace NotchPeninsula
         /// </summary>
         private void RenderDropdownList(SKCanvas canvas, float x, float yOffset, float w,
                                         string[] options, int selectedIndex, int hoveredIndex, int dimmedIndex,
-                                        bool upward = false, int scrollFirst = 0)
+                                        bool upward = false, int scrollFirst = 0, int visibleRowsOverride = 0)
         {
             // 🔻 浮层高度必须**钳制**在窗口内：
             //    提示音列表是**动态加载**的（data\sound 里丢多少 wav 就有多少项），
@@ -1038,7 +1049,11 @@ namespace NotchPeninsula
             int maxRows = upward
                 ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12) / DROPDOWN_ROW_H))
                 : Math.Max(1, (int)((HEIGHT - 12 - availFrom) / DROPDOWN_ROW_H));
-            int visible = Math.Min(total, maxRows);
+            // 🔻 调用方若已经用布局真源（GetToastSoundMenuLayout / GetVolumeMenuLayout）算过可视行数，
+            //    就**以它为准** —— 否则命中侧与绘制侧又变成两份独立算式（A7 的病根）。
+            int visible = visibleRowsOverride > 0
+                ? Math.Min(total, visibleRowsOverride)
+                : Math.Min(total, maxRows);
             float listH = visible * DROPDOWN_ROW_H;
             float dY = upward ? anchorY - 2 - listH : anchorY;
             var dRect = new SKRect(x, dY, x + w, dY + listH);
@@ -1165,23 +1180,25 @@ namespace NotchPeninsula
             {
                 // 浮层锚点与可滚范围都取自 GetToastSoundMenuLayout —— 绘制 / 悬停命中 / 滚轮三处同源，
                 // 不要再在这里手写 `SOUND_BOX_Y + SOUND_ROW_H + 2`。
-                GetToastSoundMenuLayout(out float soundMenuTop, out _, out _);
+                GetToastSoundMenuLayout(out float soundMenuTop, out int soundVisible, out _);
                 RenderDropdownList(canvas, SOUND_CTRL_X, soundMenuTop - TITLE_BAR_HEIGHT, SOUND_CTRL_W,
                     ToastSoundConfig.BuildOptionLabels(), ToastSoundConfig.SelectedIndex, _hoveredToastSoundIndex,
                     dimmedIndex: ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out _)
                         ? -1 : ToastSoundConfig.CustomIndex,
-                    scrollFirst: _dropdownScroll);
+                    scrollFirst: _dropdownScroll, visibleRowsOverride: soundVisible);
             }
 
             // 🎵 音量下拉菜单：档位多（0%~100%，10% 一档共 11 项）且控件贴近窗口下半区，
             //    所以**向上展开** —— 向下展开会一路拖出窗口。
+            //    可视行数由 GetVolumeMenuLayout 给出（与命中侧同源），绘制不再自己算一份。
             if (_selectedTab == 0 && _soundVolumeDropdownOpen)
             {
                 var volLabels = new string[ToastSoundConfig.VolumeOptions.Length];
                 for (int i = 0; i < volLabels.Length; i++) volLabels[i] = $"{ToastSoundConfig.VolumeOptions[i]}%";
+                GetVolumeMenuLayout(out _, out _, out int volVisible);
                 RenderDropdownList(canvas, SOUND_VOL_X, SOUND_BOX_Y, SOUND_VOL_W,
                     volLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex, dimmedIndex: -1,
-                    upward: true);
+                    upward: true, scrollFirst: 0, visibleRowsOverride: volVisible);
             }
 
             // 目标显示器

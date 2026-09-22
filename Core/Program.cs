@@ -67,6 +67,8 @@ namespace NotchPeninsula
                     ToastSoundConfig.RefreshBuiltins();
                     ToastSoundConfig.Restore(
                         (int)key.GetValue("ToastSoundIndex", 0),
+                        // 内置音的文件名身份（老版本注册表没有这个值 → 空串，会按索引一次性迁移）
+                        key.GetValue("ToastSoundKey", "") as string ?? "",
                         key.GetValue("ToastSoundPath", "") as string ?? "",
                         (int)key.GetValue("ToastSoundEnabled", 0) != 0,
                         (int)key.GetValue("ToastSoundVolume", ToastSoundConfig.DefaultVolumePercent));

@@ -160,9 +160,15 @@ namespace NotchPeninsula
                     && y >= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y + TOGGLE_TRACK_H)
                     newSoundToggleHovered = true;
 
-                // 🎵 第 2 行：提示音下拉（浮层展开时底层不吃指针，避免误触浮窗底下的框）
+                // 🎵 行 4 的「提示音设置」是**父开关「消息提示音」的附属**：
+                //    父开关关掉时整行不吃指针（与绘制侧的置灰判据同源，见 ToastSoundConfig.IsRowEnabled）。
+                bool soundRowEnabled = ToastSoundConfig.IsRowEnabled;
+                // 音量 / 试听 / 重置 还要再多一个条件：已选中具体音源（同样与绘制侧同源）
+                bool soundReady = ToastSoundConfig.IsSourceReady;
+
+                // 🎵 行 4：提示音下拉（浮层展开时底层不吃指针，避免误触浮窗底下的框）
                 // ⚠️ 命中区必须与绘制侧同一个 SOUND_BOX_Y（框顶），不能用 SOUND_ROW_Y。
-                if (!_toastSoundDropdownOpen
+                if (soundRowEnabled && !_toastSoundDropdownOpen
                     && x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
                     && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                     newToastSoundDropdownHovered = true;
@@ -174,35 +180,28 @@ namespace NotchPeninsula
                     GetToastSoundMenuLayout(out float menuTop, out int visible, out int maxFirst);
                     // 首行**只认 _dropdownScroll**，不再每帧「抢回选中项」—— 那是滚轮失效的元凶。
                     int first = Math.Clamp(_dropdownScroll, 0, maxFirst);
-                    _dropdownVisibleRows = visible;
-                    _dropdownFirstRow = first;
                     if (x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
                         && y >= menuTop && y < menuTop + visible * DROPDOWN_ROW_H)
                         newHoveredToastSoundIndex = first + (int)((y - menuTop) / DROPDOWN_ROW_H);
                 }
 
                 // 🎵 音量下拉：只在选了具体音源时接受指针（与绘制侧的置灰判据同源）
-                bool soundReady = ToastSoundConfig.SelectedIndex > 0;
                 if (soundReady && !_soundVolumeDropdownOpen
                     && x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
                     && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                     newSoundVolumeDropdownHovered = true;
                 if (soundReady && _soundVolumeDropdownOpen)
                 {
-                    // 🔻 与 RenderDropdownList(upward: true) 同源：音量列表向上展开，
-                    //    底边贴住音量框上沿 (SOUND_BOX_Y)，首行在 (menuBottom - 可视行数*26)。
-                    float anchor = TITLE_BAR_HEIGHT + SOUND_BOX_Y;
-                    int totalVol = ToastSoundConfig.VolumeOptions.Length;
-                    int maxRowsV = Math.Max(1, (int)((anchor - TITLE_BAR_HEIGHT - 12) / 26));
-                    int visibleV = Math.Min(totalVol, maxRowsV);
-                    float menuBottom = anchor - 2;
-                    float menuTopV = menuBottom - visibleV * 26;
+                    // 🔻 浮层顶 / 浮层底 / 可视行数**只认 GetVolumeMenuLayout**（与绘制侧同一个真源）。
+                    //    以前这里自己算了一份、绘制侧在 RenderDropdownList 里又算一份，而且少了
+                    //    `anchorY - 2` 那一步 —— 两边靠巧合算出同一个行数，SOUND_BOX_Y 一挪就错位。
+                    GetVolumeMenuLayout(out float menuTopV, out float menuBottom, out _);
                     if (x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
                         && y >= menuTopV && y < menuBottom)
-                        newHoveredSoundVolumeIndex = (int)((y - menuTopV) / 26);
+                        newHoveredSoundVolumeIndex = (int)((y - menuTopV) / DROPDOWN_ROW_H);
                 }
 
-                // 🎵 第 2 行右侧按钮组：[试听] [重置]（同样只在有具体音源时接受指针）
+                // 🎵 行 4 右侧按钮组：[试听] [重置]（同样只在有具体音源时接受指针）
                 if (soundReady && y >= TITLE_BAR_HEIGHT + SOUND_BTN_Y && y <= TITLE_BAR_HEIGHT + SOUND_BTN_Y + SOUND_BTN_H)
                 {
                     if (x >= SOUND_PREVIEW_X && x <= SOUND_PREVIEW_X + SOUND_BTN_W) newSoundPreviewHovered = true;
@@ -242,10 +241,17 @@ namespace NotchPeninsula
                 }
 
                 // 待机显示内容卡片 (1/3 布局)
+                // ⚠️ 组合模式下这张卡片是**置灰**的（见 RenderTabDisplay 的 isDisabled），
+                //    所以这里也不能给出悬停 —— 否则会变成「看着灰、光标是禁止、点下去却生效」。
+                //    （下面 261 行那个 `if (_selectedTab == 1 && !CompositeModeEnabled)` 块
+                //      与本段等价，属于历史遗留的重复计算，本次未动。）
                 float displayOptY = TITLE_BAR_HEIGHT + 306;
-                if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2; // 硬件占用
-                if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0; // 时间日期
-                if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1; // 空白
+                if (!Renderer.CompositeModeEnabled)
+                {
+                    if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2; // 硬件占用
+                    if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0; // 时间日期
+                    if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1; // 空白
+                }
 
                 // 组合模式hover判定
                 float compCardY = TITLE_BAR_HEIGHT + 372;
@@ -416,6 +422,14 @@ namespace NotchPeninsula
                 if (_selectedTab == 1 && Renderer.CompositeModeEnabled
                     && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 360)  // 待机显示内容卡片
                 {
+                    newIsHoveringDisabledArea = true;
+                }
+                else if (_selectedTab == 0 && !ToastSoundConfig.IsRowEnabled
+                    && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
+                {
+                    // 🎵 提示音设置行（通知卡行 4）：父开关「消息提示音」关掉时整行禁止指针。
+                    //    判据与绘制侧的置灰（ToastSoundConfig.IsRowEnabled）、命中侧的不吃指针
+                    //    **完全同源** —— 与 tab 3「自动隐藏关掉 → 子开关整行禁用」同一套约定。
                     newIsHoveringDisabledArea = true;
                 }
                 else if (_selectedTab == 3)
