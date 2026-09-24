@@ -695,7 +695,8 @@ namespace NotchPeninsula
                     // 因为开启穿透后系统收不到鼠标消息，必须用 GetCursorPos 底层轮询
                     Win32.GetCursorPos(out var pt);
                     float logX = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
-                    float logY = (pt.y - _cachedMonitorY - _currentY) / _dpiScale;
+                    // 窗口 Y = 显示器原点 + 岛体垂直基准 + _currentY，换算回窗口内坐标要把基准一起减掉
+                    float logY = (pt.y - _cachedMonitorY - Renderer.IslandBaseY * _dpiScale - _currentY) / _dpiScale;
                     bool isOverNotch = logX >= left && logX <= left + _currentWidth && logY >= topY && logY <= topY + _currentHeight;
 
                     // 如果处于唤醒状态，但鼠标点击了本体外任意地方，立刻进入睡眠
@@ -754,7 +755,8 @@ namespace NotchPeninsula
                     float expTopY = 12f * _currentStyleProgress;
                     Win32.GetCursorPos(out var expPt);
                     float expX = (expPt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
-                    float expY = (expPt.y - _cachedMonitorY - _currentY) / _dpiScale;
+                    // 同上：窗口 Y 含岛体垂直基准，换算回窗口内坐标要一起减掉
+                    float expY = (expPt.y - _cachedMonitorY - Renderer.IslandBaseY * _dpiScale - _currentY) / _dpiScale;
                     bool isOverIsland = expX >= expLeft && expX <= expLeft + _currentWidth
                                         && expY >= expTopY && expY <= expTopY + _currentHeight;
 
@@ -804,7 +806,16 @@ namespace NotchPeninsula
                 // 隐藏位移量还必须加上灵动岛专属的下沉高度，否则藏不进屏幕。
                 float currentTopY = 12f * _currentStyleProgress;
                 float settledHeight = Math.Min(_currentHeight, _targetHeight);
-                float expectedTargetY = shouldHide ? -((settledHeight + currentTopY - 4) * _dpiScale) : 0f;
+
+                // 🌑 隐藏方式由「岛体垂直基准」（Renderer.IslandBaseY，位置自定义的唯一真源）决定：
+                //    · 基准贴顶（默认）→ 上移法：整窗顶出目标显示器上边缘、留 4px 细边，点细边唤醒（现状）
+                //    · 基准离开顶部      → 上移法会在屏幕中间留下一条 4px 岛体残影（而且岛体会从屏幕中间
+                //                          "飞"到顶部再消失），所以改用「完全隐藏」：原地整块淡出到 0% 透明
+                //                          （全透明像素会被 Windows 判定为物理穿透），唤醒入口复用岛体正中的
+                //                          唤醒按钮（与穿透睡眠态同一颗）。
+                //    两者互斥，贴顶时 FullHideAlpha 恒为 1 → 线上行为与本改动前完全一致。
+                bool slideOutHide = Renderer.IslandBaseY <= 0.5f;
+                float expectedTargetY = shouldHide && slideOutHide ? -((settledHeight + currentTopY - 4) * _dpiScale) : 0f;
 
                 if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
@@ -831,6 +842,13 @@ namespace NotchPeninsula
                     _currentY = (float)(_startY + (_targetY - _startY) * SpringEase(elapsedY));
                 }
             }
+
+                // 🌑 「完全隐藏」不透明度：只在「基准离开顶部 + 该隐藏」时淡到 0，其余情况恒为 1。
+                //    平滑节奏与穿透那套保持一致（0.18 + 归零钳制），避免小浮点让 Windows 判定不出全透明。
+                float targetFullHide = shouldHide && !slideOutHide ? 0f : 1f;
+                Renderer.FullHideAlpha += (targetFullHide - Renderer.FullHideAlpha) * 0.18f;
+                if (Renderer.FullHideAlpha < 0.01f) Renderer.FullHideAlpha = 0f;
+                if (Renderer.FullHideAlpha > 0.99f) Renderer.FullHideAlpha = 1f;
 
                 // ========================================================
                 // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
@@ -1087,7 +1105,8 @@ namespace NotchPeninsula
 
             if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
             ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
-            ptDst.y = _cachedMonitorY + (int)_currentY;
+            // 垂直基准走 Renderer.IslandBaseY（岛体位置自定义的唯一真源，默认 0 = 贴顶）
+            ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
 
             var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
             var blend = new Win32.BLENDFUNCTION
@@ -1158,7 +1177,8 @@ namespace NotchPeninsula
                         float hitTopY = 12f * _currentStyleProgress;
 
                         // 1. 最高优先级拦截：唤醒按钮热区（位置真源在 Renderer.WakeButtonX，与渲染共用）
-                        if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake)
+                        //    两种「整块不可见」的形态都要短路：穿透睡眠态、完全隐藏态（岛体基准离开顶部）
+                        if ((Renderer.PassthroughModeEnabled && !_isPassthroughAwake) || Renderer.FullHideAlpha < 0.99f)
                         {
                             if (HitWakeButton(mx, my))
                             {
@@ -1288,6 +1308,15 @@ namespace NotchPeninsula
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake && HitWakeButton(cx, cy))
                         {
                             _isPassthroughAwake = true;
+                            return (IntPtr)0;
+                        }
+
+                        // 🌑 完全隐藏态（岛体基准离开顶部）：点岛体正中的唤醒按钮唤回，与穿透睡眠态同一条路径。
+                        //     复用「手动展开」标记锁住显示 —— shouldHide 本来就排除 _isManuallyExpanded，
+                        //     所以岛体立刻淡回可见；之后点岛外由既有的兜底轮询收回（无需新状态位）。
+                        if (Renderer.FullHideAlpha < 0.99f && HitWakeButton(cx, cy))
+                        {
+                            _isManuallyExpanded = true;
                             return (IntPtr)0;
                         }
 

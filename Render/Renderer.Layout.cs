@@ -147,13 +147,11 @@ namespace NotchPeninsula
                     DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                 }
 
-                // 组合模式媒体控件：一律以「内容末端 + 10px 边距」为锚点
-                float rightOccupiedWidth = isHovered ? 95f : 45f;
-                float maskEnd = mediaAnchor - rightOccupiedWidth + 5f;
-                float maskStart = maskEnd - 15f;
-                canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                // 遮罩只涂到本模块锚点为止：排在媒体右边的插件内容不会被盖掉
-                canvas.DrawRect(maskEnd, 0, mediaAnchor, currentHeight, _bgPaint);
+                // 🧹 这里原有一层「渐隐 + 底色」遮罩，用途是盖住溢出到频谱下面的歌词尾巴。
+                //    歌词改成长度自适应后（岛体按文本真实宽度撑宽，本模块占宽也含整段文本），
+                //    文本末端距本模块锚点还剩 50px 余量，遮罩已经什么都遮不到 ——
+                //    只剩一条用背景色**二次叠涂**出来的实心色带（背景越透明越明显，
+                //    看着就像媒体控制器右侧多出一块不跟随透明度设置的组件），故整块删除。
 
                 if (isHovered)
                 {
@@ -278,7 +276,9 @@ namespace NotchPeninsula
                         DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                     }
 
-                    // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
+                    // 2. 遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
+                    //    ⚠️ 只有本面板还留着遮罩 —— 展开面板的宽度是固定的 320，长标题 / 长歌词确实会压到频谱上；
+                    //       折叠态与组合模式的岛体都按文本真实宽度自适应，那里的遮罩已按「残留色带」处理掉了。
                     float maskEnd = right - 55f;
                     float maskStart = maskEnd - 20f;
                     canvas.Save();
@@ -359,11 +359,9 @@ namespace NotchPeninsula
 
                     if (MediaInteractionMode == 0) // 直接交互模式
                     {
-                        float rightOccupiedWidth = isHovered ? 95f : 45f;
-                        float maskEnd = right - rightOccupiedWidth + 5f;
-                        float maskStart = maskEnd - 15f;
-                        canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                        canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+                        // 🧹 遮罩已删：岛体按歌词真实宽度自适应（NotchWindow 的 textWidth + 115f），
+                        //    文本末端到岛体右缘留了 67px，右侧这层底色遮罩只会残留一条色带，
+                        //    不再需要（原因同组合模式那处注释）。文本超出岛体的情况由 ClipPath 兜底。
 
                         if (isHovered)
                         {
@@ -384,12 +382,7 @@ namespace NotchPeninsula
                     }
                     else // 展开交互模式
                     {
-                        float rightOccupiedWidth = bars != null ? 45f : 15f;
-                        float maskEnd = right - rightOccupiedWidth + 5f;
-                        float maskStart = maskEnd - 15f;
-
-                        canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                        canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+                        // 🧹 遮罩已删，理由同上面直接交互模式：长歌词不再溢出，遮罩只剩残留色带。
 
                         if (bars != null)
                         {
@@ -513,7 +506,9 @@ namespace NotchPeninsula
         private static void DrawWakeButton(SKCanvas canvas, float currentHeight)
         {
             // 核心逻辑：2倍速急速消失。只要本体浮现到一半（Alpha>0.5），按钮立刻彻底消失，绝不拖泥带水
-            byte wakeAlpha = (byte)(Math.Max(0f, 1f - PassthroughAlpha * 2f) * 255);
+            // 取「哪条通道把岛体压得更暗」那一条：穿透睡眠走 PassthroughAlpha，完全隐藏走 FullHideAlpha
+            float islandAlpha = Math.Min(PassthroughAlpha, FullHideAlpha);
+            byte wakeAlpha = (byte)(Math.Max(0f, 1f - islandAlpha * 2f) * 255);
 
             float wakeBtnY = (currentHeight - WAKE_BTN_SIZE) / 2f; // 对齐内部垂直居中
             // 水平居中：唤醒按钮落在整个岛体的正中心，不再贴左边缘。

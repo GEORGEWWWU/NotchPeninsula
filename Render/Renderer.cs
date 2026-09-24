@@ -76,6 +76,29 @@ namespace NotchPeninsula
 
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
 
+        /// <summary>
+        /// 岛体垂直基准位置（逻辑像素）：<c>0</c> = 贴目标显示器顶部（默认，也是当前唯一的形态）。
+        ///
+        /// <para>
+        /// <b>位置自定义的唯一真源</b>：窗口坐标（<c>ptDst.y</c>）、自动隐藏策略（上移出屏 / 完全隐藏）、
+        /// 以及两处屏幕坐标轮询（穿透悬停、岛外点击兜底）全部从它派生 —— 将来开放「岛体位置自定义」
+        /// （无论做在宿主设置里还是给插件 API），**只需要写这一个值**，其余自动跟着走。
+        /// </para>
+        /// </summary>
+        public static float IslandBaseY { get; set; } = 0f;
+
+        /// <summary>
+        /// 「完全隐藏」不透明度：<c>1</c> = 正常显示，<c>0</c> = 整块不可见。
+        ///
+        /// <para>
+        /// 岛体基准离开顶部时，上移出屏那套会在屏幕中间留下一条 4px 岛体残影（且岛体会从屏幕中间
+        /// "飞"到顶部），所以改用原地淡出到 0% 透明 —— 全透明像素会被 Windows 判定为物理穿透，
+        /// 唤醒入口复用岛体正中的唤醒按钮（见 <see cref="Renderer.WakeButtonX"/>）。
+        /// 与 <see cref="PassthroughAlpha"/> 是两条独立通道（后者由穿透模式独占），渲染时取二者较小值。
+        /// </para>
+        /// </summary>
+        public static float FullHideAlpha = 1.0f;
+
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
 
@@ -223,7 +246,8 @@ namespace NotchPeninsula
                 canvas.Translate(0, topY);
 
                 // 开启一个硬件级透明图层，包裹本体所有元素，杜绝任何图层/阴影残留
-                _layerPaint.Color = SKColors.White.WithAlpha((byte)(255 * PassthroughAlpha));
+                // 两条通道相乘：穿透睡眠（PassthroughAlpha→0）与完全隐藏（FullHideAlpha→0）都表现为整块不可见
+                _layerPaint.Color = SKColors.White.WithAlpha((byte)(255 * PassthroughAlpha * FullHideAlpha));
                 canvas.SaveLayer(_layerPaint);
 
                 _bgPath.Rewind();
@@ -371,7 +395,8 @@ namespace NotchPeninsula
                 canvas.Restore(); // 1. 恢复 ClipPath 裁切
                 canvas.Restore(); // 2. 闭合 SaveLayer 透明层，本体内部渲染彻底完结！任何阴影、遮罩全部随之消失。
                 // 独立于本体之外，绘制隐形物理热区与极速渐变唤醒按钮
-                if (PassthroughModeEnabled && PassthroughAlpha < 0.99f)
+                // 穿透睡眠态 与 完全隐藏态 共用同一颗按钮（位置/命中都在岛体正中）
+                if ((PassthroughModeEnabled && PassthroughAlpha < 0.99f) || FullHideAlpha < 0.99f)
                     DrawWakeButton(canvas, currentHeight);
 
                 canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
