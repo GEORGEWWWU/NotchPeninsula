@@ -895,10 +895,13 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
             canvas.DrawText($"已安装插件 ({_pluginView.Count})", 216, listY + 26, _uiTextPaint);
-            // 「显示顺序」一览：← / → 调整的就是这张表里的位置。原生模块与插件同处一表，
-            // 把它直接画出来，用户就不会再疑惑「岛上只看得见两个内容，插件为什么是 #4」。
+            // 「显示顺序」一览：← / → 调整的就是这张表里的位置。只列出当前真的显示在岛上的内容
+            // （未启用的插件、未勾选的原生模块不参与排序，这里不显示），一眼就能对上每一行的 #N。
             canvas.DrawText(TruncateText("顺序：" + DescribeContentOrder(), _subTextPaint, WIDTH - 36 - 216),
                 216, listY + 46, _subTextPaint);
+
+            // 序号分母：当前显示中的内容数量（与上面「顺序：…」一一对应）
+            int orderTotal = PluginManager.Instance.DisplayedOrder.Count;
 
             const int maxRows = 7;
             // 上行：名称独占整行，可延展至卡片右边界外侧
@@ -934,12 +937,10 @@ namespace NotchPeninsula
                 {
                     sub = "已禁用 · " + entry.Key;
                 }
-                // 位置 = 在「内容显示顺序表」里的次序。这张表里同时住着三个原生模块
-                // （时间日期 / 硬件占用 / 媒体控制器），所以即便岛上当前只显示了两个内容，
-                // 插件也可能是 #4 —— 列表卡片顶部那行「顺序：…」把整张表摊开，一眼就能对上。
+                // 位置 = 在「当前显示的内容顺序」里的次序（与卡片顶部那行「顺序：…」一一对应）。
+                // 未启用的插件不显示在岛上，也就不参与排序，这里不给它序号。
                 int pos = PluginManager.Instance.GetOrderIndex(entry);
-                int total = PluginManager.Instance.Order.Count;
-                if (pos > 0) sub += total > 0 ? $" · #{pos}/{total}" : $" · #{pos}";
+                if (pos > 0) sub += orderTotal > 0 ? $" · #{pos}/{orderTotal}" : $" · #{pos}";
                 _subTextPaint.Color = subColor;
                 float infoBaseline = rowY + 40;
                 canvas.DrawText(TruncateText(sub, _subTextPaint, infoTextMax), 216, infoBaseline, _subTextPaint);

@@ -31,14 +31,15 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 把「内容显示顺序表」渲染成一行可读文本（原生模块用中文名、插件用友好名）。
-        /// 让用户一眼看到 ← / → 调整后，插件与原生功能在灵动岛上的真实左右次序。
+        /// 把「当前显示的内容顺序」渲染成一行可读文本（原生模块用中文名、插件用友好名）。
+        /// 只列出**当前真的显示在岛上**的内容：禁用的插件、未勾选的原生模块不参与排序，
+        /// 这里就不显示它们（它们的位置仍保留着，重新启用 / 重新显示后会自动插回原位）。
         /// </summary>
 
         private string DescribeContentOrder()
         {
             var mgr = PluginManager.Instance;
-            var order = mgr.Order;
+            var order = mgr.DisplayedOrder;
             if (order.Count == 0) return "（暂无内容）";
 
             var sb = new System.Text.StringBuilder(96);
