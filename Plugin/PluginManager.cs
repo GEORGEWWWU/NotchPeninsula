@@ -177,28 +177,99 @@ public sealed class PluginManager
     // 插件显示顺序（决定插件内容在灵动岛上的排列位置）
     // ====================================================================
 
-    /// <summary>顺序位（从 1 开始）；0 表示该插件尚未登记顺序。</summary>
+    /// <summary>
+    /// 当前显示中的内容顺序（原生模块 + 已启用插件），「顺序一览」与序号计数都以它为准。
+    /// 未显示的内容（禁用的插件 / 未勾选的原生模块）不在其中，但仍在顺序表里保留位置，
+    /// 重新启用 / 重新显示时会自动回到原来的位置。
+    /// </summary>
+    public IReadOnlyList<string> DisplayedOrder
+    {
+        get
+        {
+            lock (_lock)
+            {
+                var list = new List<string>(_order.Count);
+                foreach (var key in _order)
+                    if (IsDisplayedLocked(key)) list.Add(key);
+                return list;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 该顺序项当前是否真的显示在灵动岛上。
+    /// 不显示的内容不参与排序：顺序一览里不列出、序号不计入、← / → 也会跳过它。
+    /// </summary>
+    public bool IsOrderItemDisplayed(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return false;
+        lock (_lock) return IsDisplayedLocked(key);
+    }
+
+    /// <summary>该内容是否显示中。调用方需持有 _lock。</summary>
+    private bool IsDisplayedLocked(string key)
+    {
+        if (BuiltinWidgets.IsBuiltin(key)) return IsBuiltinDisplayed(key);
+
+        // 插件：只有「已启用且加载成功」才真的显示在岛上（禁用 / 加载失败都不参与排序）
+        var e = FindEntryByKeyOrId(key);
+        return e != null && e.State == PluginState.Loaded;
+    }
+
+    /// <summary>原生模块当前是否显示（与 Renderer 的绘制门控保持一致）。</summary>
+    private static bool IsBuiltinDisplayed(string id)
+    {
+        if (Renderer.CompositeModeEnabled)
+        {
+            if (string.Equals(id, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return Renderer.CompShowDateTime;
+            if (string.Equals(id, BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) return Renderer.CompShowHardware;
+            return Renderer.CompShowMedia; // 媒体控制器
+        }
+
+        // 非组合模式：待机时同一时刻只显示一个原生模块（媒体激活时显示媒体，与「待机显示内容」无关）
+        if (string.Equals(id, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return Renderer.StandbyDisplayMode == 0;
+        if (string.Equals(id, BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) return Renderer.StandbyDisplayMode == 2;
+        return true;
+    }
+
+    /// <summary>顺序位（从 1 开始，只数当前显示中的内容）；0 表示该内容当前不显示或尚未登记顺序。</summary>
     public int GetOrderIndex(PluginEntry e)
     {
         if (string.IsNullOrEmpty(e.Key)) return 0;
         lock (_lock)
         {
-            int i = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
-            return i < 0 ? 0 : i + 1;
+            int n = 0;
+            foreach (var key in _order)
+            {
+                if (!IsDisplayedLocked(key)) continue;
+                n++;
+                if (string.Equals(key, e.Key, StringComparison.OrdinalIgnoreCase)) return n;
+            }
+            return 0;
         }
     }
 
-    /// <summary>该插件能否朝指定方向移动（delta = -1 左移 / +1 右移）。与插件当前启用状态无关。</summary>
+    /// <summary>
+    /// 该内容能否朝指定方向移动（delta = -1 左移 / +1 右移）。
+    /// 未显示的内容不参与排序：自己不能移动，也不会成为别人的落点。
+    /// </summary>
     public bool CanMoveOrder(PluginEntry e, int delta)
     {
         if (string.IsNullOrEmpty(e.Key)) return false;
         lock (_lock)
         {
             int idx = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
-            if (idx < 0) return false;
-            int target = idx + delta;
-            return target >= 0 && target < _order.Count;
+            if (idx < 0 || !IsDisplayedLocked(_order[idx])) return false;
+            return FindMoveTargetLocked(idx, delta) >= 0;
         }
+    }
+
+    /// <summary>idx 朝 delta 方向第一个「显示中」的位置；没有则返回 -1。调用方需持有 _lock。</summary>
+    private int FindMoveTargetLocked(int idx, int delta)
+    {
+        for (int t = idx + delta; t >= 0 && t < _order.Count; t += delta)
+            if (IsDisplayedLocked(_order[t])) return t;
+        return -1;
     }
 
     /// <summary>调整插件在灵动岛上的显示顺序并持久化；返回是否真的发生了变化。</summary>
@@ -209,8 +280,11 @@ public sealed class PluginManager
         {
             int idx = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
             if (idx < 0) { _order.Add(e.Key); idx = _order.Count - 1; }
-            int target = Math.Clamp(idx + delta, 0, _order.Count - 1);
-            if (target == idx) return false;
+
+            // 只与「显示中」的内容换位：中间那些未显示的内容被跨过（它们的位置照旧保留）
+            int target = FindMoveTargetLocked(idx, delta);
+            if (target < 0) return false;
+
             _order.RemoveAt(idx);
             _order.Insert(target, e.Key);
         }
