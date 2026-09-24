@@ -8,6 +8,11 @@ namespace NotchPeninsula
     public static partial class Renderer
     {
 
+        // 媒体控件遮罩：左端取按钮块起点（位置固定），向右延伸 MEDIA_MASK_WIDTH（<=0 视为不铺），左起 MEDIA_MASK_FADE 渐隐。
+        // 79 = 右端正好落在「下一首」图标右缘（三个按钮实体范围是组件右端 −79 ~ −11）；90 = 一直到组件右端。
+        private const float MEDIA_MASK_WIDTH = 0f;
+        private const float MEDIA_MASK_FADE = 15f;
+
         // ================= 岛体内容布局：两条互斥分支 =================
         // 组合模式：原生模块与插件组件按「内容顺序表」混排（各模块是下面的局部函数）。
         // 非组合模式：原生内容居中，插件行按顺序表贴在它的左右两侧。
@@ -147,14 +152,19 @@ namespace NotchPeninsula
                     DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                 }
 
-                // 🧹 这里原有一层「渐隐 + 底色」遮罩，用途是盖住溢出到频谱下面的歌词尾巴。
-                //    歌词改成长度自适应后（岛体按文本真实宽度撑宽，本模块占宽也含整段文本），
-                //    文本末端距本模块锚点还剩 50px 余量，遮罩已经什么都遮不到 ——
-                //    只剩一条用背景色**二次叠涂**出来的实心色带（背景越透明越明显，
-                //    看着就像媒体控制器右侧多出一块不跟随透明度设置的组件），故整块删除。
-
+                // 媒体控件遮罩：仅悬停时绘制，自按钮块起点向右延伸 MEDIA_MASK_WIDTH。
                 if (isHovered)
                 {
+                    float maskLeft = mBtnPrevX;
+                    float maskWidth = Math.Max(MEDIA_MASK_WIDTH, 0f);
+                    float fadeW = Math.Min(MEDIA_MASK_FADE, maskWidth);
+                    canvas.Save();
+                    canvas.Translate(maskLeft, 0);
+                    canvas.Scale(fadeW, currentHeight);
+                    canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                    canvas.Restore();
+                    canvas.DrawRect(maskLeft + fadeW, 0, maskLeft + maskWidth, currentHeight, _bgPaint);
+
                     float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                     DrawSvgPath(canvas, _mediaIconPaint, mBtnPrevX + 11, prevNextY, _prevPath);
                     DrawSvgPath(canvas, _mediaIconPaint, mBtnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
@@ -276,9 +286,7 @@ namespace NotchPeninsula
                         DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                     }
 
-                    // 2. 遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
-                    //    ⚠️ 只有本面板还留着遮罩 —— 展开面板的宽度是固定的 320，长标题 / 长歌词确实会压到频谱上；
-                    //       折叠态与组合模式的岛体都按文本真实宽度自适应，那里的遮罩已按「残留色带」处理掉了。
+                    // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
                     float maskEnd = right - 55f;
                     float maskStart = maskEnd - 20f;
                     canvas.Save();
@@ -359,12 +367,19 @@ namespace NotchPeninsula
 
                     if (MediaInteractionMode == 0) // 直接交互模式
                     {
-                        // 🧹 遮罩已删：岛体按歌词真实宽度自适应（NotchWindow 的 textWidth + 115f），
-                        //    文本末端到岛体右缘留了 67px，右侧这层底色遮罩只会残留一条色带，
-                        //    不再需要（原因同组合模式那处注释）。文本超出岛体的情况由 ClipPath 兜底。
-
+                        // 媒体控件遮罩：仅悬停时绘制，自按钮块起点向右延伸 MEDIA_MASK_WIDTH。
                         if (isHovered)
                         {
+                            float maskLeft = btnPrevX;
+                            float maskWidth = Math.Max(MEDIA_MASK_WIDTH, 0f);
+                            float fadeW = Math.Min(MEDIA_MASK_FADE, maskWidth);
+                            canvas.Save();
+                            canvas.Translate(maskLeft, 0);
+                            canvas.Scale(fadeW, currentHeight);
+                            canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                            canvas.Restore();
+                            canvas.DrawRect(maskLeft + fadeW, 0, maskLeft + maskWidth, currentHeight, _bgPaint);
+
                             float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                             DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
                             DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
@@ -382,7 +397,7 @@ namespace NotchPeninsula
                     }
                     else // 展开交互模式
                     {
-                        // 🧹 遮罩已删，理由同上面直接交互模式：长歌词不再溢出，遮罩只剩残留色带。
+                        // 本模式折叠态悬停不换成按钮，无需遮罩。
 
                         if (bars != null)
                         {
