@@ -8,6 +8,10 @@ namespace NotchPeninsula
     public static partial class Renderer
     {
 
+        // 媒体控件遮罩：左端取按钮块起点（位置固定），向右延伸 MEDIA_MASK_WIDTH（<=0 视为不铺），左起 MEDIA_MASK_FADE 渐隐。
+        private const float MEDIA_MASK_WIDTH = 90f;
+        private const float MEDIA_MASK_FADE = 15f;
+
         // ================= 岛体内容布局：两条互斥分支 =================
         // 组合模式：原生模块与插件组件按「内容顺序表」混排（各模块是下面的局部函数）。
         // 非组合模式：原生内容居中，插件行按顺序表贴在它的左右两侧。
@@ -147,22 +151,18 @@ namespace NotchPeninsula
                     DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                 }
 
-                // 🎵 媒体控件遮罩：只在「悬停换成播放控制按钮」那一帧铺 —— 右侧 95px 要换成三个按钮，
-                //    需要这层「渐隐 + 底色」把按钮底下的内容盖掉。
-                //    ⚠️ 不悬停时什么都不铺：原来还有一档常态遮罩（45f），但岛体按歌词真实宽度自适应后
-                //       它已遮不到东西，只剩一条用背景色二次叠涂出来的实心色带（背景越透明越明显，
-                //       看着就像媒体模块右侧多出一块不跟随透明度设置的组件），故删掉那一档。
+                // 媒体控件遮罩：仅悬停时绘制，自按钮块起点向右延伸 MEDIA_MASK_WIDTH。
                 if (isHovered)
                 {
-                    float maskEnd = mediaAnchor - 90f; // 原 95f − 5f 边距 = 悬停时右侧交给按钮的宽度
-                    float maskStart = maskEnd - 15f;
+                    float maskLeft = mBtnPrevX;
+                    float maskWidth = Math.Max(MEDIA_MASK_WIDTH, 0f);
+                    float fadeW = Math.Min(MEDIA_MASK_FADE, maskWidth);
                     canvas.Save();
-                    canvas.Translate(maskStart, 0);
-                    canvas.Scale(maskEnd - maskStart, currentHeight);
+                    canvas.Translate(maskLeft, 0);
+                    canvas.Scale(fadeW, currentHeight);
                     canvas.DrawRect(0, 0, 1, 1, _fadePaint);
                     canvas.Restore();
-                    // 遮罩只涂到本模块锚点为止：排在媒体右边的插件内容不会被盖掉
-                    canvas.DrawRect(maskEnd, 0, mediaAnchor, currentHeight, _bgPaint);
+                    canvas.DrawRect(maskLeft + fadeW, 0, maskLeft + maskWidth, currentHeight, _bgPaint);
 
                     float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                     DrawSvgPath(canvas, _mediaIconPaint, mBtnPrevX + 11, prevNextY, _prevPath);
@@ -366,19 +366,18 @@ namespace NotchPeninsula
 
                     if (MediaInteractionMode == 0) // 直接交互模式
                     {
-                        // 🎵 媒体控件遮罩：只在「悬停换成播放控制按钮」那一帧铺（原 常态 45f / 悬停 95f 两档，
-                        //    现在只保留悬停档）。不悬停时什么都不铺 —— 常态那一档在岛体按歌词真实宽度
-                        //    自适应后已遮不到东西，只剩一条用背景色二次叠涂出来的实心色带。
+                        // 媒体控件遮罩：仅悬停时绘制，自按钮块起点向右延伸 MEDIA_MASK_WIDTH。
                         if (isHovered)
                         {
-                            float maskEnd = right - 90f; // 原 95f − 5f 边距 = 悬停时右侧交给按钮的宽度
-                            float maskStart = maskEnd - 15f;
+                            float maskLeft = btnPrevX;
+                            float maskWidth = Math.Max(MEDIA_MASK_WIDTH, 0f);
+                            float fadeW = Math.Min(MEDIA_MASK_FADE, maskWidth);
                             canvas.Save();
-                            canvas.Translate(maskStart, 0);
-                            canvas.Scale(maskEnd - maskStart, currentHeight);
+                            canvas.Translate(maskLeft, 0);
+                            canvas.Scale(fadeW, currentHeight);
                             canvas.DrawRect(0, 0, 1, 1, _fadePaint);
                             canvas.Restore();
-                            canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+                            canvas.DrawRect(maskLeft + fadeW, 0, maskLeft + maskWidth, currentHeight, _bgPaint);
 
                             float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                             DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
@@ -397,8 +396,7 @@ namespace NotchPeninsula
                     }
                     else // 展开交互模式
                     {
-                        // 🧹 不铺遮罩：本模式折叠态悬停不换成按钮（整块岛体都是「点击展开」的热区），
-                        //    没有任何需要遮挡的内容；原来那档常态遮罩只会留下一条实心色带。
+                        // 本模式折叠态悬停不换成按钮，无需遮罩。
 
                         if (bars != null)
                         {
