@@ -138,17 +138,9 @@ namespace NotchPeninsula
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
 
-        /// <summary>
-        /// Just Solo 侧的音量变化（服务端回推，且不是本机刚下发的回声），参数 0.0 ~ 1.0。
-        /// 连接时服务端补推的初始值不触发；宿主收到后只把它落进内置音量，不回发也不改系统音量。
-        /// </summary>
-        public event Action<float>? JustSoloVolumeChanged;
-
         public MediaController()
         {
             Instance = this;
-            // Just Solo 侧的音量变化（服务端回推）向上暴露给宿主：由宿主写回内置音量，这里不直接操作音频设备
-            _justSoloLyric.VolumePushed += v => JustSoloVolumeChanged?.Invoke(v);
             _ = InitializeAsync();
         }
 
@@ -590,6 +582,13 @@ namespace NotchPeninsula
             _justSoloLyric.SendVolume(level);
             return true;
         }
+
+        /// <summary>
+        /// Just Solo 播放器当前音量（0.0 ~ 1.0）—— 与系统音量互不覆盖的独立变量，
+        /// 由 WS 上的音量操作（本机下发 / 服务端回推 / 连接补推）镜像维护。
+        /// 返回 false 表示还没从 WS 拿到过音量（没连上 / 服务端还没推）。
+        /// </summary>
+        public bool TryGetJustSoloVolume(out float volume) => _justSoloLyric.TryGetVolume(out volume);
 
         private async void OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
         {

@@ -346,10 +346,9 @@ namespace NotchPeninsula
 
             _notifyIcon.Visible = true;
             Debug($"初始音量读取完成，当前音量：{audio.Volume:F2}");
-            // 🔉 内置音量的下游：有 Just Solo 的 WS 就下发播放器（改 WS），没有就落系统主音量
+            // 🔉 内置音量（系统主音量）只有一个下游：接了 Just Solo 的 WS 就下发播放器，没接才改系统主音量。
+            //    Just Solo 自己的音量是另一个变量（MediaController.TryGetJustSoloVolume），两边互不覆盖。
             audio.VolumeSink = _media.TrySyncVolumeToJustSolo;
-            // Just Solo 侧改的音量（服务端回推）→ 只落进内置音量状态
-            _media.JustSoloVolumeChanged += OnJustSoloVolumeChanged;
             // 🧩 插件系统：先把插件提醒接入 Toast 流，再初始化运行时自动加载已启用插件
             PluginManager.Instance.Host.ReminderPosted += OnPluginReminder;
             PluginManager.Instance.Initialize();
@@ -362,17 +361,6 @@ namespace NotchPeninsula
             Timer aud = new Timer(500);
             aud.Elapsed += (s, e) => audio.RefreshFromSystem();
             aud.Start();
-        }
-
-        /// <summary>
-        /// Just Solo 侧的音量变化（服务端回推，非本机回声）→ 只落进内置音量。
-        /// 按协议 v1.3.0 的双向同步要求：收到服务端 volume 后**不回发**（否则来回抖动），也不改系统音量。
-        /// </summary>
-        private void OnJustSoloVolumeChanged(float volume)
-        {
-            if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnJustSoloVolumeChanged(volume)); return; }
-            Debug($"Just Solo 侧音量：{volume:F2}");
-            audio.SetSystemVolume(volume, notify: false);
         }
 
         /// <summary>

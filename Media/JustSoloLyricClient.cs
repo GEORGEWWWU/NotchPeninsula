@@ -22,8 +22,8 @@ namespace NotchPeninsula
         private const float DefaultLyricPreReadSeconds = 0.13f;
         // 超过该时长未收到 spectrum 即视为无数据（服务端推送周期 100ms），回退到本地音频采集
         private const double SpectrumStaleMs = 500d;
-        // 服务端回推的音量与本机最近下发的值相差小于它，就认定是「自己那次的回声」
-        private const float VolumeEchoEpsilon = 0.002f;
+        // 音量镜像的「视为没变」阈值（吃掉服务端与本机之间的浮点 / 取整差异）
+        private const float VolumeDelta = 0.0005f;
 
         private readonly record struct LyricLine(int Time, string Text, string Translation);
 
@@ -35,6 +35,9 @@ namespace NotchPeninsula
         private bool _isPlaying;
         private float[] _spectrum = Array.Empty<float>();
         private DateTime _spectrumStamp = DateTime.MinValue;
+        // Just Solo 播放器音量的镜像（与系统音量是两个互不覆盖的独立变量）
+        private float _volume;
+        private bool _hasVolume;
 
         private volatile bool _running;   // 是否期望保持连接
         private volatile bool _connected; // 当前是否已连接
@@ -42,10 +45,6 @@ namespace NotchPeninsula
         private ClientWebSocket? _ws;
         // ClientWebSocket 不允许并发 SendAsync，多线程同时下发时用信号量串行化
         private readonly SemaphoreSlim _sendLock = new(1, 1);
-        // 本机最近下发的音量（负数 = 还没下发过），用来识别服务端广播回来的回声
-        private volatile float _lastSentVolume = -1f;
-        // 连接后服务端会补推一次「当前音量」，那是状态快照而不是变化，按「只记录不处理」跳过
-        private volatile bool _skipVolumePush = true;
         private CancellationTokenSource? _cts;
         private Task? _loopTask;
 
@@ -53,10 +52,18 @@ namespace NotchPeninsula
         public bool IsConnected => _connected;
 
         /// <summary>
-        /// Just Solo 侧音量变化（服务端回推，且**不是**本机刚下发音量的回声），参数 0.0 ~ 1.0。
-        /// 连接时补推的初始值不触发本事件。
+        /// Just Solo 播放器当前音量（0.0 ~ 1.0）—— **WS 侧的独立变量**，与系统音量互不覆盖。
+        /// 本机下发的值、服务端回推的值、连接时补推的当前值都会镜像进来。
+        /// 返回 false 表示还没从 WS 拿到过音量（未连接 / 服务端还没推）。
         /// </summary>
-        public event Action<float>? VolumePushed;
+        public bool TryGetVolume(out float volume)
+        {
+            lock (_lock)
+            {
+                volume = _volume;
+                return _hasVolume;
+            }
+        }
 
         /// <summary>
         /// 当前这首歌的时间轴里是否存在翻译行。判定挂在「整首歌」而不是「当前这一句」上：
@@ -180,7 +187,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 下发 volume 指令（协议 v1.3.0，0.0~1.0，越界自动裁剪），调节 Just Solo 播放器音量。
-        /// 未连接时静默丢弃：服务端无回执，音量变化会以回推 <see cref="VolumePushed"/> 的形式自然体现。
+        /// 未连接时静默丢弃；发出的值会镜像进 <see cref="TryGetVolume"/> 的 Just Solo 音量变量。
         /// 可高频调用，服务端按到达顺序依次应用。
         /// </summary>
         public void SendVolume(float value)
@@ -189,8 +196,7 @@ namespace NotchPeninsula
             if (ws == null || ws.State != WebSocketState.Open) return;
 
             float clamped = Math.Clamp(value, 0f, 1f);
-            // 记下本机发出去的值：服务端会把这次变化广播回来（含发送方），靠它认出是自己的回声
-            _lastSentVolume = clamped;
+            UpdateVolumeMirror(clamped);
 
             string json = "{\"type\":\"volume\",\"value\":"
                 + clamped.ToString("F3", CultureInfo.InvariantCulture) + "}";
@@ -216,11 +222,9 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 处理服务端回推的音量。两种「不该当成变化」的情况直接吞掉：
-        ///   ① 本机刚下发的值被广播回来（含发送方）—— 系统这边已经等于它了，再写回只会引入取整漂移；
-        ///   ② 连接后服务端补推的当前音量 —— 那是状态快照，不是变化。
-        /// 其余（Just Solo 界面 / 快捷键 / 其它客户端改的）才向上抛 <see cref="VolumePushed"/>。
-        /// 协议明确要求：收到服务端 volume 后**不要**再回发，否则来回抖动。
+        /// 处理服务端回推的音量：只镜像进 Just Solo 音量变量，不做任何反向动作。
+        /// 因此「收到服务端 volume 又回发」的来回抖动在本设计里根本不存在（协议 4.5 明确要求不要回发）；
+        /// 连接时补推的当前音量同样走这里 —— 它本来就代表播放器真实音量，不必特殊对待。
         /// </summary>
         private void ApplyVolume(JsonElement root)
         {
@@ -230,18 +234,18 @@ namespace NotchPeninsula
                 return;
             }
 
-            value = Math.Clamp(value, 0f, 1f);
+            UpdateVolumeMirror(Math.Clamp(value, 0f, 1f));
+        }
 
-            if (_lastSentVolume >= 0f && Math.Abs(value - _lastSentVolume) < VolumeEchoEpsilon) return;
-
-            if (_skipVolumePush)
+        private void UpdateVolumeMirror(float value)
+        {
+            lock (_lock)
             {
-                _skipVolumePush = false;
-                Logger.Debug($"Just Solo 当前音量 {value:F2}（连接补推，不反向同步）");
-                return;
+                if (_hasVolume && Math.Abs(value - _volume) < VolumeDelta) return;
+                _volume = value;
+                _hasVolume = true;
             }
-
-            VolumePushed?.Invoke(value);
+            Logger.Debug($"Just Solo 音量镜像：{value:F2}");
         }
 
         private void ResetState()
@@ -271,8 +275,6 @@ namespace NotchPeninsula
 
                     _connected = true;
                     _ws = ws;
-                    // 每次（重）连接，服务端都会补推一次当前音量：那一条只当状态快照，不触发反向同步
-                    _skipVolumePush = true;
                     delayMs = InitialReconnectDelayMs;
                     Logger.Info("Just Solo LyricServer 已连接");
 
