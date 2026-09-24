@@ -7,10 +7,10 @@
 
 <img alt="Windows" src="https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white" />
 <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white" />
-<img alt="C#" src="https://img.shields.io/badge/C%23-9.0%2B-239120?logo=csharp&logoColor=white" />
+<img alt="C#" src="https://img.shields.io/badge/C%23-14.0-239120?logo=csharp&logoColor=white" />
 <img alt="NAudio" src="https://img.shields.io/badge/NAudio-2.2-5C2D91" />
 <img alt="SkiaSharp" src="https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2" />
-<img alt="Version" src="https://img.shields.io/badge/version-1.7.0-blue" />
+<img alt="Version" src="https://img.shields.io/badge/version-1.8.0-blue" />
 <img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-green.svg" />
 
 <p>
@@ -38,7 +38,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 多平台音乐应用的媒体来源识别与桌面歌词
 - 实时音频频谱柱状图
 - 时间日期与 CPU / 内存硬件占用
-- Windows Toast 通知气泡
+- Windows Toast 通知气泡与可配置消息提示音
 - 剪贴板链接识别与一键打开
 - 可安装第三方插件扩展的自定义组件
 - 可配置的自动隐藏、窗口置顶、鼠标穿透与自动更新检测
@@ -51,10 +51,10 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 ### 1. 媒体控制
 
 - 自动识别当前系统媒体会话
-- 支持常见平台：通用媒体、浏览器媒体、网易云音乐、QQ音乐、酷狗、Spotify、Apple Music、Echo Music、LX Music
+- 支持常见平台：自动媒体、浏览器媒体、网易云音乐、QQ音乐、酷狗、Spotify、Apple Music、Echo Music、LX Music
 - **浏览器媒体模式**：只接管浏览器（Chrome / Edge / Firefox / Brave / Opera / Vivaldi / QQ浏览器 / 360 / 搜狗等）的 SMTC 会话，
   其他播放器的会话一律不接管；命中后自动清理网页标题后缀、不请求歌词
-- **通用媒体 + 手动选择软件**：直接锁定指定进程的 SMTC 会话，**优先级高于一切自动判定**。
+- **自动媒体 + 手动选择软件**：直接锁定指定进程的 SMTC 会话，**优先级高于一切自动判定**。
   被锁定的软件不再走浏览器 / 视频平台识别，一律按普通媒体源请求歌词，校验命中即正常显示。
   据此，Pake / Tauri 等基于 WebView2（进程名含 `msedgewebview2`）的套壳播放器、
   以及进程名不含浏览器关键字的浏览器，手动指定后都能正常出歌词
@@ -64,7 +64,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
   时间 / 日期、CPU / RAM 区域打开「显示设置」，其余区域打开设置窗口的当前页签
 - 展开的媒体控制面板 / 插件详情页：**鼠标离开灵动岛即自动收起**（鼠标停在岛上时不会自己消失）。
   其中插件详情页会延迟约 0.9s 再收，避免刚展开时鼠标恰好落在新面板之外被瞬间收掉
-- 支持自动识别当前系统媒体会话，使用歌曲信息网络获取歌词
+- 歌词按「歌曲信息网络获取」，三个引擎依次回退：QQ音乐 → 网易云 API → LRCLIB
 - 支持卡拉 OK 动效与歌词延迟微调
 - 歌词过长时岛体自适应加宽（**不截断**：文本按真实长度撑宽，只受岛体总长上限 `1920` 约束；
   岛体允许长到铺满屏幕，宁可溢出屏幕也不裁切歌词）
@@ -83,8 +83,12 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 在界面中展示最近通知的标题和正文
 - 自动折叠和淡出，避免遮挡桌面内容
 - 穿透模式下通知弹出时会**临时禁用穿透**，保证通知可见、可点击；通知结束后穿透自动恢复
-- 可在**通用设置**中禁用通知展示；「通知开关」与「通知内容」合并为同一张卡片（主从两行）
+- 可在**通用设置**中禁用通知展示；通知开关、通知内容与消息提示音**共用同一张卡片**，共四行：
+  通知总开关 / 内容模式 / 消息提示音开关 / 提示音设置（音源 + 音量 + 试听 + 重置）
 - 通知内容支持「缩略 / 紧凑 / 完整」三种呈现方式
+- **消息提示音**（默认关闭）：通知到达时播放提示音
+  - 音源从 `data/sound` 目录动态扫描（内置 15 个），也可「浏览音频…」选本地文件（≤ 2 MB、≤ 5 秒）
+  - 音量 0% ~ 100% 十档可调，支持试听；「重置」关闭提示音并把音源 / 音量恢复出厂默认
 
 ### 4. 时间日期与硬件占用
 
@@ -97,13 +101,16 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 事件驱动监听剪贴板（`WM_CLIPBOARDUPDATE`），稳态零 CPU / 零额外内存占用
 - 复制整段链接后自动在岛体弹出面板，点击即可用默认浏览器打开
 - 穿透模式下弹出链接面板时会**临时禁用穿透**，保证「打开」按钮可点击；面板关闭后穿透自动恢复
-- 可在**通用设置**中关闭（该开关原在「交互设置」，2026-09-20 移入通用设置）
+- 可在**通用设置**中关闭
 
 ### 6. Just Solo歌词
 
 - 支持通过 Just Solo LyricServer（`ws://127.0.0.1:47290`）实时获取带时间轴的歌词
 - 协议细节见WIKI中的文档
 - 支持使用服务端推送的实时频谱
+- 音量操作只有一个出口：**连上 Just Solo 的 WS 就调播放器音量**（协议 v1.3.0 的 `volume` 指令），没连上才调系统主音量
+- 系统音量与 Just Solo 音量**互不干扰**：音量键 / 系统 OSD / 其它软件改的系统音量只更新系统侧，不会去动 Just Solo；
+  Just Solo 侧（界面 / 快捷键 / 其它客户端）改的音量也只在 WS 侧镜像，不回发、不改系统音量
 
 ### 7. 插件系统
 
@@ -121,6 +128,8 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 灵动岛字体可整体切换为自定义字体，缺字自动回退
 - **窗口置顶**与**鼠标穿透**模式
 - 多显示器环境下可指定目标显示器
+- 设置窗口自动尝试原生背景材质（Windows 11 为云母、Windows 10 为亚克力），
+  系统不支持或调用失败时回退到纯色暗色外观
 
 ### 9. 自动隐藏与交互体验
 
@@ -138,7 +147,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
   关掉穿透模式后，原先的自动隐藏设置自动恢复
 - 通知弹窗、剪贴板链接面板、插件详情页展开期间**一律不隐藏**，与自动隐藏开关无关
   —— 包括全屏状态下：消息来了岛体照样弹出来，不会漏通知
-- 点击交互区可控制播放、上/下一曲、音量等
+- 点击交互区可控制播放、上/下一曲（展开媒体面板后还可拖动时间轴定位）
 - 通过托盘菜单快速调出设置窗口
 
 ## 使用方式
@@ -155,14 +164,13 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 开机自启
 - 退出
 
-在设置窗口中，按左侧导航分类配置：
+在设置窗口中，按左侧导航分类配置（共 7 个页签）：
 
-- **背景材质**：设置窗口默认尝试启用原生系统背景材质（Windows 11 为云母，Windows 10 为亚克力）；若系统不支持或调用失败，自动回退到原有暗色材质。
 - **个性化中心**：主题、背景不透明度、刘海样式与圆角、各状态尺寸、DPI 缩放
-- **通用设置**：开机自启、窗口置顶、消息通知（通知开关与内容模式合并在同一张卡片）、
+- **通用设置**：开机自启、窗口置顶、系统消息通知（通知开关 / 内容模式 / 消息提示音 / 提示音设置四行同一张卡片）、
   剪贴板链接检测、灵动岛字体
 - **显示设置**：待机内容（时间日期 / 空白）、目标显示器、组合模式
-- **媒体设置**：媒体控制、目标音乐平台、歌词与卡拉 OK、歌词延迟
+- **媒体设置**：媒体控制、目标媒体平台、歌词与卡拉 OK、歌词延迟
 - **交互设置**：自动隐藏（含「暂停播放后自动隐藏」「全屏自动隐藏」两个互斥附属开关）、
   媒体交互方式、鼠标穿透
 - **插件中心**：导入 / 启用 / 禁用 / 热重载 / 移除插件、打开插件目录、进入插件市场
@@ -202,7 +210,9 @@ NotchPeninsula/
 │   ├── MediaLogoProvider.cs    # 媒体平台站标与 LOGO 管理
 │   ├── JustSoloLyricClient.cs  # Just Solo LyricServer 歌词客户端
 │   ├── AudioAnalyzer.cs        # WASAPI Loopback 音频频谱分析
-│   └── Audio.cs                # NAudio 音频底层适配
+│   ├── Audio.cs                # NAudio 音频底层适配
+│   ├── ToastSoundConfig.cs     # 通知提示音配置与校验（动态扫描 data\sound）
+│   └── ToastSoundPlayer.cs     # 通知提示音播放队列
 ├── UI/                         # 自绘窗口
 │   ├── ConsoleWindow.cs        # 设置窗口：状态字段、构造、窗口生命周期、消息泵、渲染主流程
 │   ├── ConsoleWindow.Render.cs # 设置窗口绘制：侧边栏、各页签、下拉浮层与控件绘制
@@ -220,10 +230,14 @@ NotchPeninsula/
 │   └── AppActivator.cs         # 通过 AUMID 激活应用
 ├── Plugin/                     # 插件系统（API、宿主、加载器、管理、窗口、布局）
 ├── data/image/                 # 平台 logo / 图标资源
+├── data/sound/                 # 内置提示音（*.wav + sound.json 显示名覆盖）
 ├── NPS_PluginsAPI.md           # 插件开发文档
 ├── build.ps1                   # 一键发布为单文件 exe
 ├── NPS_NotchPeninsula-logo.ico # 应用图标
 ├── NotchPeninsula.csproj       # .NET 项目配置
+├── NotchPeninsula.slnx         # 解决方案文件
+├── msvcp140.dll                # VC++ 运行库（随程序分发）
+├── vcruntime140.dll            # VC++ 运行库（随程序分发）
 ├── LICENSE                     # Apache 2.0
 └── README.md                   # 项目说明
 ```
@@ -266,7 +280,7 @@ bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\
 .\build.ps1
 ```
 
-产物位于 `publish\NotchPeninsula.exe`，目标机需自备 .NET 10 Desktop Runtime。仅清理不打包可执行 `\build.ps1 -Clean`。
+产物位于 `publish\NotchPeninsula.exe`，目标机需自备 .NET 10 Desktop Runtime。仅清理不打包可执行 `.\build.ps1 -Clean`。
 
 ### 运行说明
 

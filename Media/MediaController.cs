@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.RegularExpressions;
 using Windows.Media.Control;
 using SkiaSharp;
@@ -571,6 +571,24 @@ namespace NotchPeninsula
         /// 返回 false 表示不可用（未连接 / 服务端版本过低 / 已暂停），调用方应回退到本地音频采集。
         /// </summary>
         public bool TryGetSoloSpectrum(out float[] bands) => _justSoloLyric.TryGetSpectrum(out bands);
+
+        /// <summary>
+        /// 把内置音量下发给 Just Solo 播放器（协议 v1.3.0 的 volume 指令，level: 0.0~1.0）。
+        /// 返回 true 表示已由 WS 接走（此时不该再去改系统音量）；未连接 Just Solo 时返回 false。
+        /// </summary>
+        public bool TrySyncVolumeToJustSolo(float level)
+        {
+            if (!_justSoloLyric.IsConnected) return false;
+            _justSoloLyric.SendVolume(level);
+            return true;
+        }
+
+        /// <summary>
+        /// Just Solo 播放器当前音量（0.0 ~ 1.0）—— 与系统音量互不覆盖的独立变量，
+        /// 由 WS 上的音量操作（本机下发 / 服务端回推 / 连接补推）镜像维护。
+        /// 返回 false 表示还没从 WS 拿到过音量（没连上 / 服务端还没推）。
+        /// </summary>
+        public bool TryGetJustSoloVolume(out float volume) => _justSoloLyric.TryGetVolume(out volume);
 
         private async void OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
         {
