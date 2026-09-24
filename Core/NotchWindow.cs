@@ -28,7 +28,6 @@ namespace NotchPeninsula
         public static bool IsClipboardEnabled = true; // 📋 剪贴板链接检测开关（交互设置，默认开启）
         public static bool IsTopmostEnabled = true; // 默认开启置顶
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
-        float _currentVolume = 0f;
         private readonly IntPtr _hwnd;
         private readonly MediaController _media;
         private bool _isHovered = false;
@@ -57,7 +56,7 @@ namespace NotchPeninsula
         private DateTime _toastEndTime;
         private DateTime _animStartTime;
         private readonly IntPtr _hCursorArrow;
-        private readonly SystemSettingsManager? audio;
+        private readonly SystemSettingsManager audio;
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
         private ToastNotificationListener? _listener;
@@ -346,8 +345,11 @@ namespace NotchPeninsula
             };
 
             _notifyIcon.Visible = true;
-            _currentVolume = audio.GetSystemVolume();
-            Debug($"初始音量读取完成，当前音量：{_currentVolume:F2}");
+            Debug($"初始音量读取完成，当前音量：{audio.Volume:F2}");
+            // 🔉 内置音量的下游：有 Just Solo 的 WS 就下发播放器（改 WS），没有就落系统主音量
+            audio.VolumeSink = _media.TrySyncVolumeToJustSolo;
+            // Just Solo 侧改的音量（服务端回推）→ 只落进内置音量状态
+            _media.JustSoloVolumeChanged += OnJustSoloVolumeChanged;
             // 🧩 插件系统：先把插件提醒接入 Toast 流，再初始化运行时自动加载已启用插件
             PluginManager.Instance.Host.ReminderPosted += OnPluginReminder;
             PluginManager.Instance.Initialize();
@@ -356,18 +358,22 @@ namespace NotchPeninsula
             // 📋 订阅剪贴板监听：窗口句柄就绪后注册 WM_CLIPBOARDUPDATE
             _clipboardMonitor.OnUrlDetected += OnClipboardUrlDetected;
             _clipboardMonitor.Attach(_hwnd);
+            // 🔉 每 500ms 读一次系统音量，发现不经过 SystemSettingsManager 的改动（音量键 / 系统 OSD / 其它软件）
             Timer aud = new Timer(500);
-            aud.Elapsed += (s, e) => {
-                float vol = audio.GetSystemVolume(); // 只读取一次，减少底层通信开销
-                if (_currentVolume != vol)
-                {
-                    _currentVolume = vol;
-                    audioVolumeChanged();
-                }
-            };
+            aud.Elapsed += (s, e) => audio.RefreshFromSystem();
             aud.Start();
         }
-        private void audioVolumeChanged() => Debug($"音量改变{_currentVolume:F2}");
+
+        /// <summary>
+        /// Just Solo 侧的音量变化（服务端回推，非本机回声）→ 只落进内置音量。
+        /// 按协议 v1.3.0 的双向同步要求：收到服务端 volume 后**不回发**（否则来回抖动），也不改系统音量。
+        /// </summary>
+        private void OnJustSoloVolumeChanged(float volume)
+        {
+            if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnJustSoloVolumeChanged(volume)); return; }
+            Debug($"Just Solo 侧音量：{volume:F2}");
+            audio.SetSystemVolume(volume, notify: false);
+        }
 
         /// <summary>
         /// 自绘托盘菜单「退出」项的执行体。原封不动搬自旧的 ToolStripMenuItem 闭包，
