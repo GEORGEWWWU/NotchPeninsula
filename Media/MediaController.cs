@@ -161,6 +161,20 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 退出前释放媒体侧持有的后台资源：
+        ///   · Just Solo LyricServer 的 WebSocket 连接与重连循环（<see cref="JustSoloLyricClient.Stop"/>）；
+        ///   · 当前封面位图（原生 Skia 位图，Dispose 前先切断属性引用）。
+        ///
+        /// 刻意不处理的两样：SMTC 会话归系统管；<c>_http</c> 是进程级静态复用的 HttpClient，
+        /// 单例生命周期内复用是正确的，提前 Dispose 反而会导致退出前的请求抛异常。
+        /// </summary>
+        public void Shutdown()
+        {
+            try { _justSoloLyric.Stop(); } catch { }
+            try { Thumbnail?.Dispose(); Thumbnail = null; } catch { }
+        }
+
+        /// <summary>
         /// 当前所有可接管的 SMTC 会话 AppID（去重、保持系统顺序，全局屏蔽的软件不列出），
         /// 供设置界面「手动选择软件」下拉直接展示原始 AppID。只在用户展开下拉时调用一次，不做任何后台轮询。
         /// </summary>
@@ -481,7 +495,12 @@ namespace NotchPeninsula
                             Thumbnail = null;
                         }
                     }
-                    else Thumbnail = null;
+                    else
+                    {
+                        // 与上面两条分支保持一致的释放纪律：丢引用前先放掉原生位图
+                        Thumbnail?.Dispose();
+                        Thumbnail = null;
+                    }
                 }
             }
             catch (Exception ex)
@@ -489,6 +508,7 @@ namespace NotchPeninsula
                 Logger.Error("读取媒体属性失败，可能遇到不规范的媒体源", ex);
                 Title = _isPotPlayerSession ? "" : "Unknown";
                 Artist = (_isBilibiliSession || _isPotPlayerSession) ? "" : "Unknown";
+                Thumbnail?.Dispose();
                 Thumbnail = null;
             }
 

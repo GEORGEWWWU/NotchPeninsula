@@ -87,6 +87,14 @@ public sealed class PluginManager
     private readonly object _lock = new();
 
     public PluginHost Host => _host;
+
+    // 变更序号：任何「发现 / 加载 / 卸载 / 启用状态 / 排序 / 加载失败」都会自增。
+    // 设置面板用它做缓存判据 —— 插件列表与行内文案原本是每次渲染都重建，
+    // 有了这个序号就能只在真变了的时候重建一次。
+    private int _changeVersion;
+
+    /// <summary>注册表变更序号（单调递增，只在 <see cref="Changed"/> 触发前自增）。</summary>
+    public int ChangeVersion => System.Threading.Volatile.Read(ref _changeVersion);
     public string PluginsRoot { get; }
     public IReadOnlyList<PluginEntry> Entries { get { lock (_lock) return _entries.ToArray(); } }
 
@@ -507,7 +515,13 @@ public sealed class PluginManager
         // 整个「释放 + 注销 + 卸载」都在独立栈帧里完成（见 Teardown）。
         // 这样本方法（下面要执行 GC 循环）的栈帧里不会残留任何插件对象引用。
         var weak = Teardown(e);
-        if (weak != null) WaitForUnload(weak, e.Key);
+        if (weak != null)
+        {
+            // 必须在同步 GC 之前：渲染侧的静态字段（组件数组 / 详情页 / 命中区）平时要等到
+            // 下一帧才发现版本号变化，此刻它们还钉着插件对象，WaitForUnload 必然判「未被回收」。
+            Renderer.InvalidatePluginSnapshot();
+            WaitForUnload(weak, e.Key);
+        }
 
         TryDeleteDir(shadow);
         Logger.Info($"[PluginManager] 已卸载 {e.Key}");
@@ -746,6 +760,7 @@ public sealed class PluginManager
 
     private void RaiseChanged()
     {
+        System.Threading.Interlocked.Increment(ref _changeVersion);
         try { Changed?.Invoke(); } catch (Exception ex) { Logger.Error("[PluginManager] Changed 事件处理异常", ex); }
     }
 

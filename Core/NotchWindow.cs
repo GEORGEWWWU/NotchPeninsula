@@ -68,6 +68,15 @@ namespace NotchPeninsula
         private readonly float[] _spectrumBars = new float[5]; // LyricServer 12 频段压缩为 5 柱的复用缓冲（仅 RenderLoop 单线程内写入并当帧消费）
         private bool _wasUsingSoloSpectrum; // 上一帧是否在用 LyricServer 频谱，用于感知独占播放结束
         private readonly System.Windows.Forms.NotifyIcon _notifyIcon; // 托盘与自启常量
+        // 托盘图标：NotifyIcon 不会释放赋给它的 Icon（那是调用方的东西），所以由本类持有并在退出时释放。
+        // 之前这里是直接把 Icon.ExtractAssociatedIcon(...) 挂上去、不留引用 —— 等于让一个 HICON 无主。
+        private System.Drawing.Icon? _trayIcon;
+        // 系统音量看门狗（原为 CreateWindow 里的局部变量 `Timer aud`）：
+        // 局部变量在 System.Timers.Timer 上是永生的（内部 AppDomain 计时器表持有注册），
+        // 既回收不掉也 Dispose 不了，所以提成字段。
+        private Timer? _audioWatchTimer;
+        // 退出中标记：置位后渲染循环立刻停止，避免正在跑的帧撞上已被释放的画布
+        private volatile bool _shuttingDown;
         private const string AppName = "NotchPeninsula";
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
         public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关（**用户的偏好**，不等于真的生效）
@@ -323,7 +332,8 @@ namespace NotchPeninsula
             InstanceHandle = _hwnd;
             // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
             _renderTimer = new Timer(16);
-            _renderTimer.Elapsed += (s, e) => RenderLoop();
+            // 具名方法而非 lambda：才能在退出时 -= 退订（lambda 会把 this 钉在计时器上）
+            _renderTimer.Elapsed += OnRenderTick;
             _renderTimer.Start();
 
             // 🛠️ 托盘图标与右键菜单（自绘纯色菜单，见 TrayMenuWindow）
@@ -331,7 +341,8 @@ namespace NotchPeninsula
             _notifyIcon = new System.Windows.Forms.NotifyIcon();
 
             // 2. 最后再给托盘对象的各项属性赋值
-            _notifyIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Process.GetCurrentProcess().MainModule!.FileName);
+            _trayIcon = System.Drawing.Icon.ExtractAssociatedIcon(Process.GetCurrentProcess().MainModule!.FileName);
+            _notifyIcon.Icon = _trayIcon;
             _notifyIcon.Text = "NotchPeninsula";
 
             // 右键弹自绘菜单；左键沿用系统默认行为（这里不接管）
@@ -358,10 +369,16 @@ namespace NotchPeninsula
             _clipboardMonitor.OnUrlDetected += OnClipboardUrlDetected;
             _clipboardMonitor.Attach(_hwnd);
             // 🔉 每 500ms 读一次系统音量，发现不经过 SystemSettingsManager 的改动（音量键 / 系统 OSD / 其它软件）
-            Timer aud = new Timer(500);
-            aud.Elapsed += (s, e) => audio.RefreshFromSystem();
-            aud.Start();
+            _audioWatchTimer = new Timer(500);
+            _audioWatchTimer.Elapsed += OnAudioWatchTick;
+            _audioWatchTimer.Start();
         }
+
+        /// <summary>渲染时钟（16ms）。具名方法：退出时能 -= 退订。</summary>
+        private void OnRenderTick(object? sender, System.Timers.ElapsedEventArgs e) => RenderLoop();
+
+        /// <summary>系统音量看门狗（500ms）。具名方法：退出时能 -= 退订。</summary>
+        private void OnAudioWatchTick(object? sender, System.Timers.ElapsedEventArgs e) => audio.RefreshFromSystem();
 
         /// <summary>
         /// 自绘托盘菜单「退出」项的执行体。原封不动搬自旧的 ToolStripMenuItem 闭包，
@@ -382,9 +399,93 @@ namespace NotchPeninsula
                 Error("释放托盘图标失败", ex);
             }
 
+            // 释放本窗口持有的全部长期资源（定时器 / 渲染缓冲 / 托盘图标 / 监听器）。
+            // 之前只摘了托盘图标就直接 Exit —— 靠进程终止兜底，等于把"没释放"这件事藏起来了。
+            try { _instanceForExit?.ShutdownResources(); }
+            catch (Exception ex) { Error("释放窗口资源失败", ex); }
+
             Info("程序退出");
             _instanceForExit?._audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
             Environment.Exit(0);
+        }
+
+        /// <summary>
+        /// 退出前释放本窗口持有的全部长期资源。
+        ///
+        /// 顺序不能反：先把所有"会回调进来的源头"停掉（定时器 / 轮询 / 监听器 / 剪贴板），
+        /// 再释放它们会碰到的资源（SKSurface 及其绑定的 DIB、图标句柄）——
+        /// 反过来做就是让还在跑的定时器撞上已释放的画布。
+        /// </summary>
+        private void ShutdownResources()
+        {
+            // 1) 渲染时钟：置位退出标记 → 停表 → 退订 → Dispose
+            _shuttingDown = true;
+            try
+            {
+                _renderTimer.Elapsed -= OnRenderTick;
+                _renderTimer.Stop();
+                _renderTimer.Dispose();
+            }
+            catch { }
+
+            // 2) 系统音量看门狗
+            try
+            {
+                if (_audioWatchTimer != null)
+                {
+                    _audioWatchTimer.Elapsed -= OnAudioWatchTick;
+                    _audioWatchTimer.Stop();
+                    _audioWatchTimer.Dispose();
+                    _audioWatchTimer = null;
+                }
+            }
+            catch { }
+
+            // 3) 通知轮询
+            try
+            {
+                if (_pollingTimer != null)
+                {
+                    _pollingTimer.Tick -= OnPollingTick;
+                    _pollingTimer.Stop();
+                    _pollingTimer = null;
+                }
+            }
+            catch { }
+
+            // 4) 通知监听器（HttpListener 占着 47300 端口 + 一条后台循环）
+            try
+            {
+                if (_listener != null)
+                {
+                    _listener.OnToastDetected -= OnToastDetected;
+                    _listener.Dispose();
+                    _listener = null;
+                }
+            }
+            catch { }
+
+            // 5) 剪贴板监听反注册（WM_DESTROY 也会做一次，两处都幂等）
+            try { _clipboardMonitor.Detach(); } catch { }
+
+            // 6) 渲染资源：SKSurface 绑在 pBits 上，必须先于 DIB 释放
+            try
+            {
+                _renderSurface?.Dispose();
+                _renderSurface = null;
+                if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero) Win32.SelectObject(_memDc, _oldBitmap);
+                if (_hBitmap != IntPtr.Zero) Win32.DeleteObject(_hBitmap);
+                if (_memDc != IntPtr.Zero) Win32.DeleteDC(_memDc);
+                _hBitmap = _memDc = _oldBitmap = IntPtr.Zero;
+            }
+            catch { }
+
+            // 7) 托盘图标句柄
+            try { _trayIcon?.Dispose(); } catch { }
+            _trayIcon = null;
+
+            // 8) 媒体侧的后台连接（Just Solo LyricServer 的 WebSocket 重连循环）
+            try { _media.Shutdown(); } catch { }
         }
 
         /// <summary>
@@ -403,9 +504,12 @@ namespace NotchPeninsula
 
             // Start polling only after listener initialization to reduce CPU usage during startup.
             _pollingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) };
-            _pollingTimer.Tick += (_, __) => _ = _listener?.FetchLatestNotificationAsync();
+            _pollingTimer.Tick += OnPollingTick;
             _pollingTimer.Start();
         }
+
+        /// <summary>通知轮询（2s）。具名方法：退出时能 -= 退订。</summary>
+        private void OnPollingTick(object? sender, EventArgs e) => _ = _listener?.FetchLatestNotificationAsync();
 
         /// <summary>
         /// 🎵 在消息真正上岛时投递提示音。
@@ -616,6 +720,10 @@ namespace NotchPeninsula
 
         private unsafe void RenderLoop()
         {
+            // 退出中：画布与 DIB 即将（或已经）被释放，这一帧直接不画。
+            // 必须放在重入判定之前 —— 放后面会在返回时漏掉 _isRendering 的复位。
+            if (_shuttingDown) return;
+
             if (System.Threading.Interlocked.Exchange(ref _isRendering, 1) == 1) return;
 
             try

@@ -146,6 +146,9 @@ internal static class ToastSoundConfig
     /// </summary>
     internal static void RefreshBuiltins()
     {
+        // 列表要重建了 → 先让下拉标签缓存失效（放在最前面，任何提前返回的分支都已失效）
+        _optionLabelsCache = null;
+
         var list = new List<BuiltinEntry>();
         _folder = "";
 
@@ -229,17 +232,29 @@ internal static class ToastSoundConfig
 
     /// <summary>
     /// 构建下拉框的显示文本数组（「无」+ 内置名 + 「浏览音频…」）。
-    /// 每次 Render 时按需生成 —— 选项数很小，且能保证与磁盘现状完全一致。
+    ///
+    /// 结果按「内置列表版本」缓存：设置面板每次渲染展开的下拉都会调它，
+    /// 每帧新建一个 <c>string[OptionCount]</c> 是纯浪费。缓存由 <see cref="RefreshBuiltins"/>
+    /// 在**开头**清空 —— 列表一变，下次调用自然重建。
+    /// 返回的数组是共享的，调用方**只读**，不得写入。
     /// </summary>
     internal static string[] BuildOptionLabels()
     {
+        var cached = _optionLabelsCache;
+        if (cached != null) return cached;
+
         var labels = new string[OptionCount];
         labels[0] = NoneName;
         for (int i = 0; i < _builtins.Length; i++)
             labels[BuiltinOffset + i] = _builtins[i].Label;
         labels[CustomIndex] = BrowseName;
+
+        _optionLabelsCache = labels;
         return labels;
     }
+
+    /// <summary><see cref="BuildOptionLabels"/> 的缓存，由 <see cref="RefreshBuiltins"/> 失效。</summary>
+    private static string[]? _optionLabelsCache;
 
     /// <summary>下拉框上显示的当前选中文本。自定义项若文件已失效则显示「自定义（不可用）」。</summary>
     internal static string CurrentDisplayText()

@@ -424,8 +424,11 @@ namespace NotchPeninsula
 
             var order = Plugins.PluginManager.Instance.Host.ContentOrder;
             // 顺序表的插件 ID 集合，供结尾兜底去重（只补「没进表」的插件，已入表的绝不重复计宽）；
-            // 第一趟（只量原生）用不到它，直接跳过分配
-            var orderSet = includePlugins ? new HashSet<string>(order, StringComparer.OrdinalIgnoreCase) : null;
+            // 第一趟（只量原生）用不到它，直接跳过。
+            // 用缓存而不是每帧 new：ContentOrder 返回的是宿主内部那个快照数组，
+            // 只有用户真的改过排序才会换新引用 —— 引用判等即可安全复用
+            // （组合模式 60FPS 下每帧一个 HashSet + 内部桶数组是纯浪费）。
+            var orderSet = includePlugins ? GetOrderSet(order) : null;
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;
 
             for (int i = 0; i < order.Count; i++)
@@ -462,6 +465,26 @@ namespace NotchPeninsula
             width += 16f; // 右侧边距与 Draw 中每模块尾距(16px)对齐，避免最后一个模块被裁切 6px
 
             return width;
+        }
+
+        // 内容顺序表的去重集合缓存：只在宿主换出新快照数组时重建。
+        // 建成后集合只被读（SumPluginRowWidthNotIn 只做 Contains），因此无需加锁。
+        private static HashSet<string>? _orderSetCache;
+        private static IReadOnlyList<string>? _orderSetSource;
+
+        /// <summary>
+        /// 取「内容顺序表」的插件 Id 集合（大小写不敏感），按快照引用缓存。
+        /// 宿主 <c>ContentOrder</c> 返回的是内部快照数组，顺序不变时引用不变，因此可以零成本命中。
+        /// </summary>
+        private static HashSet<string> GetOrderSet(IReadOnlyList<string> order)
+        {
+            var cached = _orderSetCache;
+            if (cached != null && ReferenceEquals(_orderSetSource, order)) return cached;
+
+            cached = new HashSet<string>(order, StringComparer.OrdinalIgnoreCase);
+            _orderSetSource = order;   // 先写源再写缓存：极端竞态下最多多重建一次，不会读到不一致的集合
+            _orderSetCache = cached;
+            return cached;
         }
 
         // 媒体激活时刷新「当前显示文本 / 歌词 / 叠化动画」的缓存。

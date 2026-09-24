@@ -300,6 +300,38 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 立即失效渲染侧持有的**全部插件快照**（组件数组 / 宽度 / 命中区 / 详情页）。
+        ///
+        /// 专供插件卸载路径调用：这些静态字段平时要到「下一帧发现版本号变了」才重建，
+        /// 而卸载方法紧接着就会做几轮同步 GC 来确认可回收 ALC 是否释放 —— 那时这些字段
+        /// 还钉着插件对象，GC 必然判定「加载上下文未被回收」。先在这里切断引用，
+        /// 同步 GC 才有机会真正回收。
+        /// </summary>
+        public static void InvalidatePluginSnapshot()
+        {
+            lock (_pluginSlotLock)
+            {
+                _pluginWidgets = null;
+                _pluginWidths = null;
+                _pluginBroken = null;
+                _pluginDrawn = null;
+                _pluginVisible = null;
+                _pluginWidgetsVersion = -1;   // 下一帧强制重建快照
+                _pluginSlots.Clear();
+                _pluginRowReserve = 0f;
+
+                _detailPage = null;
+                _detailHitPage = null;
+                _detailHitRect = default;
+                _detailWidth = 0f;
+                _detailHeight = 0f;
+                _detailBroken = false;
+
+                _compositeMediaRight = -1f;
+            }
+        }
+
+        /// <summary>
         /// 组合模式下媒体模块的右边界（-1 表示当前不在组合模式绘制）。
         /// UI 线程用它来判定媒体按钮 / 悬停区域，保证插件被排到媒体左边或右边时命中依然准确。
         /// </summary>

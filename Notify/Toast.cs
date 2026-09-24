@@ -6,11 +6,15 @@ using SkiaSharp;
 
 namespace NotchPeninsula
 {
-    public class ToastNotificationListener
+    public class ToastNotificationListener : IDisposable
     {
         private UserNotificationListener? _listener;
         private uint _lastNotificationId;
         private bool _initialized;
+
+        // 本地 HTTP 接收服务（47300 端口）。提为字段是为了能在 Dispose 时 Stop/Close ——
+        // 它占着一个 TCP 端口和一条后台接收循环，不能只靠进程退出兜底。
+        private System.Net.HttpListener? _httpListener;
         
         public event Action<ToastData>? OnToastDetected;
         
@@ -48,11 +52,15 @@ namespace NotchPeninsula
         // 极致性能的轻量级 HTTP 监听
         private void StartHttpServer()
         {
+            System.Net.HttpListener? listener = null;
             try
             {
-                var listener = new System.Net.HttpListener();
+                listener = new System.Net.HttpListener();
                 listener.Prefixes.Add("http://127.0.0.1:47300/api/activities/");
                 listener.Start();
+
+                // 挂到字段上：后台循环由闭包持有，本类则负责在 Dispose 时把它关掉。
+                _httpListener = listener;
 
                 byte[] okRes = System.Text.Encoding.UTF8.GetBytes("{\"ok\":true}");
 
@@ -65,8 +73,11 @@ namespace NotchPeninsula
                             var ctx = await listener.GetContextAsync();
                             if (ctx.Request.HttpMethod == "POST")
                             {
-                                // 读取原始字符串
-                                string rawJson = await new System.IO.StreamReader(ctx.Request.InputStream).ReadToEndAsync();
+                                // 读取原始字符串（StreamReader 持有请求流，必须释放，
+                                // 否则每次 POST 都留一个未关闭的流给 GC 终结器）
+                                string rawJson;
+                                using (var reader = new System.IO.StreamReader(ctx.Request.InputStream))
+                                    rawJson = await reader.ReadToEndAsync();
 
                                 // 暴力修复非法的反斜杠转义（解决 \N 报错问题），兼容严格的 JSON 解析
                                 rawJson = rawJson.Replace("\\", "\\\\").Replace("\\\\\"", "\\\"");
@@ -122,7 +133,24 @@ namespace NotchPeninsula
             catch (Exception ex)
             {
                 Logger.Error("[HTTP接口] 端口监听启动失败 (可能被占用)", ex);
+                // 启动中途失败（端口被占等）时把已分配的监听器放掉，别留一个半死的实例占着端口
+                try { listener?.Close(); } catch { }
+                _httpListener = null;
             }
+        }
+
+        /// <summary>
+        /// 停止并释放本地 HTTP 监听服务（47300 端口 + 后台接收循环）。幂等，可重复调用。
+        /// 退出路径由 NotchWindow.ShutdownResources 调用。
+        /// </summary>
+        public void Dispose()
+        {
+            var listener = System.Threading.Interlocked.Exchange(ref _httpListener, null);
+            if (listener == null) return;
+
+            try { listener.Stop(); } catch { }
+            try { listener.Close(); } catch { }
+            Logger.Info("[HTTP接口] 本地监听已停止");
         }
 
         /// <summary>
