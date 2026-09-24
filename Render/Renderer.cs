@@ -144,6 +144,9 @@ namespace NotchPeninsula
                 // 📋 剪贴板「打开」按钮热区帧首作废：本帧不画就等于命中区不存在
                 _clipboardOpenHit = default;
 
+                // 🖱️ 原生模块（时间/日期、CPU/RAM、媒体）右键命中区同样帧首作废
+                InvalidateNativeHitZones();
+
                 // 岛体物理左边界（背景形状 / 裁剪范围以它为准）
                 float islandLeft = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）

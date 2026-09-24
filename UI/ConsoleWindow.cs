@@ -639,6 +639,31 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 打开设置窗口并直达指定页签（岛内右键按区域调用：媒体控制器 → 2 媒体设置、时间/硬件 → 1 显示设置）。
+        /// 窗口还没创建过就先创建（构造里会显示），再落地页签；已创建则切页签后走 <see cref="Toggle"/> 的显示流程。
+        /// </summary>
+        public static void ShowTab(int tab)
+        {
+            if (_instance == null)
+            {
+                _instance = new ConsoleWindow();
+                _instance.SelectTab(tab);
+                return;
+            }
+            _instance.SelectTab(tab);
+            Toggle();
+        }
+
+        /// <summary>切换左侧页签：与点击页签完全同一套动作（关掉浮层下拉 + 重绘）。</summary>
+        private void SelectTab(int tab)
+        {
+            if (tab < 0 || tab > 6 || _selectedTab == tab) return;
+            _selectedTab = tab;
+            CloseAllDropdowns();
+            Render();
+        }
+
         private ConsoleWindow()
         {
             // 先挂到静态实例上：CreateWindowEx 期间系统可能立刻发 WM_PAINT/WM_CREATE，

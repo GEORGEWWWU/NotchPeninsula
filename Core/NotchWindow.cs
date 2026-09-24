@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 using Microsoft.Win32;
@@ -1388,6 +1388,10 @@ namespace NotchPeninsula
                         //    早先这里有个「右键折叠态媒体标题 → 展开媒体面板」的快捷入口（05df004 加的），
                         //    它把标题文字那一段的右键整片吃掉（热区高 = 整个岛体高），用户想开设置窗口
                         //    还得精确点到岛体最右侧那条窄边。已整体删除，不再登记任何媒体标题热区。
+                        int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        float rtY = 12f * _currentStyleProgress;
+
                         if (_currentToast == null)
                         {
                             // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
@@ -1396,10 +1400,6 @@ namespace NotchPeninsula
                                 PluginManager.Instance.Host.CloseDetailPage();
                                 return (IntPtr)0;
                             }
-
-                            int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                            int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                            float rtY = 12f * _currentStyleProgress;
 
                             string? detailWidget = Renderer.DispatchPluginRightClick(rx, ry - rtY);
 
@@ -1410,7 +1410,14 @@ namespace NotchPeninsula
                                 return (IntPtr)0;
                             }
                         }
-                        ConsoleWindow.Toggle();
+
+                        // 🖱️ 按「右键落在哪块原生内容上」直达对应设置页签（用户 2026-09-23 建议）：
+                        //    媒体控制器 → 媒体设置；时间/日期、CPU/RAM → 显示设置；
+                        //    其他（空白待机 / 插件行 / 剪贴板面板…）→ 保持原行为，打开设置窗口的当前页签。
+                        //    命中区由渲染器本帧登记（Renderer.Layout.cs），所以通知 / 详情页接管岛体期间不会误命中。
+                        int targetTab = Renderer.NativeRightClickTab(rx);
+                        if (targetTab >= 0) ConsoleWindow.ShowTab(targetTab);
+                        else ConsoleWindow.Toggle();
                     }
                     break;
             }
