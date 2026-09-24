@@ -31,6 +31,8 @@ namespace NotchPeninsula
                 canvas.DrawText(_cachedTimeStr, currentX, timeBaselineY, _timePaint);
                 float dateX = currentX + _cachedTimeWidth + 12f;
                 canvas.DrawText(_cachedDateStr, dateX, timeBaselineY, _datePaint);
+                _clockZoneL = currentX;
+                _clockZoneR = dateX + _cachedDateWidth;
                 currentX = dateX + _cachedDateWidth + moduleGap;
             }
 
@@ -97,6 +99,8 @@ namespace NotchPeninsula
                         barH / 2f, barH / 2f, _barPaint);
 
                 currentX = ramX + ramGroupW + moduleGap;
+                _hardwareZoneL = cpuX;
+                _hardwareZoneR = ramX + ramGroupW;
             }
 
             // 2. 媒体控制器模块（含频谱，媒体激活时才显示）
@@ -106,6 +110,9 @@ namespace NotchPeninsula
                 float mediaRight = currentX + MeasureMediaBlockWidth(media);
                 float mediaAnchor = mediaRight + 18f;
                 _compositeMediaRight = mediaAnchor;
+                // 🖱️ 本模块的右键命中区 = 文字 + 频谱 / 按钮锚点（插件被排到媒体右边时不越界）
+                _mediaZoneL = currentX;
+                _mediaZoneR = mediaAnchor;
                 int mBtnPrevX = (int)mediaAnchor - 90;
                 int mBtnPlayX = (int)mediaAnchor - 60;
                 int mBtnNextX = (int)mediaAnchor - 30;
@@ -213,6 +220,9 @@ namespace NotchPeninsula
             // 拆分绘制逻辑
             if (media.IsActive)
             {
+                // 🖱️ 非组合模式下媒体控制器独占「原生内容区」：整块内容区都算媒体区域
+                _mediaZoneL = left;
+                _mediaZoneR = right;
                 _textPaint.Color = _currentTextColor.WithAlpha(alpha);
 
                 if (IsMediaExpanded && currentHeight > 60f) // 展开模式布局
@@ -400,6 +410,9 @@ namespace NotchPeninsula
                 float baselineY = currentHeight / 2f + 5f + textOffsetY;
                 canvas.DrawText(_cachedTimeStr, left + 16f, baselineY, _timePaint);
                 canvas.DrawText(_cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint);
+                // 🖱️ 待机时整条原生内容区（时间 + 日期）都算时钟区域
+                _clockZoneL = left + 16f;
+                _clockZoneR = right - 16f;
                 // 注：插件组件行不参与本段原生布局，统一在下面「插件组件行」处渲染在岛体最右侧
             }
             else if (StandbyDisplayMode == 1)
@@ -449,6 +462,9 @@ namespace NotchPeninsula
                 float startX = centerX - totalContentW / 2f;
                 float cpuBarW = cpuGroupW;
                 float ramBarW = ramGroupW;
+                // 🖱️ 硬件占用模块的右键命中区 = CPU 标签到 RAM 进度条右端
+                _hardwareZoneL = startX;
+                _hardwareZoneR = startX + totalContentW;
 
                 // ================= [ CPU ] =================
                 float cpuX = startX;
@@ -519,6 +535,44 @@ namespace NotchPeninsula
                 DrawSvgPath(canvas, _wakePaint, wakeBtnX, wakeBtnY, _wakePath);
             }
         }
+
+        // ================= 🖱️ 岛内右键「按区域直达设置页签」命中区 =================
+        // 规则（用户 2026-09-19 定下、2026-09-23 细分）：原生媒体控制器区域的右键一律不消费、
+        // 依然只打开设置窗口，只是**按右键落在哪块原生内容上直达对应页签**：
+        //   · 媒体控制器（标题 / 歌词 / 频谱 / 播放按钮 / 空白）→ 媒体设置
+        //   · 时间 / 日期、CPU / RAM                            → 显示设置
+        //   · 其他（空白待机、插件行、插件详情页等）            → 设置窗口的当前页签，保持原行为
+        //
+        // 命中区与插件命中区同一套思路：**本帧绘制时登记，帧首作废**（见 InvalidateNativeHitZones）。
+        // 于是通知 / 剪贴板面板 / 插件详情页接管岛体时，这几块区域自动不存在，右键不会误命中。
+        // ⚠️ 只登记「本模块真正画出来的 x 区间」，不登记覆盖整岛的隐形大热区 ——
+        //    2026-09-19 的回归就是这么来的（大热区把设置窗口的入口整片吃掉）。
+
+        private static float _clockZoneL = -1f, _clockZoneR = -1f;
+        private static float _hardwareZoneL = -1f, _hardwareZoneR = -1f;
+        private static float _mediaZoneL = -1f, _mediaZoneR = -1f;
+
+        /// <summary>帧首作废三块原生模块的右键命中区；本帧没画就等于命中区不存在。</summary>
+        private static void InvalidateNativeHitZones()
+        {
+            _clockZoneL = _clockZoneR = -1f;
+            _hardwareZoneL = _hardwareZoneR = -1f;
+            _mediaZoneL = _mediaZoneR = -1f;
+        }
+
+        /// <summary>
+        /// 岛内右键落在哪块原生内容上，返回设置窗口应直达的页签下标；未命中任何原生模块返回 -1。
+        /// 页签下标与 <see cref="ConsoleWindow"/> 的侧边栏一致：1 = 显示设置、2 = 媒体设置。
+        /// 只按 x 判定 —— 三块区域在岛内是互不重叠的横向切片，y 由调用方（岛体悬停）保证。
+        /// </summary>
+        public static int NativeRightClickTab(float x)
+        {
+            if (InZone(x, _mediaZoneL, _mediaZoneR)) return 2;
+            if (InZone(x, _clockZoneL, _clockZoneR) || InZone(x, _hardwareZoneL, _hardwareZoneR)) return 1;
+            return -1;
+        }
+
+        private static bool InZone(float x, float l, float r) => l >= 0f && x >= l && x <= r;
 
     }
 }
