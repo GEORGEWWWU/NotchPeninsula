@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -223,7 +224,14 @@ namespace NotchPeninsula
         private async Task ReceiveLoopAsync(ClientWebSocket ws, CancellationToken token)
         {
             var buffer = new byte[4096];
-            var sb = new StringBuilder();
+
+            // ⚠️ 必须「先攒原始字节、整条消息到齐了再解码」，不能按帧各自 UTF8.GetString：
+            //    服务端把整首歌的歌词一次性发出来（实测 init 单条消息 5565 字节），超过这个 4KB 缓冲后
+            //    会被切成多帧；逐帧解码时，落在帧边界上的中文（3 字节 UTF-8）会被解成 U+FFFD「�」——
+            //    用户 2026-09-24 反馈的「译文里显示一个乱码」就是这么来的（实测 4096 边界处恰好切在
+            //    一句译文中间：「渐渐开始怀疑你是否会如期出���在我面前」，整条解码则完好）。
+            //    MemoryStream 循环复用，稳态不产生额外分配。
+            using var payload = new MemoryStream();
 
             while (ws.State == WebSocketState.Open && !token.IsCancellationRequested)
             {
@@ -234,11 +242,11 @@ namespace NotchPeninsula
                     break;
                 }
 
-                sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                payload.Write(buffer, 0, result.Count);
                 if (!result.EndOfMessage) continue;
 
-                HandleMessage(sb.ToString());
-                sb.Clear();
+                HandleMessage(Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length));
+                payload.SetLength(0);
             }
         }
 
@@ -332,6 +340,8 @@ namespace NotchPeninsula
         //   ② 判定不出译文（中日以外的同语种对照、粤语夹普通话等）→ 两行合并进 text，用换行符分隔。
         // 形态 ② 若照原样画出来，换行符会在 Skia 里变成一个「豆腐块」乱码，两行也挤在同一行上。
         // 这里在加载时就地拆开：第一行仍是原文，其余行合并为一句话当译文 —— 之后渲染层只管两行。
+        // 注：实测本机 LyricServer（2026-09-24）走的就是形态 ②：整首歌 translation 字段恒为空、
+        //     47/54 行的 text 里是「原文\n译文」。
         private static readonly char[] MergedLineSeparators = { '\n', '\r', '\u2028', '\u2029', '\u0085', '\u000B', '\u000C' };
 
         private static void SplitMergedLine(ref string text, ref string translation)
