@@ -9,7 +9,8 @@ namespace NotchPeninsula
     {
 
         // 媒体控件遮罩：左端取按钮块起点（位置固定），向右延伸 MEDIA_MASK_WIDTH（<=0 视为不铺），左起 MEDIA_MASK_FADE 渐隐。
-        private const float MEDIA_MASK_WIDTH = 90f;
+        // 79 = 右端正好落在「下一首」图标右缘（三个按钮实体范围是组件右端 −79 ~ −11）；90 = 一直到组件右端。
+        private const float MEDIA_MASK_WIDTH = 0f;
         private const float MEDIA_MASK_FADE = 15f;
 
         // ================= 岛体内容布局：两条互斥分支 =================
