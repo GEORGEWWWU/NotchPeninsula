@@ -343,6 +343,12 @@ namespace NotchPeninsula
 
         private static SKBitmap? _appIconBitmap;
 
+        // 窗口类注册时那个 HICON 的托管宿主。窗口类里的 hIcon 要活到进程结束，
+        // 所以这里必须持有 Icon 实例（原实现只取了 .Handle 就把 Icon 丢掉，
+        // 等于靠"Icon 没有终结器"这一隐式假设在保活那个句柄）。
+        // 与 _appIconBitmap 一样属于进程级常驻资源，故意不在窗口销毁时释放。
+        private static Icon? _appSysIcon;
+
         private static string _appTitleWithVersion = "NotchPeninsula";
 
         // 侧边栏与通用设置状态
@@ -711,8 +717,9 @@ namespace NotchPeninsula
                 try
                 {
                     // 提取系统级小图标 (专供窗口注册和任务栏底层使用)
-                    var sysIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
-                    if (sysIcon != null) appIconHandle = sysIcon.Handle;
+                    // 留住引用而不是只取句柄：这个 HICON 要随窗口类活到进程结束。
+                    _appSysIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+                    if (_appSysIcon != null) appIconHandle = _appSysIcon.Handle;
 
                     string iconPath = Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-logo.ico");
 
@@ -724,9 +731,9 @@ namespace NotchPeninsula
                     }
 
                     // 兜底：如果外部文件丢失或解码失败，用系统图标转存
-                    if (_appIconBitmap == null && sysIcon != null)
+                    if (_appIconBitmap == null && _appSysIcon != null)
                     {
-                        using var bmp = sysIcon.ToBitmap();
+                        using var bmp = _appSysIcon.ToBitmap();
                         using var ms = new MemoryStream();
                         bmp.Save(ms, ImageFormat.Png);
                         ms.Position = 0;
@@ -982,9 +989,8 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(windowRect, cornerRadius, cornerRadius, _bgPaint);
 
             canvas.Save();
-            using var clipPath = new SKPath();
-            clipPath.AddRoundRect(windowRect, cornerRadius, cornerRadius);
-            canvas.ClipPath(clipPath, SKClipOperation.Intersect, true);
+            // 复用进程级静态裁剪路径（尺寸只由常量 WIDTH/HEIGHT 决定，见 ConsoleWindow.Paint.cs）
+            canvas.ClipPath(WindowClipPath, SKClipOperation.Intersect, true);
 
             // 标题栏区：纯暗色模式仍保留传统顶栏；材质模式下不再额外盖一整块底色，让亚克力/云母连续透过。
             if (_backdropMode == BackdropMaterialMode.SolidDark)

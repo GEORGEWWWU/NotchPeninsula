@@ -31,10 +31,14 @@ namespace NotchPeninsula
 
             int radius = Math.Max(12, (int)MathF.Round(8f * _dpiScale * 2f));
             IntPtr region = Win32.CreateRoundRectRgn(0, 0, _scaledWidth + 1, _scaledHeight + 1, radius, radius);
-            if (region != IntPtr.Zero)
-            {
-                _ = Win32.SetWindowRgn(hwnd, region, true);
-            }
+            if (region == IntPtr.Zero)
+                return;
+
+            // SetWindowRgn 只在**成功**时由窗口接管 region 的所有权；
+            // 失败（返回 0）时所有权仍在调用方，必须自己 DeleteObject ——
+            // 否则每开一次设置窗口就永久泄漏一块 GDI region（region 是受限的系统资源）。
+            if (Win32.SetWindowRgn(hwnd, region, true) == 0)
+                Win32.DeleteObject(region);
         }
 
         private void SyncBackdropToContent()

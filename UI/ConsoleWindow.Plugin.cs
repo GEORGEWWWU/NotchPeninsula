@@ -24,23 +24,68 @@ namespace NotchPeninsula
 
         private List<PluginEntry> _pluginView = new();
 
+        // 行内副标题（"运行中 · v1.2.0 · #2/4" 之类）：与 _pluginView 同序、同版本。
+        // 原来是在 Render 里对每一行每帧拼一遍（含 $-插值），现在跟着列表一起只在变更时重建。
+        private readonly List<string> _pluginSubTexts = new();
+
+        // 缓存判据：PluginManager 的变更序号 + 上次算好的「顺序：…」那一行文本
+        private int _pluginViewVersion = -1;
+        private string _contentOrderDesc = "";
+        private int _contentOrderDescVersion = -1;
+
         // ================= 插件中心辅助逻辑 =================
         private void RefreshPluginView()
         {
-            _pluginView = PluginManager.Instance.Entries.ToList();
+            int version = PluginManager.Instance.ChangeVersion;
+            if (_pluginViewVersion == version) return;   // 插件页每帧都会调；没变就直接复用
+            _pluginViewVersion = version;
+
+            var mgr = PluginManager.Instance;
+            _pluginView = mgr.Entries.ToList();
+
+            // 副标题的全部输入（状态 / 版本号 / 错误 / 排序位置 / 显示总数）都随变更序号变化，
+            // 所以在这里跟列表一起重建，渲染路径只负责取用。
+            _pluginSubTexts.Clear();
+            int orderTotal = mgr.DisplayedOrder.Count;
+            for (int i = 0; i < _pluginView.Count; i++)
+            {
+                var entry = _pluginView[i];
+                string sub;
+                if (entry.State == PluginState.Failed)
+                    sub = "加载失败：" + (entry.Error ?? "未知错误");
+                else if (entry.State == PluginState.Loaded)
+                    sub = string.IsNullOrEmpty(entry.Version) ? "运行中" : $"运行中 · v{entry.Version}";
+                else
+                    sub = "已禁用 · " + entry.Key;
+
+                // 位置 = 在「当前显示的内容顺序」里的次序（与卡片顶部那行「顺序：…」一一对应）。
+                // 未启用的插件不显示在岛上，也就不参与排序，这里不给它序号。
+                int pos = mgr.GetOrderIndex(entry);
+                if (pos > 0) sub += orderTotal > 0 ? $" · #{pos}/{orderTotal}" : $" · #{pos}";
+
+                _pluginSubTexts.Add(sub);
+            }
         }
 
         /// <summary>
         /// 把「当前显示的内容顺序」渲染成一行可读文本（原生模块用中文名、插件用友好名）。
         /// 只列出**当前真的显示在岛上**的内容：禁用的插件、未勾选的原生模块不参与排序，
         /// 这里就不显示它们（它们的位置仍保留着，重新启用 / 重新显示后会自动插回原位）。
+        /// 结果按变更序号缓存 —— 这一行原来是每个渲染帧都拼一遍 StringBuilder。
         /// </summary>
-
         private string DescribeContentOrder()
         {
+            int version = PluginManager.Instance.ChangeVersion;
+            if (_contentOrderDescVersion == version)
+                return _contentOrderDesc;
+
             var mgr = PluginManager.Instance;
             var order = mgr.DisplayedOrder;
-            if (order.Count == 0) return "（暂无内容）";
+            if (order.Count == 0)
+            {
+                _contentOrderDescVersion = version;
+                return _contentOrderDesc = "（暂无内容）";
+            }
 
             var sb = new System.Text.StringBuilder(96);
             for (int i = 0; i < order.Count; i++)
@@ -58,7 +103,10 @@ namespace NotchPeninsula
                 if (sb.Length > 0) sb.Append("  ·  ");
                 sb.Append(i + 1).Append('.').Append(name);
             }
-            return sb.ToString();
+
+            _contentOrderDescVersion = version;
+            _contentOrderDesc = sb.ToString();
+            return _contentOrderDesc;
         }
 
         private PluginEntry? GetPluginAt(int index)

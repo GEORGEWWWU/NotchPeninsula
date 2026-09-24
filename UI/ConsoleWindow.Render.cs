@@ -369,7 +369,9 @@ namespace NotchPeninsula
 
                 if (index == 0) // 调整经典刘海的矢量绘图比例，使其视觉高度和灵动岛保持一致
                 {
-                    var path = new SKPath();
+                    // using：SKPath 持有 Skia 原生对象，本方法每次渲染显示设置页都会调用，
+                    // 漏掉 it 就是"每次重绘泄漏一个原生路径"（与下方 DrawSortArrow 的写法保持一致）。
+                    using var path = new SKPath();
                     path.MoveTo(cx - 35, cy - 10);
                     path.QuadTo(cx - 25, cy - 10, cx - 25, cy - 5);
                     path.LineTo(cx - 25, cy + 5);
@@ -851,7 +853,7 @@ namespace NotchPeninsula
                 }
                 _dynamicTextPaint.Color = isOpacityDisabled ? new SKColor(100, 100, 100) : (isSelected ? SKColors.White : new SKColor(150, 150, 150));
                 _dynamicTextPaint.TextSize = 11f;
-                string pct = (i * 25) + "%";
+                string pct = OpacityStopLabels[i];   // 复用静态刻度文案，避免每帧插值
                 float tw = _dynamicTextPaint.MeasureText(pct);
                 canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
                 _dynamicTextPaint.TextSize = 13f;
@@ -900,8 +902,7 @@ namespace NotchPeninsula
             canvas.DrawText(TruncateText("顺序：" + DescribeContentOrder(), _subTextPaint, WIDTH - 36 - 216),
                 216, listY + 46, _subTextPaint);
 
-            // 序号分母：当前显示中的内容数量（与上面「顺序：…」一一对应）
-            int orderTotal = PluginManager.Instance.DisplayedOrder.Count;
+            // 序号分母已挪进 RefreshPluginView（副标题在那里一次算好），此处不再需要
 
             const int maxRows = 7;
             // 上行：名称独占整行，可延展至卡片右边界外侧
@@ -922,25 +923,12 @@ namespace NotchPeninsula
                 canvas.DrawText(TruncateText(entry.FriendlyName, _uiTextPaint, nameTextMax), 216, rowY + 18, _uiTextPaint);
 
                 // ═══ 下行：信息 + 全部操作按钮（同一行从左到右排列） ═══
-                string sub;
-                SKColor subColor = new SKColor(170, 170, 170);
-                if (entry.State == PluginState.Failed)
-                {
-                    sub = "加载失败：" + (entry.Error ?? "未知错误");
-                    subColor = new SKColor(232, 100, 100);
-                }
-                else if (entry.State == PluginState.Loaded)
-                {
-                    sub = string.IsNullOrEmpty(entry.Version) ? "运行中" : $"运行中 · v{entry.Version}";
-                }
-                else
-                {
-                    sub = "已禁用 · " + entry.Key;
-                }
-                // 位置 = 在「当前显示的内容顺序」里的次序（与卡片顶部那行「顺序：…」一一对应）。
-                // 未启用的插件不显示在岛上，也就不参与排序，这里不给它序号。
-                int pos = PluginManager.Instance.GetOrderIndex(entry);
-                if (pos > 0) sub += orderTotal > 0 ? $" · #{pos}/{orderTotal}" : $" · #{pos}";
+                // 副标题文本已按「插件变更序号」在 RefreshPluginView 里预算好（见 ConsoleWindow.Plugin.cs），
+                // 渲染路径只取用；颜色按状态现算（SKColor 是值类型，不产生堆分配）。
+                string sub = i < _pluginSubTexts.Count ? _pluginSubTexts[i] : "";
+                SKColor subColor = entry.State == PluginState.Failed
+                    ? new SKColor(232, 100, 100)
+                    : new SKColor(170, 170, 170);
                 _subTextPaint.Color = subColor;
                 float infoBaseline = rowY + 40;
                 canvas.DrawText(TruncateText(sub, _subTextPaint, infoTextMax), 216, infoBaseline, _subTextPaint);
@@ -1194,11 +1182,9 @@ namespace NotchPeninsula
             //    可视行数由 GetVolumeMenuLayout 给出（与命中侧同源），绘制不再自己算一份。
             if (_selectedTab == 0 && _soundVolumeDropdownOpen)
             {
-                var volLabels = new string[ToastSoundConfig.VolumeOptions.Length];
-                for (int i = 0; i < volLabels.Length; i++) volLabels[i] = $"{ToastSoundConfig.VolumeOptions[i]}%";
                 GetVolumeMenuLayout(out _, out _, out int volVisible);
                 RenderDropdownList(canvas, SOUND_VOL_X, SOUND_BOX_Y, SOUND_VOL_W,
-                    volLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex, dimmedIndex: -1,
+                    VolumeOptionLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex, dimmedIndex: -1,
                     upward: true, scrollFirst: 0, visibleRowsOverride: volVisible);
             }
 

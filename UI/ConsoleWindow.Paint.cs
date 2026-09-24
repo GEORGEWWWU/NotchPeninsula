@@ -63,5 +63,31 @@ namespace NotchPeninsula
         private static readonly SKPaint _dynamicStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
 
         private static readonly SKPaint _dynamicTextPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+
+        // 窗口圆角裁剪路径：只取决于编译期常量 WIDTH / HEIGHT 与固定圆角 8（DPI 缩放由画布矩阵负责），
+        // 所以整个进程只需要这一条。原实现是每次 Render 都 new 一条 SKPath 再 ClipPath。
+        private static readonly SKPath WindowClipPath = CreateWindowClipPath();
+
+        private static SKPath CreateWindowClipPath()
+        {
+            var path = new SKPath();
+            path.AddRoundRect(new SKRect(0, 0, WIDTH, HEIGHT), 8f, 8f);
+            return path;
+        }
+
+        // 音量档位下拉的标签（"0%" … "100%"）：来源是固定的 ToastSoundConfig.VolumeOptions，
+        // 进程内建一次即可。原来每次渲染展开的音量下拉都新建 string[11] 并逐项插值。
+        private static readonly string[] VolumeOptionLabels = BuildVolumeOptionLabels();
+
+        private static string[] BuildVolumeOptionLabels()
+        {
+            var options = ToastSoundConfig.VolumeOptions;
+            var labels = new string[options.Length];
+            for (int i = 0; i < labels.Length; i++) labels[i] = $"{options[i]}%";
+            return labels;
+        }
+
+        // 背景透明度滑轨的 5 个刻度文案（0% / 25% / 50% / 75% / 100%），同样只建一次。
+        private static readonly string[] OpacityStopLabels = ["0%", "25%", "50%", "75%", "100%"];
     }
 }

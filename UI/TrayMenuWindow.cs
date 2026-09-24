@@ -136,11 +136,15 @@ namespace NotchPeninsula
             LayoutItems();
 
             _renderTimer = new System.Timers.Timer(16) { AutoReset = false };
-            _renderTimer.Elapsed += (_, __) =>
-            {
-                _renderScheduled = false;
-                if (!_dismissRequested) Render();
-            };
+            // 用具名方法而不是 lambda：lambda 闭包会捕获 this（整个窗口对象），
+            // 且无法在销毁时 -= 退订 —— 计时器 + 闭包会把窗口一直钉在内存里。
+            _renderTimer.Elapsed += OnRenderTick;
+        }
+
+        private void OnRenderTick(object? sender, System.Timers.ElapsedEventArgs e)
+        {
+            _renderScheduled = false;
+            if (!_dismissRequested) Render();
         }
 
         private void LayoutItems()
@@ -346,10 +350,16 @@ namespace NotchPeninsula
         private void Destroy()
         {
             _tearingDown = true;
+            _tornDown = true;   // 从这一刻起不再调度任何新渲染
 
             try
             {
+                // 必须 Stop + 退订 + Dispose 三件套：只 Stop 不会释放内部的 System.Threading.Timer 注册，
+                // 而注册里挂着 OnRenderTick（实例方法）→ 会把整个 TrayMenuWindow 一直钉住。
+                // 菜单每次弹出都是 new 一个实例，所以这里不严格释放就是"每开一次托盘菜单泄漏一个窗口对象"。
+                _renderTimer.Elapsed -= OnRenderTick;
                 _renderTimer.Stop();
+                _renderTimer.Dispose();
             }
             catch { /* 关窗路径上不值得为计时器异常打断 */ }
 
@@ -364,13 +374,24 @@ namespace NotchPeninsula
             _tearingDown = false;
             _trackingMouse = false;
 
+            // 逐个 Dispose 再置 null：SKPaint / SKTypeface 持有 Skia 原生资源，
+            // 只把字段置 null 不会释放原生句柄（要等 GC 终结器），而 CreateResources() 用的是 `??=`，
+            // 下次打开菜单又会重新分配一整套 —— 于是"每开关一次菜单泄漏 1 字体 + 7 画笔"。
+            DisposePaint(ref _textPaint);
+            DisposePaint(ref _checkPaint);
+            DisposePaint(ref _bgPaint);
+            DisposePaint(ref _borderPaint);
+            DisposePaint(ref _hoverPaint);
+            DisposePaint(ref _separatorPaint);
+            try { _typeface?.Dispose(); } catch { }
             _typeface = null;
-            _textPaint = null;
-            _checkPaint = null;
-            _bgPaint = null;
-            _borderPaint = null;
-            _hoverPaint = null;
-            _separatorPaint = null;
+        }
+
+        /// <summary>释放一支画笔并置空；重复调用安全（字段为 null 时为空操作）。</summary>
+        private static void DisposePaint(ref SKPaint? paint)
+        {
+            try { paint?.Dispose(); } catch { }
+            paint = null;
         }
 
         // ==================== 消息处理 ====================
@@ -509,6 +530,7 @@ namespace NotchPeninsula
         }
 
         private bool _tearingDown;   // 销毁过程中，用来屏蔽 WM_CAPTURECHANGED 的递归关闭
+        private bool _tornDown;      // 已彻底销毁（计时器与画笔均已释放），禁止再次调度渲染
         private bool _ignoreNextButtonUp; // 吃掉"拉起菜单的那一下右键抬起"，防止刚弹出就自杀
 
         private int HitTest(int x, int y)
@@ -565,7 +587,9 @@ namespace NotchPeninsula
 
         private void RequestRender()
         {
-            if (_renderScheduled || _dismissRequested) return;
+            // _tornDown：Destroy() 已经把计时器 Dispose 了，此时再 Start() 会抛 ObjectDisposedException。
+            // 窗口销毁后仍可能有已排队的消息进来（销毁与消息派发之间没有同步保证），必须挡住。
+            if (_tornDown || _renderScheduled || _dismissRequested) return;
             _renderScheduled = true;
             _renderTimer.Start();
         }

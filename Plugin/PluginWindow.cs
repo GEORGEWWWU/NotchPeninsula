@@ -39,8 +39,25 @@ public sealed class PluginWindow : IPluginWindow
     private bool _closing;
     private int _posX, _posY;
 
+    // 归属信息：宿主 + 打开它的插件 Id。
+    // 存在的唯一目的是「插件卸载时能被宿主主动关掉」—— 本窗口的 _draw/_mouseDown/_key 是
+    // 插件实例方法的委托，会直接引用插件类型；只要窗口还活着，承载它的可回收 ALC 就回收不掉
+    // （热重载会持续泄漏旧版本程序集）。所以 Show() 时向宿主登记、销毁时注销。
+    private readonly PluginHost? _owner;
+    private readonly string? _ownerPluginId;
+
+    /// <summary>创建窗口的线程 Id（同步销毁只能在这个线程上执行）。</summary>
+    private int _ownerThreadId;
+
+    /// <summary>无归属窗口（宿主内部 / 测试用）。这类窗口不会被插件卸载路径自动关闭。</summary>
     public PluginWindow(string title, int width, int height)
+        : this(null, null, title, width, height) { }
+
+    /// <summary>带回属主的窗口：<paramref name="owner"/> 为宿主，<paramref name="ownerPluginId"/> 为打开它的插件。</summary>
+    internal PluginWindow(PluginHost? owner, string? ownerPluginId, string title, int width, int height)
     {
+        _owner = owner;
+        _ownerPluginId = ownerPluginId;
         _title = title;
         _width = width;
         _height = height;
@@ -71,6 +88,29 @@ public sealed class PluginWindow : IPluginWindow
     {
         if (_hwnd != IntPtr.Zero)
             Win32.PostMessage(_hwnd, Win32.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    /// <summary>
+    /// 同步销毁窗口（走与 WM_CLOSE 完全相同的清理路径：释放 DIB/SKSurface → DestroyWindow → 摘除登记表）。
+    ///
+    /// 为什么需要它：插件卸载时要立刻切断「窗口 → 插件方法委托 → 插件类型 → ALC」这条引用链，
+    /// 而 <see cref="Close"/> 只是 PostMessage，消息要等宿主回到消息循环才处理 ——
+    /// 卸载路径随后马上就做的那几轮同步 GC 会因此判定「加载上下文仍未被回收」。
+    ///
+    /// 只能在创建窗口的那个线程上调用（DestroyWindow 的硬性要求）。非同线程返回 false，
+    /// 由调用方回退到 <see cref="Close"/>。
+    /// </summary>
+    internal bool TryDestroyNow()
+    {
+        if (_hwnd == IntPtr.Zero) return true;
+        if (Environment.CurrentManagedThreadId != _ownerThreadId) return false;
+
+        var hwnd = _hwnd;
+        _closing = true;
+        CleanupBuffer();          // 先放掉 SKSurface + DIB，再让 WM_DESTROY 摘登记表
+        Win32.DestroyWindow(hwnd);
+        if (_hwnd != IntPtr.Zero) _hwnd = IntPtr.Zero;
+        return true;
     }
 
     /// <summary>创建窗口并注册到消息路由表。</summary>
@@ -105,6 +145,10 @@ public sealed class PluginWindow : IPluginWindow
 
         if (_hwnd == IntPtr.Zero) return;
         lock (_windows) _windows[_hwnd] = this;
+        _ownerThreadId = Environment.CurrentManagedThreadId;
+        // 向宿主登记归属：插件被卸载时宿主会把这些窗口逐个关掉（见 PluginHost.UnregisterPlugin）
+        if (_owner != null && _ownerPluginId != null)
+            _owner.AttachWindow(_ownerPluginId, this);
         _posX = x;
         _posY = y;
         Win32.SetForegroundWindow(_hwnd); // 激活窗口，让 Esc/键盘输入立即生效
@@ -158,6 +202,10 @@ public sealed class PluginWindow : IPluginWindow
 
             case Win32.WM_DESTROY:
                 lock (_windows) _windows.Remove(hwnd);
+                // 从宿主的归属表中摘除，避免宿主列表随「用户手动关窗」无限增长
+                if (_owner != null && _ownerPluginId != null)
+                    _owner.DetachWindow(_ownerPluginId, this);
+                _hwnd = IntPtr.Zero;
                 return IntPtr.Zero;
         }
         return Win32.DefWindowProc(hwnd, msg, wParam, lParam);

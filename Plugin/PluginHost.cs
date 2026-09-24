@@ -48,6 +48,11 @@ public sealed class PluginHost
     private readonly Dictionary<string, List<IDisposable>> _refreshes = new();
     private readonly Dictionary<string, Action?> _settingsHandlers = new();
 
+    // 每个插件打开的窗口。插件窗口的绘制/输入回调是插件实例方法的委托，会直接引用插件类型；
+    // 若不在这里记账并在卸载时关掉，窗口会被 PluginWindow 的静态路由表强引用，
+    // 承载它的可回收 ALC 就永远回收不掉（热重载持续泄漏旧版本程序集）。
+    private readonly Dictionary<string, List<IPluginWindow>> _windows = new();
+
     // 组件注册表版本号：任何 Register/Unregister/排序 都会自增。
     // 渲染侧（Renderer）用它做快照缓存 —— 只有版本变化时才重新拷贝组件数组，
     // 稳态 60FPS 下读取零分配，插件禁用/卸载后渲染侧下一帧自动感知。
@@ -336,6 +341,7 @@ public sealed class PluginHost
     public void UnregisterPlugin(string pluginId)
     {
         List<IDisposable>? refreshes = null;
+        List<IPluginWindow>? windows = null;
         bool detailInvalidated = false;
         lock (_lock)
         {
@@ -373,12 +379,35 @@ public sealed class PluginHost
                 refreshes = list;
                 _refreshes.Remove(pluginId);
             }
+            // 该插件打开的窗口一并收回：窗口的绘制/输入委托引用插件类型，
+            // 不关掉的话下面 PluginManager 的 ctx.Unload() + GC 永远回收不到这个 ALC。
+            if (_windows.TryGetValue(pluginId, out var winList))
+            {
+                windows = winList;
+                _windows.Remove(pluginId);
+            }
         }
 
         // 定时器在锁外释放，避免 Dispose 回调再次进入宿主造成死锁
         if (refreshes != null)
             foreach (var r in refreshes)
                 try { r.Dispose(); } catch { }
+
+        // 窗口同样在锁外关闭（销毁过程会回调 DetachWindow，再进宿主锁）
+        if (windows != null)
+        {
+            foreach (var w in windows)
+            {
+                try
+                {
+                    // 优先同步销毁：卸载路径紧接着就要做同步 GC，PostMessage 那种异步关窗赶不上，
+                    // 会让 ALC 回收判定失败。非同线程时回退到 Close()。
+                    if (w is PluginWindow pw && pw.TryDestroyNow()) continue;
+                    w.Close();
+                }
+                catch { /* 单个窗口关不掉不影响其余资源回收 */ }
+            }
+        }
 
         if (detailInvalidated) DetailPageChanged?.Invoke();
     }
@@ -479,11 +508,37 @@ public sealed class PluginHost
     }
 
     // ---- 窗口 ----
-    public IPluginWindow CreateWindow(string title, int width, int height)
+    /// <summary>
+    /// 创建插件自有窗口。必须带上 <paramref name="pluginId"/>：宿主按插件记账，
+    /// 卸载时统一关闭 —— 否则窗口会一直强引用插件类型，让可回收 ALC 回收失败。
+    /// </summary>
+    public IPluginWindow CreateWindow(string pluginId, string title, int width, int height)
     {
-        var win = new PluginWindow(title, width, height);
-        win.Show();
+        var win = new PluginWindow(this, pluginId, title, width, height);
+        win.Show();   // Show() 内部会调 AttachWindow 完成登记
         return win;
+    }
+
+    /// <summary>窗口创建成功后由 <see cref="PluginWindow"/> 回调登记。</summary>
+    internal void AttachWindow(string pluginId, IPluginWindow window)
+    {
+        lock (_lock)
+        {
+            if (!_windows.TryGetValue(pluginId, out var list))
+                _windows[pluginId] = list = new List<IPluginWindow>(1);
+            if (!list.Contains(window)) list.Add(window);
+        }
+    }
+
+    /// <summary>窗口销毁时由 <see cref="PluginWindow"/> 回调注销（含用户手动关窗），避免记账表无限增长。</summary>
+    internal void DetachWindow(string pluginId, IPluginWindow window)
+    {
+        lock (_lock)
+        {
+            if (!_windows.TryGetValue(pluginId, out var list)) return;
+            list.Remove(window);
+            if (list.Count == 0) _windows.Remove(pluginId);
+        }
     }
 
     /// <summary>周期刷新句柄：后台定时器触发回调，Dispose 即停止。</summary>
@@ -554,5 +609,5 @@ public sealed class ScopedPluginHost : IPluginHost
     public float GetPluginRowBudget() => _host.GetPluginRowBudgetFor(_pluginId);
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
-    public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(title, width, height);
+    public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(_pluginId, title, width, height);
 }

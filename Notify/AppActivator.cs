@@ -49,43 +49,73 @@ namespace NotchPeninsula
         {
             try
             {
+                // PackageManager / Package 都是 WinRT 包装对象（底层 COM RCW + 原生资源）。
+                // 这里要枚举当前用户的**全部**已安装包，单次就能产出数百个包装对象 ——
+                // 不释放的话只能等 GC 终结器，高频点击通知会让 RCW 在两次 GC 之间持续累积。
                 var packageManager = new Windows.Management.Deployment.PackageManager();
-                var packages = packageManager.FindPackagesForUserWithPackageTypes(
-                    null,
-                    Windows.Management.Deployment.PackageTypes.Main |
-                    Windows.Management.Deployment.PackageTypes.Optional);
-
-                foreach (var package in packages)
+                try
                 {
-                    var entries = await package.GetAppListEntriesAsync();
-                    foreach (var entry in entries)
+                    var packages = packageManager.FindPackagesForUserWithPackageTypes(
+                        null,
+                        Windows.Management.Deployment.PackageTypes.Main |
+                        Windows.Management.Deployment.PackageTypes.Optional);
+
+                    foreach (var package in packages)
                     {
-                        if (string.Equals(entry.AppUserModelId, aumid, StringComparison.OrdinalIgnoreCase))
+                        try
                         {
-                            bool launched = await entry.LaunchAsync();
-                            if (launched)
+                            var entries = await package.GetAppListEntriesAsync();
+                            foreach (var entry in entries)
                             {
-                                var display = entry.DisplayInfo?.DisplayName ?? aumid;
-                                Logger.Info($"WinRT LaunchAsync 成功，显示名={display}");
-                                return (true, $"已通过 WinRT 唤醒应用：{display}");
-                            }
-                            else
-                            {
-                                Logger.Warn("WinRT LaunchAsync 返回 false（用户可能取消了启动）");
-                                return (false, "LaunchAsync 返回 false（用户可能取消了启动）");
+                                if (string.Equals(entry.AppUserModelId, aumid, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    bool launched = await entry.LaunchAsync();
+                                    if (launched)
+                                    {
+                                        var display = entry.DisplayInfo?.DisplayName ?? aumid;
+                                        Logger.Info($"WinRT LaunchAsync 成功，显示名={display}");
+                                        return (true, $"已通过 WinRT 唤醒应用：{display}");
+                                    }
+                                    else
+                                    {
+                                        Logger.Warn("WinRT LaunchAsync 返回 false（用户可能取消了启动）");
+                                        return (false, "LaunchAsync 返回 false（用户可能取消了启动）");
+                                    }
+                                }
                             }
                         }
+                        finally
+                        {
+                            ReleaseWinRT(package);
+                        }
                     }
-                }
 
-                Logger.Warn($"WinRT 未找到匹配 AUMID 的已安装包：{aumid}");
-                return (false, "未在当前用户的已安装包中找到匹配的 AUMID");
+                    Logger.Warn($"WinRT 未找到匹配 AUMID 的已安装包：{aumid}");
+                    return (false, "未在当前用户的已安装包中找到匹配的 AUMID");
+                }
+                finally
+                {
+                    ReleaseWinRT(packageManager);
+                }
             }
             catch (Exception ex)
             {
                 Logger.Error($"WinRT 激活异常，AUMID={aumid}", ex);
                 return (false, $"WinRT 激活异常：{ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 尽力确定性释放一个 WinRT / COM 包装对象。
+        ///
+        /// 用 <c>as IDisposable</c> 而不是 <c>using</c>：并非所有 WinRT 类型都投影出 IDisposable
+        /// （只有底层实现 IClosable 的才有），写死 <c>using</c> 会因类型不带该接口而编译不过。
+        /// 支持释放的当场释放，不支持的静默跳过。
+        /// </summary>
+        private static void ReleaseWinRT(object? o)
+        {
+            try { (o as IDisposable)?.Dispose(); }
+            catch (Exception ex) { Logger.Debug($"释放 WinRT 对象失败：{ex.Message}"); }
         }
 
         #endregion
@@ -134,10 +164,14 @@ namespace NotchPeninsula
 
         private static (bool Success, string Message) TryLaunchViaCom(string aumid)
         {
+            // RCW（运行时可调用包装）不再使用后应显式释放，否则这个 COM 对象要等 GC 终结器
+            // 才断开与 ApplicationActivationManager 的连接（每次点击通知都会走一遍）。
+            object? activatorRaw = null;
             try
             {
                 // Instantiate the COM coclass and cast to the interface to get correct signature (int/HRESULT)
-                var activator = (IApplicationActivationManager?)new ApplicationActivationManager();
+                activatorRaw = new ApplicationActivationManager();
+                var activator = (IApplicationActivationManager?)activatorRaw;
                 if (activator == null)
                 {
                     Logger.Error("COM 创建 ApplicationActivationManager 实例失败");
@@ -169,6 +203,14 @@ namespace NotchPeninsula
                 Logger.Error($"COM 激活异常，AUMID={aumid}", ex);
                 return (false, $"COM 激活异常：{ex.Message}");
             }
+            finally
+            {
+                if (activatorRaw != null)
+                {
+                    try { Marshal.FinalReleaseComObject(activatorRaw); }
+                    catch (Exception ex) { Logger.Debug($"释放 ApplicationActivationManager 失败：{ex.Message}"); }
+                }
+            }
         }
 
         #endregion
@@ -194,25 +236,45 @@ namespace NotchPeninsula
             try
             {
                 var procs = System.Diagnostics.Process.GetProcesses();
-                foreach (var p in procs)
+                try
                 {
-                    try
+                    foreach (var p in procs)
                     {
-                        if (p.MainWindowHandle == IntPtr.Zero)
-                            continue;
-                        if ((!string.IsNullOrWhiteSpace(p.MainWindowTitle) && p.MainWindowTitle.IndexOf(appName, StringComparison.OrdinalIgnoreCase) >= 0)
-                            || p.ProcessName.IndexOf(appName, StringComparison.OrdinalIgnoreCase) >= 0)
+                        // Process 持有原生进程句柄，必须确定性释放 ——
+                        // GetProcesses() 为系统里每个进程都建了一个对象，靠 GC 终结器回收
+                        // 会让句柄数在两次 GC 之间持续飙高（本方法每次"置前"都会调一次）。
+                        try
                         {
-                            IntPtr h = p.MainWindowHandle;
-                            if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
-                            SetForegroundWindow(h);
-                            Logger.Info($"已将进程 {p.ProcessName} (PID={p.Id}) 窗口置前");
-                            return (true, $"已将进程 {p.ProcessName} 的窗口置前");
+                            if (p.MainWindowHandle == IntPtr.Zero)
+                                continue;
+                            if ((!string.IsNullOrWhiteSpace(p.MainWindowTitle) && p.MainWindowTitle.IndexOf(appName, StringComparison.OrdinalIgnoreCase) >= 0)
+                                || p.ProcessName.IndexOf(appName, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                string procName = SafeProcessName(p);
+                                int procId = SafeProcessId(p);
+                                IntPtr h = p.MainWindowHandle;
+                                if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+                                SetForegroundWindow(h);
+                                Logger.Info($"已将进程 {procName} (PID={procId}) 窗口置前");
+                                return (true, $"已将进程 {procName} 的窗口置前");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Debug($"遍历进程 {SafeProcessName(p)} 时异常：{ex.Message}");
+                        }
+                        finally
+                        {
+                            p.Dispose();
                         }
                     }
-                    catch (Exception ex)
+                }
+                finally
+                {
+                    // 提前 return 时，剩余尚未遍历到的 Process 也要释放
+                    foreach (var rest in procs)
                     {
-                        Logger.Debug($"遍历进程 {p.ProcessName} 时异常：{ex.Message}");
+                        try { rest.Dispose(); } catch { }
                     }
                 }
                 Logger.Warn($"未找到匹配 appName={appName} 的进程窗口");
@@ -223,6 +285,20 @@ namespace NotchPeninsula
                 Logger.Error($"置前异常，appName={appName}", ex);
                 return (false, $"置前异常：{ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 取进程名 / PID 的容错包装：进程可能在遍历途中退出，
+        /// 此时访问 ProcessName 会抛，而原实现是在 catch 里再读一次 ProcessName 打日志 —— 会二次抛。
+        /// </summary>
+        private static string SafeProcessName(System.Diagnostics.Process p)
+        {
+            try { return p.ProcessName; } catch { return "(已退出)"; }
+        }
+
+        private static int SafeProcessId(System.Diagnostics.Process p)
+        {
+            try { return p.Id; } catch { return -1; }
         }
     }
 }
