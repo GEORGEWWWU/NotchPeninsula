@@ -147,16 +147,23 @@ namespace NotchPeninsula
                     DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
                 }
 
-                // 组合模式媒体控件：一律以「内容末端 + 10px 边距」为锚点
-                float rightOccupiedWidth = isHovered ? 95f : 45f;
-                float maskEnd = mediaAnchor - rightOccupiedWidth + 5f;
-                float maskStart = maskEnd - 15f;
-                canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                // 遮罩只涂到本模块锚点为止：排在媒体右边的插件内容不会被盖掉
-                canvas.DrawRect(maskEnd, 0, mediaAnchor, currentHeight, _bgPaint);
-
+                // 🎵 媒体控件遮罩：只在「悬停换成播放控制按钮」那一帧铺 —— 右侧 95px 要换成三个按钮，
+                //    需要这层「渐隐 + 底色」把按钮底下的内容盖掉。
+                //    ⚠️ 不悬停时什么都不铺：原来还有一档常态遮罩（45f），但岛体按歌词真实宽度自适应后
+                //       它已遮不到东西，只剩一条用背景色二次叠涂出来的实心色带（背景越透明越明显，
+                //       看着就像媒体模块右侧多出一块不跟随透明度设置的组件），故删掉那一档。
                 if (isHovered)
                 {
+                    float maskEnd = mediaAnchor - 90f; // 原 95f − 5f 边距 = 悬停时右侧交给按钮的宽度
+                    float maskStart = maskEnd - 15f;
+                    canvas.Save();
+                    canvas.Translate(maskStart, 0);
+                    canvas.Scale(maskEnd - maskStart, currentHeight);
+                    canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                    canvas.Restore();
+                    // 遮罩只涂到本模块锚点为止：排在媒体右边的插件内容不会被盖掉
+                    canvas.DrawRect(maskEnd, 0, mediaAnchor, currentHeight, _bgPaint);
+
                     float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                     DrawSvgPath(canvas, _mediaIconPaint, mBtnPrevX + 11, prevNextY, _prevPath);
                     DrawSvgPath(canvas, _mediaIconPaint, mBtnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
@@ -359,14 +366,20 @@ namespace NotchPeninsula
 
                     if (MediaInteractionMode == 0) // 直接交互模式
                     {
-                        float rightOccupiedWidth = isHovered ? 95f : 45f;
-                        float maskEnd = right - rightOccupiedWidth + 5f;
-                        float maskStart = maskEnd - 15f;
-                        canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                        canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
+                        // 🎵 媒体控件遮罩：只在「悬停换成播放控制按钮」那一帧铺（原 常态 45f / 悬停 95f 两档，
+                        //    现在只保留悬停档）。不悬停时什么都不铺 —— 常态那一档在岛体按歌词真实宽度
+                        //    自适应后已遮不到东西，只剩一条用背景色二次叠涂出来的实心色带。
                         if (isHovered)
                         {
+                            float maskEnd = right - 90f; // 原 95f − 5f 边距 = 悬停时右侧交给按钮的宽度
+                            float maskStart = maskEnd - 15f;
+                            canvas.Save();
+                            canvas.Translate(maskStart, 0);
+                            canvas.Scale(maskEnd - maskStart, currentHeight);
+                            canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                            canvas.Restore();
+                            canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+
                             float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                             DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
                             DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
@@ -384,12 +397,8 @@ namespace NotchPeninsula
                     }
                     else // 展开交互模式
                     {
-                        float rightOccupiedWidth = bars != null ? 45f : 15f;
-                        float maskEnd = right - rightOccupiedWidth + 5f;
-                        float maskStart = maskEnd - 15f;
-
-                        canvas.Save(); canvas.Translate(maskStart, 0); canvas.Scale(maskEnd - maskStart, currentHeight); canvas.DrawRect(0, 0, 1, 1, _fadePaint); canvas.Restore();
-                        canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+                        // 🧹 不铺遮罩：本模式折叠态悬停不换成按钮（整块岛体都是「点击展开」的热区），
+                        //    没有任何需要遮挡的内容；原来那档常态遮罩只会留下一条实心色带。
 
                         if (bars != null)
                         {
