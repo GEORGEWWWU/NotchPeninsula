@@ -88,10 +88,30 @@ namespace NotchPeninsula
                     Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 2);
                     Renderer.TargetMonitorIndex = (int)key.GetValue("TargetMonitorIndex", 0);
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
-                    Renderer.CompositeModeEnabled = (int)key.GetValue("CompositeMode_Enabled", 0) != 0;
-                    Renderer.CompShowDateTime = (int)key.GetValue("Composite_ShowDateTime", 1) != 0;
-                    Renderer.CompShowHardware = (int)key.GetValue("Composite_ShowHardware", 1) != 0;
-                    Renderer.CompShowMedia = (int)key.GetValue("Composite_ShowMedia", 1) != 0;
+
+                    // 🧩 组合模式已常开（总开关在 2026-09-25 被移除），这里只负责把老配置迁移成复选框初值。
+                    //    老版本没开过组合模式的用户，其「待机显示内容」三选一正是「复选框只勾一个」，
+                    //    直接按它换算；组合模式本来就开着的，沿用注册表里的勾选状态。
+                    //    ⚠️ 媒体控制器一律勾上：旧的非组合模式下「媒体一激活就显示」，与待机显示内容无关，
+                    //       不勾的话升级后媒体会整个消失。
+                    if ((int)key.GetValue("CompositeMode_Enabled", 0) != 0)
+                    {
+                        Renderer.CompShowDateTime = (int)key.GetValue("Composite_ShowDateTime", 1) != 0;
+                        Renderer.CompShowHardware = (int)key.GetValue("Composite_ShowHardware", 1) != 0;
+                        Renderer.CompShowMedia = (int)key.GetValue("Composite_ShowMedia", 1) != 0;
+                    }
+                    else
+                    {
+                        Renderer.CompShowDateTime = Renderer.StandbyDisplayMode == 0;
+                        Renderer.CompShowHardware = Renderer.StandbyDisplayMode == 2;
+                        Renderer.CompShowMedia = true;
+
+                        // 🔑 迁移只做一次：把 CompositeMode_Enabled 置 1 并落盘，
+                        //    否则下次启动又会走这条分支、拿 StandbyDisplayMode 重新推导，
+                        //    把用户在新版本里新勾的选项**覆盖掉**（StandbyDisplayMode 已经不再被任何 UI 修改）。
+                        Program.SaveSetting("CompositeMode_Enabled", 1);
+                    }
+
                     Renderer.PassthroughModeEnabled = (int)key.GetValue("PassthroughMode", 0) != 0;
 
                     Renderer.ApplyThemeColors(); // 启动时注入颜色

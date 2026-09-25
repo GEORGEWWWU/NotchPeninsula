@@ -58,13 +58,19 @@ namespace NotchPeninsula
 
         public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
 
-        public static int StandbyDisplayMode { get; set; } = 0; // 0=时间日期, 1=空白
+        public static int StandbyDisplayMode { get; set; } = 0; // 旧「待机显示内容」（0=时间日期, 1=空白, 2=硬件占用）：已被显示设置的复选框取代，只用于老配置迁移
 
         public static int TargetMonitorIndex { get; set; } = 0; // 目标显示器索引
 
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
 
-        public static bool CompositeModeEnabled { get; set; } = false; // 自定义组合模式总开关
+        // 🧩 组合模式已**常开**（2026-09-25 用户要求移除总开关）：灵动岛显示什么、按什么次序，
+        //    完全由「显示设置 → 显示内容」那张复选框 + 上下排序列表决定 —— 只勾一个就等于旧的
+        //    「待机显示内容」，勾多个就是多模块并排。
+        //    之所以还留着这个「恒为 true」的属性，是因为渲染 / 布局 / 宽度计算里到处都在问
+        //    「是不是组合模式」；非组合模式那套布局已成为不可达分支，但先不动它，
+        //    避免连带改动岛体几何（宽度决策 / 插件行预留）而引入回归。
+        public static bool CompositeModeEnabled => true;
 
         public static bool CompShowDateTime { get; set; } = true;  // 显示时间日期
 

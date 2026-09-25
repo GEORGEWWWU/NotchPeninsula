@@ -164,17 +164,6 @@ namespace NotchPeninsula
                     float[] defaultVals = { 125f, 29f, 250f, 35f, 260f, 55f, 1.0f, 12f };
                     _customValues[updateIdx] = defaultVals[updateIdx];
 
-                    // 重置时如果处于硬件监控，拦截至最小限制
-                    if (Renderer.StandbyDisplayMode == 2)
-                    {
-                        if (updateIdx == 0 && _customValues[0] < 170f) _customValues[0] = 170f;
-                        if (updateIdx == 1 && _customValues[1] < 34f) _customValues[1] = 34f;
-                    }
-
-                    // 重置待机宽度时，同步更新快照，防止切回时恢复到旧值
-                    if (updateIdx == 0)
-                        _savedStandbyWidth = -1f; // 清除快照，切回时用默认125
-
                     // 完整模式重置消息通知尺寸时，同样拦截至完整模式最小限制，避免缩得放不下应用名
                     if (Renderer.IsToastFullMode)
                     {
@@ -191,12 +180,6 @@ namespace NotchPeninsula
                     else
                     {
                         float minLimit = updateIdx == 6 ? 0.5f : 20f;
-                        // 滑动尺寸时的保护墙
-                        if (Renderer.StandbyDisplayMode == 2)
-                        {
-                            if (updateIdx == 0) minLimit = 170f;
-                            if (updateIdx == 1) minLimit = 34f;
-                        }
                         // 完整模式下，消息通知最小尺寸必须能容纳应用名
                         if (Renderer.IsToastFullMode)
                         {
@@ -418,75 +401,30 @@ namespace NotchPeninsula
                 _dropdownOpen = false;
                 Render();
             }
-            // ⚠️ 组合模式下「待机显示内容」是置灰的（RenderTabDisplay 的 isDisabled），
-            //    这里必须同步禁用 —— 否则会出现「看着灰、光标是禁止指针、点下去却真的生效」。
-            else if (_selectedTab == 1 && !Renderer.CompositeModeEnabled && _hoveredDisplayOptionIndex != -1)
+            // ===== 显示内容列表 =====
+            // 顺序项同时含内置模块与插件，统一走 PluginManager 那张顺序表 ——
+            // 所以这里不需要（也不该）再区分「原生模块」与「插件」两套逻辑。
+            else if (_selectedTab == 1 && (_hoveredDisplayRow != -1 || _hoveredDisplayMoveUp != -1 || _hoveredDisplayMoveDown != -1))
             {
-                int previousMode = Renderer.StandbyDisplayMode;
-                _selectedDisplayIndex = _hoveredDisplayOptionIndex;
-                Renderer.StandbyDisplayMode = _selectedDisplayIndex;
+                var displayItems = PluginManager.Instance.DisplayItems;
 
-                // 进入硬件检测：快照当前宽度，然后强制拉宽
-                if (Renderer.StandbyDisplayMode == 2 && previousMode != 2)
+                if (_hoveredDisplayRow != -1 && _hoveredDisplayRow < displayItems.Count)
                 {
-                    // 保存用户切换前的真实宽度（只在首次进入时快照，防止反复覆盖）
-                    if (_savedStandbyWidth < 0f)
-                        _savedStandbyWidth = Renderer.STANDBY_WIDTH;
-
-                    if (Renderer.STANDBY_WIDTH < 170f)
+                    // 勾选 / 取消勾选：内置模块写 CompShow*，插件走启用 / 禁用
+                    var item = displayItems[_hoveredDisplayRow];
+                    PluginManager.Instance.SetDisplayed(item.Key, !item.IsShown);
+                }
+                else
+                {
+                    // 上 / 下移动（与相邻行换位，持久化后灵动岛下一帧即生效）
+                    int rowIdx = _hoveredDisplayMoveUp != -1 ? _hoveredDisplayMoveUp : _hoveredDisplayMoveDown;
+                    if (rowIdx >= 0 && rowIdx < displayItems.Count)
                     {
-                        Renderer.STANDBY_WIDTH = 170f;
-                        _customValues[0] = 170f;
-                        Program.SaveSetting("Custom_StandbyW", 170f);
-                        UpdateValueString(0);
-                    }
-                    if (Renderer.BASE_HEIGHT < 34f)
-                    {
-                        Renderer.BASE_HEIGHT = 34f;
-                        _customValues[1] = 34f;
-                        Program.SaveSetting("Custom_BaseH", 34f);
-                        UpdateValueString(1);
+                        int delta = _hoveredDisplayMoveUp != -1 ? -1 : 1;
+                        PluginManager.Instance.MoveDisplay(displayItems[rowIdx].Key, delta);
                     }
                 }
-                // 离开硬件检测：恢复用户之前的宽度
-                else if (previousMode == 2 && Renderer.StandbyDisplayMode != 2)
-                {
-                    float restoreWidth = _savedStandbyWidth > 0f ? _savedStandbyWidth : 125f;
-                    Renderer.STANDBY_WIDTH = restoreWidth;
-                    _customValues[0] = restoreWidth;
-                    Program.SaveSetting("Custom_StandbyW", restoreWidth);
-                    UpdateValueString(0);
 
-                    // 重置快照，下次再进入硬件检测时重新记录
-                    _savedStandbyWidth = -1f;
-                }
-
-                Program.SaveSetting("StandbyDisplayMode", _selectedDisplayIndex);
-                Render();
-            }
-            // 组合模式点击处理
-            else if (_compositeToggleHovered)
-            {
-                Renderer.CompositeModeEnabled = !Renderer.CompositeModeEnabled;
-                Program.SaveSetting("CompositeMode_Enabled", Renderer.CompositeModeEnabled ? 1 : 0);
-                Render();
-            }
-            else if (_compDateTimeHovered && Renderer.CompositeModeEnabled)
-            {
-                Renderer.CompShowDateTime = !Renderer.CompShowDateTime;
-                Program.SaveSetting("Composite_ShowDateTime", Renderer.CompShowDateTime ? 1 : 0);
-                Render();
-            }
-            else if (_compHardwareHovered && Renderer.CompositeModeEnabled)
-            {
-                Renderer.CompShowHardware = !Renderer.CompShowHardware;
-                Program.SaveSetting("Composite_ShowHardware", Renderer.CompShowHardware ? 1 : 0);
-                Render();
-            }
-            else if (_compMediaHovered && Renderer.CompositeModeEnabled)
-            {
-                Renderer.CompShowMedia = !Renderer.CompShowMedia;
-                Program.SaveSetting("Composite_ShowMedia", Renderer.CompShowMedia ? 1 : 0);
                 Render();
             }
             // ===== 插件中心交互 =====
@@ -514,17 +452,7 @@ namespace NotchPeninsula
                 var pe = GetPluginAt(_hoveredPluginRemove);
                 if (pe != null) { PluginManager.Instance.Remove(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
             }
-            else if (_selectedTab == 6 && _hoveredPluginMoveLeft != -1)
-            {
-                // 🧩 左移：调整该插件在灵动岛上的显示顺序（持久化，立即生效）
-                var pe = GetPluginAt(_hoveredPluginMoveLeft);
-                if (pe != null && PluginManager.Instance.MoveOrder(pe, -1)) { RefreshPluginView(); Render(); }
-            }
-            else if (_selectedTab == 6 && _hoveredPluginMoveRight != -1)
-            {
-                var pe = GetPluginAt(_hoveredPluginMoveRight);
-                if (pe != null && PluginManager.Instance.MoveOrder(pe, 1)) { RefreshPluginView(); Render(); }
-            }
+            // 注：插件位置的 ← / → 已于 2026-09-25 移除，排序统一走「显示设置 → 显示内容」。
         }
     }
 }
