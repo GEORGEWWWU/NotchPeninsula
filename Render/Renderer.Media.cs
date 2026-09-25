@@ -33,10 +33,12 @@ namespace NotchPeninsula
 
         private const float TL_MIN_HEIGHT = 140f; // 高度涨到这条线之前不画，避免与底部按钮叠字
 
-        // 显示门控：仅「纯媒体控制器（可点击展开）+ 灵动岛已展开 + 非组合模式 + SMTC 提供进度」时出现
+        // 显示门控：仅「纯媒体控制器（可点击展开）+ 灵动岛已展开 + SMTC 提供进度」时出现。
+        // ⚠️ 刻意**不再**排除组合模式（2026-09-25）：组合模式现在也能展开媒体面板，
+        //    展开后面板与固定目标宽度(320) / 面板高度(158) 完全一致，时间轴照常出现。
 
         public static bool TimelineVisible(MediaController media)
-            => IsMediaExpanded && MediaInteractionMode == 1 && !CompositeModeEnabled && media.HasTimeline;
+            => IsMediaExpanded && MediaInteractionMode == 1 && media.HasTimeline;
 
         // 展开态高度：只有在「本帧真的会画时间轴」时才为它加高 28px 留位。
         // 直接交互模式下时间轴不画（见 TimelineVisible），右键展开出的媒体面板因此回到 130，
