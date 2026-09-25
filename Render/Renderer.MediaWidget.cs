@@ -92,8 +92,9 @@ namespace NotchPeninsula
                 DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
             }
 
-            // 右端：悬停时把频谱换成播放按钮，不悬停时画频谱。两种交互模式、组合与非组合都一样。
-            if (isHovered)
+            // 右端：只有**直接交互**模式悬停时才把频谱换成播放按钮；展开交互模式悬停不显示控件
+            //（否则悬停已能直接控制，那个「点一下展开面板」的开关就没意义了），继续画频谱。
+            if (isHovered && MediaInteractionMode == 0)
             {
                 int btnPrevX = (int)geometry.AnchorRight - 90;
                 int btnPlayX = (int)geometry.AnchorRight - 60;
