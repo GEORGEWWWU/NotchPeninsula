@@ -549,7 +549,14 @@ public sealed class PluginManager
     // ====================================================================
 
     /// <summary>加载一个插件。返回是否成功。</summary>
-    public bool Load(PluginEntry e)
+    public bool Load(PluginEntry e) => Load(e, dedupSameId: false);
+
+    /// <summary>
+    /// 加载一个插件。返回是否成功。
+    /// <paramref name="dedupSameId"/> = 加载成功时顺带移除磁盘上同 Id 的其他副本（导入升级用，
+    /// 见 <see cref="RemoveSameIdDuplicates"/>）；启动时对既有插件的常规加载传 false。
+    /// </summary>
+    private bool Load(PluginEntry e, bool dedupSameId)
     {
         if (e.State == PluginState.Loaded) return true;
         try
@@ -583,6 +590,11 @@ public sealed class PluginManager
             e.Version = PluginHost.DetachString(plugin.Version);
             e.Author = PluginHost.DetachString(ReadAuthor(plugin, asm));
 
+            // 🔁 同 Id 的旧版本在这里就被移除 —— 必须早于下面的 _host.RegisterPlugin：
+            //    宿主按 pluginId 记账，两份同 Id 同时注册会互相覆盖；而且卸载旧版本时的
+            //    UnregisterPlugin(id) 会把新版本刚登记进来的组件 / 设置页一并摘掉。
+            if (dedupSameId) RemoveSameIdDuplicates(e);
+
             _host.RegisterPlugin(e.Id, e.DisplayName, e.Version);
             plugin.Initialize(_host.CreateScopedHost(e.Id));
 
@@ -606,6 +618,57 @@ public sealed class PluginManager
             RaiseChanged();
             return false;
         }
+    }
+
+    /// <summary>
+    /// 移除与 <paramref name="loaded"/> 同 Id 的其他副本（不同文件名的旧版本）：
+    /// 卸载 → 文件移入回收站 → 摘掉顺序项，并把旧版本在显示顺序表里的位置让给新版本
+    /// （否则升级后插件会掉到列表末尾）。
+    ///
+    /// <para>
+    /// 只在**导入**时调用：用户导入同 Id 插件即为升级，旧版本留着毫无意义 —— 两者无法共存，
+    /// 宿主按 pluginId 记账，同时注册会互相覆盖。启动时对磁盘上既有插件的常规加载不走这里，
+    /// 避免程序自己悄悄搬走用户的文件。
+    /// </para>
+    ///
+    /// <para>
+    /// ⚠️ 只认「加载过」的条目：<see cref="PluginEntry.Id"/> 是加载成功后才有的，
+    /// 从未加载成功的副本（禁用 / 加载失败）识别不出来，仍留在列表里由用户手动移除。
+    /// </para>
+    /// </summary>
+    private void RemoveSameIdDuplicates(PluginEntry loaded)
+    {
+        List<PluginEntry>? dups = null;
+        lock (_lock)
+        {
+            foreach (var x in _entries)
+            {
+                if (ReferenceEquals(x, loaded)) continue;                                              // 就是自己
+                if (string.Equals(x.Key, loaded.Key, StringComparison.OrdinalIgnoreCase)) continue;    // 同一个文件
+                if (string.IsNullOrEmpty(x.Id)) continue;
+                if (!string.Equals(x.Id, loaded.Id, StringComparison.OrdinalIgnoreCase)) continue;
+                (dups ??= new List<PluginEntry>()).Add(x);
+            }
+        }
+        if (dups == null) return;
+
+        bool relocated = false;
+        foreach (var dup in dups)
+        {
+            int pos;
+            lock (_lock) pos = IndexOfOrder(dup.Key);
+
+            Logger.Info($"[PluginManager] 导入同 Id 插件 {loaded.Id}，自动移除旧版本 {dup.Key}");
+            Remove(dup); // 卸载 + 文件移入 _recycle + 摘掉顺序/隐藏项
+
+            lock (_lock)
+            {
+                if (pos < 0 || ContainsOrder(loaded.Key)) continue;
+                _order.Insert(Math.Min(pos, _order.Count), loaded.Key);
+                relocated = true;
+            }
+        }
+        if (relocated) SaveOrderList();
     }
 
     /// <summary>卸载插件：让插件释放资源 → 摘除全部注册物 → 卸载 ALC → 回收影子目录。</summary>
@@ -739,7 +802,15 @@ public sealed class PluginManager
     // 导入 / 移除 / 打开目录
     // ====================================================================
 
-    /// <summary>把外部 DLL 复制进 plugins 目录并尝试加载。若不是合法插件则回滚删除。</summary>
+    /// <summary>
+    /// 把外部 DLL 复制进 plugins 目录并尝试加载。若不是合法插件则回滚删除。
+    ///
+    /// <para>
+    /// 同 Id 的插件视为「升级」，旧版本会被自动移除（卸载 + 文件移入 _recycle，可手动找回）：
+    /// 同名文件走时间戳改名，不同文件名/目录的副本由 <see cref="RemoveSameIdDuplicates"/> 在加载时清理，
+    /// 旧版本的显示顺序位让给新版本。
+    /// </para>
+    /// </summary>
     public (bool Ok, string Message) Import(string dllPath)
     {
         try
@@ -758,7 +829,8 @@ public sealed class PluginManager
             var e = Find(Path.GetFileName(target));
             if (e == null) { TryDelete(target); return (false, "导入失败：无法识别插件"); }
 
-            if (Load(e)) return (true, $"已导入并加载：{e.FriendlyName}");
+            // dedupSameId：加载成功即证明这是合法插件，此时按 Id 摘掉磁盘上的旧版本
+            if (Load(e, dedupSameId: true)) return (true, $"已导入并加载：{e.FriendlyName}");
 
             // 根本不是插件 → 回滚；是插件但初始化失败 → 保留以便排查
             if (e.Error == NoPluginError)
