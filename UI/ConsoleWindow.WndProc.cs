@@ -236,19 +236,19 @@ namespace NotchPeninsula
                         newHoveredMonitorDropdownIndex = (y - (int)listY) / 26;
                 }
 
-                // ── 显示内容列表 ──
+                // ── 显示内容列表（可滚动：首行 = _displayScroll，可视行数走 GetDisplayListLayout）──
                 // ⚠️ 行起点 / 行高 / 箭头槽位必须与 RenderTabDisplay 严格同源：
-                //    卡片顶 = TITLE_BAR_HEIGHT + 248，首行 = 卡片顶 + DISPLAY_FIRST_ROW_Y，行高 DISPLAY_ROW_H。
+                //    卡片顶 = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y，首行 = 卡片顶 + DISPLAY_FIRST_ROW_Y，行高 DISPLAY_ROW_H。
                 //    整行（名称 + 复选框）都可点 = 勾选 / 取消勾选；只有两个箭头槽吃 ↑ / ↓ 的悬停。
-                float displayRowTop = TITLE_BAR_HEIGHT + 248 + DISPLAY_FIRST_ROW_Y;
+                //    命中出的行号是**绝对条目下标**（= 滚动首行 + 槽位），点击侧直接拿它索引 displayItems。
+                GetDisplayListLayout(out int displayVisibleRows, out int displayMaxFirstRow);
+                _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
+                float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y;
                 float displayRowBottom = HEIGHT - 20;
                 if (x >= 216 && x <= WIDTH - 36 && y >= displayRowTop && y <= displayRowBottom)
                 {
-                    // 行数上限按卡片高度算，再与真实条目数取小（与渲染侧的 maxDisplayRows 同一算式）
-                    int displayRowLimit = Math.Max(1, (int)((displayRowBottom - displayRowTop) / DISPLAY_ROW_H));
-                    int rowIdx = (int)((y - displayRowTop) / DISPLAY_ROW_H);
-                    if (rowIdx >= 0 && rowIdx < displayRowLimit
-                        && rowIdx < PluginManager.Instance.DisplayItems.Count)
+                    int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
+                    if (rowIdx < _displayScroll + displayVisibleRows)
                     {
                         // 箭头槽比整行窄，所以先判箭头、再判整行 —— 箭头所在处不参与「整行勾选」的手感干扰
                         if (x >= DISPLAY_MOVE_UP_X && x <= DISPLAY_MOVE_UP_X + SORT_TRI_W) newHoveredDisplayMoveUp = rowIdx;
@@ -517,11 +517,13 @@ namespace NotchPeninsula
 
                 // 🖱 「显示内容」列表：指针压在这一行的任何部位（行本体 / ∧ / ∨）都算悬停，
                 //    行底动画统一按这个行号淡入淡出；行号一变就开表，由它逐拍推进到目标值。
+                //    ⚠️ 动画数组按**可视槽位**索引（行号 - 滚动首行），所以滚动后槽位变了也会重开表。
                 int newDisplayHoverRow = newHoveredDisplayRow != -1 ? newHoveredDisplayRow
                     : (newHoveredDisplayMoveUp != -1 ? newHoveredDisplayMoveUp : newHoveredDisplayMoveDown);
-                if (newDisplayHoverRow != _displayHoverRow)
+                int newDisplayHoverSlot = newDisplayHoverRow == -1 ? -1 : newDisplayHoverRow - _displayScroll;
+                if (newDisplayHoverSlot != _displayHoverRow)
                 {
-                    _displayHoverRow = newDisplayHoverRow;
+                    _displayHoverRow = newDisplayHoverSlot;
                     StartDisplayHoverAnim();
                 }
 

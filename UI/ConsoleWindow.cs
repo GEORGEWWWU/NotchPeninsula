@@ -42,6 +42,12 @@ namespace NotchPeninsula
 
         private const float DISPLAY_FIRST_ROW_Y = 56f;    // 首行顶部相对卡片顶部的偏移
 
+        /// <summary>「显示内容」卡片顶部相对窗口顶部的偏移（渲染与命中必须同源）。</summary>
+        private const float DISPLAY_CARD_Y = 248f;
+
+        /// <summary>滚轮一格（120）滚动几行。</summary>
+        private const int DISPLAY_WHEEL_STEP_ROWS = 3;
+
         private const float DISPLAY_MOVE_UP_X = 486f;     // ∧ 槽左边界（槽宽 = SORT_TRI_W）
 
         private const float DISPLAY_MOVE_DOWN_X = 504f;   // ∨ 槽左边界（与 ∧ 只隔 2px，视觉上是同一组控件）
@@ -559,13 +565,24 @@ namespace NotchPeninsula
         // 显示设置
         // 「显示内容」列表的悬停行：-1 = 没悬停任何行。
         // 三处分开记，是因为同一行里复选框与 ∧ / ∨ 的悬停反馈互不相同；
-        // _displayHoverRow 是「指针压在这一行的哪个部位都算」的行号，专门驱动行底动画。
+        // _displayHoverRow 是「指针压在这一行的哪个部位都算」的**可视槽位**，专门驱动行底动画。
         private int _hoveredDisplayRow = -1;
 
         private int _hoveredDisplayMoveUp = -1;
 
         private int _hoveredDisplayMoveDown = -1;
 
+        /// <summary>
+        /// 「显示内容」列表的**滚动首行**（绝对条目下标）。条目数（插件可能很多）会超过卡片
+        /// 能放下的行数，超出的部分靠这个偏移滚动查看；滚轮是唯一的改动入口。
+        /// 渲染、命中、滚轮三处都通过 <see cref="GetDisplayListLayout"/> 取可滚范围。
+        /// </summary>
+        private int _displayScroll = 0;
+
+        /// <summary>
+        /// 悬停行**在可视窗口里的槽位**（0 = 当前首行），-1 = 没悬停任何行。
+        /// 存槽位而不是绝对下标，是因为行底动画数组按槽位索引（一屏最多十来行）。
+        /// </summary>
         private int _displayHoverRow = -1;
 
         // 每行的悬停进度（0 = 没悬停，1 = 完全悬停）：由 16ms 定时器逐拍逼近目标值，
@@ -573,6 +590,33 @@ namespace NotchPeninsula
         private readonly float[] _displayHoverAnim = new float[24];
 
         private bool _displayHoverTimerOn = false;
+
+        /// <summary>
+        /// 「显示内容」列表的**唯一布局真源**：可视行数 / 最大首行。
+        /// 绘制（<c>RenderTabDisplay</c>）、悬停命中（<c>OnMouseMove</c>）、滚轮
+        /// （<c>WM_MOUSEWHEEL</c>）三处共用 —— 以前这类算式在各处各写一份，
+        /// 卡片高度或行高一改就会出现「滚不动 / 滚过头」。
+        /// </summary>
+        private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
+        {
+            // 卡片能放下几行（与旧渲染侧的 maxDisplayRows 同一算式）
+            int maxRows = Math.Max(1,
+                (int)((HEIGHT - 20 - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y)) / DISPLAY_ROW_H));
+            int total = PluginManager.Instance.DisplayItems.Count;
+            visibleRows = Math.Min(total, maxRows);
+            maxFirstRow = Math.Max(0, total - visibleRows);
+        }
+
+        /// <summary>当前光标位置换算成窗口客户区坐标（DIP，已除 DPI 缩放）；取不到返回 false。</summary>
+        private bool TryGetCursorClientPos(out int x, out int y)
+        {
+            x = 0; y = 0;
+            if (!Win32.GetCursorPos(out var pt) || !Win32.GetWindowRect(_hwnd, out var rect))
+                return false;
+            x = (int)((pt.x - rect.Left) / _dpiScale);
+            y = (int)((pt.y - rect.Top) / _dpiScale);
+            return true;
+        }
 
         private int _hoveredStyleIndex = -1;
 
@@ -946,8 +990,8 @@ namespace NotchPeninsula
                     OnLeftButtonDown(hwnd, (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale));
                     break;
 
-                // 🖱 滚轮：只服务于提示音下拉浮层（列表是动态扫目录来的，条目数不封顶）。
-                //    每格 120 → 滚动 3 行；可滚范围与绘制 / 命中共用 GetToastSoundMenuLayout。
+                // 🖱 滚轮：服务于两张**条目数不封顶**的长列表 —— 提示音下拉浮层、以及
+                //    「显示设置 → 显示内容」（插件一多就会超出卡片高度）。
                 case Win32.WM_MOUSEWHEEL:
                     if (_toastSoundDropdownOpen)
                     {
@@ -966,6 +1010,28 @@ namespace NotchPeninsula
                             }
                         }
                         return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
+                    }
+
+                    // 「显示内容」列表：只在光标落在列表区域时才滚动，免得在页面别处滚轮误动列表
+                    if (_selectedTab == 1 && TryGetCursorClientPos(out int wheelX, out int wheelY)
+                        && wheelX >= 200 && wheelX <= WIDTH - 20
+                        && wheelY >= TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y - DISPLAY_ROW_H)
+                    {
+                        GetDisplayListLayout(out _, out int displayMaxFirst);
+                        if (displayMaxFirst > 0)
+                        {
+                            int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                            int target = Math.Clamp(_displayScroll - delta / 120 * DISPLAY_WHEEL_STEP_ROWS, 0, displayMaxFirst);
+                            if (target != _displayScroll)
+                            {
+                                _displayScroll = target;
+                                // 同上：滚动后光标下的行号变了，hover 还停在旧行上，
+                                // 不补这一次命中，紧接着点下去就会勾错 / 移错条目。
+                                SyncHoverFromCursor();
+                                Render();
+                            }
+                        }
+                        return IntPtr.Zero;
                     }
                     break;
 
