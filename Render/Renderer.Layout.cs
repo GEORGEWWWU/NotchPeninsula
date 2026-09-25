@@ -121,7 +121,7 @@ namespace NotchPeninsula
             }
 
             // ---- 🧩 按「内容顺序表」混排：原生模块与插件组件共用同一套左右顺序 ----
-            // 顺序表由「插件中心」的 ← / → 调整并持久化，默认 = [时钟, 硬件, 媒体, 插件...]，
+            // 顺序表由「显示设置 → 显示内容」调整并持久化，默认 = [时钟, 硬件, 媒体, 插件...]，
             // 与引入顺序表之前的表现完全一致；插件之间的先后也在同一张表里独立调整。
             var contentOrder = Plugins.PluginManager.Instance.Host.ContentOrder;
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;

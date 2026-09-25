@@ -4,7 +4,7 @@ namespace NotchPeninsula.Plugins;
 
 /// <summary>
 /// 原生（内置）内容模块的伪 Id，与插件组件共处同一张「内容显示顺序表」。
-/// 有了它们，用户就能在「插件中心」用 ← / → 把插件挪到时间日期 / 硬件占用 / 媒体控制器之间或之前。
+/// 有了它们，用户就能在「显示设置 → 显示内容」里把插件挪到时间日期 / 硬件占用 / 媒体控制器之间或之前。
 /// </summary>
 public static class BuiltinWidgets
 {
@@ -73,11 +73,37 @@ public sealed class PluginHost
     // _pluginOrder 的只读快照：渲染侧每帧读取，避免每帧 ToArray 分配
     private string[] _contentOrderArr = Array.Empty<string>();
 
+    // 🚫 「已加载但不显示」的插件 id：显示设置里取消勾选 = 只从岛上收起，**不禁用、不卸载**。
+    //    由 PluginManager 通过 SetHiddenPlugins 注入；过滤必须放在 Widgets 这个唯一出口上 ——
+    //    渲染侧（DrawPluginWidgets / SumPluginRowWidth / SumPluginRowWidthNotIn）全部只吃 Widgets，
+    //    把 id 从 ContentOrder 里删掉是不够的（那样组件会落进「未登记顺序」的兜底桶里，照样被画出来）。
+    private readonly HashSet<string> _hiddenPlugins = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// 内容显示顺序（含 builtin.* 原生模块与插件 pluginId）。渲染侧据此把原生模块与插件组件混排。
     /// 返回内部快照数组，读取零分配。
     /// </summary>
     public IReadOnlyList<string> ContentOrder { get { lock (_lock) return _contentOrderArr; } }
+
+    /// <summary>
+    /// 注入「已加载但不显示」的插件 id 集合（显示设置为空的那些）。只影响组件的输出，不触发加载/卸载。
+    /// </summary>
+    public void SetHiddenPlugins(IReadOnlyCollection<string> hiddenIds)
+    {
+        var next = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in hiddenIds)
+            if (!string.IsNullOrEmpty(id)) next.Add(id);
+
+        lock (_lock)
+        {
+            if (next.SetEquals(_hiddenPlugins)) return; // 没变就别惊动渲染侧
+
+            _hiddenPlugins.Clear();
+            foreach (var id in next) _hiddenPlugins.Add(id);
+
+            _widgetsVersion++; // 组件集合变了 → 让渲染侧下一帧重建排序快照
+        }
+    }
 
     /// <summary>查询某个组件属于哪个插件（渲染侧按插件分组绘制用）。</summary>
     public bool TryGetWidgetPlugin(string widgetId, out string pluginId)
@@ -88,6 +114,7 @@ public sealed class PluginHost
     /// <summary>
     /// 主显示区组件（已按插件显示顺序排列）。
     /// 顺序由 <see cref="SetPluginOrder"/> 注入；未登记顺序的组件保持注册顺序追加在末尾。
+    /// <see cref="SetHiddenPlugins"/> 标记的插件，其组件**一律不出现在这里**（既不排布也不绘制）。
     /// </summary>
     public IReadOnlyList<IWidget> Widgets
     {
@@ -96,20 +123,25 @@ public sealed class PluginHost
             lock (_lock)
             {
                 if (_widgets.Count == 0) return Array.Empty<IWidget>();
-                if (_pluginOrder.Count == 0) return _widgets.ToArray();
+                if (_pluginOrder.Count == 0 && _hiddenPlugins.Count == 0) return _widgets.ToArray();
 
                 // 按插件顺序输出，同一插件内部保持其注册顺序
                 var ordered = new IWidget[_widgets.Count];
                 int n = 0;
                 foreach (var pid in _pluginOrder)
+                {
+                    if (_hiddenPlugins.Contains(pid)) continue; // 被隐藏的插件：组件留着，但不参与排布
                     foreach (var w in _widgets)
                         if (_widgetPluginMap.TryGetValue(w.Id, out var p) && string.Equals(p, pid, StringComparison.OrdinalIgnoreCase))
                             ordered[n++] = w;
+                }
 
-                // 追加未登记顺序的组件（例如直接 RegisterWidget(IWidget) 注册的测试组件）
+                // 追加未登记顺序的组件（例如直接 RegisterWidget(IWidget) 注册的测试组件）；
+                // 被隐藏插件的组件在这里同样要挡住，否则会从兜底路径漏回岛上。
                 foreach (var w in _widgets)
                 {
-                    if (_widgetPluginMap.TryGetValue(w.Id, out var p) && ContainsIgnoreCase(_pluginOrder, p)) continue;
+                    if (_widgetPluginMap.TryGetValue(w.Id, out var p)
+                        && (ContainsIgnoreCase(_pluginOrder, p) || _hiddenPlugins.Contains(p))) continue;
                     ordered[n++] = w;
                 }
 

@@ -33,6 +33,8 @@ public sealed class PluginEntry
     public string Id { get; internal set; } = "";
     public string DisplayName { get; set; } = "";
     public string Version { get; internal set; } = "";
+    /// <summary>作者（插件没实现 <see cref="INotchPlugin.Author"/> 时退回程序集元数据，可能为空）。</summary>
+    public string Author { get; internal set; } = "";
     public PluginState State { get; internal set; } = PluginState.NotLoaded;
     public string? Error { get; internal set; }
 
@@ -69,6 +71,7 @@ public sealed class PluginManager
     private const string RegistryBase = @"SOFTWARE\NotchPeninsula";
     private const string DisabledListValue = "Plugins_Disabled";
     private const string OrderListValue = "Plugins_Order";
+    private const string HiddenListValue = "Plugins_Hidden";
     private const string NoPluginError = "DLL 中未找到 INotchPlugin 的实现";
 
     private static readonly Lazy<PluginManager> _lazy = new(() => new PluginManager());
@@ -77,6 +80,12 @@ public sealed class PluginManager
     private readonly PluginHost _host = new();
     private readonly List<PluginEntry> _entries = new();
     private readonly HashSet<string> _disabled = new(StringComparer.OrdinalIgnoreCase);
+    // 🚫 「已加载但不显示」的插件（存 Key）：显示设置里取消勾选只把它从岛上收起，
+    //    **插件照常运行**（不卸载、不禁用），下次启动也保持不显示。
+    //    与 _disabled 是两件独立的事：_disabled = 不跑；_hidden = 跑但不显示。
+    //    ⚠️ 两者的联动是**单向**的：启用会自动取消隐藏（启用即要显示），
+    //       取消勾选显示则绝不动启用状态。
+    private readonly HashSet<string> _hidden = new(StringComparer.OrdinalIgnoreCase);
     // 插件显示顺序（存 Key，即相对 plugins 根的稳定标识）：持久化在注册表，决定灵动岛上的排列位置。
     // 为什么不用 pluginId：pluginId 只有「加载成功」后才知道，插件一旦被禁用/加载失败就查不到，
     // 会导致顺序位丢失、甚至只剩一个启用插件时排序按钮全部失效。Key 是磁盘上的稳定标识，与运行状态无关。
@@ -108,6 +117,7 @@ public sealed class PluginManager
     {
         PluginsRoot = Path.Combine(GetAppDirectory(), "plugins");
         LoadDisabledList();
+        LoadHiddenList();
         LoadOrderList();
     }
 
@@ -185,123 +195,203 @@ public sealed class PluginManager
     // 插件显示顺序（决定插件内容在灵动岛上的排列位置）
     // ====================================================================
 
+    /// <summary>「显示内容」列表里的一行（显示设置页据此渲染复选框与左右移动按钮）。</summary>
+    public sealed class DisplayItem
+    {
+        /// <summary>顺序项标识：内置模块为 builtin.*，插件为 <see cref="PluginEntry.Key"/>。</summary>
+        public string Key { get; init; } = "";
+        public string Name { get; init; } = "";
+        /// <summary>
+        /// 当前是否显示在灵动岛上：内置模块 = CompShow*，插件 = **已加载且未被隐藏**。
+        /// 插件这里为 false 有两种原因：没跑（禁用 / 加载失败），或跑着但被用户取消了显示。
+        /// </summary>
+        public bool IsShown { get; init; }
+        /// <summary>是否内置模块（时间日期 / 硬件占用 / 媒体控制器），UI 用它加「（内置）」标记。</summary>
+        public bool IsBuiltin { get; init; }
+    }
+
     /// <summary>
-    /// 当前显示中的内容顺序（原生模块 + 已启用插件），「顺序一览」与序号计数都以它为准。
-    /// 未显示的内容（禁用的插件 / 未勾选的原生模块）不在其中，但仍在顺序表里保留位置，
-    /// 重新启用 / 重新显示时会自动回到原来的位置。
+    /// 「显示内容」列表：内置模块（时间日期 / 硬件占用 / 媒体控制器）+ 全部插件，
+    /// 严格按显示顺序表排列 —— 这就是灵动岛上内容的排列次序。
+    ///
+    /// <para>
+    /// <b>向下兼容</b>：读的就是老版本那张顺序表（注册表 <c>Plugins_Order</c>），
+    /// 内置模块与插件的 Key 混排在同一张表里，所以升级后**用户此前调好的插件位置会原样带过来**，
+    /// 只是入口从「插件中心」搬到了「显示设置」。表里没有的内容（老版本从未排过序的插件）
+    /// 由 <see cref="EnsureOrder"/> 追加到末尾；老版本用 pluginId 写下的历史顺序也在那里迁移成 Key。
+    /// </para>
+    ///
+    /// <para>
+    /// 未勾选的插件（禁用 / 加载失败）**也在列表里**（复选框空着），
+    /// 用户才能在同一处把它重新勾回来；已经不在磁盘上的残留顺序项直接跳过。
+    /// </para>
     /// </summary>
-    public IReadOnlyList<string> DisplayedOrder
+    public IReadOnlyList<DisplayItem> DisplayItems
     {
         get
         {
             lock (_lock)
             {
-                var list = new List<string>(_order.Count);
+                var list = new List<DisplayItem>(_order.Count + BuiltinWidgets.Default.Length);
                 foreach (var key in _order)
-                    if (IsDisplayedLocked(key)) list.Add(key);
+                {
+                    if (BuiltinWidgets.IsBuiltin(key))
+                    {
+                        list.Add(new DisplayItem { Key = key, Name = BuiltinName(key), IsShown = IsBuiltinDisplayed(key), IsBuiltin = true });
+                        continue;
+                    }
+
+                    var e = FindEntryByKeyOrId(key);
+                    if (e == null || string.IsNullOrEmpty(e.Key)) continue; // 顺序表里的失效残留
+                    list.Add(new DisplayItem
+                    {
+                        Key = e.Key,
+                        Name = e.FriendlyName,
+                        IsShown = e.State == PluginState.Loaded && !_hidden.Contains(e.Key)
+                    });
+                }
+
+                // 🛟 兜底：内置模块一行都不能少。
+                //    正常路径下 EnsureOrder 已把它们补进表里，但那个调用只发生在 Initialize() 里 ——
+                //    万一初始化没跑（plugins 目录异常 / 初始化抛错），老版本的显示设置页仍然有
+                //    「时间日期 / 硬件占用 / 空白」三选一可点，这里要是空了，用户就彻底没入口把时钟勾回来了。
+                foreach (var b in BuiltinWidgets.Default)
+                    if (!list.Any(x => string.Equals(x.Key, b, StringComparison.OrdinalIgnoreCase)))
+                        list.Add(new DisplayItem { Key = b, Name = BuiltinName(b), IsShown = IsBuiltinDisplayed(b), IsBuiltin = true });
+
                 return list;
             }
         }
     }
 
+    /// <summary>内置模块的中文名（与显示设置页的文案一致）。调用方需持有 _lock。</summary>
+    private static string BuiltinName(string key)
+    {
+        if (string.Equals(key, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return "时间日期";
+        if (string.Equals(key, BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) return "资源占用检测";
+        return "媒体控制器(含频谱)";
+    }
+
     /// <summary>
-    /// 该顺序项当前是否真的显示在灵动岛上。
-    /// 不显示的内容不参与排序：顺序一览里不列出、序号不计入、← / → 也会跳过它。
+    /// 勾选 / 取消勾选某个顺序项并持久化。
+    ///
+    /// <para>
+    /// 内置模块写 <c>CompShow*</c>，插件写「隐藏清单」——与插件中心的开关**不是同一件事**：
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>勾选插件 = 要看到它 → 顺带启用（没跑就没法显示），会退出隐藏清单；</item>
+    ///   <item>取消勾选插件 = **只从岛上收起，不禁用、不卸载**，插件继续在后台跑；</item>
+    ///   <item>反向由 <see cref="SetEnabled"/> 兜：启用会自动取消隐藏，禁用则天然不显示。</item>
+    /// </list>
     /// </summary>
-    public bool IsOrderItemDisplayed(string key)
+    public void SetDisplayed(string key, bool shown)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+
+        if (BuiltinWidgets.IsBuiltin(key))
+        {
+            if (string.Equals(key, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase))
+            {
+                Renderer.CompShowDateTime = shown;
+                Program.SaveSetting("Composite_ShowDateTime", shown ? 1 : 0);
+            }
+            else if (string.Equals(key, BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase))
+            {
+                Renderer.CompShowHardware = shown;
+                Program.SaveSetting("Composite_ShowHardware", shown ? 1 : 0);
+            }
+            else
+            {
+                Renderer.CompShowMedia = shown;
+                Program.SaveSetting("Composite_ShowMedia", shown ? 1 : 0);
+            }
+            RaiseChanged();
+            return;
+        }
+
+        var e = Find(key);
+        if (e == null) return;
+
+        if (shown)
+        {
+            // 勾上显示 = 用户要看到它。插件没在跑就先跑起来（SetEnabled 内部会把它移出隐藏清单）
+            if (e.State != PluginState.Loaded) { SetEnabled(e, true); return; }
+            if (!_hidden.Remove(e.Key)) return; // 本来就显示着，什么都不用做
+        }
+        else
+        {
+            // 只收起显示：**不动启用状态**（插件继续运行，下次启动也保持收起）
+            if (!_hidden.Add(e.Key)) return;
+        }
+
+        SaveHiddenList();
+        PushOrderToHost(); // 立即重排/收起，灵动岛下一帧生效
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// 该顺序项能否朝指定方向移动（delta = -1 上移 / +1 下移）。
+    /// 跳过失效的残留项（插件已移除），所以「视觉上相邻的两行」永远是彼此的落点。
+    /// </summary>
+    public bool CanMoveDisplay(string key, int delta)
     {
         if (string.IsNullOrEmpty(key)) return false;
-        lock (_lock) return IsDisplayedLocked(key);
-    }
-
-    /// <summary>该内容是否显示中。调用方需持有 _lock。</summary>
-    private bool IsDisplayedLocked(string key)
-    {
-        if (BuiltinWidgets.IsBuiltin(key)) return IsBuiltinDisplayed(key);
-
-        // 插件：只有「已启用且加载成功」才真的显示在岛上（禁用 / 加载失败都不参与排序）
-        var e = FindEntryByKeyOrId(key);
-        return e != null && e.State == PluginState.Loaded;
-    }
-
-    /// <summary>原生模块当前是否显示（与 Renderer 的绘制门控保持一致）。</summary>
-    private static bool IsBuiltinDisplayed(string id)
-    {
-        if (Renderer.CompositeModeEnabled)
-        {
-            if (string.Equals(id, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return Renderer.CompShowDateTime;
-            if (string.Equals(id, BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) return Renderer.CompShowHardware;
-            return Renderer.CompShowMedia; // 媒体控制器
-        }
-
-        // 非组合模式：待机时同一时刻只显示一个原生模块（媒体激活时显示媒体，与「待机显示内容」无关）
-        if (string.Equals(id, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return Renderer.StandbyDisplayMode == 0;
-        if (string.Equals(id, BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) return Renderer.StandbyDisplayMode == 2;
-        return true;
-    }
-
-    /// <summary>顺序位（从 1 开始，只数当前显示中的内容）；0 表示该内容当前不显示或尚未登记顺序。</summary>
-    public int GetOrderIndex(PluginEntry e)
-    {
-        if (string.IsNullOrEmpty(e.Key)) return 0;
         lock (_lock)
         {
-            int n = 0;
-            foreach (var key in _order)
-            {
-                if (!IsDisplayedLocked(key)) continue;
-                n++;
-                if (string.Equals(key, e.Key, StringComparison.OrdinalIgnoreCase)) return n;
-            }
-            return 0;
+            int idx = IndexOfOrder(key);
+            return idx >= 0 && FindMoveTargetLocked(idx, delta) >= 0;
         }
     }
 
     /// <summary>
-    /// 该内容能否朝指定方向移动（delta = -1 左移 / +1 右移）。
-    /// 未显示的内容不参与排序：自己不能移动，也不会成为别人的落点。
+    /// 把顺序项朝指定方向与相邻项交换位置并持久化，灵动岛下一帧即生效。
+    /// 内置模块与插件走同一条路径 —— 它们本来就在同一张顺序表里。
     /// </summary>
-    public bool CanMoveOrder(PluginEntry e, int delta)
+    public bool MoveDisplay(string key, int delta)
     {
-        if (string.IsNullOrEmpty(e.Key)) return false;
+        if (string.IsNullOrEmpty(key)) return false;
+
         lock (_lock)
         {
-            int idx = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
-            if (idx < 0 || !IsDisplayedLocked(_order[idx])) return false;
-            return FindMoveTargetLocked(idx, delta) >= 0;
-        }
-    }
+            int idx = IndexOfOrder(key);
+            if (idx < 0) return false;
 
-    /// <summary>idx 朝 delta 方向第一个「显示中」的位置；没有则返回 -1。调用方需持有 _lock。</summary>
-    private int FindMoveTargetLocked(int idx, int delta)
-    {
-        for (int t = idx + delta; t >= 0 && t < _order.Count; t += delta)
-            if (IsDisplayedLocked(_order[t])) return t;
-        return -1;
-    }
-
-    /// <summary>调整插件在灵动岛上的显示顺序并持久化；返回是否真的发生了变化。</summary>
-    public bool MoveOrder(PluginEntry e, int delta)
-    {
-        if (string.IsNullOrEmpty(e.Key)) return false;
-        lock (_lock)
-        {
-            int idx = _order.FindIndex(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
-            if (idx < 0) { _order.Add(e.Key); idx = _order.Count - 1; }
-
-            // 只与「显示中」的内容换位：中间那些未显示的内容被跨过（它们的位置照旧保留）
             int target = FindMoveTargetLocked(idx, delta);
             if (target < 0) return false;
 
-            _order.RemoveAt(idx);
-            _order.Insert(target, e.Key);
+            string moving = _order[idx];
+            _order[idx] = _order[target];
+            _order[target] = moving;
         }
 
         SaveOrderList();
         PushOrderToHost(); // 顺序变化 → 重新按新顺序输出组件，灵动岛下一帧即生效
-        Logger.Info($"[PluginManager] 插件显示顺序调整: {e.FriendlyName} → #{GetOrderIndex(e)}");
         RaiseChanged();
         return true;
+    }
+
+    /// <summary>顺序项在顺序表里的下标；不在表里返回 -1。调用方需持有 _lock。</summary>
+    private int IndexOfOrder(string key)
+        => _order.FindIndex(x => string.Equals(x, key, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>idx 朝 delta 方向第一个「列表里真的会显示出来」的位置；没有则返回 -1。调用方需持有 _lock。</summary>
+    private int FindMoveTargetLocked(int idx, int delta)
+    {
+        for (int t = idx + delta; t >= 0 && t < _order.Count; t += delta)
+            if (IsListedLocked(_order[t])) return t;
+        return -1;
+    }
+
+    /// <summary>该顺序项会不会出现在「显示内容」列表里（内置模块或磁盘上还在的插件）。调用方需持有 _lock。</summary>
+    private bool IsListedLocked(string key)
+        => BuiltinWidgets.IsBuiltin(key) || FindEntryByKeyOrId(key) != null;
+
+    /// <summary>原生模块当前是否勾选显示（与显示设置页的复选框、渲染器的绘制门控同源）。</summary>
+    private static bool IsBuiltinDisplayed(string id)
+    {
+        if (string.Equals(id, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return Renderer.CompShowDateTime;
+        if (string.Equals(id, BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) return Renderer.CompShowHardware;
+        return Renderer.CompShowMedia; // 媒体控制器
     }
 
     /// <summary>
@@ -375,22 +465,33 @@ public sealed class PluginManager
     /// <summary>
     /// 把顺序表注入宿主：原生模块（builtin.*）原样传递，插件则把 Key 换成 pluginId。
     /// 未加载（禁用 / 失败）的插件不输出，但其顺序位在表里保留，启用后自动回到原位。
+    /// <b>被隐藏的插件</b>同样不进顺序表，而是单独交给 <see cref="PluginHost.SetHiddenPlugins"/> ——
+    /// 宿主据此把它的组件从 Widgets 里滤掉，插件照常运行、只是不在岛上。
     /// </summary>
     private void PushOrderToHost()
     {
         string[] ids;
+        string[] hiddenIds;
         lock (_lock)
         {
             var list = new List<string>(_order.Count);
+            var hidden = new List<string>(_hidden.Count);
             foreach (var item in _order)
             {
                 if (Plugins.BuiltinWidgets.IsBuiltin(item)) { list.Add(item); continue; }
+
                 var e = FindEntryByKeyOrId(item);
-                if (e != null && !string.IsNullOrEmpty(e.Id)) list.Add(e.Id);
+                if (e != null && !string.IsNullOrEmpty(e.Id))
+                {
+                    if (_hidden.Contains(e.Key)) hidden.Add(e.Id);
+                    else list.Add(e.Id);
+                }
             }
             ids = list.ToArray();
+            hiddenIds = hidden.ToArray();
         }
         _host.SetPluginOrder(ids);
+        _host.SetHiddenPlugins(hiddenIds);
     }
 
     private void LoadOrderList()
@@ -480,6 +581,7 @@ public sealed class PluginManager
             e.Id = PluginHost.DetachString(plugin.Id);
             e.DisplayName = PluginHost.DetachString(plugin.DisplayName);
             e.Version = PluginHost.DetachString(plugin.Version);
+            e.Author = PluginHost.DetachString(ReadAuthor(plugin, asm));
 
             _host.RegisterPlugin(e.Id, e.DisplayName, e.Version);
             plugin.Initialize(_host.CreateScopedHost(e.Id));
@@ -589,21 +691,39 @@ public sealed class PluginManager
         e.Id = "";
         e.Version = "";
         e.DisplayName = "";
+        e.Author = "";
         Refresh();
         var fresh = Find(e.Key) ?? e;
         return Load(fresh);
     }
 
-    /// <summary>启用 / 禁用插件（持久化）。</summary>
+    /// <summary>
+    /// 启用 / 禁用插件（持久化）。
+    ///
+    /// <para>
+    /// 与「显示」（<see cref="SetDisplayed"/>）的联动是**单向**的：
+    /// <list type="bullet">
+    ///   <item>启用 → 自动取消隐藏（用户打开开关就是要用它）；</item>
+    ///   <item>禁用 → 插件被卸载，自然不显示，隐藏清单不用动（下次启用会自动显示）。</item>
+    /// </list>
+    /// 反方向不动：取消勾选显示**绝不禁用**插件。
+    /// </para>
+    /// </summary>
     public void SetEnabled(PluginEntry e, bool enabled)
     {
         if (enabled)
         {
             _disabled.Remove(e.Key);
             SaveDisabledList();
+
+            // 🔗 「启用插件自动显示」：把隐藏标记摘掉，否则插件跑起来了岛上却还是看不到
+            if (_hidden.Remove(e.Key)) SaveHiddenList();
+
             Refresh();
             var fresh = Find(e.Key) ?? e;
             if (fresh.State != PluginState.Loaded) Load(fresh);
+            // Load 内部已经推过一次顺序；这里再推一次是为了覆盖「本来就已加载、只是被隐藏」这条路径
+            PushOrderToHost();
         }
         else
         {
@@ -670,6 +790,9 @@ public sealed class PluginManager
         }
         SaveOrderList();
 
+        // 隐藏清单同理：文件都没了，标记留着只会在将来重名插件上莫名其妙地生效
+        if (_hidden.Remove(e.Key)) SaveHiddenList();
+
         try
         {
             var recycle = Path.Combine(PluginsRoot, "_recycle", DateTime.Now.ToString("yyyyMMdd_HHmmss_fff"));
@@ -712,6 +835,27 @@ public sealed class PluginManager
     // ====================================================================
     // 内部工具
     // ====================================================================
+
+    /// <summary>
+    /// 取插件作者：优先插件自己声明的 <see cref="INotchPlugin.Author"/>，
+    /// 为空（老插件没实现该成员）时退回程序集的 <c>AssemblyCompany</c> 元数据（csproj 的 Authors/Company）。
+    /// 取作者失败绝不能让插件加载失败，所以两条路径都各自兜住异常。
+    /// </summary>
+    private static string ReadAuthor(INotchPlugin plugin, Assembly asm)
+    {
+        try
+        {
+            string declared = plugin.Author;
+            if (!string.IsNullOrWhiteSpace(declared)) return declared.Trim();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[PluginManager] 读取插件作者失败，改用程序集元数据: {ex.Message}");
+        }
+
+        try { return asm.GetCustomAttribute<AssemblyCompanyAttribute>()?.Company?.Trim() ?? ""; }
+        catch { return ""; }
+    }
 
     private static Type? FindPluginType(Assembly asm)
     {
@@ -787,6 +931,31 @@ public sealed class PluginManager
             key?.SetValue(DisabledListValue, string.Join(";", _disabled));
         }
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件禁用清单失败", ex); }
+    }
+
+    // ---- 显示状态持久化（隐藏清单：插件照常运行，只是不出现在岛上） ----
+
+    private void LoadHiddenList()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RegistryBase);
+            var raw = key?.GetValue(HiddenListValue) as string;
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            foreach (var item in raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                _hidden.Add(item);
+        }
+        catch (Exception ex) { Logger.Error("[PluginManager] 读取插件隐藏清单失败", ex); }
+    }
+
+    private void SaveHiddenList()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RegistryBase);
+            key?.SetValue(HiddenListValue, string.Join(";", _hidden));
+        }
+        catch (Exception ex) { Logger.Error("[PluginManager] 保存插件隐藏清单失败", ex); }
     }
 
     /// <summary>exe 所在目录：单文件发布时 AppContext.BaseDirectory 是临时解压目录，插件必须放 exe 同级。</summary>

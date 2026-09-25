@@ -84,8 +84,10 @@ namespace NotchPeninsula
                 }
             }
 
-            int newHoveredDisplayOptionIndex = -1;
             int newHoveredStyleIndex = -1;
+            int newHoveredDisplayRow = -1;        // 「显示内容」列表：悬停在行本体上
+            int newHoveredDisplayMoveUp = -1;     // 该行 ∧ 的悬停
+            int newHoveredDisplayMoveDown = -1;   // 该行 ∨ 的悬停
             bool newToggleHovered = false;
             bool newToastToggleHovered = false;
             bool newTopmostToggleHovered = false;
@@ -113,16 +115,10 @@ namespace NotchPeninsula
             bool newSoundToggleHovered = false;
             bool newSoundPreviewHovered = false;
             bool newSoundResetHovered = false;
-            bool newCompositeToggleHover = false;
-            bool newCompDateTimeHover = false;
-            bool newCompHardwareHover = false;
-            bool newCompMediaHover = false;
             int newHoveredPluginAction = -1;
             int newHoveredPluginToggle = -1;
             int newHoveredPluginReload = -1;
             int newHoveredPluginRemove = -1;
-            int newHoveredPluginMoveLeft = -1;
-            int newHoveredPluginMoveRight = -1;
             bool newFontPickHovered = false;
             bool newFontResetHovered = false;
 
@@ -240,36 +236,26 @@ namespace NotchPeninsula
                         newHoveredMonitorDropdownIndex = (y - (int)listY) / 26;
                 }
 
-                // 待机显示内容卡片 (1/3 布局)
-                // ⚠️ 组合模式下这张卡片是**置灰**的（见 RenderTabDisplay 的 isDisabled），
-                //    所以这里也不能给出悬停 —— 否则会变成「看着灰、光标是禁止、点下去却生效」。
-                //    （下面 261 行那个 `if (_selectedTab == 1 && !CompositeModeEnabled)` 块
-                //      与本段等价，属于历史遗留的重复计算，本次未动。）
-                float displayOptY = TITLE_BAR_HEIGHT + 306;
-                if (!Renderer.CompositeModeEnabled)
+                // ── 显示内容列表 ──
+                // ⚠️ 行起点 / 行高 / 箭头槽位必须与 RenderTabDisplay 严格同源：
+                //    卡片顶 = TITLE_BAR_HEIGHT + 248，首行 = 卡片顶 + DISPLAY_FIRST_ROW_Y，行高 DISPLAY_ROW_H。
+                //    整行（名称 + 复选框）都可点 = 勾选 / 取消勾选；只有两个箭头槽吃 ↑ / ↓ 的悬停。
+                float displayRowTop = TITLE_BAR_HEIGHT + 248 + DISPLAY_FIRST_ROW_Y;
+                float displayRowBottom = HEIGHT - 20;
+                if (x >= 216 && x <= WIDTH - 36 && y >= displayRowTop && y <= displayRowBottom)
                 {
-                    if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2; // 硬件占用
-                    if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0; // 时间日期
-                    if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1; // 空白
+                    // 行数上限按卡片高度算，再与真实条目数取小（与渲染侧的 maxDisplayRows 同一算式）
+                    int displayRowLimit = Math.Max(1, (int)((displayRowBottom - displayRowTop) / DISPLAY_ROW_H));
+                    int rowIdx = (int)((y - displayRowTop) / DISPLAY_ROW_H);
+                    if (rowIdx >= 0 && rowIdx < displayRowLimit
+                        && rowIdx < PluginManager.Instance.DisplayItems.Count)
+                    {
+                        // 箭头槽比整行窄，所以先判箭头、再判整行 —— 箭头所在处不参与「整行勾选」的手感干扰
+                        if (x >= DISPLAY_MOVE_UP_X && x <= DISPLAY_MOVE_UP_X + SORT_TRI_W) newHoveredDisplayMoveUp = rowIdx;
+                        else if (x >= DISPLAY_MOVE_DOWN_X && x <= DISPLAY_MOVE_DOWN_X + SORT_TRI_W) newHoveredDisplayMoveDown = rowIdx;
+                        else newHoveredDisplayRow = rowIdx;
+                    }
                 }
-
-                // 组合模式hover判定
-                float compCardY = TITLE_BAR_HEIGHT + 372;
-                newCompositeToggleHover = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= compCardY + 72 && y <= compCardY + 92;
-                if (Renderer.CompositeModeEnabled)
-                { // 状态拦截，防止关闭时产生幽灵悬停
-                    newCompDateTimeHover = x >= 216 && x <= 350 && y >= compCardY + 105 && y <= compCardY + 121;
-                    newCompHardwareHover = x >= 216 && x <= 350 && y >= compCardY + 140 && y <= compCardY + 156;
-                    newCompMediaHover = x >= 216 && x <= 380 && y >= compCardY + 175 && y <= compCardY + 191;
-                }
-
-            }
-            if (_selectedTab == 1 && !Renderer.CompositeModeEnabled)
-            {
-                float displayOptY = TITLE_BAR_HEIGHT + 306;
-                if (x >= 220 && x <= 330 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 2;
-                if (x >= 340 && x <= 450 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 0;
-                if (x >= 460 && x <= 570 && y >= displayOptY && y <= displayOptY + 40) newHoveredDisplayOptionIndex = 1;
             }
             else if (_selectedTab == 2) // 媒体设置
             {
@@ -369,26 +355,24 @@ namespace NotchPeninsula
                     else if (x >= 424 && x <= 520) newHoveredPluginAction = 2;  // 插件市场
                 }
 
-                // 列表行内按钮（全部在下行：← → 排序 | 重载 | 移除 | 开关）
+                // 列表行内按钮（全部在下行：重载 | 移除 | 开关）
                 // 上行（名称）无交互目标，仅下行按钮可点击
                 float listY = topY + 110;
                 int rows = Math.Min(_pluginView.Count, 7);
-                // ⚠️ 这里的行起点必须与 Render() 里的 `listY + 64` 严格一致
-                //    （2026-09-20 加「顺序：…」那一行时把渲染下移了 20px，热区漏改 →
-                //      整行交互热区整体上移 20px，按钮全部点不到）
-                if (x >= 216 && x <= WIDTH - 36 && y >= listY + 64)
+                // ⚠️ 这里的行起点必须与 Render() 里的 `listY + 44` 严格一致。
+                //    （2026-09-25 删掉卡片顶部那行「顺序：…」后，整块列表上移了 20px）
+                if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
                 {
-                    int idx = (int)((y - (listY + 64)) / 56);
+                    int idx = (int)((y - (listY + 44)) / 56);
                     if (idx >= 0 && idx < rows)
                     {
-                        float rowY = listY + 64 + idx * 56;
+                        float rowY = listY + 44 + idx * 56;
                         // 下行按钮区（rowY+22 .. rowY+48）
                         if (y >= rowY + 22 && y <= rowY + 48)
                         {
-                            // 从左到右：排序 ← → | 重载 | 移除 | 开关
-                            if (x >= PLUGIN_SORT_LEFT_X && x <= PLUGIN_SORT_LEFT_X + SORT_TRI_W) newHoveredPluginMoveLeft = idx;
-                            else if (x >= PLUGIN_SORT_RIGHT_X && x <= PLUGIN_SORT_RIGHT_X + SORT_TRI_W) newHoveredPluginMoveRight = idx;
-                            else if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
+                            // 从左到右：重载 | 移除 | 开关
+                            // （排序已于 2026-09-25 移到「显示设置 → 显示内容」）
+                            if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
                             else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
                             else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
                         }
@@ -419,12 +403,9 @@ namespace NotchPeninsula
             //    导致不管该开关是否被禁用，hover 上去都是禁止指针）。
             if (x >= 200 && x <= WIDTH - 20)
             {
-                if (_selectedTab == 1 && Renderer.CompositeModeEnabled
-                    && y >= TITLE_BAR_HEIGHT + 248 && y <= TITLE_BAR_HEIGHT + 360)  // 待机显示内容卡片
-                {
-                    newIsHoveringDisabledArea = true;
-                }
-                else if (_selectedTab == 0 && !ToastSoundConfig.IsRowEnabled
+                // 注：tab 1 已没有置灰区域 —— 「待机显示内容」卡片与「启用组合模式」开关都在
+                //     2026-09-25 被「显示内容」列表取代，那张列表整行可点、没有禁用项。
+                if (_selectedTab == 0 && !ToastSoundConfig.IsRowEnabled
                     && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                 {
                     // 🎵 提示音设置行（通知卡行 4）：父开关「消息提示音」关掉时整行禁止指针。
@@ -463,8 +444,10 @@ namespace NotchPeninsula
                 newAppDropdownHovered != _appDropdownHovered ||
                 newHoveredAppIndex != _hoveredAppIndex ||
                 newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
-                newHoveredDisplayOptionIndex != _hoveredDisplayOptionIndex ||
                 newHoveredStyleIndex != _hoveredStyleIndex ||
+                newHoveredDisplayRow != _hoveredDisplayRow ||
+                newHoveredDisplayMoveUp != _hoveredDisplayMoveUp ||
+                newHoveredDisplayMoveDown != _hoveredDisplayMoveDown ||
                 newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                 newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                 newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
@@ -479,17 +462,12 @@ namespace NotchPeninsula
                 newSoundToggleHovered != _soundToggleHovered ||
                 newSoundPreviewHovered != _soundPreviewHovered ||
                 newSoundResetHovered != _soundResetHovered ||
-                newCompositeToggleHover != _compositeToggleHovered ||
-                newCompDateTimeHover != _compDateTimeHovered ||
-                newCompHardwareHover != _compHardwareHovered ||
-                newCompMediaHover != _compMediaHovered || newPassToggleHovered != _passToggleHovered ||
+                newPassToggleHovered != _passToggleHovered ||
                 newClipboardToggleHovered != _clipboardToggleHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
                 newHoveredPluginRemove != _hoveredPluginRemove ||
-                newHoveredPluginMoveLeft != _hoveredPluginMoveLeft ||
-                newHoveredPluginMoveRight != _hoveredPluginMoveRight ||
                 newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered
                 )
             {
@@ -506,7 +484,9 @@ namespace NotchPeninsula
                 _appDropdownHovered = newAppDropdownHovered;
                 _hoveredAppIndex = newHoveredAppIndex;
                 _hoveredLinkIndex = newHoveredLinkIndex;
-                _hoveredDisplayOptionIndex = newHoveredDisplayOptionIndex;
+                _hoveredDisplayRow = newHoveredDisplayRow;
+                _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
+                _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
                 _hoveredStyleIndex = newHoveredStyleIndex;
                 _hoveredMinusIndex = newHoverMinus;
                 _hoveredPlusIndex = newHoverPlus;
@@ -525,10 +505,6 @@ namespace NotchPeninsula
                 _soundToggleHovered = newSoundToggleHovered;
                 _soundPreviewHovered = newSoundPreviewHovered;
                 _soundResetHovered = newSoundResetHovered;
-                _compositeToggleHovered = newCompositeToggleHover;
-                _compDateTimeHovered = newCompDateTimeHover;
-                _compHardwareHovered = newCompHardwareHover;
-                _compMediaHovered = newCompMediaHover;
                 _topmostToggleHovered = newTopmostToggleHovered;
                 _passToggleHovered = newPassToggleHovered;
                 _clipboardToggleHovered = newClipboardToggleHovered;
@@ -536,10 +512,19 @@ namespace NotchPeninsula
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;
                 _hoveredPluginRemove = newHoveredPluginRemove;
-                _hoveredPluginMoveLeft = newHoveredPluginMoveLeft;
-                _hoveredPluginMoveRight = newHoveredPluginMoveRight;
                 _fontPickHovered = newFontPickHovered;
                 _fontResetHovered = newFontResetHovered;
+
+                // 🖱 「显示内容」列表：指针压在这一行的任何部位（行本体 / ∧ / ∨）都算悬停，
+                //    行底动画统一按这个行号淡入淡出；行号一变就开表，由它逐拍推进到目标值。
+                int newDisplayHoverRow = newHoveredDisplayRow != -1 ? newHoveredDisplayRow
+                    : (newHoveredDisplayMoveUp != -1 ? newHoveredDisplayMoveUp : newHoveredDisplayMoveDown);
+                if (newDisplayHoverRow != _displayHoverRow)
+                {
+                    _displayHoverRow = newDisplayHoverRow;
+                    StartDisplayHoverAnim();
+                }
+
                 Render();
             }
         }

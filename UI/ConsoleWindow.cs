@@ -23,20 +23,39 @@ namespace NotchPeninsula
 
         private const int TITLE_BAR_HEIGHT = 32;
 
-        // 🧩 插件行排序小三角（渲染与鼠标命中必须使用同一组坐标）
-        //    所有按钮均在下行（名称独占上行），按钮从左到右：← → [重载] [移除] [开关]
-
-        private const float SORT_TRI_W = 16f;
-
-        private const float PLUGIN_SORT_LEFT_X = 364f;   // ← 左移
-
-        private const float PLUGIN_SORT_RIGHT_X = 382f;  // → 右移
+        // 🧩 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
+        //    名称独占上行，按钮全在下行：从左到右 [重载] [移除] [开关]
+        //    ⚠️ 排序小三角（← / →）已于 2026-09-25 移除 —— 显示与排序统一收敛到
+        //       「显示设置 → 显示内容」那一张列表，插件中心只留启用/禁用这一件事。
 
         private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
 
         private const float PLUGIN_BTN_REMOVE_X = 460f;  // 移除按钮
 
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
+
+        // 📋 显示设置页「显示内容」列表（渲染与鼠标命中必须使用同一组坐标）
+        //    每行 = 复选框（勾选显示 / 隐藏）+ 名称 + ∧ ∨（调整在岛上的先后次序）
+        //    行高与首行偏移是一对**渲染/命中同源**的常量，改一个必须两个一起改。
+
+        private const float DISPLAY_ROW_H = 34f;
+
+        private const float DISPLAY_FIRST_ROW_Y = 56f;    // 首行顶部相对卡片顶部的偏移
+
+        private const float DISPLAY_MOVE_UP_X = 486f;     // ∧ 槽左边界（槽宽 = SORT_TRI_W）
+
+        private const float DISPLAY_MOVE_DOWN_X = 504f;   // ∨ 槽左边界（与 ∧ 只隔 2px，视觉上是同一组控件）
+
+        private const float SORT_TRI_W = 16f;             // 排序三角形的点击槽宽
+
+        // 🖱 行悬停底色动画：鼠标压到某一行时，行底由浅入深淡入，移开再淡出（与托盘菜单同款 16ms 节拍）。
+        //    —— 只是把「指针在哪一行」这个离散状态补上过渡，避免硬切造成的闪烁感。
+        private const uint DISPLAY_HOVER_TICK_MS = 16;
+
+        private const float DISPLAY_HOVER_EASE = 0.35f;   // 每拍向目标靠拢的比例（指数缓出）
+
+        // 行悬停动画的窗口定时器 id（与 BACKDROP_REFRESH_TIMER_ID 各自独立）
+        private static readonly IntPtr DISPLAY_HOVER_TIMER_ID = new IntPtr(0x4E51); // "NQ"
 
         // 🔤 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
         // 📐 通用设置页卡片顺序（2026-09-22 提示音并入通知卡之后）：
@@ -538,11 +557,22 @@ namespace NotchPeninsula
         private int _hoveredLinkIndex = -1;
 
         // 显示设置
-        private int _selectedDisplayIndex = 0;
+        // 「显示内容」列表的悬停行：-1 = 没悬停任何行。
+        // 三处分开记，是因为同一行里复选框与 ∧ / ∨ 的悬停反馈互不相同；
+        // _displayHoverRow 是「指针压在这一行的哪个部位都算」的行号，专门驱动行底动画。
+        private int _hoveredDisplayRow = -1;
 
-        private int _hoveredDisplayOptionIndex = -1;
+        private int _hoveredDisplayMoveUp = -1;
 
-        private static readonly string[] _displayOptions = ["时间日期", "空白"];
+        private int _hoveredDisplayMoveDown = -1;
+
+        private int _displayHoverRow = -1;
+
+        // 每行的悬停进度（0 = 没悬停，1 = 完全悬停）：由 16ms 定时器逐拍逼近目标值，
+        // 渲染时按它算行底透明度。长度按「卡片最多能放下的行数」给足余量，越界一律当 0。
+        private readonly float[] _displayHoverAnim = new float[24];
+
+        private bool _displayHoverTimerOn = false;
 
         private int _hoveredStyleIndex = -1;
 
@@ -551,15 +581,6 @@ namespace NotchPeninsula
         private bool _monitorDropdownHovered = false;
 
         private int _hoveredMonitorDropdownIndex = -1;
-        // 组合模式 UI 状态
-
-        private bool _compositeToggleHovered = false;
-
-        private bool _compDateTimeHovered = false;
-
-        private bool _compHardwareHovered = false;
-
-        private bool _compMediaHovered = false;
 
         private bool _isHoveringDisabledArea = false;
 
@@ -587,9 +608,6 @@ namespace NotchPeninsula
         private int _hoveredPlusIndex = -1;
 
         private int _hoveredResetIndex = -1;
-        // 硬件检测模式切换前的待机宽度快照（用于切回时恢复）
-
-        private float _savedStandbyWidth = -1f;
 
         private float[] _customValues = new float[8];
         // 「恢复默认」用的出厂值，顺序 = [待机宽, 待机高, 媒体宽, 媒体高, 通知宽, 通知高, DPI, 底部圆角]。
@@ -824,13 +842,6 @@ namespace NotchPeninsula
                 }
             });
 
-            _selectedDisplayIndex = Renderer.StandbyDisplayMode; // 初始化时同步当前选择
-
-            // 如果启动时就是硬件检测模式，标记快照为未记录（-1），
-            // 这样切走时会回退到默认 130px
-            if (Renderer.StandbyDisplayMode == 2)
-                _savedStandbyWidth = -1f;
-
             Render();
         }
 
@@ -915,6 +926,13 @@ namespace NotchPeninsula
                         ReapplyBackdropMaterial();
                         return IntPtr.Zero;
                     }
+                    if (wParam == DISPLAY_HOVER_TIMER_ID)
+                    {
+                        // 🖱 行悬停动画：逐拍把每行进度推向目标值；全部到位就自己停表，
+                        //    所以「没有动画在跑」时不会有任何空转的定时器。
+                        if (!TickDisplayHoverAnim()) StopDisplayHoverAnim(hwnd);
+                        return IntPtr.Zero;
+                    }
                     break;
 
                 case Win32.WM_MOUSEMOVE:
@@ -961,6 +979,9 @@ namespace NotchPeninsula
                         _backdropHwnd = IntPtr.Zero;
                         Win32.DestroyWindow(backdrop);
                     }
+                    // 定时器本身随窗口一起消失，只是把这个标志归位：
+                    // 否则万一在动画途中销毁窗口，标志会一直停在 true，下次开表会被自己挡掉。
+                    _displayHoverTimerOn = false;
                     _instance = null;
                     break;
 

@@ -18,20 +18,14 @@ namespace NotchPeninsula
 
         private int _hoveredPluginRemove = -1;  // 行索引：移除
 
-        private int _hoveredPluginMoveLeft = -1;   // 行索引：左移（调整灵动岛显示顺序）
-
-        private int _hoveredPluginMoveRight = -1;  // 行索引：右移
-
         private List<PluginEntry> _pluginView = new();
 
-        // 行内副标题（"运行中 · v1.2.0 · #2/4" 之类）：与 _pluginView 同序、同版本。
+        // 行内副标题（"运行中 · v1.2.0 · 作者" 之类）：与 _pluginView 同序、同版本。
         // 原来是在 Render 里对每一行每帧拼一遍（含 $-插值），现在跟着列表一起只在变更时重建。
         private readonly List<string> _pluginSubTexts = new();
 
-        // 缓存判据：PluginManager 的变更序号 + 上次算好的「顺序：…」那一行文本
+        // 缓存判据：PluginManager 的变更序号
         private int _pluginViewVersion = -1;
-        private string _contentOrderDesc = "";
-        private int _contentOrderDescVersion = -1;
 
         // ================= 插件中心辅助逻辑 =================
         private void RefreshPluginView()
@@ -43,10 +37,9 @@ namespace NotchPeninsula
             var mgr = PluginManager.Instance;
             _pluginView = mgr.Entries.ToList();
 
-            // 副标题的全部输入（状态 / 版本号 / 错误 / 排序位置 / 显示总数）都随变更序号变化，
-            // 所以在这里跟列表一起重建，渲染路径只负责取用。
+            // 副标题（状态 / 版本 / 作者）随插件状态变化，所以在这里跟列表一起重建，渲染路径只负责取用。
+            // ⚠️ 不再带「#N/M」位置序号 —— 位置改由「显示设置 → 显示内容」统一展示与调整（2026-09-25）。
             _pluginSubTexts.Clear();
-            int orderTotal = mgr.DisplayedOrder.Count;
             for (int i = 0; i < _pluginView.Count; i++)
             {
                 var entry = _pluginView[i];
@@ -54,72 +47,26 @@ namespace NotchPeninsula
                 if (entry.State == PluginState.Failed)
                     sub = "加载失败：" + (entry.Error ?? "未知错误");
                 else if (entry.State == PluginState.Loaded)
+                {
+                    // 运行中 · v1.0.0 · 作者（作者缺失时只留前两段，免得出现一个孤零零的分隔点）
                     sub = string.IsNullOrEmpty(entry.Version) ? "运行中" : $"运行中 · v{entry.Version}";
+                    if (!string.IsNullOrEmpty(entry.Author)) sub += $" · {entry.Author}";
+                }
                 else
                     sub = "已禁用 · " + entry.Key;
 
-                // 位置 = 在「当前显示的内容顺序」里的次序（与卡片顶部那行「顺序：…」一一对应）。
-                // 未启用的插件不显示在岛上，也就不参与排序，这里不给它序号。
-                int pos = mgr.GetOrderIndex(entry);
-                if (pos > 0) sub += orderTotal > 0 ? $" · #{pos}/{orderTotal}" : $" · #{pos}";
-
                 _pluginSubTexts.Add(sub);
             }
-        }
-
-        /// <summary>
-        /// 把「当前显示的内容顺序」渲染成一行可读文本（原生模块用中文名、插件用友好名）。
-        /// 只列出**当前真的显示在岛上**的内容：禁用的插件、未勾选的原生模块不参与排序，
-        /// 这里就不显示它们（它们的位置仍保留着，重新启用 / 重新显示后会自动插回原位）。
-        /// 结果按变更序号缓存 —— 这一行原来是每个渲染帧都拼一遍 StringBuilder。
-        /// </summary>
-        private string DescribeContentOrder()
-        {
-            int version = PluginManager.Instance.ChangeVersion;
-            if (_contentOrderDescVersion == version)
-                return _contentOrderDesc;
-
-            var mgr = PluginManager.Instance;
-            var order = mgr.DisplayedOrder;
-            if (order.Count == 0)
-            {
-                _contentOrderDescVersion = version;
-                return _contentOrderDesc = "（暂无内容）";
-            }
-
-            var sb = new System.Text.StringBuilder(96);
-            for (int i = 0; i < order.Count; i++)
-            {
-                string item = order[i];
-                string name;
-                if (string.Equals(item, Plugins.BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) name = "时间日期";
-                else if (string.Equals(item, Plugins.BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase)) name = "硬件占用";
-                else if (string.Equals(item, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase)) name = "媒体控制器";
-                else
-                {
-                    var pe = mgr.Find(item);
-                    name = pe != null ? pe.FriendlyName : item;
-                }
-                if (sb.Length > 0) sb.Append("  ·  ");
-                sb.Append(i + 1).Append('.').Append(name);
-            }
-
-            _contentOrderDescVersion = version;
-            _contentOrderDesc = sb.ToString();
-            return _contentOrderDesc;
         }
 
         private PluginEntry? GetPluginAt(int index)
             => index >= 0 && index < _pluginView.Count ? _pluginView[index] : null;
 
         /// <summary>列表变化后清空行内悬停索引，避免指向错行。</summary>
-
         private void ResetPluginHover()
         {
             _hoveredPluginToggle = -1;
             _hoveredPluginReload = -1;
-            _hoveredPluginMoveLeft = -1;
-            _hoveredPluginMoveRight = -1;
             _hoveredPluginRemove = -1;
         }
 

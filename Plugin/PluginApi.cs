@@ -15,6 +15,19 @@ public interface INotchPlugin
     string Id { get; }
     string DisplayName { get; }
     string Version { get; }
+
+    /// <summary>
+    /// 作者名，显示在插件中心的列表里。
+    ///
+    /// <para>
+    /// 带默认实现（返回空串）是**刻意**的：这个成员是后加的，写成抽象成员会让所有
+    /// 已编译好的老插件在实例化时直接抛 <see cref="TypeLoadException"/> ——
+    /// 有默认实现，老 DLL 照常加载，只是作者一栏空着；
+    /// 主机在为空时会退回读程序集的 <c>AssemblyCompany</c> 元数据（即 csproj 里的 Authors/Company）。
+    /// </para>
+    /// </summary>
+    string Author => "";
+
     void Initialize(IPluginHost host);
 }
 

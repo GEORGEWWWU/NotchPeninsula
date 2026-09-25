@@ -105,29 +105,6 @@ namespace NotchPeninsula
             }
         }
 
-        // 行内小开关（组合模式总开关用）
-        private void DrawToggleCard_Inline(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered)
-        {
-            canvas.DrawText(title, 216, yOffset + 16, _uiTextPaint);
-            canvas.DrawText(sub, 216, yOffset + 36, _subTextPaint);
-            float tW = 42; float tH = 20; float tX = WIDTH - 20 - 16 - tW; float tY = yOffset + 10;
-            var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-            if (state)
-            {
-                _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = hovered ? new SKColor(150, 150, 150) : new SKColor(100, 100, 100);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = hovered ? new SKColor(200, 200, 200) : new SKColor(150, 150, 150);
-                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
-        }
-
         // 勾选框选项
         private void DrawCheckItem(SKCanvas canvas, float yOffset, string label, bool isChecked, bool hovered, bool disabled)
         {
@@ -163,6 +140,91 @@ namespace NotchPeninsula
                 _uiTextPaint.Color = SKColors.White;
             canvas.DrawText(label, boxX + 24, boxY + 13, _uiTextPaint);
             _uiTextPaint.Color = SKColors.White;
+        }
+
+        // ================= 🖱 「显示内容」列表的行悬停动画 =================
+        // 悬停是离散状态（指针在这一行 / 不在），底色硬切会闪；这里给每行一个 0→1 的进度，
+        // 由窗口定时器逐拍逼近目标值，渲染时按进度算底色透明度 —— 进出都是淡入淡出。
+        // 与托盘菜单同一套做法：**定时器只在动画进行时存在**，跑完就 KillTimer，不空转。
+
+        /// <summary>开表。已在跑、或窗口还没建好时什么都不做。</summary>
+        private void StartDisplayHoverAnim()
+        {
+            if (_displayHoverTimerOn || _hwnd == IntPtr.Zero) return;
+            if (Win32.SetTimer(_hwnd, DISPLAY_HOVER_TIMER_ID, DISPLAY_HOVER_TICK_MS, IntPtr.Zero) == IntPtr.Zero) return;
+            _displayHoverTimerOn = true;
+        }
+
+        /// <summary>停表。</summary>
+        private void StopDisplayHoverAnim(IntPtr hwnd)
+        {
+            if (!_displayHoverTimerOn) return;
+            Win32.KillTimer(hwnd, DISPLAY_HOVER_TIMER_ID);
+            _displayHoverTimerOn = false;
+        }
+
+        /// <summary>推进一拍动画并重绘；返回是否还有行没到位（true = 继续跑表）。</summary>
+        private bool TickDisplayHoverAnim()
+        {
+            bool animating = false;
+            for (int i = 0; i < _displayHoverAnim.Length; i++)
+            {
+                float target = i == _displayHoverRow ? 1f : 0f;
+                float cur = _displayHoverAnim[i];
+                if (Math.Abs(target - cur) <= 0.01f) { _displayHoverAnim[i] = target; continue; }
+
+                _displayHoverAnim[i] = cur + (target - cur) * DISPLAY_HOVER_EASE;
+                animating = true;
+            }
+
+            // 无条件重绘：最后那一拍会把进度**吸附**到目标值，这一帧必须画出来，
+            // 否则会停在 0.99 那种「差一点点」的状态上。
+            Render();
+            return animating;
+        }
+
+        /// <summary>某一行的悬停进度（0 ~ 1）；越界返回 0。</summary>
+        private float GetDisplayHoverProgress(int row)
+            => row >= 0 && row < _displayHoverAnim.Length ? _displayHoverAnim[row] : 0f;
+
+        /// <summary>
+        /// 「显示内容」列表行尾的上 / 下移动箭头（原插件中心那对左右箭头的同款细描边三角，
+        /// 只是方向朝上下）。
+        /// <paramref name="slotX"/> 是 16px 点击槽的**左边界**（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
+        /// <paramref name="centerY"/> 是它所在行的垂直中心；<paramref name="up"/> 为 false 时画朝下的三角。
+        /// </summary>
+        private void DrawSortArrow(SKCanvas canvas, float slotX, float centerY, bool hovered, bool enabled, bool up)
+        {
+            using var stroke = new SKPaint
+            {
+                Color = !enabled ? new SKColor(130, 130, 130)
+                    : hovered ? SKColors.White
+                    : new SKColor(210, 210, 210),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.6f,
+                StrokeCap = SKStrokeCap.Round,
+                StrokeJoin = SKStrokeJoin.Round,
+                IsAntialias = true
+            };
+
+            // ⚠️ 尺寸是原左右箭头（半宽 3 / 半高 5）**转 90° 后的结果**：两个半轴对调 → 10×6 的扁三角。
+            //    照搬 6×10 直接改方向会得到一个又细又尖的竖三角，和原来那对完全不搭（踩过）。
+            float cx = slotX + SORT_TRI_W / 2f;   // 水平居中于 16px 槽
+            const float halfW = 5f, halfH = 3f;
+            using var path = new SKPath();
+            if (up)
+            {
+                path.MoveTo(cx - halfW, centerY + halfH);
+                path.LineTo(cx, centerY - halfH);
+                path.LineTo(cx + halfW, centerY + halfH);
+            }
+            else
+            {
+                path.MoveTo(cx - halfW, centerY - halfH);
+                path.LineTo(cx, centerY + halfH);
+                path.LineTo(cx + halfW, centerY - halfH);
+            }
+            canvas.DrawPath(path, stroke);
         }
 
         // 侧边栏重排与分割线绘制
@@ -420,61 +482,69 @@ namespace NotchPeninsula
             canvas.DrawLine(mdX + mdW - 20, mdY + 14, mdX + mdW - 15, mdY + 19, _chevronPaint);
             canvas.DrawLine(mdX + mdW - 15, mdY + 19, mdX + mdW - 10, mdY + 14, _chevronPaint);
 
-            // 待机显示内容卡片 (极简宫格布局)
-            float displayCardY = TITLE_BAR_HEIGHT + 248;
-            var displayCardRect = new SKRect(200, displayCardY, WIDTH - 20, displayCardY + 112); // 卡片高度减半收缩
-            canvas.DrawRoundRect(displayCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(displayCardRect, 6, 6, _cardBorder);
-            _uiTextPaint.Color = Renderer.CompositeModeEnabled ? new SKColor(100, 100, 100) : SKColors.White;
-            canvas.DrawText("待机显示内容", 216, displayCardY + 26, _uiTextPaint);
-            _uiTextPaint.Color = SKColors.White;
-            _subTextPaint.Color = Renderer.CompositeModeEnabled ? new SKColor(80, 80, 80) : new SKColor(170, 170, 170);
-            canvas.DrawText("刘海处于待机状态时默认展示的信息", 216, displayCardY + 46, _subTextPaint);
-            _subTextPaint.Color = new SKColor(170, 170, 170);
-            void DrawDisplayOpt(int index, string name, float x, float y)
+            // ── 显示内容卡片 ──
+            // 灵动岛显示什么、按什么次序，全在这一张列表里：每行 = 复选框（勾选 = 显示在岛上）
+            // + 名称（内置模块后面跟一个蓝色「（内置）」标记）+ ‹ ›（调整在岛上的左右次序）。
+            // 列表内容与顺序都取自 PluginManager 那张**统一顺序表**（内置模块与插件混排），
+            // 所以老版本在「插件中心」调好的插件位置，升级后会原样出现在这里。
+            float contentCardY = TITLE_BAR_HEIGHT + 248;
+            var contentCardRect = new SKRect(200, contentCardY, WIDTH - 20, HEIGHT - 20);
+            canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBorder);
+            canvas.DrawText("显示内容", 216, contentCardY + 26, _uiTextPaint);
+            canvas.DrawText("勾选要显示的内容，并用箭头调整它们在刘海上的先后次序", 216, contentCardY + 46, _subTextPaint);
+
+            var displayItems = PluginManager.Instance.DisplayItems;
+            // 卡片能放下几行：超出部分不画（也不给命中），避免内容溢出卡片下沿
+            int maxDisplayRows = Math.Max(1,
+                (int)((HEIGHT - 20 - (contentCardY + DISPLAY_FIRST_ROW_Y)) / DISPLAY_ROW_H));
+            if (displayItems.Count == 0)
+                canvas.DrawText("暂无可显示的内容", 216, contentCardY + DISPLAY_FIRST_ROW_Y + 18, _subTextPaint);
+
+            // 「（内置）」标记：副标题字号 + 强调蓝，紧跟在内置模块名之后
+            const string builtinTag = "（内置）";
+            var builtinTagColor = new SKColor(0, 140, 240);
+            float builtinTagW = _subTextPaint.MeasureText(builtinTag);
+
+            for (int i = 0; i < Math.Min(displayItems.Count, maxDisplayRows); i++)
             {
-                bool isDisabled = Renderer.CompositeModeEnabled;
-                bool isSelected = _selectedDisplayIndex == index && !isDisabled;
-                bool isHovered = _hoveredDisplayOptionIndex == index && !isDisabled;
+                var item = displayItems[i];
+                float rowY = contentCardY + DISPLAY_FIRST_ROW_Y + i * DISPLAY_ROW_H;
 
-                var optRect = new SKRect(x, y, x + 110, y + 40);
-                _dynamicFillPaint.Color = isDisabled ? new SKColor(255, 255, 255, 3) : (isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? new SKColor(255, 255, 255, 15) : new SKColor(255, 255, 255, 8)));
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
-                _dynamicStrokePaint.Color = isDisabled ? new SKColor(60, 60, 60) : (isSelected ? new SKColor(0, 120, 212) : new SKColor(80, 80, 80));
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
+                // 🖱 悬停底色：进度由定时器逐拍淡入淡出（0 = 完全不画），指针压在整行或任一箭头上都算
+                float hoverP = GetDisplayHoverProgress(i);
+                if (hoverP > 0.01f)
+                {
+                    _dynamicFillPaint.Color = new SKColor(255, 255, 255, (byte)(16 * hoverP));
+                    canvas.DrawRoundRect(new SKRect(210, rowY - 2, WIDTH - 30, rowY + DISPLAY_ROW_H - 4), 5, 5, _dynamicFillPaint);
+                }
 
-                float cx = x + 20; float cy = y + 20;
-                _dynamicStrokePaint.Color = isDisabled ? new SKColor(100, 100, 100) : (isSelected ? new SKColor(0, 140, 240) : SKColors.White);
-                _dynamicStrokePaint.StrokeWidth = 1.5f;
+                if (i > 0) canvas.DrawLine(216, rowY - 5, WIDTH - 36, rowY - 5, _separatorPaint);
 
-                if (index == 0) { canvas.DrawCircle(cx, cy, 8, _dynamicStrokePaint); canvas.DrawLine(cx, cy, cx, cy - 4, _dynamicStrokePaint); canvas.DrawLine(cx, cy, cx + 3, cy + 3, _dynamicStrokePaint); }
-                else if (index == 1) { canvas.DrawLine(cx - 6, cy, cx + 6, cy, _dynamicStrokePaint); }
-                else if (index == 2) { canvas.DrawRect(cx - 7, cy - 6, 14, 12, _dynamicStrokePaint); canvas.DrawLine(cx - 3, cy - 3, cx + 3, cy - 3, _dynamicStrokePaint); }
+                // 复选框 + 名称（点击整行任意处即可勾选 / 取消）
+                // 名称按「复选框文字起点 → ∧ 槽之前的空隙」截断，内置模块还要再让出「（内置）」标记的宽度
+                float nameMax = DISPLAY_MOVE_UP_X - 16 - (216 + 24) - (item.IsBuiltin ? builtinTagW + 4f : 0f);
+                string shownName = TruncateText(item.Name, _uiTextPaint, nameMax);
+                DrawCheckItem(canvas, rowY + 6, shownName, item.IsShown, _hoveredDisplayRow == i, false);
 
-                _dynamicTextPaint.Color = isDisabled ? new SKColor(100, 100, 100) : (isSelected ? new SKColor(0, 140, 240) : SKColors.White);
-                canvas.DrawText(name, cx + 18, cy + 5, _dynamicTextPaint);
+                // 🔵 内置标记：紧跟名字右侧，用蓝色与第三方插件区分开
+                if (item.IsBuiltin)
+                {
+                    _subTextPaint.Color = builtinTagColor;
+                    canvas.DrawText(builtinTag, 216 + 24 + _uiTextPaint.MeasureText(shownName) + 2, rowY + 19, _subTextPaint);
+                    _subTextPaint.Color = new SKColor(170, 170, 170);
+                }
+
+                // 上下移动：rowY + 17 是行内垂直中心（行高 34）
+                DrawSortArrow(canvas, DISPLAY_MOVE_UP_X, rowY + 17, _hoveredDisplayMoveUp == i,
+                    PluginManager.Instance.CanMoveDisplay(item.Key, -1), true);
+                DrawSortArrow(canvas, DISPLAY_MOVE_DOWN_X, rowY + 17, _hoveredDisplayMoveDown == i,
+                    PluginManager.Instance.CanMoveDisplay(item.Key, 1), false);
             }
 
-            DrawDisplayOpt(2, "硬件占用", 220, displayCardY + 58);
-            DrawDisplayOpt(0, "时间日期", 340, displayCardY + 58);
-            DrawDisplayOpt(1, "空白", 460, displayCardY + 58);
-
-            // 自定义组合模式卡片
-            float compositeCardY = TITLE_BAR_HEIGHT + 372;
-            var compositeCardRect = new SKRect(200, compositeCardY, WIDTH - 20, compositeCardY + 200);
-            canvas.DrawRoundRect(compositeCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(compositeCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("自定义组合模式", 216, compositeCardY + 26, _uiTextPaint);
-            canvas.DrawText("自由选择刘海内显示的功能模块", 216, compositeCardY + 46, _subTextPaint);
-
-            // 总开关
-            DrawToggleCard_Inline(canvas, compositeCardY + 62, "启用组合模式", "开启后可同时显示多个功能模块", Renderer.CompositeModeEnabled, _compositeToggleHovered);
-
-            // 子选项
-            DrawCheckItem(canvas, compositeCardY + 105, "时间日期", Renderer.CompShowDateTime, _compDateTimeHovered, !Renderer.CompositeModeEnabled);
-            DrawCheckItem(canvas, compositeCardY + 140, "资源占用检测", Renderer.CompShowHardware, _compHardwareHovered, !Renderer.CompositeModeEnabled);
-            DrawCheckItem(canvas, compositeCardY + 175, "媒体控制器(含频谱)", Renderer.CompShowMedia, _compMediaHovered, !Renderer.CompositeModeEnabled);
-
+            // 行数不够时的提示：这是唯一的入口，得让用户知道还有内容没列出来
+            if (displayItems.Count > maxDisplayRows)
+                canvas.DrawText($"还有 {displayItems.Count - maxDisplayRows} 项未列出", 216, HEIGHT - 34, _subTextPaint);
         }
 
         // 页签：媒体设置
@@ -895,26 +965,24 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
             canvas.DrawText($"已安装插件 ({_pluginView.Count})", 216, listY + 26, _uiTextPaint);
-            // 「显示顺序」一览：← / → 调整的就是这张表里的位置。只列出当前真的显示在岛上的内容
-            // （未启用的插件、未勾选的原生模块不参与排序，这里不显示），一眼就能对上每一行的 #N。
-            canvas.DrawText(TruncateText("顺序：" + DescribeContentOrder(), _subTextPaint, WIDTH - 36 - 216),
-                216, listY + 46, _subTextPaint);
-
-            // 序号分母已挪进 RefreshPluginView（副标题在那里一次算好），此处不再需要
+            // ⚠️ 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
+            //    插件中心只负责启用 / 禁用，不再提供任何排序入口（2026-09-25 用户要求）。
 
             const int maxRows = 7;
             // 上行：名称独占整行，可延展至卡片右边界外侧
-            // 下行：信息（左）+ 全部操作按钮（右，从左到右：← → 排序 | 重载 | 移除 | 开关）
+            // 下行：信息（左）+ 操作按钮（右，从左到右：重载 | 移除 | 开关）
             float nameTextMax = (WIDTH - 36) - 216;                // 名称几乎全宽
-            float infoTextMax = PLUGIN_SORT_LEFT_X - 216 - 8;     // 信息止于排序三角之前
+            float infoTextMax = PLUGIN_BTN_RELOAD_X - 216 - 8;     // 信息止于按钮区之前
 
             if (_pluginView.Count == 0)
-                canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 86, _subTextPaint);
+                canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 66, _subTextPaint);
 
             for (int i = 0; i < Math.Min(_pluginView.Count, maxRows); i++)
             {
                 var entry = _pluginView[i];
-                float rowY = listY + 64 + i * 56;      // 行高 56，上行名称独占，下行按钮全部一行排列
+                // 行高 56：上行名称独占，下行按钮全部一行排列。
+                // ⚠️ 行起点必须与 OnMouseMove 的 tab 6 段严格一致（删掉「顺序一览」后整体上移了 20px）
+                float rowY = listY + 44 + i * 56;
                 if (i > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
 
                 // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
@@ -935,44 +1003,9 @@ namespace NotchPeninsula
                 // ── 下行按钮（全部在同一行，y 中心 ≈ rowY+38） ──
                 const float btnTop = 25f, btnH = 20f;       // 操作按钮矩形（上移 2px，远离底部分割线）
 
-                // 排序箭头 < >（用 SKPath 描边绘制，相对下行按钮区垂直居中）
-                void DrawSortArrow(float bx, bool hovered, bool enabled, bool left)
-                {
-                    using var stroke = new SKPaint
-                    {
-                        Color = !enabled ? new SKColor(130, 130, 130)
-                            : hovered ? SKColors.White
-                            : new SKColor(210, 210, 210),
-                        Style = SKPaintStyle.Stroke,
-                        StrokeWidth = 1.6f,
-                        StrokeCap = SKStrokeCap.Round,
-                        StrokeJoin = SKStrokeJoin.Round,
-                        IsAntialias = true
-                    };
-                    float cx = bx + SORT_TRI_W / 2f;   // 水平居中于 16px 槽
-                    float cy = rowY + 35f;            // 相对下行按钮区（rowY+22..rowY+48）垂直居中
-                    float s = 3f, h = 5f;
-                    using var path = new SKPath();
-                    if (left)
-                    {
-                        path.MoveTo(cx + s, cy - h);
-                        path.LineTo(cx - s, cy);
-                        path.LineTo(cx + s, cy + h);
-                    }
-                    else
-                    {
-                        path.MoveTo(cx - s, cy - h);
-                        path.LineTo(cx + s, cy);
-                        path.LineTo(cx - s, cy + h);
-                    }
-                    canvas.DrawPath(path, stroke);
-                }
-                DrawSortArrow(PLUGIN_SORT_LEFT_X, _hoveredPluginMoveLeft == i,
-                    PluginManager.Instance.CanMoveOrder(entry, -1), true);
-                DrawSortArrow(PLUGIN_SORT_RIGHT_X, _hoveredPluginMoveRight == i,
-                    PluginManager.Instance.CanMoveOrder(entry, 1), false);
-
                 // 操作按钮（重载 / 移除）+ 开关
+                // ⚠️ 排序小三角已于 2026-09-25 移除：位置调整统一走「显示设置 → 显示内容」，
+                //    这里不再有 CanMoveOrder / MoveOrder 的入口。
                 void DrawRowButton(float bx, bool hovered, string label, bool danger)
                 {
                     var r = new SKRect(bx, rowY + btnTop, bx + 50, rowY + btnTop + btnH);
