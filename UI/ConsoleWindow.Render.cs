@@ -487,7 +487,9 @@ namespace NotchPeninsula
             // + 名称（内置模块后面跟一个蓝色「（内置）」标记）+ ‹ ›（调整在岛上的左右次序）。
             // 列表内容与顺序都取自 PluginManager 那张**统一顺序表**（内置模块与插件混排），
             // 所以老版本在「插件中心」调好的插件位置，升级后会原样出现在这里。
-            float contentCardY = TITLE_BAR_HEIGHT + 248;
+            // 🖱 条目数可能超过卡片高度：超出部分靠滚轮滚动查看（_displayScroll = 滚动首行），
+            //    可滚范围与命中 / 滚轮共用 GetDisplayListLayout；右侧画一条滚动条指示。
+            float contentCardY = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y;
             var contentCardRect = new SKRect(200, contentCardY, WIDTH - 20, HEIGHT - 20);
             canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBorder);
@@ -495,9 +497,9 @@ namespace NotchPeninsula
             canvas.DrawText("勾选要显示的内容，并用箭头调整它们在刘海上的先后次序", 216, contentCardY + 46, _subTextPaint);
 
             var displayItems = PluginManager.Instance.DisplayItems;
-            // 卡片能放下几行：超出部分不画（也不给命中），避免内容溢出卡片下沿
-            int maxDisplayRows = Math.Max(1,
-                (int)((HEIGHT - 20 - (contentCardY + DISPLAY_FIRST_ROW_Y)) / DISPLAY_ROW_H));
+            GetDisplayListLayout(out int visibleRows, out int maxFirstRow);
+            // 条目变少（插件被移除）时把滚动位置钳回可滚范围，避免停在一片空白上
+            _displayScroll = Math.Clamp(_displayScroll, 0, maxFirstRow);
             if (displayItems.Count == 0)
                 canvas.DrawText("暂无可显示的内容", 216, contentCardY + DISPLAY_FIRST_ROW_Y + 18, _subTextPaint);
 
@@ -506,20 +508,22 @@ namespace NotchPeninsula
             var builtinTagColor = new SKColor(0, 140, 240);
             float builtinTagW = _subTextPaint.MeasureText(builtinTag);
 
-            for (int i = 0; i < Math.Min(displayItems.Count, maxDisplayRows); i++)
+            // slot = 可视槽位（0 = 当前首行），i = 绝对条目下标
+            for (int slot = 0; slot < visibleRows; slot++)
             {
+                int i = _displayScroll + slot;
                 var item = displayItems[i];
-                float rowY = contentCardY + DISPLAY_FIRST_ROW_Y + i * DISPLAY_ROW_H;
+                float rowY = contentCardY + DISPLAY_FIRST_ROW_Y + slot * DISPLAY_ROW_H;
 
                 // 🖱 悬停底色：进度由定时器逐拍淡入淡出（0 = 完全不画），指针压在整行或任一箭头上都算
-                float hoverP = GetDisplayHoverProgress(i);
+                float hoverP = GetDisplayHoverProgress(slot);
                 if (hoverP > 0.01f)
                 {
                     _dynamicFillPaint.Color = new SKColor(255, 255, 255, (byte)(16 * hoverP));
                     canvas.DrawRoundRect(new SKRect(210, rowY - 2, WIDTH - 30, rowY + DISPLAY_ROW_H - 4), 5, 5, _dynamicFillPaint);
                 }
 
-                if (i > 0) canvas.DrawLine(216, rowY - 5, WIDTH - 36, rowY - 5, _separatorPaint);
+                if (slot > 0) canvas.DrawLine(216, rowY - 5, WIDTH - 36, rowY - 5, _separatorPaint);
 
                 // 复选框 + 名称（点击整行任意处即可勾选 / 取消）
                 // 名称按「复选框文字起点 → ∧ 槽之前的空隙」截断，内置模块还要再让出「（内置）」标记的宽度
@@ -542,9 +546,23 @@ namespace NotchPeninsula
                     PluginManager.Instance.CanMoveDisplay(item.Key, 1), false);
             }
 
-            // 行数不够时的提示：这是唯一的入口，得让用户知道还有内容没列出来
-            if (displayItems.Count > maxDisplayRows)
-                canvas.DrawText($"还有 {displayItems.Count - maxDisplayRows} 项未列出", 216, HEIGHT - 34, _subTextPaint);
+            // 超出可视区时在卡片右侧画一条滚动条指示（与下拉浮层同款），避免用户以为「列表就这么长」。
+            // ⚠️ 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
+            if (maxFirstRow > 0 && visibleRows > 0)
+            {
+                float trackTop = contentCardY + DISPLAY_FIRST_ROW_Y - 4;
+                float trackH = visibleRows * DISPLAY_ROW_H - 4;
+                float thumbH = Math.Max(18f, trackH * visibleRows / displayItems.Count);
+                float thumbY = trackTop + (trackH - thumbH) * _displayScroll / maxFirstRow;
+                _dynamicFillPaint.Color = new SKColor(255, 255, 255, 30);
+                canvas.DrawRoundRect(new SKRect(WIDTH - 34, trackTop, WIDTH - 31, trackTop + trackH), 1.5f, 1.5f, _dynamicFillPaint);
+                _dynamicFillPaint.Color = new SKColor(255, 255, 255, 110);
+                canvas.DrawRoundRect(new SKRect(WIDTH - 34, thumbY, WIDTH - 31, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+            }
+
+            // 行数不够时的提示：现在可以滚轮滚动查看，文案不再是「未列出」
+            if (maxFirstRow > 0)
+                canvas.DrawText($"滚轮可滚动查看其余 {maxFirstRow} 项", 216, HEIGHT - 34, _subTextPaint);
         }
 
         // 页签：媒体设置
