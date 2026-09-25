@@ -383,7 +383,8 @@ namespace NotchPeninsula
             else if (_mediaExpToggleHovered)
             {
                 Renderer.MediaInteractionMode = Renderer.MediaInteractionMode == 1 ? 0 : 1;
-                if (Renderer.MediaInteractionMode == 0) Renderer.IsMediaExpanded = false; // 关闭时强制收起
+                // 关闭展开交互时强制收起媒体面板（面板开合统一走 NotchWindow 的那套管理）
+                if (Renderer.MediaInteractionMode == 0) NotchWindow.CloseMediaPanel();
                 Program.SaveSetting("MediaInteractionMode", Renderer.MediaInteractionMode);
                 Render();
             }

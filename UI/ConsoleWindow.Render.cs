@@ -678,11 +678,9 @@ namespace NotchPeninsula
                 !isFsHideDisabled && _fsHideToggleHovered,
                 isFsHideDisabled);
 
-            bool isMediaExpDisabled = Renderer.CompositeModeEnabled;
-            DrawToggleCard(canvas, 208, "媒体交互方式", isMediaExpDisabled ? "组合模式下固定为直接交互" : "开启为展开交互，关闭为直接交互",
-                isMediaExpDisabled ? false : (Renderer.MediaInteractionMode == 1),
-                !isMediaExpDisabled && _mediaExpToggleHovered,
-                isMediaExpDisabled);
+            // 🎵 媒体交互方式：组合模式同样可展开媒体面板（2026-09-25 起），因此不再置灰
+            DrawToggleCard(canvas, 208, "媒体交互方式", "开启为展开交互，关闭为直接交互",
+                Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
             DrawToggleCard(canvas, 280, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
         }

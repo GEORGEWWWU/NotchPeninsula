@@ -320,14 +320,44 @@ namespace NotchPeninsula
     
     public class ToastData
     {
-        public string AppName { get; set; } = "";
-        public string Title { get; set; } = "";
-        public string Body { get; set; } = "";
+        // 三个文本字段都是**单行显示**（灵动岛每个字段只画一行），所以在赋值入口就归一化：
+        // 换行（\r\n）、制表符等控制字符与连续空白折叠成一个空格，并去掉首尾空白。
+        // 系统通知的正文常自带换行（一个 textElement 内部就含 \r\n），原样交给 Skia 会把换行
+        // 当缺字画成一个方块 —— 就是「显示乱码」；它还会把文本宽度测量撑成错误的值。
+        private string _appName = "";
+        private string _title = "";
+        private string _body = "";
+
+        public string AppName { get => _appName; set => _appName = NormalizeText(value); }
+        public string Title { get => _title; set => _title = NormalizeText(value); }
+        public string Body { get => _body; set => _body = NormalizeText(value); }
         public string Aumid { get; set; } = "";
         public uint NotificationId { get; set; }
         public UserNotification? InternalNotification { get; set; }
         // best-effort process name for display
         public string ProcessName { get; set; } = "";
+
+        /// <summary>
+        /// 把多行文本压成单行：控制字符（含 \r \n \t）与空白一律当分隔符，连续多个只留一个空格，
+        /// 首尾空白直接丢掉。emoji 的代理对不受影响（逐 char 追加，顺序不变）。
+        /// </summary>
+        public static string NormalizeText(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            var sb = new System.Text.StringBuilder(text.Length);
+            bool pendingSpace = false;
+            foreach (char c in text)
+            {
+                if (char.IsControl(c) || char.IsWhiteSpace(c))
+                {
+                    pendingSpace = sb.Length > 0;
+                    continue;
+                }
+                if (pendingSpace) { sb.Append(' '); pendingSpace = false; }
+                sb.Append(c);
+            }
+            return sb.ToString();
+        }
 
         private SKBitmap? _customIcon;
 

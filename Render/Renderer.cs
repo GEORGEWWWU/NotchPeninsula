@@ -234,9 +234,6 @@ namespace NotchPeninsula
                 // 组合模式与「非组合 + 有插件预留」都要用渲染时的真实值 —— 插件被排到原生内容左边时，
                 // 媒体右边界就是岛体右边界，旧的换算公式会算出偏左的错误位置。
                 _compositeMediaRight = CompositeModeEnabled || pluginReserve > 0f ? right : -1f;
-                int btnPrevX = (int)right - 90;
-                int btnPlayX = (int)right - 60;
-                int btnNextX = (int)right - 30;
 
                 // 灵动岛悬浮距离顶部的 Y 轴高度 (随过渡进度平滑变化)
                 float topY = 12f * styleProgress;
@@ -342,11 +339,17 @@ namespace NotchPeninsula
                     UpdateMediaState(media);
                 UpdateClockCache();
 
-                // ---------------- [ 自定义组合模式 ] ----------------
-                if (CompositeModeEnabled)
+                // ---------------- [ 自定义组合模式 / 原生布局 ] ----------------
+                // 🎵 媒体展开面板优先接管：组合模式与非组合模式一视同仁 —— 面板整块占满岛体，
+                //    时钟 / 硬件 / 插件行本帧都不画（宿主已把插件行预算归零、岛体锁成面板尺寸）。
+                //    判定与宿主尺寸决策共用 IsMediaExpanded，所以「组合模式也能展开」不需要额外分支。
+                if (IsMediaPanelShowing(media, currentHeight))
+                    DrawMediaControl(canvas, media, isHovered, bars,
+                        new MediaBlockGeometry(left, left, right), currentHeight, textOffsetY, alpha);
+                else if (CompositeModeEnabled)
                     DrawCompositeLayout(canvas, media, isHovered, bars, left, currentHeight, topY, textOffsetY, alpha);
                 else
-                    DrawNativeLayout(canvas, media, isHovered, bars, left, right, btnPrevX, btnPlayX, btnNextX,
+                    DrawNativeLayout(canvas, media, isHovered, bars, left, right,
                         currentHeight, textOffsetY, alpha);
 
                 // ================= 🧩 插件组件行（非组合模式） =================

@@ -8,17 +8,16 @@ namespace NotchPeninsula
     public static partial class Renderer
     {
 
-        // 媒体控件遮罩：左端取按钮块起点（位置固定），向右延伸 MEDIA_MASK_WIDTH（<=0 视为不铺），左起 MEDIA_MASK_FADE 渐隐。
-        // 79 = 右端正好落在「下一首」图标右缘（三个按钮实体范围是组件右端 −79 ~ −11）；90 = 一直到组件右端。
-        private const float MEDIA_MASK_WIDTH = 0f;
-        private const float MEDIA_MASK_FADE = 15f;
-
         // ================= 岛体内容布局：两条互斥分支 =================
         // 组合模式：原生模块与插件组件按「内容顺序表」混排（各模块是下面的局部函数）。
         // 非组合模式：原生内容居中，插件行按顺序表贴在它的左右两侧。
         //
         // 参数都是 Draw() 里算好的几何量，直接透传，不要在这里重算 ——
         // 左右边界 / 按钮位置 / 插件预留都只有 Draw() 一个真源。
+        //
+        // 🎵 媒体控制不在这里实现：它整块搬到了 Renderer.MediaWidget.cs，由统一入口
+        //    DrawMediaControl 自行分流「折叠内联行 / 展开面板」—— 本文件只负责把几何量喂给它，
+        //    组合与非组合因此不再各写一套媒体绘制。
 
         private static void DrawCompositeLayout(SKCanvas canvas, MediaController media, bool isHovered, float[]? bars,
             float left, float currentHeight, float topY, float textOffsetY, byte alpha)
@@ -113,74 +112,11 @@ namespace NotchPeninsula
             {
                 // 本模块的右边界：不再假设自己一定贴着岛体最右 —— 插件可能被排到它右边
                 float mediaRight = currentX + MeasureMediaBlockWidth(media);
-                float mediaAnchor = mediaRight + 18f;
-                _compositeMediaRight = mediaAnchor;
-                // 🖱️ 本模块的右键命中区 = 文字 + 频谱 / 按钮锚点（插件被排到媒体右边时不越界）
-                _mediaZoneL = currentX;
-                _mediaZoneR = mediaAnchor;
-                int mBtnPrevX = (int)mediaAnchor - 90;
-                int mBtnPlayX = (int)mediaAnchor - 60;
-                int mBtnNextX = (int)mediaAnchor - 30;
-
-                float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f;
-                float textX = currentX;
-
-                if (media.Thumbnail != null)
-                {
-                    float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
-                    var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
-                    canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
-                    canvas.Save();
-                    _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
-                    canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                    canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                    canvas.Restore();
-                    textX += thumbSize + 10;
-                }
-
-                bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
-                if (_lyricAnimProgress < 1f && isLyricDisplay)
-                {
-                    float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
-                    if (!string.IsNullOrEmpty(_prevLyric))
-                        DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
-                    DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
-                    _textPaint.Color = _currentTextColor.WithAlpha(alpha);
-                }
-                else
-                {
-                    DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
-                }
-
-                // 媒体控件遮罩：仅悬停时绘制，自按钮块起点向右延伸 MEDIA_MASK_WIDTH。
-                if (isHovered)
-                {
-                    float maskLeft = mBtnPrevX;
-                    float maskWidth = Math.Max(MEDIA_MASK_WIDTH, 0f);
-                    float fadeW = Math.Min(MEDIA_MASK_FADE, maskWidth);
-                    canvas.Save();
-                    canvas.Translate(maskLeft, 0);
-                    canvas.Scale(fadeW, currentHeight);
-                    canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                    canvas.Restore();
-                    canvas.DrawRect(maskLeft + fadeW, 0, maskLeft + maskWidth, currentHeight, _bgPaint);
-
-                    float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
-                    DrawSvgPath(canvas, _mediaIconPaint, mBtnPrevX + 11, prevNextY, _prevPath);
-                    DrawSvgPath(canvas, _mediaIconPaint, mBtnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
-                    DrawSvgPath(canvas, _mediaIconPaint, mBtnNextX + 11, prevNextY, _nextPath);
-                }
-                else if (bars != null)
-                {
-                    float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f;
-                    float spectrumX = mediaAnchor - 16f - totalBarWidth;
-                    for (int i = 0; i < 5; i++)
-                    {
-                        float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
-                        canvas.DrawRoundRect(new SKRect(spectrumX + i * (barWidth + spacing), y, spectrumX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
-                    }
-                }
-
+                // 整块交给媒体控制模块（折叠 / 展开由它自己分流）；
+                // 锚点比模块右缘多 18px，是给频谱 / 播放按钮让出的固定位置。
+                DrawMediaControl(canvas, media, isHovered, bars,
+                    new MediaBlockGeometry(currentX, currentX, mediaRight + 18f),
+                    currentHeight, textOffsetY, alpha);
                 currentX = mediaRight + moduleGap;
             }
 
@@ -223,193 +159,18 @@ namespace NotchPeninsula
         }
 
         private static void DrawNativeLayout(SKCanvas canvas, MediaController media, bool isHovered, float[]? bars,
-            float left, float right, int btnPrevX, int btnPlayX, int btnNextX, float currentHeight, float textOffsetY, byte alpha)
+            float left, float right, float currentHeight, float textOffsetY, byte alpha)
         {
             // 拆分绘制逻辑
             if (media.IsActive)
             {
-                // 🖱️ 非组合模式下媒体控制器独占「原生内容区」：整块内容区都算媒体区域
-                _mediaZoneL = left;
-                _mediaZoneR = right;
-                _textPaint.Color = _currentTextColor.WithAlpha(alpha);
-
-                if (IsMediaExpanded && currentHeight > 60f) // 展开模式布局
-                {
-                    float coverSize = 50f; // 1. 封面缩小 10px
-                    float coverX = left + 20f;
-                    float coverY = 20f;    // 封面微调光学居中
-
-                    // 封面
-                    if (media.Thumbnail != null)
-                    {
-                        var thumbRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
-                        canvas.DrawRoundRect(thumbRect, 8f, 8f, _shadowPaint);
-                        canvas.Save();
-                        _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, 8f, 8f);
-                        canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                        canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                        canvas.Restore();
-                    }
-                    else
-                    {
-                        canvas.DrawRoundRect(new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize), 8f, 8f, _fallbackIconPaint);
-                    }
-
-                    // 双行文字
-                    float textStartX = coverX + coverSize + 12f;
-                    _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
-                    _titlePaint.TextSize = 14.5f;
-                    DrawKaraoke(canvas, _lastMediaTitle, textStartX, coverY + 18f, _titlePaint, alpha, 0f, false); // 歌名也做 emoji/多语言回退
-
-                    _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
-                    _bodyPaint.TextSize = 12.5f;
-                    string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
-                    // 译文只在「下方那行确实是歌词」时才跟着画（显示的是歌手名时不能贴译文）
-                    string displaySubTrans = string.IsNullOrEmpty(_lastLyric) ? "" : _lastLyricTrans;
-
-                    // 展开模式下的平滑叠化渲染 (带卡拉OK)
-                    bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
-                    if (_lyricAnimProgress < 1f && isLyricDisplay)
-                    {
-                        float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
-                        if (!string.IsNullOrEmpty(_prevLyric))
-                        {
-                            // 旧歌词淡出时进度直接锁定 100% (1f)
-                            DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
-                        }
-                        // 新歌词套用当前进度
-                        DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
-                        _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
-                    }
-                    else
-                    {
-                        DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
-                    }
-
-                    // 2. 新增遮罩隔断：在渲染右侧律动频谱前，直接截断文字区域 (零内存分配)
-                    float maskEnd = right - 55f;
-                    float maskStart = maskEnd - 20f;
-                    canvas.Save();
-                    canvas.Translate(maskStart, 0);
-                    canvas.Scale(maskEnd - maskStart, currentHeight);
-                    canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                    canvas.Restore();
-                    canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-
-                    // 复用律动频谱 (放右上角)
-                    if (bars != null)
-                    {
-                        float barWidth = 2.5f, spacing = 3.5f, maxH = 18f, totalBarWidth = 26.5f;
-                        float startX = right - 20f - totalBarWidth;
-                        for (int i = 0; i < 5; i++)
-                        {
-                            float h = Math.Max(2f, bars[i] * maxH);
-                            float barY = coverY + 22f + (maxH - h) / 2f;
-                            canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), barY, startX + i * (barWidth + spacing) + barWidth, barY + h), 1.5f, 1.5f, _barPaint);
-                        }
-                    }
-
-                    // 3. 底部放大媒体控件
-                    float btnY = currentHeight - 34f;
-                    // 居中于「原生内容区」而非整岛：插件行被排到左边时内容区整体右移，按钮要跟着走
-                    float centerX = (left + right) / 2f;
-                    float scale = 1.6f;
-                    float playBtnY = btnY - 1.6f;
-
-                    if (HoveredExpandedButton == 0) canvas.DrawCircle(centerX - 54f, btnY + 8f, 20f, _hoverCirclePaint);
-                    if (HoveredExpandedButton == 1) canvas.DrawCircle(centerX + 1f, playBtnY + 9.6f, 20f, _hoverCirclePaint);
-                    if (HoveredExpandedButton == 2) canvas.DrawCircle(centerX + 52f, btnY + 8f, 20f, _hoverCirclePaint);
-
-                    DrawSvgPath(canvas, _mediaIconPaint, centerX - 60f, btnY, _prevPath, scale);
-                    DrawSvgPath(canvas, _mediaIconPaint, centerX - 7f, playBtnY, media.IsPlaying ? _pausePath : _playPath, scale);
-                    DrawSvgPath(canvas, _mediaIconPaint, centerX + 45f, btnY, _nextPath, scale);
-
-                    // 🎵 歌曲时间轴：必须画在文字遮罩之后（否则右半边被整块盖掉）。
-                    //    高度没涨到 140 之前不画，避免展开动画途中与底部按钮叠字。
-                    if (TimelineVisible(media) && currentHeight > TL_MIN_HEIGHT)
-                        DrawTimeline(canvas, media, left, right, currentHeight, alpha);
-                }
-                else // 原版折叠模式布局
-                {
-                    float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
-                    float textX = left + 16;
-                    if (media.Thumbnail != null)
-                    {
-                        float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
-                        var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
-                        canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
-                        canvas.Save();
-                        _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
-                        canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                        canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
-                        canvas.Restore();
-                        textX += thumbSize + 10;
-                    }
-
-                    // 折叠模式下的歌词叠化与位移动画 (带卡拉OK)
-                    bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
-                    if (_lyricAnimProgress < 1f && isLyricDisplay)
-                    {
-                        float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
-
-                        if (!string.IsNullOrEmpty(_prevLyric))
-                        {
-                            DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textX, textY - (10f * easeOut), _textPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
-                        }
-
-                        DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY + (10f * (1f - easeOut)), _textPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
-                        _textPaint.Color = _currentTextColor.WithAlpha(alpha);
-                    }
-                    else
-                    {
-                        DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
-                    }
-
-                    if (MediaInteractionMode == 0) // 直接交互模式
-                    {
-                        // 媒体控件遮罩：仅悬停时绘制，自按钮块起点向右延伸 MEDIA_MASK_WIDTH。
-                        if (isHovered)
-                        {
-                            float maskLeft = btnPrevX;
-                            float maskWidth = Math.Max(MEDIA_MASK_WIDTH, 0f);
-                            float fadeW = Math.Min(MEDIA_MASK_FADE, maskWidth);
-                            canvas.Save();
-                            canvas.Translate(maskLeft, 0);
-                            canvas.Scale(fadeW, currentHeight);
-                            canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                            canvas.Restore();
-                            canvas.DrawRect(maskLeft + fadeW, 0, maskLeft + maskWidth, currentHeight, _bgPaint);
-
-                            float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
-                            DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
-                            DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
-                        }
-                        else if (bars != null)
-                        {
-                            float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
-                            for (int i = 0; i < 5; i++)
-                            {
-                                float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
-                                canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
-                            }
-                        }
-                    }
-                    else // 展开交互模式
-                    {
-                        // 本模式折叠态悬停不换成按钮，无需遮罩。
-
-                        if (bars != null)
-                        {
-                            float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f, startX = right - 16f - totalBarWidth;
-                            for (int i = 0; i < 5; i++)
-                            {
-                                float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
-                                canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), y, startX + i * (barWidth + spacing) + barWidth, y + h), 1.5f, 1.5f, _barPaint);
-                            }
-                        }
-                    }
-                }
+                // 🎵 非组合模式下媒体控制器独占「原生内容区」：内容区左右边界就是它的几何量。
+                //    内容起点比左边界多 16px（岛体内边距），锚点就是右边界 —— 与组合模式喂进去的
+                //    只是几何量不同，绘制走的是同一个模块，所以「组合 / 非组合」不会再有两套媒体逻辑。
+                //    展开面板由模块自己判定接管（IsMediaPanelShowing），此处无需分支。
+                DrawMediaControl(canvas, media, isHovered, bars,
+                    new MediaBlockGeometry(left, left + 16f, right),
+                    currentHeight, textOffsetY, alpha);
             }
             else if (StandbyDisplayMode == 0)
             {
@@ -581,6 +342,15 @@ namespace NotchPeninsula
             if (InZone(x, _clockZoneL, _clockZoneR) || InZone(x, _hardwareZoneL, _hardwareZoneR)) return 1;
             return -1;
         }
+
+        /// <summary>
+        /// 岛内逻辑坐标 x 是否落在本帧绘制的媒体模块上（折叠内联行或展开面板都算）。
+        ///
+        /// 宿主用它判定「点击展开媒体面板」与「悬停给小手」：组合模式下媒体只是岛体里的一段
+        /// （左右还挨着时钟 / 硬件 / 插件），所以不能用「整岛命中」——那会让点时钟也把媒体展开。
+        /// 区间由绘制时登记、帧首作废，与本帧实际画出来的东西严格一致。
+        /// </summary>
+        public static bool HitMediaZone(float x) => InZone(x, _mediaZoneL, _mediaZoneR);
 
         private static bool InZone(float x, float l, float r) => l >= 0f && x >= l && x <= r;
 

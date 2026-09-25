@@ -352,8 +352,8 @@ namespace NotchPeninsula
                 if (!Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled
                     && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
                     newFsHideToggleHovered = true;
-                // 媒体交互模式
-                if (!Renderer.CompositeModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 228 && y <= TITLE_BAR_HEIGHT + 248)
+                // 媒体交互模式（组合模式同样可用：组合模式现在也能展开媒体面板）
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 228 && y <= TITLE_BAR_HEIGHT + 248)
                     newMediaExpToggleHovered = true;
                 // 使用局部变量，防止状态死锁
                 newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 300 && y <= TITLE_BAR_HEIGHT + 320;
@@ -435,13 +435,12 @@ namespace NotchPeninsula
                 else if (_selectedTab == 3)
                 {
                     // 与 Render() tab 3 的 disabled 判据同源（改那边记得改这边）
+                    // 注：「媒体交互方式」卡片不再因为组合模式而禁用（2026-09-25 起组合模式也能展开媒体面板），
+                    //     所以这里也没有它对应的禁止指针区间。
                     bool autoHideDisabled = Renderer.PassthroughModeEnabled;
                     bool subToggleDisabled = autoHideDisabled || !NotchWindow.IsAutoHideEnabled;
 
-                    if (Renderer.CompositeModeEnabled
-                        && y >= TITLE_BAR_HEIGHT + 208 && y <= TITLE_BAR_HEIGHT + 270)  // 媒体交互方式卡片
-                        newIsHoveringDisabledArea = true;
-                    else if (autoHideDisabled
+                    if (autoHideDisabled
                         && y >= TITLE_BAR_HEIGHT + 12 && y <= TITLE_BAR_HEIGHT + 198)   // 自动隐藏卡片整卡（穿透模式下三行全禁用）
                         newIsHoveringDisabledArea = true;
                     else if (subToggleDisabled
