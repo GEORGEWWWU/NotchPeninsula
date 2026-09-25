@@ -14,8 +14,11 @@ namespace NotchPeninsula
         //   · 展开面板：geometry 的左右端就是面板左右端，整块岛体交给它。
         // 展开与否由 IsMediaPanelShowing 裁决。
 
-        // 悬停时播放按钮的垫底遮罩的渐隐宽度：自按钮块起点向左渐隐，把那一小截文字收掉，按钮不和歌词叠字。
-        private const float MEDIA_MASK_FADE = 15f;
+        // 悬停时播放按钮的垫底遮罩：只盖按钮块本身。三个图标固定摆在组件右端 −90 / −60 / −30，
+        // 各自再右移 11px 起画，所以按钮块的实体范围就是组件右端 −79（第一个图标左缘）~ −11（最后一个图标右缘）。
+        private const float MEDIA_MASK_FADE = 15f;      // 按钮块左缘再向左的渐隐宽度（把文字柔和收掉）
+        private const float BUTTON_BLOCK_LEFT = 79f;    // 组件右端 − 79 = 第一个图标左缘
+        private const float BUTTON_BLOCK_RIGHT = 11f;   // 组件右端 − 11 = 「下一首」图标右缘
 
         /// <summary>
         /// 媒体模块本帧的几何量，三个 x 值都由调用方算好，模块自己不重算。
@@ -89,28 +92,37 @@ namespace NotchPeninsula
                 DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
             }
 
-            // 右端：悬停时把频谱换成播放按钮，不悬停时画频谱。
-            // ⚠️ 这里**不按交互模式分叉**（2026-09-25 修正）：组合模式与非组合模式的差别只是
-            //    「当前显示哪些模块」（内容顺序表 / 待机显示内容），媒体模块自身的行为必须完全一致 ——
-            //    早先组合模式恒有此悬停按钮、非组合模式只在「直接交互」下才有，正是要消除的那种分叉。
-            //    交互模式只决定「点击模块空白处要不要展开面板」，不影响这里的观感。
+            // 右端：悬停时把频谱换成播放按钮，不悬停时画频谱。两种交互模式、组合与非组合都一样。
             if (isHovered)
             {
                 int btnPrevX = (int)geometry.AnchorRight - 90;
                 int btnPlayX = (int)geometry.AnchorRight - 60;
                 int btnNextX = (int)geometry.AnchorRight - 30;
 
-                // 垫底遮罩只在本组件区间内叠加：左端渐隐起点若落在组件左缘之外（组件比按钮块还窄）就夹回来，
-                // 右端止于组件右缘，绝不越界到相邻模块。
-                float maskL = Math.Max(geometry.ZoneLeft, btnPrevX - MEDIA_MASK_FADE);
-                float maskR = geometry.AnchorRight;
-                float fadeW = Math.Min(MEDIA_MASK_FADE, maskR - maskL);
+                // 垫底遮罩只盖按钮块这一段，两端都渐隐（低背景透明度档位下不出现硬边）：
+                //   渐入 [maskL, maskL+fadeW]  →  实心  →  渐出 [maskR−fadeW, maskR]
+                // 左缘 = 组件右端 −79（第一个图标左缘）再向左留出渐隐段，右缘 = 组件右端 −11（「下一首」图标右缘）。
+                float maskL = Math.Max(geometry.ZoneLeft, geometry.AnchorRight - BUTTON_BLOCK_LEFT - MEDIA_MASK_FADE);
+                float maskR = geometry.AnchorRight - BUTTON_BLOCK_RIGHT;
+                // 组件过窄时两段渐隐会打架，按可用宽度对半收窄
+                float fadeW = Math.Min(MEDIA_MASK_FADE, (maskR - maskL) / 2f);
+
                 canvas.Save();
                 canvas.Translate(maskL, 0);
                 canvas.Scale(fadeW, currentHeight);
                 canvas.DrawRect(0, 0, 1, 1, _fadePaint);
                 canvas.Restore();
-                canvas.DrawRect(maskL + fadeW, 0, maskR, currentHeight, _bgPaint);
+
+                canvas.Save();
+                canvas.Translate(maskR, 0);
+                canvas.Scale(-fadeW, currentHeight); // 负缩放 → 渐变镜像，实心在左、透明在右
+                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
+                canvas.Restore();
+
+                // ⚠️ 用 SKRect 而不是 (x, y, 宽, 高) 那个重载：后者第 3 个参数是**宽度**，
+                //    写成右边缘会画出一条一直冲到岛体最右的色带。
+                if (maskR - maskL > fadeW * 2f)
+                    canvas.DrawRect(new SKRect(maskL + fadeW, 0f, maskR - fadeW, currentHeight), _bgPaint);
 
                 float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                 DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
