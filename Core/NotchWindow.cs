@@ -60,7 +60,15 @@ namespace NotchPeninsula
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
         private ToastNotificationListener? _listener;
-        private DispatcherTimer? _pollingTimer;
+        // 通知轮询定时器：**刻意用线程池定时器（System.Timers.Timer），不要换回 DispatcherTimer**。
+        // DispatcherTimer 依赖 WPF Dispatcher 的队列被"泵"，而本程序的主循环是纯 Win32 的 Run()
+        // （GetMessage/DispatchMessage，没有 Dispatcher.Run/PushFrame）。实测它在启动后只跳几次就静默停摆：
+        // 2026-09-25 部署了带心跳的版本，2 分半内 0 条心跳（心跳在每次调用开头就打），而同一时刻 dispatcher
+        // 明明是活的（HTTP 探针触发的 _dispatcher.Invoke 顺利回到 UI 线程并返回 200）——
+        // 这就是"重启后能收几条、随后彻底收不到且日志全空"的根因。渲染循环与音量看门狗一直用
+        // System.Timers.Timer，从未出现此问题。取快照这一步允许在 MTA 线程调用
+        // （UserNotificationListener 声明的就是 MTA），真正需要 UI 线程的 OnToastDetected 自己会切回去。
+        private Timer? _pollingTimer;
         private readonly Dispatcher _dispatcher;
         private readonly DateTime _appStartTime = DateTime.Now;
         private readonly AudioAnalyzer _audioAnalyzer;
@@ -481,7 +489,7 @@ namespace NotchPeninsula
             {
                 if (_pollingTimer != null)
                 {
-                    _pollingTimer.Tick -= OnPollingTick;
+                    _pollingTimer.Elapsed -= OnPollingTick;
                     _pollingTimer.Stop();
                     _pollingTimer = null;
                 }
@@ -531,20 +539,72 @@ namespace NotchPeninsula
         #region 监听
         private async System.Threading.Tasks.Task InitializeListenerAsync()
         {
-            _listener = new ToastNotificationListener();
-            var (ok, msg) = await _listener.InitializeAsync();
+            var listener = new ToastNotificationListener();
+            _listener = listener;
+            var (ok, msg) = await listener.InitializeAsync();
+
+            // await 期间用户可能已经退出：ShutdownResources 会把 _listener 置空、停掉定时器，
+            // 这里必须先判退出标记，否则续体会往已释放的对象上挂事件、并重新拉起一个定时器。
+            if (_shuttingDown) { try { listener.Dispose(); } catch { } return; }
+
             if (!ok) { Error($"监听失败：{msg}"); return; }
-            _listener.OnToastDetected += OnToastDetected;
+            listener.OnToastDetected += OnToastDetected;
             Info("通知监听已启动");
 
-            // Start polling only after listener initialization to reduce CPU usage during startup.
-            _pollingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) };
-            _pollingTimer.Tick += OnPollingTick;
+            // 轮询用线程池定时器（原因见字段声明处）：DispatcherTimer 在本程序的主循环下会静默停摆。
+            // 取快照本身允许在 MTA 线程调用，弹通知由 OnToastDetected 自己切回 UI 线程。
+            _pollingTimer = new Timer(2000) { AutoReset = true };
+            _pollingTimer.Elapsed += OnPollingTick;
             _pollingTimer.Start();
         }
 
         /// <summary>通知轮询（2s）。具名方法：退出时能 -= 退订。</summary>
-        private void OnPollingTick(object? sender, EventArgs e) => _ = _listener?.FetchLatestNotificationAsync();
+        private void OnPollingTick(object? sender, System.Timers.ElapsedEventArgs e) => _ = _listener?.FetchLatestNotificationAsync();
+
+        // ================= 🔔 通知轮询看门狗 =================
+        private long _watchdogLastCheckTicks;
+        private long _watchdogLastWarnTicks;
+
+        /// <summary>
+        /// 轮询看门狗（挂在渲染循环上，每 ~10s 抽检一次）。
+        ///
+        /// 只看一件事：**轮询还有没有在发起调用**。判据用"发起时刻"而不是"取到数据的时刻"——
+        /// 取不到数据（超时、权限失效、快照冻结）由轮询自己的诊断负责，这里专治"轮询压根没在跑"
+        /// 这一类静默故障：2026-09-25 就是 DispatcherTimer 在本程序的主循环下跳几次就不动了，
+        /// 而它自己的诊断日志也随之消失，从外部完全无痕。发现停摆就重启定时器并留下日志。
+        /// </summary>
+        private void TickPollingWatchdog()
+        {
+            long nowTicks = DateTime.UtcNow.Ticks;
+            if (nowTicks - _watchdogLastCheckTicks < TimeSpan.TicksPerSecond * 10) return;   // 10s 抽检一次
+            _watchdogLastCheckTicks = nowTicks;
+
+            var listener = _listener;
+            if (listener == null || !IsToastEnabled) return;   // 通知功能没开：不适用
+
+            long lastAttemptTicks = listener.LastPollAttemptUtcTicks;
+            if (lastAttemptTicks == 0) return;                 // 还没跑过第一轮，谈不上停摆
+
+            double silentSeconds = (nowTicks - lastAttemptTicks) / (double)TimeSpan.TicksPerSecond;
+            if (silentSeconds < 30) return;
+
+            // 告警节流到 5 分钟一条；但重启动作每次都做（很便宜，能尽早把轮询拉回来）。
+            if (nowTicks - _watchdogLastWarnTicks >= TimeSpan.TicksPerMinute * 5)
+            {
+                _watchdogLastWarnTicks = nowTicks;
+                Warn($"[通知轮询] 看门狗：轮询已 {silentSeconds:F0} 秒没有任何一次触发（定时器疑似停摆），正尝试重启轮询定时器");
+            }
+
+            try
+            {
+                var timer = _pollingTimer;
+                if (timer != null) { timer.Stop(); timer.Start(); }
+            }
+            catch (Exception ex)
+            {
+                Error("[通知轮询] 看门狗重启轮询定时器失败", ex);
+            }
+        }
 
         /// <summary>
         /// 🎵 在消息真正上岛时投递提示音。
@@ -577,7 +637,9 @@ namespace NotchPeninsula
         {
             if (toast == null) return;
             clicked_info = false;
-            if (!_dispatcher.CheckAccess()) { _dispatcher.Invoke(() => OnToastDetected(toast)); return; }
+            // 用 BeginInvoke（不等待）而不是 Invoke：调用方可能是 HTTP 接收线程或轮询的线程池线程，
+            // 这里只是赋值 + 入队提示音，不需要返回值 —— 别让它们被 UI 线程的忙闲拖着走。
+            if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnToastDetected(toast)); return; }
 
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
@@ -763,6 +825,11 @@ namespace NotchPeninsula
 
             try
             {
+                // 🔔 轮询看门狗：借用渲染循环这个最可靠的时钟（16ms 线程池定时器）去盯"通知轮询还在不在跑"。
+                //    2026-09-25 的教训就是：自检不能放在被检对象自己身上 —— DispatcherTimer 停摆后，
+                //    它自己的诊断日志也一起哑了，从外部完全看不出原因。
+                TickPollingWatchdog();
+
                 // 🧩 插件详情页状态必须最先同步：WINDOW_WIDTH / MAX_WINDOW_HEIGHT 会随详情页尺寸变化，
                 //    而下面重建底层显存缓冲的判断恰好依赖这两个值。
                 //    详情页 Measure 抛异常被熔断时，这里顺手把宿主状态收起，岛体恢复原状。
