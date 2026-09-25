@@ -545,7 +545,11 @@ namespace NotchPeninsula
 
             // await 期间用户可能已经退出：ShutdownResources 会把 _listener 置空、停掉定时器，
             // 这里必须先判退出标记，否则续体会往已释放的对象上挂事件、并重新拉起一个定时器。
-            if (_shuttingDown) { try { listener.Dispose(); } catch { } return; }
+            if (_shuttingDown)
+            {
+                try { listener.Dispose(); } catch { }
+                return;
+            }
 
             if (!ok) { Error($"监听失败：{msg}"); return; }
             listener.OnToastDetected += OnToastDetected;
