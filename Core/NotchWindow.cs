@@ -1525,10 +1525,11 @@ namespace NotchPeninsula
                                     else if (cx >= center + 35 && cx <= center + 65) { _media.Next(); hitButtons = true; }
                                 }
                             }
-                            else
+                            else if (Renderer.MediaInteractionMode == 0)
                             {
-                                // 折叠态的播放按钮在**悬停时始终可见**（两种交互模式、组合与非组合都一样，
-                                // 见 Renderer.MediaWidget.cs 的 DrawMediaInline），所以这里不该再按交互模式分叉。
+                                // 折叠态播放按钮只在**直接交互**模式下绘制（见 Renderer.MediaWidget.cs 的
+                                // DrawMediaInline），因此也只有该模式吃这里的点击；展开交互模式点这一带会
+                                // 落到下面「点媒体区即展开面板」的分支，与「悬停不显示控件」保持一致。
                                 // 位置与渲染侧共用同一个锚点：GetMediaRight 返回的就是媒体模块右缘。
                                 float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
                                 float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
