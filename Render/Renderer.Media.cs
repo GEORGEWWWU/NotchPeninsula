@@ -13,7 +13,8 @@ namespace NotchPeninsula
             // 复用卡拉OK run 缓存：组合模式 / 折叠模式每帧都会用同一句歌词调这里，
             // 命中缓存时连 MeasureText 都不做（稳定期零重算、零分配，也不打断渲染节奏）。
             if (ReuseCachedRuns(text, _semiBoldTypeface, out float cachedWidth)) return cachedWidth;
-            return _textPaint.MeasureText(text);
+            // 未命中时走逐 run 兜底测量：`_textPaint.MeasureText` 只按基础字体量，缺字的歌词会被量窄。
+            return MeasureTextWithFallback(text);
         }
 
         public static bool IsMediaExpanded = false;
@@ -362,15 +363,16 @@ namespace NotchPeninsula
 
         private static float MeasureMediaBlockWidth(MediaController? media)
         {
+            // 一律用兜底测量：组合模式的岛体长度按这个值裁，缺字歌词被量窄会让长句被遮罩截断。
             float textWidth = (!string.IsNullOrEmpty(media?.CurrentLyric) && MediaController.IsLyricsEnabled)
-                ? _textPaint.MeasureText(media!.CurrentLyric)
+                ? MeasureTextWithFallback(media!.CurrentLyric)
                 : (string.IsNullOrEmpty(media?.Artist)
-                    ? _textPaint.MeasureText(media?.Title)
-                    : _textPaint.MeasureText(media!.Artist) + _textPaint.MeasureText(media.Title) + 15f);
+                    ? MeasureTextWithFallback(media?.Title)
+                    : MeasureTextWithFallback(media!.Artist) + MeasureTextWithFallback(media.Title) + 15f);
 
             // 译文第二行若更宽，按它计宽（与折叠态的自适应宽度口径一致）
             if (IsTranslationLineVisible(media))
-                textWidth = Math.Max(textWidth, _textPaint.MeasureText(media!.CurrentLyricTranslation) * LYRIC_TRANS_SCALE);
+                textWidth = Math.Max(textWidth, MeasureTextWithFallback(media!.CurrentLyricTranslation) * LYRIC_TRANS_SCALE);
 
             float thumbW = media?.Thumbnail != null ? 32f : 0f;
             return thumbW + textWidth + 12f + 21.2f;

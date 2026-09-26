@@ -76,8 +76,7 @@ namespace NotchPeninsula
 
                 for (int i = 0; i < 8; i++)
                 {
-                    // index 0（水平宽度）/ 4（弹出的宽度）已改成「系统自动调整，无需设置」：
-                    // 那两行既不画控件也不吃指针 —— 与绘制侧同源，改一边就得改另一边。
+                    // index 0 / 4 无控件，不吃指针（与绘制侧保持一致）
                     if (i == 0 || i == 4) continue;
 
                     float btnY = GetBtnY(i);

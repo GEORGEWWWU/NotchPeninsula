@@ -199,6 +199,8 @@ namespace NotchPeninsula
             _karaokeRuns1.Clear();
             _krKey0 = default;
             _krKey1 = default;
+            // 兜底宽度缓存同样只按文本做 key，字体一换就必须整体作废，否则新字体会被旧的宽度顶掉。
+            _fallbackWidths.Clear();
         }
 
         private static readonly SKPaint _titlePaint = new() { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = _boldTypeface };
@@ -531,6 +533,26 @@ namespace NotchPeninsula
             if (_krKey0.Text == _cachedMediaDisplay) return _krKey0.Width;
             if (_krKey1.Text == _cachedMediaDisplay) return _krKey1.Width;
             return 0f;
+        }
+
+        // 逐 run 兜底测量的暂存列表与宽度缓存（避免每帧重建 runs）。
+        private static readonly List<(string Text, SKTypeface Type, float X)> _measureRuns = new(8);
+        private static readonly Dictionary<string, float> _fallbackWidths = new(64);
+
+        /// <summary>
+        /// 文本排版宽度，逐 run 做字体兜底后再量（与 DrawKaraoke 的宽度口径一致）。
+        /// 基础字体缺字的歌词（韩文 / 泰文 / 阿拉伯文…）必须换兜底字体再量，否则会被量窄。
+        /// 带文本级缓存，字体切换时随 _krKey* 一起作废。
+        /// </summary>
+        public static float MeasureTextWithFallback(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0f;
+            if (_fallbackWidths.TryGetValue(text, out float cached)) return cached;
+
+            BuildTextRuns(text, _textPaint, _textPaint.Typeface, _measureRuns, out float width);
+            if (_fallbackWidths.Count >= 128) _fallbackWidths.Clear();
+            _fallbackWidths[text] = width;
+            return width;
         }
 
         /// <summary>

@@ -90,60 +90,29 @@ namespace NotchPeninsula
         private volatile bool _shuttingDown;
         private const string AppName = "NotchPeninsula";
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
-        /// <summary>
-        /// 「自动隐藏」总开关（**用户的偏好**）。2026-09-26 起**已停用**：开关能拨、能被记住，
-        /// 但**不再参与任何判定** —— 面板上行首的副标题也已明确写出「已停用」。
-        ///
-        /// 它的原逻辑（焦点离开时隐藏）已由 <see cref="IsFocusAutoHideEnabled"/> 独立接替，
-        /// 所以这里**不要**再拿它去栅栏下面任何一个模式，也**不要**拿它去算「实际是否生效」。
-        /// 之所以还留着这个字段，只是为了设置面板那个开关还能显示自己原来的位置。
-        /// </summary>
+        /// <summary>「自动隐藏」总开关（面板小字：允许灵动岛自动隐藏）。关掉时下面三种模式一起失效。</summary>
         public static bool IsAutoHideEnabled = false;
 
-        /// <summary>
-        /// 「焦点离开时自动隐藏岛」开关（**用户的偏好**），默认关闭。
-        /// 语义：岛体在**没有媒体会话**时，一旦失去鼠标悬停 / 焦点就藏起来。
-        ///
-        /// 这是 2026-09-26 之前「自动隐藏」总开关所对应的那份逻辑，现在原样搬到这里独立成开关。
-        /// </summary>
+        /// <summary>总开关实际是否生效：总开关 且 非穿透模式。</summary>
+        public static bool IsAutoHideEffective => IsAutoHideEnabled && !Renderer.PassthroughModeEnabled;
+
+        /// <summary>「焦点离开时自动隐藏岛」：没有媒体会话时，失去焦点就收起。</summary>
         public static bool IsFocusAutoHideEnabled = false;
 
-        /// <summary>
-        /// 「焦点离开时自动隐藏岛」**实际是否生效**。穿透模式下强制失效。
-        ///
-        /// 设置面板在穿透模式开启时会把这一行置灰并**显示为关闭**（副标题：穿透模式下禁止自动隐藏），
-        /// 运行时必须和这个承诺完全一致 —— 否则就会出现「开关显示已关、岛体却还在躲」。
-        /// 判据必须与设置面板用的是同一个（`Renderer.PassthroughModeEnabled`），别再各写一份。
-        ///
-        /// 注意这里**不销毁用户偏好**：`IsFocusAutoHideEnabled` 原样保留，关掉穿透模式后自动回来。
-        /// </summary>
-        public static bool IsFocusAutoHideEffective => IsFocusAutoHideEnabled && !Renderer.PassthroughModeEnabled;
+        /// <summary>「焦点离开时自动隐藏岛」实际是否生效：总开关放行 且 自身开启。</summary>
+        public static bool IsFocusAutoHideEffective => IsAutoHideEffective && IsFocusAutoHideEnabled;
 
-        /// <summary>
-        /// 「暂停播放后自动隐藏」开关（**用户的偏好**），默认关闭。
-        /// 语义：媒体会话还在（岛体本来会因为 `_media.IsActive` 而拒绝隐藏），但**没有在播放**
-        /// （SMTC 处于暂停 / 停止）时，允许把岛体藏起来。
-        /// </summary>
+        /// <summary>「暂停播放后自动隐藏」：媒体暂停 / 停止时，也把岛藏起来。</summary>
         public static bool IsPauseAutoHideEnabled = false;
 
-        /// <summary>
-        /// 「暂停播放后自动隐藏」**实际是否生效**。判据 = 自身开关 且 非穿透模式。
-        /// 三个模式**互相独立、可任意组合**，所以这里只判自己，不再看别人。
-        /// </summary>
-        public static bool IsPauseAutoHideEffective => IsPauseAutoHideEnabled && !Renderer.PassthroughModeEnabled;
+        /// <summary>「暂停播放后自动隐藏」实际是否生效：总开关放行 且 自身开启。</summary>
+        public static bool IsPauseAutoHideEffective => IsAutoHideEffective && IsPauseAutoHideEnabled;
 
-        /// <summary>
-        /// 「全屏自动隐藏」开关（**用户的偏好**），默认关闭。
-        /// 语义：检测到有全屏应用在跑（全屏视频 / 全屏游戏，含独占模式 D3D）时，**无条件**让位隐藏，
-        /// 哪怕音乐正在播放 —— 全屏场景下岛体压在顶上就是纯打扰。
-        /// </summary>
+        /// <summary>「全屏自动隐藏」：检测到全屏视频 / 游戏（含独占 D3D）时无条件让位，播放中也不显示。</summary>
         public static bool IsFullscreenAutoHideEnabled = false;
 
-        /// <summary>
-        /// 「全屏自动隐藏」**实际是否生效**。判据同上：只判自己 + 非穿透模式。
-        /// （2026-09-26 起与「暂停播放后」不再互斥，两者可以同时开着。）
-        /// </summary>
-        public static bool IsFullscreenAutoHideEffective => IsFullscreenAutoHideEnabled && !Renderer.PassthroughModeEnabled;
+        /// <summary>「全屏自动隐藏」实际是否生效：总开关放行 且 自身开启。</summary>
+        public static bool IsFullscreenAutoHideEffective => IsAutoHideEffective && IsFullscreenAutoHideEnabled;
 
         // ==================== 全屏检测（「全屏自动隐藏」专用） ====================
         // 轻量化的三个关键：
@@ -192,10 +161,10 @@ namespace NotchPeninsula
         /// <c>shouldHide</c>（藏不藏）与 <c>WM_LBUTTONDOWN</c> 的唤醒分支（点了能不能唤回）**必须共用它**，
         /// 否则就会出现「藏得下去、点不回来」。
         ///
-        /// 三种模式**互相独立、可任意组合**（面板上不再有总开关栅栏、也不再有互斥）：
+        /// 三种模式互相独立、可任意组合，且都被总开关拦住（总开关关掉时三个 Effective 全为 false）：
         ///   · 焦点离开时自动隐藏：没有媒体会话 → 允许
-        ///   · 暂停播放后自动隐藏：媒体**暂停 / 停止**时 → 允许（原本是「媒体激活即一律不隐藏」）
-        ///   · 全屏自动隐藏：检测到全屏应用 → **无条件允许**（正在播放也要让位，这正是它的用途）
+        ///   · 暂停播放后自动隐藏：媒体暂停 / 停止时 → 允许
+        ///   · 全屏自动隐藏：检测到全屏应用 → 无条件允许
         ///
         /// 历史坑：唤醒分支曾自己写死 `!_media.IsActive`。加了「暂停后隐藏」之后，岛体会在
         /// `_media.IsActive == true`（暂停中）的状态下藏起来，写死的判据就变成「藏得下去、点不回来」。
