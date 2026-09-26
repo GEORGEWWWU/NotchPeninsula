@@ -716,7 +716,7 @@ namespace NotchPeninsula
                 string lrcText = "";
                 // 译文 LRC：与原文同一套时间戳，解析后按时间对齐成「原文行 → 译文」的映射
                 string transText = "";
-                // QQ 搜索命中的 songmid，留着给译文的兜底渠道用（拿到就说明这首歌在 QQ 曲库里有对应记录）
+                // QQ 搜索命中的 songmid，QQ 引擎取歌词用
                 string qqSongmid = "";
                 string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
@@ -867,14 +867,14 @@ namespace NotchPeninsula
                     catch (Exception ex) { Logger.Warn($"LRCLIB引擎失败: {ex.Message}"); }
                 }
 
-                // ====== 译文补抓：落月 API ======
-                // 前面的引擎都没给出可用的译文时（要么整段为空，要么拿到的全是 `//` 这类占位），
-                // 用 QQ 搜索命中的 songmid 去落月 API 再要一份。只补译文，不参与歌词正文的获取 ——
-                // 它返回的 trans 与 QQ 官方歌词同源同时间戳，解析后能按时间戳精确贴到原文行上。
-                if (!string.IsNullOrEmpty(qqSongmid) && BuildTransTable(transText).Length == 0)
+                // ====== 引擎 4：落月 API（原文 + 译文兜底）======
+                // 先按「歌名 歌手」搜到 QQ songid，再用 songid 取原文与译文（data.lrc / data.trans）；
+                // 原文或译文缺失时发这一次请求，一起补齐。
+                if (string.IsNullOrEmpty(lrcText) || BuildTransTable(transText).Length == 0)
                 {
-                    string? fallbackTrans = await FetchTransFromLuoYueAsync(qqSongmid, ua);
-                    if (!string.IsNullOrEmpty(fallbackTrans)) transText = fallbackTrans;
+                    var fallback = await FetchFromLuoYueAsync(title, artist, ua);
+                    if (string.IsNullOrEmpty(lrcText) && !string.IsNullOrEmpty(fallback.Lrc)) lrcText = fallback.Lrc;
+                    if (BuildTransTable(transText).Length == 0 && !string.IsNullOrEmpty(fallback.Trans)) transText = fallback.Trans;
                 }
 
                 // ====== 极速解析时间轴 ======
@@ -916,41 +916,62 @@ namespace NotchPeninsula
             }
         }
 
-        // 落月 API 译文源。主域名不通时自动退回备用域名（官方文档给出的容灾域名）。
-        private static readonly string[] LuoYueHosts = { "https://api.vkeys.cn", "https://api.epdd.cn" };
+        // 落月 API 域名
+        private const string LuoYueHost = "https://api.vkeys.cn";
 
         /// <summary>
-        /// 按 QQ songmid 向落月 API 要一份译文 LRC。**只用于译文**，不参与歌词正文获取：
-        /// 它返回的 trans 与 QQ 官方歌词同源同时间戳，解析后能按时间戳精确贴到原文行上。
-        /// 拿不到（网络异常 / 曲库无此曲 / code 非 200）一律返回 null，调用方保持「无译文」的单行显示。
+        /// 落月 API 取歌词：先 /v2/music/tencent/search/song?word= 搜到 QQ songid，
+        /// 再用 /v2/music/tencent/lyric?id= 取原文（data.lrc）与译文（data.trans）。拿不到一律返回 (null, null)。
         /// </summary>
-        private async Task<string?> FetchTransFromLuoYueAsync(string mid, string ua)
+        private async Task<(string? Lrc, string? Trans)> FetchFromLuoYueAsync(string title, string artist, string ua)
         {
-            foreach (var host in LuoYueHosts)
+            try
             {
-                try
-                {
-                    _http.DefaultRequestHeaders.Clear();
-                    _http.DefaultRequestHeaders.Add("User-Agent", ua);
+                _http.DefaultRequestHeaders.Clear();
+                _http.DefaultRequestHeaders.Add("User-Agent", ua);
 
-                    using var stream = await _http.GetStreamAsync($"{host}/v2/music/tencent/lyric?mid={Uri.EscapeDataString(mid)}");
-                    using var doc = await JsonDocument.ParseAsync(stream);
-                    var root = doc.RootElement;
+                // 1. 搜索：按「歌名 歌手」搜，结果里歌名与歌手都全字匹配才认
+                string word = Uri.EscapeDataString(string.IsNullOrEmpty(artist) ? title : $"{title} {artist}");
+                using var searchStream = await _http.GetStreamAsync($"{LuoYueHost}/v2/music/tencent/search/song?word={word}");
+                using var searchDoc = await JsonDocument.ParseAsync(searchStream);
+                if (!searchDoc.RootElement.TryGetProperty("data", out var list) || list.ValueKind != JsonValueKind.Array) return (null, null);
 
-                    // code != 200 视为这个域名没戏，但换个域名还有救，所以继续循环
-                    if (root.TryGetProperty("code", out var codeEl) && codeEl.TryGetInt32(out int code) && code != 200) continue;
-                    if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object) continue;
-                    if (!data.TryGetProperty("trans", out var transEl)) continue;
+                long songId = MatchSongId(list, title, artist);
+                if (songId <= 0) return (null, null);
 
-                    string trans = transEl.GetString() ?? "";
-                    if (!string.IsNullOrEmpty(trans)) return trans;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Debug($"落月API译文获取失败({host}): {ex.Message}");
-                }
+                // 2. 取歌词
+                using var lyricStream = await _http.GetStreamAsync($"{LuoYueHost}/v2/music/tencent/lyric?id={songId}");
+                using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
+                var root = lyricDoc.RootElement;
+
+                if (root.TryGetProperty("code", out var codeEl) && codeEl.TryGetInt32(out int code) && code != 200) return (null, null);
+                if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object) return (null, null);
+
+                string lrc = data.TryGetProperty("lrc", out var lrcEl) ? lrcEl.GetString() ?? "" : "";
+                string trans = data.TryGetProperty("trans", out var transEl) ? transEl.GetString() ?? "" : "";
+                return (string.IsNullOrEmpty(lrc) ? null : lrc, string.IsNullOrEmpty(trans) ? null : trans);
             }
-            return null;
+            catch (Exception ex)
+            {
+                Logger.Debug($"落月API歌词获取失败: {ex.Message}");
+                return (null, null);
+            }
+        }
+
+        /// <summary>搜索结果里歌名与歌手全字匹配的第一条 id；匹配不上返回 0。</summary>
+        private static long MatchSongId(JsonElement list, string title, string artist)
+        {
+            foreach (var song in list.EnumerateArray())
+            {
+                string name = song.TryGetProperty("song", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                string singer = song.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
+
+                if (!string.Equals(name, title, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.IsNullOrEmpty(artist) && !string.Equals(singer, artist, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (song.TryGetProperty("id", out var idEl) && idEl.TryGetInt64(out long id)) return id;
+            }
+            return 0;
         }
 
         // 译文行与原文行的时间戳允许的最大偏差。两个源（QQ 官方 trans / 落月 API）与歌词正文

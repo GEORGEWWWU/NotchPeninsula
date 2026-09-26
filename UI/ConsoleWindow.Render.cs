@@ -725,51 +725,49 @@ namespace NotchPeninsula
         // 页签：交互设置
         private void RenderTabInteraction(SKCanvas canvas)
         {
-            // 🎯 「自动隐藏」这张卡片自 2026-09-26 起改成**四行**：行首是已停用的总开关，
-            //    下面三行是三种互相独立、可任意组合的隐藏模式（焦点离开时 / 暂停播放后 / 全屏时）。
-            //    卡片底单独画成四行高（248px，yOffset 12..260），再用 DrawToggleRow 画四行内容。
-            //    四行 yOffset 12 / 74 / 136 / 198（行距 62），行间各一条分隔线。
-            //    ⚠️ 改这里的数值时必须同步改上面 tab 3 的悬停热区（当前 +32/+94/+156/+218/+290/+362）。
-            //    （「剪贴板链接检测」已于 2026-09-20 搬到「通用设置」）
-            bool isAutoHideDisabled = Renderer.PassthroughModeEnabled;
+            // 四行：yOffset 12 / 74 / 136 / 198，行距 62（改这里要同步改上面 tab 3 的悬停热区）。
+            bool isPassthrough = Renderer.PassthroughModeEnabled;
+            // 总开关只被穿透模式压制；三个模式行还要等总开关放行（要启用总开关才能选择模式）。
+            bool isAutoHideDisabled = isPassthrough;
+            bool isModeDisabled = isPassthrough || !NotchWindow.IsAutoHideEnabled;
             var autoHideCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 260);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBorder);
 
-            // 行 1：总开关。**已停用** —— 能拨、能被记住，但不参与任何判定，所以副标题如实写明。
-            DrawToggleRow(canvas, 12, "自动隐藏", isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "总开关已停用，请看下方三种模式",
-                NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
+            // 行 1：总开关，关掉时下面三行一起置灰、不可点。
+            DrawToggleRow(canvas, 12, "自动隐藏", isPassthrough ? "穿透模式下禁止自动隐藏" : "允许灵动岛自动隐藏",
+                NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered, isAutoHideDisabled);
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 70, WIDTH - 36, TITLE_BAR_HEIGHT + 70, _separatorPaint);
 
-            // 三个模式行的可用性**只**取决于穿透模式 —— 总开关不再是它们的父开关，彼此之间也不互斥，
-            //    所以这里不再出现「需先开启「自动隐藏」」这档置灰，与运行时判据完全同源。
-            //    穿透模式下置灰并**显示为关闭**，与「自动隐藏卡片整卡置灰」的既有约定一致，
-            //    免得出现「开关看着是开的、却怎么都不生效」的困惑。
-            // 行 2：🎯 「焦点离开时自动隐藏岛」—— 接替原总开关的那份逻辑。
+            // 三个模式行：穿透模式或总开关未开启时置灰、不可点，并显示为关闭。
+            // 行 2：「焦点离开时自动隐藏岛」。
             DrawToggleRow(canvas, 74, "当焦点离开时自动隐藏岛",
-                isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "没有媒体会话时，焦点离开就收起",
+                isPassthrough ? "穿透模式下禁止自动隐藏"
+                    : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "没有媒体会话时，焦点离开就收起"),
                 NotchWindow.IsFocusAutoHideEnabled,
-                !isAutoHideDisabled && _focusHideToggleHovered,
-                isAutoHideDisabled);
+                !isModeDisabled && _focusHideToggleHovered,
+                isModeDisabled);
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 132, WIDTH - 36, TITLE_BAR_HEIGHT + 132, _separatorPaint);
 
             // 行 3：🎵 「暂停播放后自动隐藏」：媒体暂停 / 停止时也把岛藏起来。
             DrawToggleRow(canvas, 136, "暂停播放后自动隐藏",
-                isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "媒体暂停播放时，也把刘海藏起来",
+                isPassthrough ? "穿透模式下禁止自动隐藏"
+                    : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "媒体暂停播放时，也把刘海藏起来"),
                 NotchWindow.IsPauseAutoHideEnabled,
-                !isAutoHideDisabled && _pauseHideToggleHovered,
-                isAutoHideDisabled);
+                !isModeDisabled && _pauseHideToggleHovered,
+                isModeDisabled);
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 194, WIDTH - 36, TITLE_BAR_HEIGHT + 194, _separatorPaint);
 
             // 行 4：🖥 「全屏自动隐藏」：检测到全屏视频 / 全屏游戏（含独占 D3D）时无条件让位，播放中也不显示。
             DrawToggleRow(canvas, 198, "全屏自动隐藏",
-                isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "检测到全屏视频 / 游戏时隐藏",
+                isPassthrough ? "穿透模式下禁止自动隐藏"
+                    : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "检测到全屏视频 / 游戏时隐藏"),
                 NotchWindow.IsFullscreenAutoHideEnabled,
-                !isAutoHideDisabled && _fsHideToggleHovered,
-                isAutoHideDisabled);
+                !isModeDisabled && _fsHideToggleHovered,
+                isModeDisabled);
 
             // 🎵 媒体交互方式：组合模式同样可展开媒体面板（2026-09-25 起），因此不再置灰
             DrawToggleCard(canvas, 270, "媒体交互方式", "开启为点击展开面板，关闭为悬停直接控制",
@@ -824,9 +822,7 @@ namespace NotchPeninsula
         {
             void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
             {
-                // 检测该卡片对应的尺寸设置是否已被改动
-                // 🚫 index 0 / 4 不参与判定：它们已不再可调（见下面循环里的「系统自动调整，无需设置」），
-                //    否则「完整模式」等内部逻辑改动过的值会让标签永久挂着，而用户已经没法重置它。
+                // 该卡片的尺寸设置是否已被改动（index 0 / 4 已不可调，不参与判定）
                 bool isModified = false;
                 foreach (int index in indices)
                 {
@@ -869,10 +865,7 @@ namespace NotchPeninsula
 
                     canvas.DrawText(subLabels[i], 216, cardBtnY + 17, _subTextPaint);
 
-                    // 🚫 index 0「水平宽度」与 index 4「弹出的宽度」不再可调：实际尺寸由程序按内容 /
-                    //    屏幕自己算，右侧只给一句说明，不画「减 / 值 / 加 / 重置」四个控件。
-                    //    ⚠️ 命中侧（WndProc 里那段 GetBtnY 循环）必须一起跳过这两个 index，否则会
-                    //       「看着不能点、指针却还能落在隐藏的按钮上」。
+                    // index 0 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
                     if (index == 0 || index == 4)
                     {
                         const string autoHint = "系统自动调整，无需设置";
