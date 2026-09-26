@@ -66,6 +66,9 @@ namespace NotchPeninsula
         private readonly SessionEventsHandler _sessionEvents;
         private MMDeviceEnumerator? _enumerator;
         private AudioEndpointVolume? _endpointVolume; // 需持有引用，否则音量回调会被回收
+        // 音量回调必须存成具名字段：lambda 退不掉，一旦本类生命周期内重复订阅就会累积
+        private AudioEndpointVolumeNotificationDelegate? _volumeNotificationHandler;
+        private bool _systemEventsSubscribed;         // 订阅幂等守卫（见 SubscribeSystemEvents）
         private AudioSessionControl? _sessionControl; // 需持有引用，会话断开回调依赖它
 
         public AudioAnalyzer()
@@ -101,7 +104,15 @@ namespace NotchPeninsula
                 _sessionControl = null;
                 ReleaseCapture();
 
+                // 先退订音量回调再放掉端点：委托持有 this，留着会让本对象多活一轮
+                if (_endpointVolume != null && _volumeNotificationHandler != null)
+                {
+                    try { _endpointVolume.OnVolumeNotification -= _volumeNotificationHandler; } catch { }
+                }
+                _volumeNotificationHandler = null;
+
                 try { _enumerator?.UnregisterEndpointNotificationCallback(_notificationClient); } catch { }
+                _enumerator = null;
                 _endpointVolume?.Dispose();
                 _endpointVolume = null;
 
@@ -373,6 +384,11 @@ namespace NotchPeninsula
 
         private void SubscribeSystemEvents()
         {
+            // 幂等守卫：本方法只在构造时调用一次，但**不得**依赖这个事实 ——
+            // 旧 enumerator 只在 Dispose 里反注册一次，多订阅一份就多漏一份回调与引用。
+            // 失败时不置位，保留"下次再试"的能力。
+            if (_systemEventsSubscribed) return;
+
             try
             {
                 var enumerator = new MMDeviceEnumerator();
@@ -380,10 +396,13 @@ namespace NotchPeninsula
 
                 var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var volume = device.AudioEndpointVolume;
-                volume.OnVolumeNotification += _ => EnsureCaptureAlive();
+                // 具名委托（而非匿名 lambda）：Dispose 时要能 -= 退订
+                _volumeNotificationHandler = _ => EnsureCaptureAlive();
+                volume.OnVolumeNotification += _volumeNotificationHandler;
 
                 _enumerator = enumerator;
                 _endpointVolume = volume;
+                _systemEventsSubscribed = true;
             }
             catch (Exception ex)
             {

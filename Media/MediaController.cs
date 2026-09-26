@@ -389,13 +389,25 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 新出现的会话：挂上监听
+                // 新出现的会话：挂上监听。
+                // 判据**不能只看 AppID** —— 同一个 App 的会话可能被系统换成**新的 COM 对象**
+                // （AppID 不变、引用不同）。只看 AppID 会误判「已订阅」，既不摘旧也不挂新，
+                // 结果是该 App 的 PlaybackInfoChanged 永久丢失（表现为切歌状态不刷新）。
                 for (int i = 0; i < sessions.Count; i++)
                 {
-                    string id = sessions[i].SourceAppUserModelId ?? "";
-                    if (id.Length == 0 || _watchedSessions.ContainsKey(id)) continue;
-                    sessions[i].PlaybackInfoChanged += OnPlaybackInfoChanged;
-                    _watchedSessions[id] = sessions[i];
+                    var session = sessions[i];
+                    string id = session.SourceAppUserModelId ?? "";
+                    if (id.Length == 0) continue;
+
+                    if (_watchedSessions.TryGetValue(id, out var watched))
+                    {
+                        if (ReferenceEquals(watched, session)) continue; // 就是同一个对象，已订阅
+                        // 对象被替换：先摘掉旧对象的订阅（对已消失的会话是安全空操作）
+                        try { watched.PlaybackInfoChanged -= OnPlaybackInfoChanged; } catch { }
+                    }
+
+                    session.PlaybackInfoChanged += OnPlaybackInfoChanged;
+                    _watchedSessions[id] = session;
                 }
             }
         }
