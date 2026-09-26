@@ -76,6 +76,10 @@ namespace NotchPeninsula
 
                 for (int i = 0; i < 8; i++)
                 {
+                    // index 0（水平宽度）/ 4（弹出的宽度）已改成「系统自动调整，无需设置」：
+                    // 那两行既不画控件也不吃指针 —— 与绘制侧同源，改一边就得改另一边。
+                    if (i == 0 || i == 4) continue;
+
                     float btnY = GetBtnY(i);
                     float rightX = WIDTH - 36; // 保持原有变量不动
                     if (x >= rightX - 175 && x <= rightX - 145 && y >= btnY && y <= btnY + 24) newHoverMinus = i;
@@ -93,6 +97,7 @@ namespace NotchPeninsula
             bool newTopmostToggleHovered = false;
             bool newMediaToggleHovered = false;
             bool newAutoHideToggleHovered = false;
+            bool newFocusHideToggleHovered = false; // 「当焦点离开时自动隐藏岛」
             bool newPauseHideToggleHovered = false; // 「暂停播放后自动隐藏」
             bool newFsHideToggleHovered = false;    // 「全屏自动隐藏」
             bool newDropdownHovered = false;
@@ -325,24 +330,27 @@ namespace NotchPeninsula
             else if (_selectedTab == 3) // 交互设置
             {
                 // ⚠️ 本段的 y 值必须与下面 tab 3 的渲染保持同步
-                //    （自动隐藏卡片是三行高：行1 +32、行2 +94、行3 +156；其余两张卡 +228 / +300）
-                // 自动隐藏（穿透模式下禁止）
+                //    （自动隐藏卡片是四行高：行1 +32、行2 +94、行3 +156、行4 +218；其余两张卡 +290 / +362）
+                // 行 1：自动隐藏总开关（**已停用**，仍可拨动；穿透模式下禁止）
                 if (!Renderer.PassthroughModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newAutoHideToggleHovered = true;
-                // 🎵 暂停播放后自动隐藏（自动隐藏卡片的第二行）
-                // 可用性 = 自动隐藏已开启 且 非穿透模式；不可用时不给 hover（避免「灰着还能点」）
-                if (!Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled
+                // 🎯 行 2：当焦点离开时自动隐藏岛。可用性**只**看穿透模式 —— 总开关不再是父开关。
+                if (!Renderer.PassthroughModeEnabled
                     && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
-                    newPauseHideToggleHovered = true;
-                // 🖥 全屏自动隐藏（自动隐藏卡片的第三行）——可用性同上
-                if (!Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled
+                    newFocusHideToggleHovered = true;
+                // 🎵 行 3：暂停播放后自动隐藏（可用性同上）
+                if (!Renderer.PassthroughModeEnabled
                     && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
+                    newPauseHideToggleHovered = true;
+                // 🖥 行 4：全屏自动隐藏（可用性同上）
+                if (!Renderer.PassthroughModeEnabled
+                    && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
                     newFsHideToggleHovered = true;
                 // 媒体交互模式（组合模式同样可用：组合模式现在也能展开媒体面板）
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 228 && y <= TITLE_BAR_HEIGHT + 248)
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 290 && y <= TITLE_BAR_HEIGHT + 310)
                     newMediaExpToggleHovered = true;
                 // 使用局部变量，防止状态死锁
-                newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 300 && y <= TITLE_BAR_HEIGHT + 320;
+                newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 362 && y <= TITLE_BAR_HEIGHT + 382;
             }
             else if (_selectedTab == 6) // 插件中心
             {
@@ -398,9 +406,9 @@ namespace NotchPeninsula
             // 「禁止」指针区域 —— 判据必须与 Render() 里对应卡片的 disabled **完全同源**，
             // 否则就会出现「明明能点、却显示禁止指针」。
             // ⚠️ 这些 y 区间是手写的，卡片一挪动就必须同步改（踩过一次：
-            //    自动隐藏卡片从两行加高到三行后，「媒体交互方式」卡片从 yOffset 84 挪到了 208，
-            //    这里没跟着改，禁止区域就压在了「暂停播放后自动隐藏」那一行上 ——
-            //    导致不管该开关是否被禁用，hover 上去都是禁止指针）。
+            //    自动隐藏卡片加高后，「媒体交互方式」卡片跟着往下挪，这里没跟着改，
+            //    禁止区域就压在了别的开关那一行上 —— 导致不管该开关是否被禁用，
+            //    hover 上去都是禁止指针。卡片高度自 2026-09-26 起是四行 248px（12..260））。
             if (x >= 200 && x <= WIDTH - 20)
             {
                 // 注：tab 1 已没有置灰区域 —— 「待机显示内容」卡片与「启用组合模式」开关都在
@@ -410,22 +418,18 @@ namespace NotchPeninsula
                 {
                     // 🎵 提示音设置行（通知卡行 4）：父开关「消息提示音」关掉时整行禁止指针。
                     //    判据与绘制侧的置灰（ToastSoundConfig.IsRowEnabled）、命中侧的不吃指针
-                    //    **完全同源** —— 与 tab 3「自动隐藏关掉 → 子开关整行禁用」同一套约定。
+                    //    **完全同源** —— 与「父开关关掉 → 附属行整行禁用」的通用约定同一套（如「消息提示音 → 提示音设置」）。
                     newIsHoveringDisabledArea = true;
                 }
                 else if (_selectedTab == 3)
                 {
-                    // 与 Render() tab 3 的 disabled 判据同源（改那边记得改这边）
+                    // 与 Render() tab 3 的 disabled 判据同源（改那边记得改这边）：
+                    // 整张自动隐藏卡片**只**因穿透模式而禁用 —— 自 2026-09-26 起总开关不再栅栏三个模式，
+                    // 所以旧的 subToggleDisabled（需先开启「自动隐藏」）分支已删除。
                     // 注：「媒体交互方式」卡片不再因为组合模式而禁用（2026-09-25 起组合模式也能展开媒体面板），
                     //     所以这里也没有它对应的禁止指针区间。
-                    bool autoHideDisabled = Renderer.PassthroughModeEnabled;
-                    bool subToggleDisabled = autoHideDisabled || !NotchWindow.IsAutoHideEnabled;
-
-                    if (autoHideDisabled
-                        && y >= TITLE_BAR_HEIGHT + 12 && y <= TITLE_BAR_HEIGHT + 198)   // 自动隐藏卡片整卡（穿透模式下三行全禁用）
-                        newIsHoveringDisabledArea = true;
-                    else if (subToggleDisabled
-                        && y >= TITLE_BAR_HEIGHT + 74 && y <= TITLE_BAR_HEIGHT + 198)   // 两个附属开关行（需先开启「自动隐藏」）
+                    if (Renderer.PassthroughModeEnabled
+                        && y >= TITLE_BAR_HEIGHT + 12 && y <= TITLE_BAR_HEIGHT + 260)   // 自动隐藏卡片整卡（穿透模式下四行全禁用）
                         newIsHoveringDisabledArea = true;
                 }
             }
@@ -436,6 +440,7 @@ namespace NotchPeninsula
                 newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
                 newToastToggleHovered != _toastToggleHovered || newTopmostToggleHovered != _topmostToggleHovered ||
                 newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
+                newFocusHideToggleHovered != _focusHideToggleHovered ||
                 newPauseHideToggleHovered != _pauseHideToggleHovered ||
                 newFsHideToggleHovered != _fsHideToggleHovered ||
                 newDropdownHovered != _dropdownHovered ||
@@ -475,6 +480,7 @@ namespace NotchPeninsula
                 _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
                 _toastToggleHovered = newToastToggleHovered;
                 _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
+                _focusHideToggleHovered = newFocusHideToggleHovered;
                 _pauseHideToggleHovered = newPauseHideToggleHovered;
                 _fsHideToggleHovered = newFsHideToggleHovered;
                 _dropdownHovered = newDropdownHovered;

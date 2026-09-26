@@ -41,7 +41,7 @@ namespace NotchPeninsula
         }
 
         // 只画「一行开关」的内容（标题 / 副标题 / 右侧开关），**不画卡片底**。
-        // 拆出来是为了让「自动隐藏」那张卡片能在同一个卡片底里放两行（主开关 + 附属开关）。
+        // 拆出来是为了让「自动隐藏」那张卡片能在同一个卡片底里放多行（总开关 + 三个模式开关）。
         //
         // ⚠️ 纵向偏移必须走全页统一的常量，**按本行有几行文字分别取基线**：
         //    有副标题（两行）→ 标题基线 = yOffset + ROW_TEXT_BASELINE（= 行首 + 25.5），
@@ -306,7 +306,7 @@ namespace NotchPeninsula
             //    「音量」下拉的可用性由 ToastSoundConfig.IsSourceReady 给出（父开关 + 有具体音源），
             //    与命中侧 / 点击侧**同源**，不要再在这里手写 `SelectedIndex > 0`。
             //    🎵 第 4 行整行是「消息提示音」开关的附属：父开关关掉时整行置灰、不吃指针
-            //       （与 tab 3「自动隐藏关掉 → 两个子开关整行置灰」同一套父子约定）。
+            //       （就是「父开关 → 附属行」的那套通用约定，面板上另一处例子是 tab 3 的自动隐藏卡片）。
             bool soundRowEnabled = ToastSoundConfig.IsRowEnabled;
             bool soundReady = ToastSoundConfig.IsSourceReady;
 
@@ -725,52 +725,57 @@ namespace NotchPeninsula
         // 页签：交互设置
         private void RenderTabInteraction(SKCanvas canvas)
         {
-            // 🎵🖥 「自动隐藏」与它的两个附属开关（暂停播放后 / 全屏时）**共用同一张卡片**，
-            //    所以卡片底要单独画成三行高（186px，yOffset 12..198），再用 DrawToggleRow 画三行内容。
-            //    三行 yOffset 12 / 74 / 136（行距 62），行间各一条分隔线，让「附属」关系一眼可见。
-            //    两个附属开关**互斥**（见点击处理），所以两行看起来是「二选一」的一组。
-            //    ⚠️ 改这里的数值时必须同步改上面 tab 3 的悬停热区（当前 +32/+94/+156/+228/+300）。
-            //    （「剪贴板链接检测」已于 2026-09-20 搬到「通用设置」，这里只剩三张卡）
+            // 🎯 「自动隐藏」这张卡片自 2026-09-26 起改成**四行**：行首是已停用的总开关，
+            //    下面三行是三种互相独立、可任意组合的隐藏模式（焦点离开时 / 暂停播放后 / 全屏时）。
+            //    卡片底单独画成四行高（248px，yOffset 12..260），再用 DrawToggleRow 画四行内容。
+            //    四行 yOffset 12 / 74 / 136 / 198（行距 62），行间各一条分隔线。
+            //    ⚠️ 改这里的数值时必须同步改上面 tab 3 的悬停热区（当前 +32/+94/+156/+218/+290/+362）。
+            //    （「剪贴板链接检测」已于 2026-09-20 搬到「通用设置」）
             bool isAutoHideDisabled = Renderer.PassthroughModeEnabled;
-            var autoHideCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 198);
+            var autoHideCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 260);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBorder);
 
-            DrawToggleRow(canvas, 12, "自动隐藏", isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "当焦点离开时自动隐藏刘海",
-                NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered, isAutoHideDisabled);
+            // 行 1：总开关。**已停用** —— 能拨、能被记住，但不参与任何判定，所以副标题如实写明。
+            DrawToggleRow(canvas, 12, "自动隐藏", isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "总开关已停用，请看下方三种模式",
+                NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered);
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 70, WIDTH - 36, TITLE_BAR_HEIGHT + 70, _separatorPaint);
 
-            // 附属开关的可用性 = 自动隐藏已开启 且 非穿透模式。
-            // 两者任一不满足都置灰并**显示为关闭** —— 与「自动隐藏」在穿透模式下置灰显示为关闭的既有约定一致，
-            // 免得出现「开关看着是开的、却怎么都不生效」的困惑。
-            bool isPauseHideDisabled = isAutoHideDisabled || !NotchWindow.IsAutoHideEnabled;
-            DrawToggleRow(canvas, 74, "暂停播放后自动隐藏",
-                isAutoHideDisabled ? "穿透模式下禁止自动隐藏"
-                    : !NotchWindow.IsAutoHideEnabled ? "需先开启「自动隐藏」"
-                    : "媒体暂停播放时，也把刘海藏起来",
-                NotchWindow.IsPauseAutoHideEnabled,
-                !isPauseHideDisabled && _pauseHideToggleHovered,
-                isPauseHideDisabled);
+            // 三个模式行的可用性**只**取决于穿透模式 —— 总开关不再是它们的父开关，彼此之间也不互斥，
+            //    所以这里不再出现「需先开启「自动隐藏」」这档置灰，与运行时判据完全同源。
+            //    穿透模式下置灰并**显示为关闭**，与「自动隐藏卡片整卡置灰」的既有约定一致，
+            //    免得出现「开关看着是开的、却怎么都不生效」的困惑。
+            // 行 2：🎯 「焦点离开时自动隐藏岛」—— 接替原总开关的那份逻辑。
+            DrawToggleRow(canvas, 74, "当焦点离开时自动隐藏岛",
+                isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "没有媒体会话时，焦点离开就收起",
+                NotchWindow.IsFocusAutoHideEnabled,
+                !isAutoHideDisabled && _focusHideToggleHovered,
+                isAutoHideDisabled);
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 132, WIDTH - 36, TITLE_BAR_HEIGHT + 132, _separatorPaint);
 
-            // 🖥 「全屏自动隐藏」：检测到全屏视频 / 全屏游戏（含独占 D3D）时无条件让位，播放中也不显示。
-            //    与上面那行**互斥**，所以副标题里点明「二者只开一个」。
-            bool isFsHideDisabled = isAutoHideDisabled || !NotchWindow.IsAutoHideEnabled;
-            DrawToggleRow(canvas, 136, "全屏自动隐藏",
-                isAutoHideDisabled ? "穿透模式下禁止自动隐藏"
-                    : !NotchWindow.IsAutoHideEnabled ? "需先开启「自动隐藏」"
-                    : "检测到全屏视频 / 游戏时隐藏",
+            // 行 3：🎵 「暂停播放后自动隐藏」：媒体暂停 / 停止时也把岛藏起来。
+            DrawToggleRow(canvas, 136, "暂停播放后自动隐藏",
+                isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "媒体暂停播放时，也把刘海藏起来",
+                NotchWindow.IsPauseAutoHideEnabled,
+                !isAutoHideDisabled && _pauseHideToggleHovered,
+                isAutoHideDisabled);
+
+            canvas.DrawLine(216, TITLE_BAR_HEIGHT + 194, WIDTH - 36, TITLE_BAR_HEIGHT + 194, _separatorPaint);
+
+            // 行 4：🖥 「全屏自动隐藏」：检测到全屏视频 / 全屏游戏（含独占 D3D）时无条件让位，播放中也不显示。
+            DrawToggleRow(canvas, 198, "全屏自动隐藏",
+                isAutoHideDisabled ? "穿透模式下禁止自动隐藏" : "检测到全屏视频 / 游戏时隐藏",
                 NotchWindow.IsFullscreenAutoHideEnabled,
-                !isFsHideDisabled && _fsHideToggleHovered,
-                isFsHideDisabled);
+                !isAutoHideDisabled && _fsHideToggleHovered,
+                isAutoHideDisabled);
 
             // 🎵 媒体交互方式：组合模式同样可展开媒体面板（2026-09-25 起），因此不再置灰
-            DrawToggleCard(canvas, 208, "媒体交互方式", "开启为点击展开面板，关闭为悬停直接控制",
+            DrawToggleCard(canvas, 270, "媒体交互方式", "开启为点击展开面板，关闭为悬停直接控制",
                 Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
-            DrawToggleCard(canvas, 280, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+            DrawToggleCard(canvas, 342, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
         }
 
         // 页签：关于软件
@@ -820,9 +825,12 @@ namespace NotchPeninsula
             void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
             {
                 // 检测该卡片对应的尺寸设置是否已被改动
+                // 🚫 index 0 / 4 不参与判定：它们已不再可调（见下面循环里的「系统自动调整，无需设置」），
+                //    否则「完整模式」等内部逻辑改动过的值会让标签永久挂着，而用户已经没法重置它。
                 bool isModified = false;
                 foreach (int index in indices)
                 {
+                    if (index == 0 || index == 4) continue;
                     if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
                     {
                         isModified = true;
@@ -860,6 +868,19 @@ namespace NotchPeninsula
                     float cardBtnY = GetBtnY(index);
 
                     canvas.DrawText(subLabels[i], 216, cardBtnY + 17, _subTextPaint);
+
+                    // 🚫 index 0「水平宽度」与 index 4「弹出的宽度」不再可调：实际尺寸由程序按内容 /
+                    //    屏幕自己算，右侧只给一句说明，不画「减 / 值 / 加 / 重置」四个控件。
+                    //    ⚠️ 命中侧（WndProc 里那段 GetBtnY 循环）必须一起跳过这两个 index，否则会
+                    //       「看着不能点、指针却还能落在隐藏的按钮上」。
+                    if (index == 0 || index == 4)
+                    {
+                        const string autoHint = "系统自动调整，无需设置";
+                        float hintW = _subTextPaint.MeasureText(autoHint);
+                        canvas.DrawText(autoHint, WIDTH - 36 - hintW, cardBtnY + 17, _subTextPaint);
+                        continue;
+                    }
+
                     float cardRightX = WIDTH - 36;
 
                     _dynamicFillPaint.Color = _hoveredMinusIndex == index ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 15);
