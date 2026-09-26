@@ -1456,6 +1456,7 @@ namespace NotchPeninsula
                 }
 
                 _islandDropTarget = target;
+                Logger.Info("[NotchWindow] 岛体拖放目标已就绪（详情页可接收拖入 / 发起拖出）");
             }
             catch (Exception ex)
             {
@@ -1980,7 +1981,14 @@ namespace NotchPeninsula
             _detailCollapseWidgetId = null;
 
             // 只收当初挂时间戳的那一张：期间插件若已经换了别的详情页，说明用户在看新东西，不动它
-            if (scheduled != null && Renderer.HasActiveDetailPage
+            //
+            // 🧲 这里必须再确认一次「插件此刻是否要求永不收起」：
+            //    计时是几秒前挂上的，这中间插件的 AutoCollapseDelay 完全可能已经变成负值
+            //    （同一个详情页改了策略）—— 挂计时那一刻检查过，不代表结算这一刻还成立。
+            //    少了这一判，声明「永不收起」的面板会被一个几秒前埋下的计时器收掉。
+            if (scheduled != null
+                && Renderer.HasActiveDetailPage
+                && !Renderer.ActiveDetailKeepsOpen
                 && string.Equals(PluginManager.Instance.Host.ActiveDetailWidgetId, scheduled, StringComparison.OrdinalIgnoreCase))
             {
                 PluginManager.Instance.Host.CloseDetailPage();
