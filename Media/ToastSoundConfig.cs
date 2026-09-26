@@ -119,7 +119,7 @@ internal static class ToastSoundConfig
 
     /// <summary>
     /// 「提示音设置」行（通知卡第 4 行）是否可用：父开关「消息提示音」必须打开。
-    /// 与 tab 3「自动隐藏关掉 → 两个子开关整行置灰」的父子约定同源，
+    /// 与设置面板里「父开关关掉 → 附属行整行置灰」的通用约定同源（如「消息提示音 → 提示音设置」），
     /// **置灰 / 禁止指针 / 禁止点击三处判据都必须读它**。
     /// </summary>
     internal static bool IsRowEnabled => IsEnabled;

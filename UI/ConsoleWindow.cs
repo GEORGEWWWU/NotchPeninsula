@@ -402,9 +402,11 @@ namespace NotchPeninsula
 
         private bool _autoHideToggleHovered = false;
 
-        private bool _pauseHideToggleHovered = false; // 「暂停播放后自动隐藏」——自动隐藏卡片的第二行
+        private bool _focusHideToggleHovered = false; // 「当焦点离开时自动隐藏岛」——自动隐藏卡片的第二行
 
-        private bool _fsHideToggleHovered = false;    // 「全屏自动隐藏」——自动隐藏卡片的第三行
+        private bool _pauseHideToggleHovered = false; // 「暂停播放后自动隐藏」——自动隐藏卡片的第三行
+
+        private bool _fsHideToggleHovered = false;    // 「全屏自动隐藏」——自动隐藏卡片的第四行
 
         private bool _mediaExpToggleHovered = false;
 

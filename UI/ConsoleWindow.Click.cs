@@ -307,60 +307,33 @@ namespace NotchPeninsula
             }
             else if (_autoHideToggleHovered && !Renderer.PassthroughModeEnabled)
             {
+                // 🚫 「自动隐藏」总开关已停用（2026-09-26）：这里只翻转并记忆用户偏好，
+                //    **不再级联关闭**下面三个模式，也不再影响任何隐藏判定。
                 NotchWindow.IsAutoHideEnabled = !NotchWindow.IsAutoHideEnabled;
-                // 保存自动隐藏开关
                 Program.SaveSetting("AutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0);
-
-                // 🎵🖥 级联关闭：自动隐藏是父开关，关掉它时两个附属开关必须一起关，
-                //    否则会留下「自动隐藏已关、岛体却因暂停/全屏而躲」的矛盾状态。
-                //    （反向不级联：重新开启自动隐藏**不会**自动打开附属开关，保持「默认关闭」。）
-                if (!NotchWindow.IsAutoHideEnabled)
-                {
-                    if (NotchWindow.IsPauseAutoHideEnabled)
-                    {
-                        NotchWindow.IsPauseAutoHideEnabled = false;
-                        Program.SaveSetting("PauseAutoHide", 0);
-                    }
-                    if (NotchWindow.IsFullscreenAutoHideEnabled)
-                    {
-                        NotchWindow.IsFullscreenAutoHideEnabled = false;
-                        Program.SaveSetting("FullscreenAutoHide", 0);
-                    }
-                }
-
                 Render();
             }
-            else if (_pauseHideToggleHovered && !Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled)
+            else if (_focusHideToggleHovered && !Renderer.PassthroughModeEnabled)
             {
-                // 🎵 「暂停播放后自动隐藏」：可用前提是自动隐藏已开启且非穿透模式
-                //    （与 hover 判定同源，双保险，防止状态不同步时被点到）
+                // 🎯 「当焦点离开时自动隐藏岛」：接替原总开关的那份逻辑，现在独立成开关。
+                //    可用前提只有「非穿透模式」（与 hover / 绘制侧的判据同源，双保险）。
+                NotchWindow.IsFocusAutoHideEnabled = !NotchWindow.IsFocusAutoHideEnabled;
+                Program.SaveSetting("FocusAutoHide", NotchWindow.IsFocusAutoHideEnabled ? 1 : 0);
+                Render();
+            }
+            else if (_pauseHideToggleHovered && !Renderer.PassthroughModeEnabled)
+            {
+                // 🎵 「暂停播放后自动隐藏」：可用前提只有「非穿透模式」——
+                //    总开关不再是父开关，三个模式也不再互斥，可以任意组合同时开启。
                 NotchWindow.IsPauseAutoHideEnabled = !NotchWindow.IsPauseAutoHideEnabled;
                 Program.SaveSetting("PauseAutoHide", NotchWindow.IsPauseAutoHideEnabled ? 1 : 0);
-
-                // 🔒 互斥：两个附属开关都只是「放宽允许隐藏的条件」，同时开着会让
-                //    「到底因为哪条才藏的」变得难以预期 —— 面板上只允许开一个。
-                //    开启本项时顺手关掉另一项并写回注册表。
-                if (NotchWindow.IsPauseAutoHideEnabled && NotchWindow.IsFullscreenAutoHideEnabled)
-                {
-                    NotchWindow.IsFullscreenAutoHideEnabled = false;
-                    Program.SaveSetting("FullscreenAutoHide", 0);
-                }
-
                 Render();
             }
-            else if (_fsHideToggleHovered && !Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled)
+            else if (_fsHideToggleHovered && !Renderer.PassthroughModeEnabled)
             {
-                // 🖥 「全屏自动隐藏」：可用前提同上（自动隐藏已开启 + 非穿透模式）
+                // 🖥 「全屏自动隐藏」：可用前提同上（非穿透模式），与暂停隐藏不再互斥。
                 NotchWindow.IsFullscreenAutoHideEnabled = !NotchWindow.IsFullscreenAutoHideEnabled;
                 Program.SaveSetting("FullscreenAutoHide", NotchWindow.IsFullscreenAutoHideEnabled ? 1 : 0);
-
-                // 🔒 互斥：同上，开启本项时关掉另一项
-                if (NotchWindow.IsFullscreenAutoHideEnabled && NotchWindow.IsPauseAutoHideEnabled)
-                {
-                    NotchWindow.IsPauseAutoHideEnabled = false;
-                    Program.SaveSetting("PauseAutoHide", 0);
-                }
-
                 Render();
             }
             else if (_mediaExpToggleHovered)

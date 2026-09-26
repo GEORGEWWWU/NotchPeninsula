@@ -90,52 +90,60 @@ namespace NotchPeninsula
         private volatile bool _shuttingDown;
         private const string AppName = "NotchPeninsula";
         private static bool _isSyncingState = false; // 防重入锁，性能消耗几乎为 0
-        public static bool IsAutoHideEnabled = false; // 全局自动隐藏开关（**用户的偏好**，不等于真的生效）
+        /// <summary>
+        /// 「自动隐藏」总开关（**用户的偏好**）。2026-09-26 起**已停用**：开关能拨、能被记住，
+        /// 但**不再参与任何判定** —— 面板上行首的副标题也已明确写出「已停用」。
+        ///
+        /// 它的原逻辑（焦点离开时隐藏）已由 <see cref="IsFocusAutoHideEnabled"/> 独立接替，
+        /// 所以这里**不要**再拿它去栅栏下面任何一个模式，也**不要**拿它去算「实际是否生效」。
+        /// 之所以还留着这个字段，只是为了设置面板那个开关还能显示自己原来的位置。
+        /// </summary>
+        public static bool IsAutoHideEnabled = false;
 
         /// <summary>
-        /// 自动隐藏**实际是否生效**。穿透模式下强制失效。
+        /// 「焦点离开时自动隐藏岛」开关（**用户的偏好**），默认关闭。
+        /// 语义：岛体在**没有媒体会话**时，一旦失去鼠标悬停 / 焦点就藏起来。
         ///
-        /// 设置面板在穿透模式开启时会把「自动隐藏」开关置灰并**显示为关闭**（副标题：穿透模式下禁止自动隐藏），
+        /// 这是 2026-09-26 之前「自动隐藏」总开关所对应的那份逻辑，现在原样搬到这里独立成开关。
+        /// </summary>
+        public static bool IsFocusAutoHideEnabled = false;
+
+        /// <summary>
+        /// 「焦点离开时自动隐藏岛」**实际是否生效**。穿透模式下强制失效。
+        ///
+        /// 设置面板在穿透模式开启时会把这一行置灰并**显示为关闭**（副标题：穿透模式下禁止自动隐藏），
         /// 运行时必须和这个承诺完全一致 —— 否则就会出现「开关显示已关、岛体却还在躲」。
         /// 判据必须与设置面板用的是同一个（`Renderer.PassthroughModeEnabled`），别再各写一份。
         ///
-        /// 注意这里**不销毁用户偏好**：`IsAutoHideEnabled` 原样保留，关掉穿透模式后自动隐藏会自动回来。
-        /// 所有「自动隐藏要不要生效」的判断都请读这个属性，不要直接读 `IsAutoHideEnabled`。
+        /// 注意这里**不销毁用户偏好**：`IsFocusAutoHideEnabled` 原样保留，关掉穿透模式后自动回来。
         /// </summary>
-        public static bool IsAutoHideEffective => IsAutoHideEnabled && !Renderer.PassthroughModeEnabled;
+        public static bool IsFocusAutoHideEffective => IsFocusAutoHideEnabled && !Renderer.PassthroughModeEnabled;
 
         /// <summary>
-        /// 「暂停播放后自动隐藏」开关（**用户的偏好**）。是自动隐藏的附属扩展功能，默认关闭。
+        /// 「暂停播放后自动隐藏」开关（**用户的偏好**），默认关闭。
         /// 语义：媒体会话还在（岛体本来会因为 `_media.IsActive` 而拒绝隐藏），但**没有在播放**
-        /// （SMTC 处于暂停 / 停止）时，允许继承自动隐藏逻辑把岛体藏起来。
+        /// （SMTC 处于暂停 / 停止）时，允许把岛体藏起来。
         /// </summary>
         public static bool IsPauseAutoHideEnabled = false;
 
         /// <summary>
-        /// 「暂停播放后自动隐藏」**实际是否生效**。判据 = 自身开关 且 <see cref="IsAutoHideEffective"/>。
-        ///
-        /// 之所以直接挂在 <see cref="IsAutoHideEffective"/> 上而不是各写一份，是因为它天然继承了两条既有约束：
-        ///   1. 自动隐藏关掉时它一并失效（设置面板也会连带把开关关掉并置灰）；
-        ///   2. 穿透模式下自动隐藏强制失效 → 它也强制失效，与设置面板「两个开关都置灰」的承诺一致。
-        /// 所有「暂停后要不要隐藏」的判断都请读这个属性。
+        /// 「暂停播放后自动隐藏」**实际是否生效**。判据 = 自身开关 且 非穿透模式。
+        /// 三个模式**互相独立、可任意组合**，所以这里只判自己，不再看别人。
         /// </summary>
-        public static bool IsPauseAutoHideEffective => IsPauseAutoHideEnabled && IsAutoHideEffective;
+        public static bool IsPauseAutoHideEffective => IsPauseAutoHideEnabled && !Renderer.PassthroughModeEnabled;
 
         /// <summary>
-        /// 「全屏自动隐藏」开关（**用户的偏好**）。自动隐藏的附属扩展功能，默认关闭。
+        /// 「全屏自动隐藏」开关（**用户的偏好**），默认关闭。
         /// 语义：检测到有全屏应用在跑（全屏视频 / 全屏游戏，含独占模式 D3D）时，**无条件**让位隐藏，
         /// 哪怕音乐正在播放 —— 全屏场景下岛体压在顶上就是纯打扰。
-        ///
-        /// 与 <see cref="IsPauseAutoHideEnabled"/> **互斥**：面板上只允许开一个，开启一个会自动关掉另一个。
-        /// 理由：两者都是「放宽允许隐藏的条件」，同时开着只会让「到底因为哪条才藏的」变得难以预期。
         /// </summary>
         public static bool IsFullscreenAutoHideEnabled = false;
 
         /// <summary>
-        /// 「全屏自动隐藏」**实际是否生效**。与暂停隐藏同样直接挂在 <see cref="IsAutoHideEffective"/> 上，
-        /// 天然继承「自动隐藏关闭即失效」与「穿透模式强制压制」两条既有约束，不用各写一份。
+        /// 「全屏自动隐藏」**实际是否生效**。判据同上：只判自己 + 非穿透模式。
+        /// （2026-09-26 起与「暂停播放后」不再互斥，两者可以同时开着。）
         /// </summary>
-        public static bool IsFullscreenAutoHideEffective => IsFullscreenAutoHideEnabled && IsAutoHideEffective;
+        public static bool IsFullscreenAutoHideEffective => IsFullscreenAutoHideEnabled && !Renderer.PassthroughModeEnabled;
 
         // ==================== 全屏检测（「全屏自动隐藏」专用） ====================
         // 轻量化的三个关键：
@@ -153,7 +161,7 @@ namespace NotchPeninsula
         /// </summary>
         private static void TickFullscreenProbe()
         {
-            // 功能没开（或自动隐藏关了 / 穿透模式压着）就彻底不探测，顺手把缓存压回 false，
+            // 功能没开（或穿透模式压着）就彻底不探测，顺手把缓存压回 false，
             // 免得残留上一次的 true 让「刚关掉开关岛体还躲着」。
             if (!IsFullscreenAutoHideEffective) { _isFullscreenCached = false; return; }
 
@@ -184,8 +192,8 @@ namespace NotchPeninsula
         /// <c>shouldHide</c>（藏不藏）与 <c>WM_LBUTTONDOWN</c> 的唤醒分支（点了能不能唤回）**必须共用它**，
         /// 否则就会出现「藏得下去、点不回来」。
         ///
-        /// 三种模式**互斥**（面板上只允许开一个），共同点都是「放宽允许隐藏的条件」：
-        ///   · 普通自动隐藏：没有媒体会话 → 允许
+        /// 三种模式**互相独立、可任意组合**（面板上不再有总开关栅栏、也不再有互斥）：
+        ///   · 焦点离开时自动隐藏：没有媒体会话 → 允许
         ///   · 暂停播放后自动隐藏：媒体**暂停 / 停止**时 → 允许（原本是「媒体激活即一律不隐藏」）
         ///   · 全屏自动隐藏：检测到全屏应用 → **无条件允许**（正在播放也要让位，这正是它的用途）
         ///
@@ -197,10 +205,11 @@ namespace NotchPeninsula
         {
             get
             {
-                if (!IsAutoHideEffective) return false;   // 未开启 / 穿透模式压制
+                // 穿透模式压制：三个模式一起失效，与设置面板「整卡置灰且显示为关闭」的承诺一致。
+                if (Renderer.PassthroughModeEnabled) return false;
                 if (IsFullscreenHideActive) return true;  // 全屏优先：播放中也要让位
                 if (_media.IsActive) return IsPauseAutoHideEffective && !_media.IsPlaying;
-                return true;                              // 无媒体会话 → 普通自动隐藏
+                return IsFocusAutoHideEffective;          // 无媒体会话 → 「焦点离开时自动隐藏」说了算
             }
         }
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
@@ -1017,11 +1026,11 @@ namespace NotchPeninsula
                 TickFullscreenProbe();
 
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏。
-                // 用 IsAutoHideEffective 而不是 IsAutoHideEnabled —— 穿透模式下必须真的不隐藏，
-                // 与设置面板里「自动隐藏开关置灰且显示为关闭」保持一致。
+                // 判据统一走 CanAutoHideNow —— 它内部已经含「穿透模式压制」，穿透下必须真的不隐藏，
+                // 与设置面板里「自动隐藏卡片整卡置灰且显示为关闭」保持一致。
                 // 🎵 「允许隐藏」这一项统一由 CanAutoHideNow 回答（三模式单一真源）：
-                //    普通 / 暂停播放后 / 全屏时，三者互斥，都是「放宽允许隐藏的条件」。
-                //    它已经含 IsAutoHideEffective，所以这里不再重复写。
+                //    焦点离开时 / 暂停播放后 / 全屏时，三者互相独立、可任意组合，都是「放宽允许隐藏的条件」。
+                //    它已经含非穿透模式判定，所以这里不再重复写。
                 // ⚠️ Toast 的 `!isToastActive` 必须原样保留 —— Toast 是「系统主动弹出且需要用户交互」的，
                 //    任何自动隐藏开关都不能把它压掉。**全屏时也一样**：用户开这个功能的初衷就是
                 //    「既能不被打扰、又不漏通知」，所以全屏下收到消息岛体照样要弹出来。
@@ -1776,8 +1785,8 @@ namespace NotchPeninsula
 
                         // 「点击已隐藏的岛体把它唤回来」。
                         // ⚠️ 判据必须与 shouldHide 同源，一律读 CanAutoHideNow：
-                        //    它已经含 IsAutoHideEffective（穿透模式下 auto-hide 已失效，但刚开启穿透时岛体可能
-                        //    还在回滑动画里、_currentY 仍 < -5，此时点击不该被当成「唤醒」而莫名锁上手动展开），
+                        //    它已经含非穿透模式判定（刚开启穿透时岛体可能还在回滑动画里、_currentY 仍 < -5，
+                        //    此时点击不该被当成「唤醒」而莫名锁上手动展开），
                         //    也含「暂停后隐藏」与「全屏时隐藏」两种放宽模式 —— 写死 `!_media.IsActive`
                         //    会导致那两种模式下「藏得下去、点不回来」。
                         //    `_currentY < -5f` 是「确实已经藏起来了」的兜底闸门。
