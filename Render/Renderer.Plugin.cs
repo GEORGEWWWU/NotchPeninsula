@@ -284,6 +284,47 @@ namespace NotchPeninsula
             return detailWidgetId;
         }
 
+        /// <summary>
+        /// 找出「把文件拖到它身上就该自动展开详情页」的那个<b>收起态</b>组件；没有则返回 null。
+        ///
+        /// <para>
+        /// 命中来源是本帧绘制时登记的 <see cref="_pluginSlots"/> —— 也就是<b>只有这一帧真的画出来了的组件</b>
+        /// 才算数。通知 / 剪贴板面板 / 已有详情页接管岛体期间，插件行本来就没绘制，自然不会命中。
+        /// </para>
+        ///
+        /// <para>
+        /// 三条判定：落点在该组件矩形内、组件声明了 <c>IWidget.AcceptsFileDropWhenCollapsed</c>、
+        /// 且它确实提供详情页（没有详情页就谈不上「展开」）。
+        /// 调用方（<c>IslandDropTarget</c>）负责在展开前再确认一次「当前没有别的详情页开着」。
+        /// </para>
+        /// </summary>
+        public static string? FindCollapsedFileDropWidget(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                for (int i = 0; i < _pluginSlots.Count; i++)
+                {
+                    var slot = _pluginSlots[i];
+                    var r = slot.Rect;
+                    if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) continue;
+
+                    try
+                    {
+                        if (!slot.Widget.AcceptsFileDropWhenCollapsed) continue;
+                        if (slot.Widget.DetailPage == null) continue;   // 没详情页就没有「展开」这回事
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error("[Renderer] 读取组件「收起态可接文件」标记异常", ex);
+                        continue;
+                    }
+
+                    return slot.Widget.Id;
+                }
+            }
+            return null;
+        }
+
         /// <summary>每帧绘制前清空插件命中区；只有本帧实际绘制了插件行才会重新填充。</summary>
 
         private static void InvalidatePluginHitAreas()

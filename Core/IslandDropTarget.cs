@@ -42,6 +42,32 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
     internal IslandDropTarget(NotchWindow window) => _window = window;
 
+    /// <summary>
+    /// 光标压在一个「收起态也愿意收文件」的组件上时，把它的详情页展开。
+    ///
+    /// <para>
+    /// ⚠️ 为什么 <see cref="DragEnter"/> 里判一次不够、<see cref="DragOver"/> 里还得一直判：
+    /// 岛体窗口是<b>整块超大透明窗口</b>（<c>WINDOW_WIDTH</c> ≥ 1200），可见岛体只占中间一小块，
+    /// 而 OLE 只在「进入窗口」那一刻调一次 DragEnter —— 用户从窗口边缘进来时，
+    /// 那一瞬间的落点离组件还远得很。所以必须靠 DragOver 在光标真正压到组件上时才动手。
+    /// </para>
+    ///
+    /// <para>
+    /// 展开<b>不等于</b>接受：详情页要下一帧才画出来、命中矩形也是那时才登记，
+    /// 所以调用方这次仍按原样走（多半被拒），由 DragOver 那套「持续重试接受」在一两帧后接上。
+    /// </para>
+    /// </summary>
+    private void TryExpandCollapsedDropWidget(float x, float y)
+    {
+        if (Renderer.HasActiveDetailPage) return;   // 已经有面板开着，不抢
+
+        string? widgetId = Renderer.FindCollapsedFileDropWidget(x, y);
+        if (widgetId == null) return;
+
+        NotchWindow.ExpandPanel(widgetId);
+        Logger.Info($"[岛体拖放] 拖到收起态的组件 {widgetId} 上，已自动展开它的详情页");
+    }
+
     public int DragEnter(ComTypes.IDataObject dataObj, uint grfKeyState, Win32.POINT pt, ref uint pdwEffect)
     {
         pdwEffect = Win32.DROPEFFECT_NONE;
@@ -75,6 +101,9 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
         // 记下条目数：万一这一下的落点不在详情页里，DragOver 还要靠它重试接受
         _dragItemCount = files.Count;
+
+        // 落点正好压在某个「收起态收文件」的组件上（直接从岛上方向下滑进来的情形）→ 先把它的详情页展开
+        TryExpandCollapsedDropWidget(x, y);
 
         bool accepted = Renderer.DispatchDetailPageDragEnter(x, y, files.Count);
         Logger.Info($"[岛体拖放] 进入：{files.Count} 项，落点 {x:F0},{y:F0}，详情页{(accepted ? "接受" : "拒绝")}");
@@ -118,6 +147,11 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
         //    或者上方那段不属于详情页的区域滑进来，那一下的落点就不在详情页矩形里，
         //    于是被拒；之后鼠标再怎么移到详情页上，都不会有第二次 DragEnter，永远接不上。
         //    表现就是「有时候拖入判定有误：怎么拖都不接受」。
+
+        // 同一趟扫描里顺手判一次「光标是不是压到了某个收起态收文件的组件」：
+        // 是的话把它的详情页展开，下一帧起上面那句重试就会成立。
+        TryExpandCollapsedDropWidget(x, y);
+
         if (_dragItemCount > 0 && Renderer.DispatchDetailPageDragEnter(x, y, _dragItemCount))
         {
             _window.KeepAliveForDrop();
@@ -149,19 +183,37 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
         bool accepted = _accepted;
         _accepted = false;
+
+        if (!_window.TryScreenToIslandLogical(pt, out float x, out float y))
+        {
+            if (accepted) Renderer.DispatchDetailPageDragLeave();
+            return 0;
+        }
+
+        // ⚠️ 补一次「进入」尝试：OLE 只在**鼠标移动或修饰键变化**时才调 DragOver，
+        //    用户挪到位就立刻松手的话，两次回调之间可能一次 DragOver 都没有 ——
+        //    那样即便落点明明在详情页里，也会因为「这一轮从没被接受过」而白扔。
+        //    最典型的新场景：拖到收起态组件上自动展开，面板下一帧才画出来，手快就赶不上。
+        //    判定条件和别处完全一致（落点必须在详情页矩形内），所以不会凭空接受。
+        if (!accepted && _dragItemCount > 0)
+        {
+            accepted = Renderer.DispatchDetailPageDragEnter(x, y, _dragItemCount);
+
+            // 走到这里说明这次接受是「补」出来的，前面没有 DragOver 替我们续过悬停 —— 补一口，
+            // 免得详情页的延迟折叠在松手这一瞬间正好到点。
+            if (accepted) _window.KeepAliveForDrop();
+        }
+
         if (!accepted)
         {
-            Logger.Info("[岛体拖放] 放下，但本轮拖放此前未被接受（可能落点一直在详情页之外），忽略");
+            Logger.Info("[岛体拖放] 放下，但本轮拖放此前未被接受（落点一直不在详情页内），忽略");
             return 0;
         }
 
         bool dropped = false;
-        if (_window.TryScreenToIslandLogical(pt, out float x, out float y))
-        {
-            var files = DropPayload.ReadFileDrop(dataObj);
-            if (files.Count > 0)
-                dropped = Renderer.DispatchDetailPageDrop(x, y, files.ToArray());
-        }
+        var files = DropPayload.ReadFileDrop(dataObj);
+        if (files.Count > 0)
+            dropped = Renderer.DispatchDetailPageDrop(x, y, files.ToArray());
 
         // ⚠️ 落点不在详情页矩形内时（最典型：用户在岛体边缘松手，或者拖到一半随手一放），
         //    DispatchDetailPageDrop 会直接返回 false，并且**不会**回调 OnFilesDragLeave ——

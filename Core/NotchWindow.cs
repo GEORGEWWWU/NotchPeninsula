@@ -1906,8 +1906,14 @@ namespace NotchPeninsula
         /// <summary>
         /// 展开指定组件（builtin.media 或插件组件 Id）的面板。
         /// 同一时刻只留一块：开这块之前先把另一块收掉。
+        ///
+        /// <para>
+        /// 两个调用方：岛内左键/右键命中组件，以及<a>把文件拖到收起态组件上</a>时的自动展开
+        /// （见 <see cref="IslandDropTarget"/>，组件需声明 <c>IWidget.AcceptsFileDropWhenCollapsed</c>）。
+        /// 后者同样要先把两个折叠计时取消掉，否则刚展开的面板可能立刻被挂上收起计时。
+        /// </para>
         /// </summary>
-        private static void ExpandPanel(string componentId)
+        internal static void ExpandPanel(string componentId)
         {
             _mediaPanelCollapse.Cancel();
             _detailPanelCollapse.Cancel();
