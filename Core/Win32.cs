@@ -1,4 +1,5 @@
 ﻿using System.Runtime.InteropServices;
+using System.Text;
 
 namespace NotchPeninsula
 {
@@ -510,5 +511,138 @@ namespace NotchPeninsula
         public const int QUNS_ACCEPTS_NOTIFICATIONS = 5;   // 无上述状态，可以自由发通知
         public const int QUNS_QUIET_TIME = 6;              // 新用户首次登录 / 升级后的静默期
         public const int QUNS_APP = 7;                     // Windows 应用商店应用运行中（与全屏无关）
+
+        // ====================================================================
+        // 插件窗口的拖放：拖入（WM_DROPFILES）与拖出（DoDragDrop）
+        //
+        // 拖入：DragAcceptFiles(hwnd, true) 会同时给窗口加上 WS_EX_ACCEPTFILES 扩展样式，
+        //       之后用户从资源管理器把文件拖到窗口上松手，系统投递一次 WM_DROPFILES，
+        //       wParam 就是 HDROP —— 用 DragQueryFile 逐条取路径，最后**必须** DragFinish 归还。
+        // 拖出：DoDragDrop 发起系统拖放，需要一个 IDataObject（装在 STGMEDIUM 里的 CF_HDROP）
+        //       和一个 IDropSource（回答「继续 / 放下 / 取消」）—— 后者就是下面的 IDropSource 接口。
+        // ====================================================================
+
+        public const int WM_DROPFILES = 0x0233;
+
+        [DllImport("shell32.dll", SetLastError = true)]
+        public static extern void DragAcceptFiles(IntPtr hWnd, bool fAccept);
+
+        /// <summary>
+        /// 查 HDROP 里的路径。<paramref name="iFile"/> 传 <c>0xFFFFFFFF</c> 时返回条目数量；
+        /// 传 0..n-1 时：<paramref name="lpszFile"/> 为 null 则返回该路径的字符数（不含结尾 '\0'），
+        /// 否则把路径拷进缓冲区并返回实际拷贝的字符数。
+        /// </summary>
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        public static extern uint DragQueryFile(IntPtr hDrop, uint iFile, StringBuilder? lpszFile, uint cch);
+
+        /// <summary>释放 HDROP。处理完 WM_DROPFILES 后必须调用，否则这块由系统分配的内存不会归还。</summary>
+        [DllImport("shell32.dll")]
+        public static extern void DragFinish(IntPtr hDrop);
+
+        /// <summary>
+        /// OLE 初始化。DoDragDrop 的硬性前提，未初始化时调用会直接失败。
+        /// 返回值：0 (S_OK) = 本次初始化成功；1 (S_FALSE) = 之前已初始化过（引用计数 +1）；负数 = 失败。
+        /// 0x80010106 (RPC_E_CHANGED_MODE) 表示本线程已按另一种套间模式初始化过 —— 此时不该再初始化，
+        /// 但 OLE 本身是可用的，照常继续即可。
+        /// </summary>
+        [DllImport("ole32.dll")]
+        public static extern int OleInitialize(IntPtr pvReserved);
+
+        public const int RPC_E_CHANGED_MODE = unchecked((int)0x80010106);
+
+        /// <summary>
+        /// 发起一次系统拖放。会<b>阻塞</b>到用户松手或取消（内部自建消息循环并接管鼠标）。
+        /// <paramref name="pdwEffect"/> 返回目标最终接受的效果，0 表示没被接受（取消 / 拖到了不接收的地方）。
+        /// </summary>
+        [DllImport("ole32.dll", ExactSpelling = true)]
+        public static extern int DoDragDrop(
+            [MarshalAs(UnmanagedType.Interface)] System.Runtime.InteropServices.ComTypes.IDataObject pDataObj,
+            [MarshalAs(UnmanagedType.Interface)] IDropSource pDropSource,
+            uint dwOKEffects,
+            out uint pdwEffect);
+
+        // DROPEFFECT_*：与 System.Windows.Forms.DragDropEffects 的取值一一对应
+        public const uint DROPEFFECT_COPY = 1;
+        public const uint DROPEFFECT_MOVE = 2;
+        public const uint DROPEFFECT_LINK = 4;
+
+        // IDropSource.QueryContinueDrag / GiveFeedback 的应答码（HRESULT 形态，用 int 承载）
+        public const int DRAGDROP_S_DROP = 0x00040100;              // 「可以放下了，结束拖放」
+        public const int DRAGDROP_S_CANCEL = 0x00040101;            // 「取消这次拖放」
+        public const int DRAGDROP_S_USEDEFAULTCURSORS = 0x00040102; // 「用系统默认的拖放光标」
+        public const uint MK_LBUTTON = 0x0001;
+
+        /// <summary>
+        /// 拖放源接口（oleidl.h 的 IDropSource）。系统在拖放过程中反复回调它：
+        /// <see cref="QueryContinueDrag"/> 问「继续 / 放下 / 取消」，<see cref="GiveFeedback"/> 问「用什么光标」。
+        /// 实现类见 PluginWindow.FileDropSource。
+        /// </summary>
+        [ComImport, Guid("00000121-0000-0000-C000-000000000046"),
+         InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        public interface IDropSource
+        {
+            /// <summary>返回 S_OK 继续拖、DRAGDROP_S_DROP 放下、DRAGDROP_S_CANCEL 取消。</summary>
+            [PreserveSig] int QueryContinueDrag([MarshalAs(UnmanagedType.Bool)] bool fEscapePressed, uint grfKeyState);
+
+            /// <summary>返回 DRAGDROP_S_USEDEFAULTCURSORS 表示用系统默认光标。</summary>
+            [PreserveSig] int GiveFeedback(uint dwEffect);
+        }
+
+        // ====================================================================
+        // OLE 拖入目标（IDropTarget）
+        //
+        // 为什么要有它：WM_DROPFILES 只在用户松手那一刻投递一次消息，拖动过程中窗口完全收不到通知，
+        // 所以做不了「拖到窗口上时高亮」这类悬停反馈。IDropTarget 则在拖动的整个过程中持续回调 ——
+        // DragEnter 一次、DragOver 每次鼠标移动、DragLeave 离开时、Drop 放下时，
+        // 而且每次都带鼠标的实时坐标（屏幕物理像素）。
+        //
+        // 代价：RegisterDragDrop 要求窗口线程已完成 OleInitialize，且窗口销毁前必须 RevokeDragDrop。
+        //
+        // 注意：一个窗口同时挂了 IDropTarget 和 WS_EX_ACCEPTFILES 时，OLE 拖放会走 IDropTarget，
+        //       WM_DROPFILES 不再投递 —— 所以两者不能并存当两条路径用，只能二选一（见 PluginWindow）。
+        // ====================================================================
+
+        public const uint DROPEFFECT_NONE = 0;
+        public const uint CF_HDROP = 15;
+
+        [DllImport("user32.dll")]
+        public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+        [DllImport("ole32.dll", ExactSpelling = true)]
+        public static extern int RegisterDragDrop(IntPtr hwnd, [MarshalAs(UnmanagedType.Interface)] IDropTarget pDropTarget);
+
+        [DllImport("ole32.dll", ExactSpelling = true)]
+        public static extern int RevokeDragDrop(IntPtr hwnd);
+
+        /// <summary>归还 STGMEDIUM（GetData 取到的数据由它负责释放，漏掉就是内存泄漏）。</summary>
+        [DllImport("ole32.dll", ExactSpelling = true)]
+        public static extern void ReleaseStgMedium(ref System.Runtime.InteropServices.ComTypes.STGMEDIUM param);
+
+        /// <summary>
+        /// 拖入目标接口（oleidl.h 的 IDropTarget）。
+        /// 参数里的 <see cref="POINT"/> 就是原生 POINTL（两个 32 位 LONG，布局与 POINT 相同），
+        /// 坐标是<b>屏幕物理像素</b> —— 要自己 ScreenToClient 再除以 DPI 才是窗口内的逻辑坐标。
+        /// 实现类见 PluginWindow 里的 WindowDropTarget。
+        /// </summary>
+        [ComImport, Guid("00000122-0000-0000-C000-000000000046"),
+         InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        public interface IDropTarget
+        {
+            /// <summary>拖入项第一次进入窗口。pdwEffect 里写上你愿意接受的效果（NONE = 不接受，光标会变禁止）。</summary>
+            [PreserveSig] int DragEnter(
+                [MarshalAs(UnmanagedType.Interface)] System.Runtime.InteropServices.ComTypes.IDataObject pDataObj,
+                uint grfKeyState, POINT pt, ref uint pdwEffect);
+
+            /// <summary>鼠标在窗口内移动，高频调用（每次移动一次），实现里别做重活。</summary>
+            [PreserveSig] int DragOver(uint grfKeyState, POINT pt, ref uint pdwEffect);
+
+            /// <summary>鼠标离开了窗口，或这次拖放被取消。用来自行复位悬停态。</summary>
+            [PreserveSig] int DragLeave();
+
+            /// <summary>用户在窗口内松手。这里的 pDataObj 才是「真正要落下的数据」。</summary>
+            [PreserveSig] int Drop(
+                [MarshalAs(UnmanagedType.Interface)] System.Runtime.InteropServices.ComTypes.IDataObject pDataObj,
+                uint grfKeyState, POINT pt, ref uint pdwEffect);
+        }
     }
 }

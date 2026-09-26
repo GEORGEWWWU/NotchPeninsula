@@ -160,6 +160,71 @@ public interface IPluginWindow
     void SetMouse(Action<float, float>? down, Action<float, float>? move, Action<float, float>? up);
     /// <summary>设置键盘输入回调（char）。</summary>
     void SetKey(Action<char>? key);
+
+    /// <summary>
+    /// 设置「文件拖入」回调：用户从资源管理器等外部程序把文件 / 文件夹拖到本窗口上并松手时触发，
+    /// 参数是拖入项的完整路径数组（顺序即用户拖入的先后）。
+    ///
+    /// <para>传 <c>null</c> 取消订阅（同时关闭本窗口的文件拖放接收）。窗口默认<b>不接收</b>拖入，调用本方法即开启。</para>
+    ///
+    /// <para><b>线程</b>：回调在窗口消息线程（通常就是创建窗口的那个线程）同步执行，可以安全地更新自己的列表、
+    /// 调用 <see cref="RequestRedraw"/>。宿主会捕获回调里的异常并记日志，不会因此打断消息循环。</para>
+    ///
+    /// <para><b>只读语义</b>：回调只告诉你「用户拖进来了哪些路径」，不会移动 / 复制 / 删除任何文件 ——
+    /// 是引用原路径、还是拷贝到自己的暂存目录，完全由你决定。窗口关闭（或插件卸载）后回调不再触发。</para>
+    ///
+    /// <para><b>本方法只在「松手」那一刻触发</b>。拖动过程中的悬停反馈（高亮、落点提示）请用
+    /// <see cref="SetDragHover"/> 订阅 —— 两者互不依赖，可以只订阅其中一个。</para>
+    ///
+    /// <para><b>只接受文件拖入</b>：拖入内容里没有文件系统路径时（网页文字、画图工具的位图），
+    /// 宿主直接拒绝，本回调不会触发。</para>
+    /// </summary>
+    void SetFilesDrop(Action<string[]>? onFiles);
+
+    /// <summary>
+    /// 设置「拖入悬停」回调，用来在拖放<b>进行中</b>给用户视觉反馈 —— 比如边框亮起来、显示「松手即导入」提示、
+    /// 或者把落点画成一个插入位。三个回调都可以单独传 <c>null</c>；只要传了任意一个，本窗口就开始接收拖入。
+    ///
+    /// <para><b>与 <see cref="SetFilesDrop"/> 的分工</b>：本方法管「拖着的过程」（可能触发几十次），
+    /// <see cref="SetFilesDrop"/> 管「松手那一刻」（只触发一次）。两者互不依赖，可以只订阅其中一个。</para>
+    ///
+    /// <para><b>线程</b>：三个回调都在窗口消息线程同步执行。宿主已捕获异常并记日志，不会打断消息循环。</para>
+    ///
+    /// <para><b>⚠️ onLeave 一定会来，别把高亮状态只挂在 onOver 上</b>：用户中途按 Esc、把鼠标拖出窗口、
+    /// 或者松手放下，宿主都会调一次 onLeave。高亮该在 onEnter 点亮、在 onLeave 熄灭 —— 这是唯一可靠的配对。</para>
+    ///
+    /// <para><b>⚠️ 只接受文件拖入</b>：拖动内容里没有文件系统路径时（从网页拖一段文字、从画图工具拖一块图像），
+    /// 宿主直接拒绝，三个回调一个都不会触发、光标显示为禁止。</para>
+    /// </summary>
+    /// <param name="onEnter">
+    /// 拖入项第一次进入窗口时触发一次，参数是<b>本次拖入的条目数</b>（拖文件夹算 1 个），
+    /// 适合用来显示「将导入 3 项」这类提示。
+    /// </param>
+    /// <param name="onOver">
+    /// 鼠标在窗口内移动时持续触发（频率 = 鼠标移动频率），参数是鼠标在窗口内的<b>逻辑坐标</b>
+    /// （原点在窗口左上角，和 <see cref="SetMouse"/> 的坐标系一致），可以用来把插入位画在鼠标附近。
+    /// </param>
+    /// <param name="onLeave">鼠标拖出窗口、拖放被取消、或松手放下时触发，用来复位悬停态。</param>
+    void SetDragHover(Action<int>? onEnter, Action<float, float>? onOver, Action? onLeave);
+
+    /// <summary>
+    /// 发起一次系统拖放（把文件「拖出去」）：调用后本线程进入系统拖放循环，用户把内容拖到
+    /// 资源管理器 / 桌面 / 其他接受文件的程序上松手即完成，也可以拖到另一个插件窗口上。
+    ///
+    /// <para><b>阻塞</b>：本方法会一直阻塞到用户松手或按 Esc 取消才返回 —— 这是 OLE 拖放的固有行为，
+    /// 所以<b>不要在绘制回调里调用</b>。标准做法是在 <see cref="SetMouse"/> 的 move 回调里，
+    /// 判断左键仍按下且移动距离超过系统拖拽阈值（<c>SystemInformation.DragSize</c>）后再调用。</para>
+    ///
+    /// <para><b>⚠️ 拖放期间的鼠标消息被系统接管</b>：<see cref="SetMouse"/> 注册的 up 回调在拖放结束时<b>不会</b>
+    /// 触发，所以别指望用它复位「我正在拖动」这类内部状态 —— 请在本方法返回后自己复位。</para>
+    ///
+    /// <para>不存在的路径会被静默过滤掉；路径全部无效时直接返回 false，不进入拖放循环。</para>
+    /// </summary>
+    /// <param name="paths">要拖出的文件 / 文件夹路径。</param>
+    /// <param name="allowMove">true 时同时允许「移动」效果（拖到同盘目录会真的移动文件）；默认只允许复制。</param>
+    /// <returns>true = 用户把内容放到了目标上；false = 取消、无有效路径或拖放失败。</returns>
+    bool StartDragFiles(IReadOnlyList<string> paths, bool allowMove = false);
+
     /// <summary>请求重绘。</summary>
     void RequestRedraw();
     void Close();
