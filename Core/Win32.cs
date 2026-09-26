@@ -551,6 +551,37 @@ namespace NotchPeninsula
         public const int RPC_E_CHANGED_MODE = unchecked((int)0x80010106);
 
         /// <summary>
+        /// 确保当前线程完成过 OLE 初始化 —— RegisterDragDrop 与 DoDragDrop 的共同前提。
+        ///
+        /// 主程序走的是自定义 GetMessage 循环（不是 Application.Run），从来没有初始化过 OLE，
+        /// 所以任何要用拖放的地方，第一次使用前都得先调一次它。
+        ///
+        /// 刻意不配对 OleUninitialize：这个引用会活到进程结束，而 OLE 初始化本身是引用计数式的，
+        /// 多留一个引用不影响任何东西，却省掉了「谁负责收回」的记账。
+        ///
+        /// OLE 初始化是<b>线程级</b>的，所以状态用 ThreadStatic 存。
+        /// </summary>
+        public static bool EnsureOleInitialized()
+        {
+            if (_oleInitialized) return true;
+
+            int hr = OleInitialize(IntPtr.Zero);
+            if (hr == RPC_E_CHANGED_MODE)
+            {
+                // 本线程已经按另一种套间模式初始化过：这时不能再 OleInitialize（会失败），
+                // 但进程内 OLE 已就绪，拖放照样能用。
+                _oleInitialized = true;
+                return true;
+            }
+            if (hr < 0) return false;
+
+            _oleInitialized = true;
+            return true;
+        }
+
+        [ThreadStatic] private static bool _oleInitialized;
+
+        /// <summary>
         /// 发起一次系统拖放。会<b>阻塞</b>到用户松手或取消（内部自建消息循环并接管鼠标）。
         /// <paramref name="pdwEffect"/> 返回目标最终接受的效果，0 表示没被接受（取消 / 拖到了不接收的地方）。
         /// </summary>

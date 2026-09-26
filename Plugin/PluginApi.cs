@@ -111,7 +111,23 @@ public interface IWidget
     void OnDeactivate();
 }
 
-/// <summary>详情页（右键 / 展开后显示）。</summary>
+/// <summary>
+/// 详情页（右键组件展开后显示）。
+///
+/// <para>
+/// <b>关于下面这些带默认实现的成员</b>：详情页是<b>插件实现</b>的接口，加抽象成员会让所有
+/// 已编译好的老插件在加载时直接抛 <see cref="TypeLoadException"/>，所以鼠标与拖放这两组
+/// 一律用默认接口实现（DIM）追加 —— 老插件照常工作，只是收不到这些回调。
+/// </para>
+///
+/// <para>
+/// <b>鼠标事件与 <see cref="HitTest"/> / <see cref="OnAction"/> 的关系</b>：老的一套是
+/// 「宿主帮你做命中检测、只告诉你点了哪个动作」，一次点击只有一个回调；
+/// 新的一套是完整的按下 / 移动 / 抬起，需要自己做命中检测，但能实现「按住拖动」这类交互。
+/// 两者并存：<see cref="HitTest"/> 返回 <see cref="WidgetHit.None"/> 就能把自己从老那套里摘出去，
+/// 只走鼠标事件。
+/// </para>
+/// </summary>
 public interface IDetailPage
 {
     float MeasureWidth();
@@ -119,6 +135,82 @@ public interface IDetailPage
     void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame);
     WidgetHit HitTest(float x, float y, SKRect rect);
     void OnAction(string? action, float x, float y);
+
+    // ---- 鼠标事件（比 HitTest/OnAction 更细，实现「按住拖动」必须靠它）----
+    // 三个坐标都是**详情页内**的逻辑坐标（原点在详情页左上角），与 HitTest 收到的是同一套。
+
+    /// <summary>左键按下。</summary>
+    void OnMouseDown(float x, float y) { }
+
+    /// <summary>鼠标移动。只在鼠标位于灵动岛内时触发（拖放过程中系统接管鼠标，不会触发）。</summary>
+    void OnMouseMove(float x, float y) { }
+
+    /// <summary>左键抬起。</summary>
+    void OnMouseUp(float x, float y) { }
+
+    /// <summary>
+    /// 鼠标离开灵动岛。⚠️ 用它复位「按住」之类的状态 ——
+    /// 按下之后把鼠标拖出岛体再松手，<see cref="OnMouseUp"/> 是<b>不会</b>来的，
+    /// 只有这条会到。
+    /// </summary>
+    void OnMouseLeave() { }
+
+    // ---- 文件拖放（岛体上的详情页也能拖入 / 拖出）----
+
+    /// <summary>
+    /// 有文件被拖到详情页上。返回 true = 接受这次拖放（光标变成「可放入」，
+    /// 后续才会收到 <see cref="OnFilesDragOver"/> 与 <see cref="OnFilesDrop"/>）；
+    /// 返回 false 或保持默认实现 = 拒绝，光标显示为禁止。
+    ///
+    /// <para>只有带文件系统路径的拖入才会走到这里：从网页拖的文字、从画图工具拖的位图
+    /// 在宿主那一层就被挡掉了，一个回调都不会触发。</para>
+    /// </summary>
+    /// <param name="count">本次拖入的条目数（拖一个文件夹算 1 个）。</param>
+    bool OnFilesDragEnter(int count) => false;
+
+    /// <summary>拖放过程中鼠标在详情页内移动。x/y 是详情页内的逻辑坐标。</summary>
+    void OnFilesDragOver(float x, float y) { }
+
+    /// <summary>
+    /// 拖出详情页 / 拖放被取消（含用户按 Esc）。
+    /// ⚠️ 这条一定会来，是复位悬停高亮的唯一可靠时机 —— 别把高亮只挂在 <see cref="OnFilesDragOver"/> 上。
+    /// </summary>
+    void OnFilesDragLeave() { }
+
+    /// <summary>用户在详情页里松手。paths 是落下的完整路径数组。只在 <see cref="OnFilesDragEnter"/> 接受后才会触发。</summary>
+    void OnFilesDrop(string[] paths) { }
+
+    /// <summary>
+    /// 鼠标离开灵动岛之后，本详情页多久自动收起。三种取值：
+    /// <list type="bullet">
+    ///   <item><see cref="TimeSpan.Zero"/>（默认实现）—— 用宿主内置时长，普通详情页不用管这个属性。</item>
+    ///   <item><b>正数</b> —— 自定义时长，宿主会夹在 0.5 秒 ~ 60 秒之间（防呆）。</item>
+    ///   <item><b>负数</b>（惯例写 <see cref="Timeout.InfiniteTimeSpan"/>）—— <b>鼠标离开也不收起</b>，
+    ///         面板一直开着，直到用户自己关掉。</item>
+    /// </list>
+    ///
+    /// <para>
+    /// <b>什么时候需要动它</b>：当你的面板要求用户「先离开面板、去别处拿点东西再回来」的时候。
+    /// 典型就是拖入文件 —— 用户得把鼠标移到资源管理器里挑文件，而宿主内置的收起延迟只有几百毫秒，
+    /// 鼠标刚移开面板就自己收了，拖放目标当场消失，等于根本没法拖进来。
+    /// 把时间调长（几秒）通常就够；如果用户可能需要翻目录找一阵子，那就直接用「不收起」。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>选「不收起」= 全局屏蔽自动收起</b>：鼠标离开不收，<b>点到岛外也不收</b> ——
+    /// 因为正在从资源管理器往面板里拖文件的用户，鼠标必然要经过岛外，
+    /// 那种「点到别处去了」不能算「想关面板」。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>那怎么关掉它</b>：在岛内按右键（用户明确冲着面板来的手势，不受这一档影响），
+    /// 或者你自己调 <see cref="IPluginHost.CloseDetailPage"/>。所以选了这一档的详情页
+    /// 最好仍然给用户留一个看得见的关闭出口（或者做成根本不需要关的常驻面板）。
+    /// </para>
+    ///
+    /// <para>带默认实现是刻意的：详情页是插件实现的接口，加抽象成员会让所有已编译好的老插件加载失败。</para>
+    /// </summary>
+    TimeSpan AutoCollapseDelay => TimeSpan.Zero;
 }
 
 /// <summary>副显示区小组件（Phase 4，仅只读信息展示）。</summary>
@@ -288,6 +380,17 @@ public interface IPluginHost
     void OpenDetailPage(string widgetId);
     void CloseDetailPage();
 
+    /// <summary>
+    /// 切换指定组件详情页的开合：已展开就收起，没展开就展开。
+    ///
+    /// <para>
+    /// 这正是「右键组件」的宿主默认行为 —— 想让左键和右键表现一致，
+    /// 就在 <see cref="IWidget.OnLeftClick"/> 里调它。
+    /// </para>
+    /// </summary>
+    /// <returns>true = 这次操作被消费（展开或收起了）；false = 该组件不存在、或它没有详情页。</returns>
+    bool ToggleDetailPage(string widgetId);
+
     // 布局调度
     /// <summary>
     /// 请求宿主重新测量本插件组件的宽度。
@@ -330,4 +433,20 @@ public interface IPluginHost
     // 窗口
     /// <summary>创建一个插件自有窗口（SkiaSharp 绘制 + 鼠标输入）。</summary>
     IPluginWindow CreateWindow(string title, int width, int height);
+
+    /// <summary>
+    /// 发起一次系统拖放（把内容「拖出去」）。用于<b>详情页</b>这种画在灵动岛上的插件内容 ——
+    /// 它没有自己的窗口，所以拖出只能由宿主在岛体上代为发起。
+    /// （插件自有窗口请改用 <see cref="IPluginWindow.StartDragFiles"/>。）
+    ///
+    /// <para><b>阻塞</b>：会一直阻塞到用户松手或按 Esc 取消，期间系统接管鼠标。
+    /// 所以别在 <see cref="IDetailPage.Draw"/> 里调用 —— 标准做法是在
+    /// <see cref="IDetailPage.OnMouseMove"/> 里，判断左键仍按下且位移超过阈值后再调。</para>
+    ///
+    /// <para>不存在的路径会被静默过滤；路径全部无效时直接返回 false，不进入拖放循环。</para>
+    /// </summary>
+    /// <param name="paths">要拖出的文件 / 文件夹路径。</param>
+    /// <param name="allowMove">true 时同时允许「移动」效果（拖到同盘目录会真的移动文件）；默认只允许复制。</param>
+    /// <returns>true = 用户把内容放到了目标上；false = 取消、无有效路径或拖放失败。</returns>
+    bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false);
 }

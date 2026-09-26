@@ -645,6 +645,60 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// <see cref="ActiveDetailCollapseDelayMs"/> 返回它时，表示详情页要求「鼠标离开也不收起」。
+        /// </summary>
+        public const int CollapseNever = -1;
+
+        /// <summary>
+        /// 当前详情页是否声明了「鼠标离开也不收起」（<c>AutoCollapseDelay</c> 返回负值）。
+        ///
+        /// <para>
+        /// 岛外点击要不要顺手把它收掉，就看这个 —— 正在从资源管理器往面板里拖文件的用户，
+        /// 鼠标必然要经过岛外，那种「点了别处」不能算「想关面板」。
+        /// </para>
+        /// </summary>
+        public static bool ActiveDetailKeepsOpen => ActiveDetailCollapseDelayMs == CollapseNever;
+
+        /// <summary>
+        /// 当前详情页要求的「鼠标离开后自动收起」时长（毫秒）。三种返回：
+        /// <list type="bullet">
+        ///   <item><c>null</c> —— 未展开、详情页没指定、或取值抛异常 → 调用方沿用宿主内置时长。</item>
+        ///   <item><see cref="CollapseNever"/> —— 详情页明确要求鼠标离开也别收 → 调用方连计时都不用挂。</item>
+        ///   <item>正数 —— 自定义时长，已夹在 0.5 秒 ~ 60 秒之间。</item>
+        /// </list>
+        /// </summary>
+        public static int? ActiveDetailCollapseDelayMs
+        {
+            get
+            {
+                lock (_pluginSlotLock)
+                {
+                    var page = _detailPage;
+                    if (page == null || _detailBroken) return null;
+
+                    try
+                    {
+                        var delay = page.AutoCollapseDelay;
+
+                        // 负值（约定用 Timeout.InfiniteTimeSpan）= 永不收起
+                        if (delay < TimeSpan.Zero) return CollapseNever;
+
+                        if (delay == TimeSpan.Zero) return null;   // 没指定 → 用宿主默认
+
+                        // 有效值夹在 0.5s ~ 60s：上限防止插件把面板钉死在屏幕上收不掉，下限防止设得过短没法用
+                        return (int)Math.Clamp(delay.TotalMilliseconds, 500d, 60000d);
+                    }
+                    catch (Exception ex)
+                    {
+                        // 插件实现抛异常不该连累面板时序，记一条日志就够
+                        Logger.Error("[Renderer] 读取详情页自动收起时长异常", ex);
+                        return null;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// 同步宿主详情页状态并测量尺寸。必须在读取 WINDOW_WIDTH / MAX_WINDOW_HEIGHT 之前调用
         /// （NotchWindow 每帧第一件事就是它），因为底层缓冲尺寸依赖详情页大小。
         /// 尺寸只在详情页实例变化时测量一次，稳态 60FPS 下不触碰插件代码。
@@ -762,6 +816,181 @@ namespace NotchPeninsula
 
                 try { page.OnAction(hit.Action, x - r.Left, y - r.Top); }
                 catch (Exception ex) { Logger.Error("[Renderer] 详情页动作回调异常", ex); }
+                return true;
+            }
+        }
+
+        // ---- 详情页的鼠标事件（比 HitTest/OnAction 更细：有按下 / 移动 / 抬起 / 离开）----
+        // 老那套是「宿主做命中、只回调一个动作名」，一次点击只有一个回调，做不了「按住拖动」；
+        // 这一组把完整的鼠标消息转发给详情页，由插件自己判断命中了什么。
+        // 坐标口径与上面完全一致：传入的 x/y 是岛内逻辑坐标，这里减掉 rect 左上角就是详情页内坐标。
+
+        /// <summary>调用方必须已持有 _pluginSlotLock。落点不在详情页内时返回 false。</summary>
+        private static bool TryDetailLocalLocked(float x, float y, out Plugins.IDetailPage? page, out float lx, out float ly)
+        {
+            lx = ly = 0f;
+            var p = _detailHitPage;
+            page = p;
+            if (p == null) return false;
+
+            var r = _detailHitRect;
+            if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) return false;
+
+            lx = x - r.Left;
+            ly = y - r.Top;
+            return true;
+        }
+
+        /// <summary>左键按下（落点在详情页内才转发）。返回 true 表示这次按下归详情页。</summary>
+        public static bool DispatchDetailPageMouseDown(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                if (!TryDetailLocalLocked(x, y, out var page, out float lx, out float ly)) return false;
+                try { page!.OnMouseDown(lx, ly); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页鼠标按下回调异常", ex); }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 鼠标移动。
+        ///
+        /// <para>
+        /// ⚠️ <b>刻意不做落点判定</b>（和上面几个方法不一样）：按住拖动时鼠标<b>一定会</b>离开详情页矩形 ——
+        /// 详情页只有一两百像素高，而拖动是个大幅度动作，两下就划出去了。
+        /// 一旦在这里因为它出界就返回 false，插件就再也收不到移动，
+        /// 「按下后位移超过阈值再发起拖出」这套逻辑永远触发不了，表现就是<b>完全拖不动</b>。
+        /// </para>
+        ///
+        /// <para>坐标照实往下传（可能为负 / 超出尺寸），要不要理会由详情页自己决定。</para>
+        /// </summary>
+        public static bool DispatchDetailPageMouseMove(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page == null) return false;
+
+                var r = _detailHitRect;
+                try { page.OnMouseMove(x - r.Left, y - r.Top); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页鼠标移动回调异常", ex); }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 左键抬起。与移动不同：即使落点已经不在详情页内（按下后拖到岛体别处再松手）
+        /// 也要转发一次，否则插件那边「按住」的状态就永远复位不了。
+        /// </summary>
+        public static bool DispatchDetailPageMouseUp(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                if (TryDetailLocalLocked(x, y, out var page, out float lx, out float ly))
+                {
+                    try { page!.OnMouseUp(lx, ly); }
+                    catch (Exception ex) { Logger.Error("[Renderer] 详情页鼠标抬起回调异常", ex); }
+                    return true;
+                }
+
+                // 落在详情页外：仍然通知一次「抬起」，坐标按越界处理（详情页自己复位的时机）
+                var fallback = _detailHitPage;
+                if (fallback == null) return false;
+                try { fallback.OnMouseUp(x - _detailHitRect.Left, y - _detailHitRect.Top); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页鼠标抬起回调异常", ex); }
+                return true;
+            }
+        }
+
+        /// <summary>鼠标离开灵动岛 —— 详情页用它复位「按住」之类的状态（这条一定会来，抬起则不一定）。</summary>
+        public static void DispatchDetailPageMouseLeave()
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page == null) return;
+                try { page.OnMouseLeave(); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页鼠标离开回调异常", ex); }
+            }
+        }
+
+        // ---- 详情页的文件拖放（岛体 IDropTarget → 这里 → 插件）----
+        // 这一组与上面的 DispatchDetailPageClick 同源：都靠绘制时登记的 _detailHitPage / _detailHitRect，
+        // 坐标口径也完全一样（调用方给的 x/y 已是「岛内逻辑坐标」，这里再减 rect 左上角就是详情页内坐标）。
+
+        /// <summary>
+        /// 拖入项进入岛体：落点不在当前展开的详情页里就拒绝。
+        /// 返回 true 表示详情页接受了这次拖放（调用方据此给「可放入」光标）。
+        /// </summary>
+        public static bool DispatchDetailPageDragEnter(float x, float y, int count)
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page == null) return false;
+
+                var r = _detailHitRect;
+                if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) return false;
+
+                try { return page.OnFilesDragEnter(count); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页拖入进入回调异常", ex); return false; }
+            }
+        }
+
+        /// <summary>拖放过程中鼠标移动。返回 false = 已经拖出详情页范围（调用方据此作废本次拖放）。</summary>
+        public static bool DispatchDetailPageDragOver(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page == null) return false;
+
+                var r = _detailHitRect;
+                if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) return false;
+
+                try { page.OnFilesDragOver(x - r.Left, y - r.Top); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页拖入悬停回调异常", ex); }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 拖出岛体 / 拖放被取消：让详情页把悬停态收掉。
+        /// 这条回调一定会来（包括用户中途按 Esc），所以它是复位高亮的唯一可靠时机。
+        /// </summary>
+        public static void DispatchDetailPageDragLeave()
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page == null) return;
+
+                try { page.OnFilesDragLeave(); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页拖入离开回调异常", ex); }
+            }
+        }
+
+        /// <summary>
+        /// 用户在详情页里松手。返回 true 表示这次拖放被接受（调用方回 COPY 效果）。
+        /// 顺序是「先收悬停态、再报放下了什么」—— 反过来的话插件在 OnFilesDragLeave 里
+        /// 复位高亮，会把 OnFilesDrop 刚设好的状态一起抹掉。
+        /// </summary>
+        public static bool DispatchDetailPageDrop(float x, float y, string[] paths)
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page == null) return false;
+
+                var r = _detailHitRect;
+                if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) return false;
+
+                try { page.OnFilesDragLeave(); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页拖入离开回调异常", ex); }
+
+                try { page.OnFilesDrop(paths); }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页拖入放下回调异常", ex); return false; }
                 return true;
             }
         }

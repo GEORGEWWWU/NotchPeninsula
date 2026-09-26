@@ -1,5 +1,5 @@
+using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using SkiaSharp;
 using ComTypes = System.Runtime.InteropServices.ComTypes;
 
@@ -59,12 +59,6 @@ public sealed class PluginWindow : IPluginWindow
     private bool _dragging;
     /// <summary>拖放期间收到过关闭请求 —— 拖放结束后补做，否则窗口就永远关不掉了。</summary>
     private bool _closePending;
-
-    /// <summary>
-    /// 本线程是否已完成 OLE 初始化（DoDragDrop 的前提）。OLE 初始化是线程级的，所以用 ThreadStatic。
-    /// 只初始化一次、且刻意不配对 OleUninitialize —— 让它活到进程结束，省掉「谁负责收回」的记账。
-    /// </summary>
-    [ThreadStatic] private static bool _oleInitialized;
 
     private IntPtr _memDc, _hBitmap, _oldBitmap, _pBits;
     private SKSurface? _surface;
@@ -141,7 +135,7 @@ public sealed class PluginWindow : IPluginWindow
         if (_dropTarget != null || _hwnd == IntPtr.Zero) return;
 
         // RegisterDragDrop 的硬性前提：本线程已完成 OLE 初始化
-        if (!EnsureOleInitialized())
+        if (!Win32.EnsureOleInitialized())
         {
             Logger.Warn("[PluginWindow] OLE 不可用，退回 WM_DROPFILES 拖入（无悬停反馈）");
             Win32.DragAcceptFiles(_hwnd, true);
@@ -193,7 +187,7 @@ public sealed class PluginWindow : IPluginWindow
         }
         if (valid.Count == 0) return false;
 
-        if (!EnsureOleInitialized()) return false;
+        if (!Win32.EnsureOleInitialized()) return false;
 
         // CF_HDROP 的封装交给 WinForms 的 DataObject（SetData(FileDrop, string[]) 就是它的标准用法），
         // 它实现了 ComTypes.IDataObject，可以直接 marshal 成 DoDragDrop 需要的第一个参数。
@@ -206,6 +200,7 @@ public sealed class PluginWindow : IPluginWindow
 
         bool accepted = false;
         _dragging = true;
+        DragOutState.Enter(_hwnd);   // 标记「从本窗口发起」，免得刚拖出去又被自己接回来
         try
         {
             int hr = Win32.DoDragDrop(data, new FileDropSource(), allowed, out uint effect);
@@ -223,36 +218,12 @@ public sealed class PluginWindow : IPluginWindow
         }
         finally
         {
+            DragOutState.Exit();
             _dragging = false;
             // 拖放期间若有人请求关窗（插件被卸载 / 热重载），现在补做 —— 否则窗口永远关不掉
             if (_closePending) { _closePending = false; Close(); }
         }
         return accepted;
-    }
-
-    /// <summary>
-    /// 确保当前线程完成过 OLE 初始化。主程序走的是自定义 GetMessage 循环（不是 Application.Run），
-    /// 从来没有初始化过 OLE，所以第一次拖出前必须自己补一次。
-    /// </summary>
-    private static bool EnsureOleInitialized()
-    {
-        if (_oleInitialized) return true;
-
-        int hr = Win32.OleInitialize(IntPtr.Zero);
-        if (hr == Win32.RPC_E_CHANGED_MODE)
-        {
-            // 本线程已经按另一种套间模式初始化过：这时不能再 OleInitialize（会失败），
-            // 但进程内 OLE 已就绪，DoDragDrop 照样能用。
-            _oleInitialized = true;
-            return true;
-        }
-        if (hr < 0)
-        {
-            Logger.Error($"[PluginWindow] OleInitialize 失败：0x{hr:X8}，无法发起拖出");
-            return false;
-        }
-        _oleInitialized = true;
-        return true;
     }
 
     // ---- 拖入（IDropTarget 回调，由 WindowDropTarget 转发进来） ----
@@ -265,9 +236,11 @@ public sealed class PluginWindow : IPluginWindow
     {
         pdwEffect = Win32.DROPEFFECT_NONE;
         if (_closing) return 0;
+        // 自己拖出去的东西路过自己，不接 —— 否则用户原地松手会被当成又拖进来一份
+        if (DragOutState.IsSelfDrop(_hwnd)) return 0;
 
         // 顺手解析一次并缓存：Drop 时直接用，省掉第二次解析；条目数也在这里给 onEnter
-        _dragFiles = dataObj == null ? new List<string>() : ReadFileDrop(dataObj);
+        _dragFiles = DropPayload.ReadFileDrop(dataObj);
         if (_dragFiles.Count == 0)
         {
             _dragFiles = null;
@@ -316,7 +289,7 @@ public sealed class PluginWindow : IPluginWindow
 
         // DragEnter 没缓存到（比如窗口是在拖放中途才挂上目标的）时补解析一次
         if ((files == null || files.Count == 0) && dataObj != null)
-            files = ReadFileDrop(dataObj);
+            files = DropPayload.ReadFileDrop(dataObj);
 
         if (files == null || files.Count == 0) return 0;
         pdwEffect = Win32.DROPEFFECT_COPY;
@@ -353,67 +326,6 @@ public sealed class PluginWindow : IPluginWindow
         catch (Exception ex) { Logger.Error("[PluginWindow] 插件拖入悬停回调异常", ex); }
     }
 
-    /// <summary>从 IDataObject 取 CF_HDROP 并解析成路径数组；不是文件拖入时返回空列表。</summary>
-    private static List<string> ReadFileDrop(ComTypes.IDataObject dataObj)
-    {
-        var format = new ComTypes.FORMATETC
-        {
-            cfFormat = (short)Win32.CF_HDROP,
-            ptd = IntPtr.Zero,
-            dwAspect = ComTypes.DVASPECT.DVASPECT_CONTENT,
-            lindex = -1,
-            tymed = ComTypes.TYMED.TYMED_HGLOBAL
-        };
-
-        try
-        {
-            // 先问一句「有没有这个格式」，没有就立刻放弃 —— 不用真把数据搬出来
-            if (dataObj.QueryGetData(ref format) != 0) return new List<string>();
-
-            dataObj.GetData(ref format, out ComTypes.STGMEDIUM medium);
-            try
-            {
-                // TYMED_HGLOBAL 下 unionmember 就是 HDROP 句柄，和 WM_DROPFILES 的 wParam 同源，
-                // 所以可以直接喂给 DragQueryFile。注意这份内存由 STGMEDIUM 持有，要 ReleaseStgMedium 归还。
-                return ReadDropPaths(medium.unionmember);
-            }
-            finally
-            {
-                Win32.ReleaseStgMedium(ref medium);
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("[PluginWindow] 解析拖入内容失败", ex);
-            return new List<string>();
-        }
-    }
-
-    /// <summary>从 HDROP 句柄里读出全部路径。</summary>
-    private static List<string> ReadDropPaths(IntPtr hDrop)
-    {
-        var files = new List<string>();
-        if (hDrop == IntPtr.Zero) return files;
-
-        try
-        {
-            uint count = Win32.DragQueryFile(hDrop, 0xFFFFFFFFu, null, 0); // 0xFFFFFFFF = 问条目数量
-            for (uint i = 0; i < count; i++)
-            {
-                uint len = Win32.DragQueryFile(hDrop, i, null, 0);         // 先问长度（不含结尾 '\0'）
-                if (len == 0) continue;
-                var sb = new StringBuilder((int)len + 1);
-                if (Win32.DragQueryFile(hDrop, i, sb, (uint)sb.Capacity) > 0)
-                    files.Add(sb.ToString());
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("[PluginWindow] 读取拖入的文件列表失败", ex);
-        }
-        return files;
-    }
-
     /// <summary>
     /// 处理 WM_DROPFILES —— 只在 IDropTarget 注册失败时的**回退路径**上才会收到。
     /// ⚠️ 无论有没有订阅回调、中途是否抛异常，都必须 DragFinish，否则系统分配的那块内存不会归还。
@@ -421,7 +333,7 @@ public sealed class PluginWindow : IPluginWindow
     private void HandleFilesDrop(IntPtr hDrop)
     {
         List<string> files;
-        try { files = ReadDropPaths(hDrop); }
+        try { files = DropPayload.ReadDropPaths(hDrop); }
         finally { Win32.DragFinish(hDrop); }
 
         if (files.Count == 0 || _filesDrop == null) return;

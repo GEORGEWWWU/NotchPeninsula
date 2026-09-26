@@ -11,7 +11,7 @@
 插件做的事情，本质上是向程序“注册”下面这几类东西：
 
 - **组件**（Widget）：显示在灵动岛主区域里的一段内容，可点击。
-- **详情页**（DetailPage）：右键某个组件后展开的更详细内容页。
+- **详情页**（DetailPage）：右键某个组件后展开的更详细内容页。它有完整的鼠标事件（按下 / 移动 / 抬起），也能接收文件的拖入与拖出。
 - **刷新定时器**（ScheduleRefresh）：程序按指定时间间隔在后台调用你的代码，比如每 30 秒更新一次数据。
 - **提醒**（PostReminder）：弹出灵动岛顶部那种几秒钟的提示消息。
 - **自定义窗口**（CreateWindow）：你自己独立于灵动岛的一个可绘制、可被鼠标和键盘操作的小窗口。它还支持**文件拖放**——把资源管理器里的文件拖进来（拖动过程中有悬停回调，可以高亮提示）、把窗口里的条目拖出去。
@@ -413,6 +413,9 @@ window.SetMouse(
 2. **报尺寸**：`MeasureWidth()` / `MeasureHeight()` 返回你想要的大小，单位是逻辑像素。**尺寸完全由你决定**，宿主只做一层保护性裁剪：宽度会被限制在 `180 ~ 1000`，高度限制在 `48 ~ 480`，免得插件把岛体撑到屏幕外。灵动岛会用弹簧动画平滑过渡到这个尺寸，不用你自己做动画。
 3. **画内容 + 处理点击**：`Draw(canvas, rect, frame)` 里的 `rect` 就是整个岛体区域（左上角是 `rect.Left / rect.Top`，`rect.MidX / rect.MidY` 是中心），照着它布局即可；`HitTest(x, y, rect)` 返回动作名，用户左键点中后宿主回调 `OnAction(action, x, y)`。`x / y` 都是相对 `rect` 左上角的逻辑坐标，和你 `HitTest` 里判断的坐标系完全一致。
 
+   **要做「按住拖动」这类交互，就改用鼠标事件那一套**：详情页另有 `OnMouseDown` / `OnMouseMove` / `OnMouseUp` / `OnMouseLeave` 四个回调（都带默认实现，不写就是空操作），参数同样是详情页内的逻辑坐标。它和 `HitTest` / `OnAction` 并存 —— 让 `HitTest` 返回 `WidgetHit.None`，就自动从老那套退出，只走鼠标事件，两套不会互相干扰。
+   ⚠️ **按下之后把鼠标拖出灵动岛再松手，`OnMouseUp` 不会来**（`OnMouseLeave` 会来），所以「按住」状态必须靠它兜底复位。
+
    ⚠️ **但 `rect` 在展开 / 收起动画期间是「插值尺寸」，不能拿它当排版基准。** 宿主用弹簧动画把岛体从折叠态尺寸过渡到你报的目标尺寸，动画进行中的每一帧 `rect` 都只是过程值（例如目标 380×108，前几帧可能只有 130×34）。按它换行会导致文字每帧重排、每帧跳位——肉眼就是「展开动画不丝滑」；而且任何拿 `rect` 尺寸当 key 的分行缓存都会每帧失效，等于每帧全量重排一次（长文本尤其明显）。
 
    正确做法：**排版永远按你 `MeasureWidth` / `MeasureHeight` 返回的目标尺寸算**，绘制时再把整块内容对齐 / 缩放到当前 `rect`：
@@ -442,6 +445,13 @@ window.SetMouse(
   它的尺寸由插件决定，展开动画结束后鼠标可能刚好落在新面板之外，宿主会等 0.9s 再收，这期间鼠标回到岛上就取消。
   鼠标移到岛外点一下左键则立即收起。
   所以插件不用自己做关闭按钮——当然你想加也行（调用 `host.CloseDetailPage()` 即可）。
+  **这段延迟插件可以自己改**：实现 `TimeSpan AutoCollapseDelay` —— 返回**正数**覆盖内置的 0.9s（夹在 0.5s ~ 60s），
+  返回**负数**（`Timeout.InfiniteTimeSpan`）则**鼠标离开也不收起**。
+  需要用户离开面板去别处取东西的面板（最典型就是拖入文件：得先去资源管理器挑）要么调长、要么直接不收起，
+  否则鼠标刚移开面板就没了、拖放目标当场消失。
+  **选「不收起」= 全局屏蔽自动收起**：鼠标离开不收，**点到岛外也不收**（拖文件时鼠标必然经过岛外，
+  那种「点到别处」不算「想关面板」）。这时只剩**岛内右键**和插件自己调 `CloseDetailPage()` 能关掉它 ——
+  所以选这一档的详情页最好给用户留个看得见的关闭出口。
 - **左键优先给详情页**：详情页展开期间，岛内左键只会走详情页的 `HitTest` / `OnAction`，不会误触到原生媒体按钮。
 - **通知优先**：详情页展开时如果来了新的通知（Toast），灵动岛会先显示通知，通知结束后详情页自动回来。
 - **异常熔断**：`MeasureWidth` / `MeasureHeight` / `Draw` 里抛异常，这个详情页会被停用并自动收起，主程序照常运行（日志里能看到原因）。所以别在里面做可能阻塞很久的事。
@@ -484,6 +494,8 @@ window.SetMouse(
 
 13. **别指望拖入能收到文字或图片。** 从网页拖一段文字、从画图工具拖一块位图，宿主一律拒绝（三个悬停回调都不触发，光标显示禁止）。只认文件系统上真实存在的路径——邮件附件、压缩包内的条目这类「虚拟文件」也拿不到。
 
+14. **详情页拖出要用 `host.StartFileDrag`，而且要在 `OnMouseMove` 里按阈值发起。** 详情页画在灵动岛上、没有自己的窗口，所以 `IPluginWindow.StartDragFiles` 那套用不了，得走 `IPluginHost.StartFileDrag`。发起时机同理：放在 `OnMouseDown` 里会让用户每一次普通单击都进一次 OLE 拖放循环（观感是「点一下卡一下」）。
+
 看完这些、再对照示例代码动手写一遍，你就能做出自己的灵动岛插件了。遇到问题可以从“插件中心”看每个插件的加载状态和错误信息，多数加载失败（缺依赖、框架不符、没实现入口类）都会在那里给出提示。
 
 ---
@@ -503,7 +515,7 @@ window.SetMouse(
 - 提醒：`void PostReminder(ReminderData)`。
 - 设置持久化：`string GetSetting(string key, string fallback)` / `void SetSetting(string key, string value)`，键会自动加 `Plugin.<你的Id>.` 前缀隔离，不会互相覆盖；`event Action? SettingsChanged` 在设置被写入后触发。
 - 刷新：`IDisposable ScheduleRefresh(TimeSpan interval, Action callback)`，后台线程周期性回调，返回对象 `Dispose` 即停止。
-- 交互：`void RequestRedraw()`（常驻 60FPS 渲染下为空操作，事件驱动化预留）/ `void OpenDetailPage(string widgetId)`（已开放，展开指定组件的详情页，组件不存在或没有详情页时返回 false 且不展开）/ `void CloseDetailPage()`（已开放，收起当前详情页）。
+- 交互：`void RequestRedraw()`（常驻 60FPS 渲染下为空操作，事件驱动化预留）/ `void OpenDetailPage(string widgetId)`（已开放，展开指定组件的详情页，组件不存在或没有详情页时返回 false 且不展开）/ `void CloseDetailPage()`（已开放，收起当前详情页）/ `bool ToggleDetailPage(string widgetId)`（已开放，已展开则收起、没展开则展开 —— 就是「右键组件」的宿主默认行为，想让左键和右键表现一致就用它）。
 - 布局：`void InvalidateWidgetLayout()`（已开放，请求宿主重新测量本插件组件的宽度）。
   宿主的组件宽度是按「组件注册表版本」缓存的——只在插件注册 / 注销 / 排序时调一次 `MeasureWidth`，之后每帧直接复用缓存值（稳态 60FPS 零测量开销）。
   所以**组件宽度随内容变化的插件**（例如按文本长度自适应），在内容变化后必须调用它通知宿主，下一帧才会重新测量并用新宽度布局；岛体宽度会走既有弹簧动画平滑过渡到新值。
@@ -535,14 +547,30 @@ window.SetMouse(
 - 只有 `Id` 和 `void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`。当前注册后不会在任何地方真正绘制。
 
 **详情页 `IDetailPage`**（右键组件展开后的详细内容）（已开放）
-- `float MeasureWidth()` / `float MeasureHeight()` / `void Draw(SKCanvas, SKRect, WidgetFrame)` / `WidgetHit HitTest(float, float, SKRect)` / `void OnAction(string? action, float x, float y)`。
-- 尺寸由插件决定，宿主只把宽裁剪到 `180 ~ 1000`、高裁剪到 `48 ~ 480`；右键组件展开，鼠标离开岛体（约 0.9s 后）/ 岛内再右键 / 点击岛外都会收起，`OpenDetailPage` / `CloseDetailPage` 也可用。细节见第七节。
+- 绘制与命中的老一套：`float MeasureWidth()` / `float MeasureHeight()` / `void Draw(SKCanvas, SKRect, WidgetFrame)` / `WidgetHit HitTest(float, float, SKRect)` / `void OnAction(string? action, float x, float y)`。
+- 鼠标事件（已开放）：`void OnMouseDown(float,float)` / `OnMouseMove(float,float)` / `OnMouseUp(float,float)` / `OnMouseLeave()`，参数是详情页内的逻辑坐标，用来实现「按住拖动」这类老那套做不了的交互。
+- 文件拖放（已开放）：`bool OnFilesDragEnter(int)` / `OnFilesDragOver(float,float)` / `OnFilesDragLeave()` / `OnFilesDrop(string[])`，拖出用 `IPluginHost.StartFileDrag`。
+- 自动收起时长（已开放）：`TimeSpan AutoCollapseDelay`，三种取值 ——
+  `TimeSpan.Zero`（默认）= 用宿主内置的 `900ms`；**正数** = 自定义时长（宿主夹到 `0.5s ~ 60s`）；
+  **负数**（惯例写 `Timeout.InfiniteTimeSpan`）= **全局屏蔽自动收起**：鼠标离开不收、**点到岛外也不收**，面板一直开着。
+  **需要用户离开面板去别处取东西**的详情页应当调长它 —— 最典型就是拖入文件：用户得把鼠标移到资源管理器挑文件，900ms 根本来不及，鼠标刚移开面板就收了、拖放目标当场消失。要翻目录找一阵子的话直接用「不收起」更省事。
+  「不收起」时的关闭入口只剩两个：**岛内右键**（用户明确冲着面板来的手势，不受这一档影响）和插件自己调 `CloseDetailPage()`。
+- 尺寸由插件决定，宿主只把宽裁剪到 `180 ~ 1000`、高裁剪到 `48 ~ 480`；右键组件展开，鼠标离开岛体（默认约 0.9s 后，或插件通过 `AutoCollapseDelay` 指定的时长）/ 岛内再右键 / 点击岛外都会收起，`OpenDetailPage` / `CloseDetailPage` 也可用。细节见第七节。
 
 **自定义窗口 `IPluginWindow`**（`CreateWindow` 的返回值）
 - `SetDraw(Action<SKCanvas, int, int>)` 设置绘制回调；`SetMouse(down, move, up)` 设置鼠标三个事件；`SetKey(Action<char>)` 设置键盘字符；`RequestRedraw()` 请求重绘；`Close()` 关闭。
 - 文件拖放（已开放）：`void SetFilesDrop(Action<string[]>? onFiles)` 订阅拖入（传 null 取消订阅，同时关闭本窗口的拖放接收；窗口默认不接收），回调参数是拖入条目的完整路径数组；`void SetDragHover(Action<int>? onEnter, Action<float,float>? onOver, Action? onLeave)` 订阅拖入**过程**（条目数 / 窗口内逻辑坐标 / 结束），用来做悬停高亮这类反馈；`bool StartDragFiles(IReadOnlyList<string> paths, bool allowMove = false)` 发起拖出，阻塞到用户松手，返回是否被目标接受。
   实现上走的是 OLE 的 `IDropTarget`（`RegisterDragDrop`），而不是 `WM_DROPFILES` —— 后者只在松手时投递一次，拿不到悬停事件和实时坐标。若注册失败会自动退回 `WM_DROPFILES`：拖入仍可用，但没有任何悬停回调（日志里会记一行警告）。
   与拖放配套的四个约定：只接受带文件系统路径的拖入（文字 / 位图直接拒绝）；`onLeave` 一定会来，高亮要在它里面复位；`StartDragFiles` 期间鼠标 up 回调不会触发，状态要自己复位；拖放期间宿主会推迟任何关闭请求，不会让窗口在拖放中途被销毁。
+
+**详情页里的鼠标与拖放**（`IDetailPage`，已开放）
+- **鼠标**：`void OnMouseDown(float x, float y)` / `OnMouseMove(float x, float y)` / `OnMouseUp(float x, float y)` / `void OnMouseLeave()`，参数都是**详情页内**的逻辑坐标。它比老的 `HitTest` / `OnAction` 细一层：老的只回调「点了哪个动作」，一次点击只有一个回调，做不了「按住拖动」；新的这套把完整的按下 / 移动 / 抬起交给你。两者并存 —— `HitTest` 返回 `WidgetHit.None` 就自动从老那套里摘出去。
+  ⚠️ **按住之后把鼠标拖出灵动岛再松手，`OnMouseUp` 不会来**，只有 `OnMouseLeave` 会到，所以「按住」状态必须靠它兜底复位。
+- **拖入**：`bool OnFilesDragEnter(int count)`（返回 true = 接受这次拖放）/ `void OnFilesDragOver(float x, float y)` / `void OnFilesDragLeave()` / `void OnFilesDrop(string[] paths)`。
+- **拖出**：用 `IPluginHost.StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false)` —— 详情页画在灵动岛上、没有自己的窗口，所以拖出必须由宿主在岛体上代为发起。语义与 `IPluginWindow.StartDragFiles` 一致（阻塞到松手；不存在的路径会被静默过滤）。
+  标准写法是在 `OnMouseMove` 里判断「左键仍按下 + 位移超过阈值」再发起，别在 `OnMouseDown` 里发起。
+- 这四个拖放成员都带**默认实现**（默认拒绝拖放）。这是刻意的：详情页是插件实现的接口，加抽象成员会让所有已编译好的老插件加载失败。
+- 拖放只在**详情页展开期间**生效；岛体折叠态不接收任何拖入。落点必须落在详情页矩形内，拖到岛体别处会被当作「不接受」（光标显示禁止）。
 
 **渲染上下文 `WidgetFrame` / `RenderTheme`**（`Draw` 每帧收到的快照）
 - `WidgetFrame`：`Theme`（主题）、`Alpha`（合成透明度 0–255）、`TextOffsetY`（文字垂直偏移）、`Bars`（可选频谱）、`IsHovered`。
