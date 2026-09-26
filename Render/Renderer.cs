@@ -83,6 +83,20 @@ namespace NotchPeninsula
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
 
         /// <summary>
+        /// 是否正有一批文件被拖着经过岛体（由 <see cref="IslandDropTarget"/> 在 DragEnter / DragLeave / Drop 维护）。
+        ///
+        /// <para>
+        /// 置位期间穿透模式的「悬停即淡出到 0%」必须失效：岛体一旦降到全透明，它的像素就从 OLE 的命中测试里消失，
+        /// 拖放目标会在拖动途中当场丢失 —— 表现就是「文件怎么都放不进详情页」。拖放一结束（离开 / 放下）自动恢复。
+        /// </para>
+        ///
+        /// <para>
+        /// 写方是 UI 线程上的 OLE 回调，读方是渲染计时器线程，所以必须 <c>volatile</c>。
+        /// </para>
+        /// </summary>
+        public static volatile bool FileDragInProgress = false;
+
+        /// <summary>
         /// 岛体垂直基准位置（逻辑像素）：<c>0</c> = 贴目标显示器顶部（默认，也是当前唯一的形态）。
         ///
         /// <para>
