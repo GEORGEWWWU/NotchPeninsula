@@ -68,6 +68,25 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
         Logger.Info($"[岛体拖放] 拖到收起态的组件 {widgetId} 上，已自动展开它的详情页");
     }
 
+    /// <summary>
+    /// 标记 / 解除「正有文件被拖着经过岛体」。置位期间穿透模式的悬停淡出被压制
+    /// （见 <see cref="Renderer.FileDragInProgress"/>）—— 岛体若淡到全透明，像素就从 OLE 命中测试里消失，
+    /// 拖放目标会在拖动途中当场丢失，用户手里的文件再也放不进来。
+    ///
+    /// <para>
+    /// 只要这一轮拖放**带文件路径**就置位，与详情页收不收无关：拒收时同样不该让岛体在光标底下淡走，
+    /// 否则用户看到的就是「拖过来，岛没了」。
+    /// </para>
+    /// </summary>
+    private static void SetFileDragInProgress(bool active)
+    {
+        if (Renderer.FileDragInProgress == active) return;
+        Renderer.FileDragInProgress = active;
+        Logger.Info(active
+            ? "[岛体拖放] 检测到文件拖入，已临时禁用穿透模式（岛体不再悬停淡出）"
+            : "[岛体拖放] 本轮拖放结束，穿透模式恢复");
+    }
+
     public int DragEnter(ComTypes.IDataObject dataObj, uint grfKeyState, Win32.POINT pt, ref uint pdwEffect)
     {
         pdwEffect = Win32.DROPEFFECT_NONE;
@@ -101,6 +120,11 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
         // 记下条目数：万一这一下的落点不在详情页里，DragOver 还要靠它重试接受
         _dragItemCount = files.Count;
+
+        // 🖱 一确认是「拖着文件过来」就先掐掉穿透淡出（不等详情页接不接受）：
+        //    岛体一旦在光标底下淡到全透明，它就从 OLE 的命中测试里消失，
+        //    这一轮拖放当场作废，而且**不会**再有第二次 DragEnter 把它接回来。
+        SetFileDragInProgress(true);
 
         // 落点正好压在某个「收起态收文件」的组件上（直接从岛上方向下滑进来的情形）→ 先把它的详情页展开
         TryExpandCollapsedDropWidget(x, y);
@@ -167,6 +191,8 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
     {
         Logger.Info($"[岛体拖放] 离开（accepted={_accepted}）");
 
+        SetFileDragInProgress(false);   // 拖放走了，穿透淡出照旧
+
         if (_accepted) Renderer.DispatchDetailPageDragLeave();
         _accepted = false;
 
@@ -183,6 +209,8 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
         bool accepted = _accepted;
         _accepted = false;
+
+        SetFileDragInProgress(false);   // 松手即收官：穿透淡出立刻恢复，不必等下一次状态轮询
 
         if (!_window.TryScreenToIslandLogical(pt, out float x, out float y))
         {

@@ -934,8 +934,19 @@ namespace NotchPeninsula
                     // 用户既看不到也点不到，靠唤醒按钮也救不回来 —— 面板只停 3s，
                     // 等你去点唤醒按钮时它已经消失了。内容一结束（点开 / 超时 / 被通知挤下）穿透自动恢复 ——
                     // 不需要任何额外状态：两个 is*Active 标志位都由本帧的调度逻辑维护。
+                    // 🖱 第三个例外：**文件正被拖着经过岛体时**（Renderer.FileDragInProgress）同样不许淡出。
+                    //    这一条比上面两条更硬：淡到全透明 = 岛体像素从 OLE 命中测试里消失，
+                    //    拖放目标当场丢失，用户手里的文件就再也放不进详情页了（拖放源那边也不会补发第二次 DragEnter）。
+                    //    标志位由 IslandDropTarget 在 DragEnter / DragLeave / Drop 维护，拖放一结束穿透自动回来。
                     float targetAlpha = 1.0f;
-                    if (!_isPassthroughAwake && isOverNotch && !isClipboardActive && !isToastActive) targetAlpha = 0.0f;
+                    if (!_isPassthroughAwake && isOverNotch && !isClipboardActive && !isToastActive
+                        && !Renderer.FileDragInProgress) targetAlpha = 0.0f;
+
+                    // 🛟 兜底自动复位：拖放源被杀 / 崩溃时 DragLeave、Drop 一个都不会来，
+                    //    标志位若一直挂着，穿透淡出就永久失效（而且看不出是谁干的）。
+                    //    文件拖放全程必须按住左键，松开就说明这一轮早就结束了 —— 一个系统调用就能把它收干净。
+                    if (Renderer.FileDragInProgress && (Win32.GetAsyncKeyState(0x01) & 0x8000) == 0)
+                        Renderer.FileDragInProgress = false;
 
                     Renderer.PassthroughAlpha += (targetAlpha - Renderer.PassthroughAlpha) * 0.18f;
 
