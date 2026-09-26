@@ -23,8 +23,13 @@ namespace NotchPeninsula
     ///     歌词每个码点正常只出现一次，因此稳态 60FPS 下本类几乎不被触碰。
     ///   • <b>不做任何后台预热、不建常驻表</b>：字典条目随真实歌词增长，一首多语言歌最多几十条。
     ///   • <b>解析失败时为负缓存</b>（记 <c>null</c>），保证同一个码点绝不会被反复询问系统字体服务。
-    ///   • <b>只持有系统已安装字体的引用</b>，不加载字体文件、不读取字体数据，
-    ///     因此没有可泄漏的非托管内存，也不需要 Dispose。
+    ///   • <b>字体面一律以弱引用持有、绝不手动 Dispose</b>：<c>MatchCharacter</c> / <c>FromFamilyName</c>
+    ///     返回的对象所有权归调用方 —— SkiaSharp 2.88.8 的 SKObject 维护一张「native 指针 → 托管对象」
+    ///     全局注册表 + 引用计数，只有终结器或 Dispose 才会把计数放掉。本类若用 static 字段**强引用**
+    ///     它们，对象就永远可达、终结器永不运行 → 引用计数永不归零 = <b>永久泄漏</b>。
+    ///     所以缓存值只是 <see cref="WeakReference{T}"/>：不可达即被 GC 终结器回收，既无泄漏，
+    ///     也彻底避开「手动 Dispose 掉别人（FontConfig / 静态画笔）还在用的共享字体面」这种
+    ///     use-after-dispose —— 2.x 的实例注册表会让同一 native 指针返回同一个托管对象，这个坑很实在。
     ///
     /// 与自定义字体的关系（优先级铁律）：
     ///   用户选了自定义字体 ⇒ 用户已经明确表达了自己要的那套字面，
@@ -32,8 +37,21 @@ namespace NotchPeninsula
     /// </summary>
     internal static class LyricsFont
     {
-        /// <summary>码点 → 该用哪套字体面（null 表示"系统也给不出"，负缓存）。</summary>
-        private static readonly Dictionary<int, SKTypeface?> _perCp = new(96);
+        /// <summary>
+        /// 码点 → 该用哪套字体面。值为 null 表示「系统也给不出」（负缓存）。
+        /// <b>值必须是弱引用</b>：本字典是 static 的，一旦强引用字体面，那些对象就永远可达、
+        /// 终结器永不运行，SkiaSharp 的 native 引用计数便永不归零 —— 即永久泄漏。
+        /// </summary>
+        private static readonly Dictionary<int, WeakReference<SKTypeface>?> _perCp = new(96);
+
+        /// <summary>
+        /// <see cref="_perCp"/> 的 FIFO 顺序，只用于容量兜底。
+        /// 与 <see cref="_perCp"/> 的**键集始终一一对应**（只在新增键时入队），因此不会无界增长。
+        /// </summary>
+        private static readonly Queue<int> _cpOrder = new(96);
+
+        /// <summary>码点缓存条目上限。每个键只是个 int，很便宜；这个上限只防极端输入。</summary>
+        private const int PerCpCap = 512;
 
         /// <summary>上次解析时使用的基础字体（引用比较即可识别换字体），换字体后所有决定一律重算。</summary>
         private static SKTypeface? _baseFace;
@@ -77,15 +95,55 @@ namespace NotchPeninsula
             {
                 _baseFace = baseTypeface;
                 _perCp.Clear();
+                _cpOrder.Clear();
                 _widths.Clear();
                 _widthOrder.Clear();
             }
 
-            if (_perCp.TryGetValue(cp, out var cached)) return cached;
+            if (_perCp.TryGetValue(cp, out var cached))
+            {
+                if (cached == null) return null;                      // 负缓存命中
+                if (cached.TryGetTarget(out var alive)) return alive; // 正缓存命中
+                // 弱引用已被 GC 回收：落到下面重新解析。字体面本身已由终结器放掉，没有任何泄漏。
+            }
 
             var face = Lookup(cp, baseTypeface);
-            _perCp[cp] = face;   // face 为 null 即负缓存：同一码点绝不重复询问系统
+            if (face == null)
+            {
+                Store(cp, null); // 负缓存：同一码点绝不重复询问系统
+                return null;
+            }
+
+            Store(cp, face);
             return face;
+        }
+
+        /// <summary>
+        /// 写入码点缓存（<paramref name="face"/> 为 null 即负缓存）。两条纪律：
+        ///
+        /// <para>
+        /// ① <b>只存弱引用，绝不 Dispose</b> —— 见类注释：SkiaSharp 2.x 的实例注册表可能让
+        /// <c>MatchCharacter</c> / <c>FromFamilyName</c> 返回<b>同一个托管对象</b>，手动 Dispose
+        /// 会让别处手里的对象变成已释放状态。弱引用把回收交给 GC 的终结器，天然安全。
+        /// </para>
+        /// <para>
+        /// ② <b>键已存在时不重复入队</b> —— 弱引用失效不会移除键，若每次重解析都入队，
+        /// <see cref="_cpOrder"/> 就会成为新的无界增长点；只在真正新增键时入队可保证两者一一对应。
+        /// </para>
+        /// </summary>
+        private static void Store(int cp, SKTypeface? face)
+        {
+            if (!_perCp.ContainsKey(cp))
+            {
+                if (_perCp.Count >= PerCpCap && _cpOrder.Count > 0)
+                    _perCp.Remove(_cpOrder.Dequeue());
+                _cpOrder.Enqueue(cp);
+            }
+
+            if (face == null)
+                _perCp[cp] = null; // 负缓存
+            else
+                _perCp[cp] = new WeakReference<SKTypeface>(face);
         }
 
         /// <summary>
