@@ -35,6 +35,9 @@ namespace NotchPeninsula
         private readonly Timer _renderTimer;
         private readonly Win32.WndProc _wndProcDelegate;
 
+        /// <summary>岛体的 OLE 拖入目标（详情页拖放用）。同时是 CCW 的强引用持有者，掉了可能被 GC 回收。</summary>
+        private IslandDropTarget? _islandDropTarget;
+
         // 动画引擎核心状态
         private bool _isAnimating = false;
         private float _currentWidth = Renderer.STANDBY_WIDTH;
@@ -277,8 +280,13 @@ namespace NotchPeninsula
 
             public PanelCollapseTimer(int delayMs) => _delayMs = delayMs;
 
-            /// <summary>挂起延迟折叠（重复挂起按最后一次重新计时）。</summary>
-            public void Schedule() => _deadline = DateTime.Now.AddMilliseconds(_delayMs);
+            /// <summary>
+            /// 挂起延迟折叠（重复挂起按最后一次重新计时）。
+            /// <paramref name="delayMs"/> 传 null 就用构造时的默认值 ——
+            /// 插件详情页允许自定义这段时长（<c>IDetailPage.AutoCollapseDelay</c>），所以这里得能被覆盖。
+            /// </summary>
+            public void Schedule(int? delayMs = null)
+                => _deadline = DateTime.Now.AddMilliseconds(delayMs ?? _delayMs);
 
             /// <summary>取消挂起（鼠标回到岛上）。</summary>
             public void Cancel() => _deadline = DateTime.MinValue;
@@ -326,6 +334,7 @@ namespace NotchPeninsula
         public NotchWindow()
         {
             _instanceForExit = this; // 托盘"退出"回调需要一条静态可达的引用链
+            _liveInstance = this;
             audio = new SystemSettingsManager();
             _dispatcher = Dispatcher.CurrentDispatcher;
             _media = new MediaController();
@@ -373,6 +382,8 @@ namespace NotchPeninsula
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
             else Info($"窗口创建成功，句柄: {_hwnd}");
             InstanceHandle = _hwnd;
+            // 🖱 让岛体也能接文件拖放：右键展开的插件详情页靠它实现「拖入 / 拖出」
+            SetupIslandDropTarget();
             // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
             _renderTimer = new Timer(16);
             // 具名方法而非 lambda：才能在退出时 -= 退订（lambda 会把 this 钉在计时器上）
@@ -536,6 +547,12 @@ namespace NotchPeninsula
         /// NotchWindow 本身是实例类，但托盘回调是静态语义，需要一条稳定的引用链。
         /// </summary>
         private static NotchWindow? _instanceForExit;
+
+        /// <summary>
+        /// 当前活跃的岛体实例 —— 给 <see cref="StartFileDragOnIsland"/> 这类静态入口
+        /// 回过头调用实例方法用（拖出结束后要补一次悬停判定，见 <see cref="NotifyDragExit"/>）。
+        /// </summary>
+        private static NotchWindow? _liveInstance;
         #region 监听
         private async System.Threading.Tasks.Task InitializeListenerAsync()
         {
@@ -969,7 +986,15 @@ namespace NotchPeninsula
 
                     // 🎯 唤醒那一次按键（还没松开）不算「岛外点击」—— 见 _wakeClickPending 上的说明：
                     //    它点的屏幕顶边坐标天然落在岛体可见矩形之外，不排除掉就会「抽一下又回去」。
-                    if (!isOverIsland && !_wakeClickPending && leftDown)
+                    //
+                    // 🧲 插件详情页展开期间，岛外的左键一律不管（末尾那个 !HasActiveDetailPage）：
+                    //    ① 用左键点组件展开时，用户的手还按在按键上，紧接着这几帧都会落进这个判定；
+                    //       而展开那一瞬间 WINDOW_WIDTH / _scaledWidth 正在变，换算出的 expLeft / expX 会偏，
+                    //       一旦判成「岛外点击」就把刚展开的面板收掉了 —— 肉眼就是「点一下闪一下、展不开」。
+                    //       （右键展开没这个问题：那时 leftDown 是 false，压根不进这个分支。）
+                    //    ② 正在从资源管理器往面板里拖文件的用户，鼠标本来就该待在岛外。
+                    //    收起详情页仍有两条明确路径：岛内右键、插件自己调 CloseDetailPage()。
+                    if (!isOverIsland && !_wakeClickPending && leftDown && !Renderer.HasActiveDetailPage)
                     {
                         CollapseAllExpanded();
                     }
@@ -1348,9 +1373,194 @@ namespace NotchPeninsula
             });
         }
 
-        private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        /// <summary>
+        /// 拖放离开岛体（或拖放被取消）时由 <see cref="IslandDropTarget"/> 调用。
+        ///
+        /// <para>
+        /// 为什么需要它：拖放期间鼠标被 OLE 的拖放循环接管，窗口<b>收不到 WM_MOUSELEAVE</b>，
+        /// 于是「鼠标离开岛体 → 挂延迟折叠」这条常规路径整个被跳过了。
+        /// 不在这里补一刀，详情页就会一直停在「正在拖入」的样子 —— 高亮不灭、也不走折叠计时，
+        /// 看起来就是「卡在拖入」。
+        /// </para>
+        /// </summary>
+        internal void NotifyDragExit()
         {
-            switch (msg)
+            if (IsCursorOverIslandNow())
+            {
+                // 鼠标还在岛上（拖放刚被 Esc 取消之类）：撤销可能挂起的折叠就好
+                CancelPanelCollapse();
+                return;
+            }
+
+            RequestPanelCollapse();
+
+            // ⚠️ 到这里**刻意不去动 _isHovered**，原因很关键：
+            //    _isHovered 只由 WM_MOUSEMOVE 的「首次进入」分支（if (!_isTrackingMouse)）置 true、
+            //    由 WM_MOUSELEAVE 置 false。拖放期间这两个消息都被 OLE 吞掉了，所以它现在可能不准。
+            //    而拖放结束时 _isTrackingMouse 已经是 true —— 一旦在这里把它置成 false，
+            //    鼠标哪怕还停在岛上，也再没有任何消息会把它恢复（首次进入分支不会再走）。
+            //    后果是 WM_LBUTTONDOWN 里 `if (_isHovered && HasActiveDetailPage)` 这道门永远过不去，
+            //    详情页彻底收不到左键 —— 表现就是「拖不动、也点不动」。
+            //    悬停标志交给系统消息自己维护，这里只负责面板折叠时序。
+
+            // ✅ 但要做这件事：把 TrackMouseEvent 的订阅强行作废。
+            //    系统对 WM_MOUSELEAVE 是「只发一次、发完即失效」的，而拖放期间那次它发给了被 OLE
+            //    接管的消息循环、我们根本没收到。订阅已经消耗掉、_isTrackingMouse 却还停在 true，
+            //    于是「鼠标离开」永远不会再被检测到，_isHovered 也会一直挂着。
+            //    置 false 之后，下一次 WM_MOUSEMOVE 会重新走「首次进入」分支，把状态拉回正轨。
+            //    （WM_MOUSEMOVE 按岛体可见形状派发，分层窗口的透明像素不吃消息，所以这一支是可信的。）
+            _isTrackingMouse = false;
+        }
+
+        /// <summary>
+        /// 鼠标当前是否真的落在岛体可见矩形内。换算口径与渲染循环里那段「岛外点击」轮询一致，
+        /// 别单独改其中一处 —— 两边不一致就会出现「判定说在岛外、实际在岛上」这类鬼问题。
+        /// </summary>
+        private bool IsCursorOverIslandNow()
+        {
+            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+            float topY = 12f * _currentStyleProgress;
+
+            Win32.GetCursorPos(out var pt);
+            float x = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
+            float y = (pt.y - _cachedMonitorY - Renderer.IslandBaseY * _dpiScale - _currentY) / _dpiScale;
+
+            return x >= left && x <= left + _currentWidth && y >= topY && y <= topY + _currentHeight;
+        }
+
+        // ================= 🖱 岛体拖放（右键展开的详情页拖入 / 拖出） =================
+        // 岛体是个纯自绘的分层窗口，原本只处理鼠标与键盘消息，所以详情页收不到任何拖入事件。
+        // 这里给它挂一个 OLE 的 IDropTarget，把文件拖放转发到「当前展开的详情页」。
+        // 全套逻辑都在岛体之外（IslandDropTarget 判定落点、Renderer 分发），本类只负责登记与坐标换算。
+
+        /// <summary>
+        /// 把岛体登记成 OLE 拖入目标。只登记一次；失败也只是「详情页不能拖放」，
+        /// 不影响岛体的任何既有功能，所以整段包在 try 里。
+        /// </summary>
+        private void SetupIslandDropTarget()
+        {
+            try
+            {
+                if (!Win32.EnsureOleInitialized())
+                {
+                    Logger.Warn("[NotchWindow] OLE 不可用，详情页拖放已禁用");
+                    return;
+                }
+
+                var target = new IslandDropTarget(this);
+                int hr = Win32.RegisterDragDrop(_hwnd, target);
+                if (hr != 0)
+                {
+                    Logger.Warn($"[NotchWindow] 岛体 RegisterDragDrop 失败：0x{hr:X8}，详情页拖放已禁用");
+                    return;
+                }
+
+                _islandDropTarget = target;
+                Logger.Info("[NotchWindow] 岛体拖放目标已就绪（详情页可接收拖入 / 发起拖出）");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("[NotchWindow] 岛体拖放登记异常", ex);
+            }
+        }
+
+        /// <summary>窗口销毁前摘掉 OLE 那边的登记（失败也无所谓，进程随后就退了）。</summary>
+        private void RevokeIslandDropTarget()
+        {
+            if (_islandDropTarget == null) return;
+            _islandDropTarget = null;
+            try { Win32.RevokeDragDrop(_hwnd); } catch { /* 窗口已销毁 */ }
+        }
+
+        /// <summary>
+        /// 把拖放的屏幕坐标换算成「详情页 / 组件」口径的岛内逻辑坐标 ——
+        /// 必须与鼠标点击那一套完全一致（见 WM_MOUSEMOVE 里的 mx/my 与 hitTopY）。
+        /// 少任何一步，落点就会整体偏移，表现为「拖到卡片左边却删掉了右边那张」。
+        /// </summary>
+        internal bool TryScreenToIslandLogical(Win32.POINT screenPt, out float x, out float y)
+        {
+            x = y = 0f;
+            if (_hwnd == IntPtr.Zero || _dpiScale <= 0f) return false;
+
+            var p = new Win32.POINT(screenPt.x, screenPt.y);
+            if (!Win32.ScreenToClient(_hwnd, ref p)) return false;
+
+            x = p.x / _dpiScale;
+            y = p.y / _dpiScale - 12f * _currentStyleProgress;
+            return true;
+        }
+
+        /// <summary>
+        /// 拖放进行中时续一口「鼠标还在岛上」。
+        ///
+        /// 拖放期间鼠标被 OLE 的拖放循环接管，窗口收不到 WM_MOUSEMOVE，也就刷不到 _isHovered；
+        /// 而详情页有「鼠标移开就收起」的延迟计时 —— 不续这一口，面板会在拖放途中把自己收掉，
+        /// 拖放目标当场消失（用户看到的就是「拖到一半面板没了」）。
+        /// </summary>
+        internal void KeepAliveForDrop()
+        {
+            _isHovered = true;
+            CancelPanelCollapse();
+        }
+
+        /// <summary>
+        /// 在岛体上发起一次系统拖放（详情页把条目「拖出去」时用）。阻塞到用户松手或按 Esc 取消。
+        ///
+        /// 这个方法会在主线程里进入 OLE 的模态循环，但宿主的渲染是独立计时器驱动的（见 _renderTimer），
+        /// 所以这段时间岛体动画照常，不会卡死。
+        /// </summary>
+        public static bool StartFileDragOnIsland(IReadOnlyList<string> paths, bool allowMove = false)
+        {
+            var hwnd = InstanceHandle;
+            if (hwnd == IntPtr.Zero || paths == null || paths.Count == 0) return false;
+
+            // 过滤掉已不存在的路径：把一条硬盘上已经没有的路径丢进拖放，目标只会报错或毫无反应
+            var valid = new List<string>(paths.Count);
+            foreach (var p in paths)
+            {
+                if (string.IsNullOrWhiteSpace(p)) continue;
+                try
+                {
+                    if (System.IO.File.Exists(p) || System.IO.Directory.Exists(p)) valid.Add(p);
+                }
+                catch { /* 路径含非法字符等，跳过这一条即可 */ }
+            }
+            if (valid.Count == 0) return false;
+
+            if (!Win32.EnsureOleInitialized()) return false;
+
+            DragOutState.Enter(hwnd);   // 标记「从岛体发起」，免得刚拖出去就被岛体自己接回来
+            try
+            {
+                // CF_HDROP 的封装交给 WinForms 的 DataObject（SetData(FileDrop, string[]) 是它的标准用法）
+                var data = new System.Windows.Forms.DataObject();
+                data.SetData(System.Windows.Forms.DataFormats.FileDrop, valid.ToArray());
+
+                uint allowed = allowMove
+                    ? Win32.DROPEFFECT_COPY | Win32.DROPEFFECT_MOVE
+                    : Win32.DROPEFFECT_COPY;
+
+                int hr = Win32.DoDragDrop(data, new FileDropSource(), allowed, out uint effect);
+                return hr == 0 /* S_OK */ && effect != 0;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("[NotchWindow] 岛体发起拖出失败", ex);
+                return false;
+            }
+            finally
+            {
+                DragOutState.Exit();
+
+                // 拖出结束：拖放期间 OLE 接管鼠标，窗口收不到 WM_MOUSELEAVE。
+                // 用户若是拖到岛外松手（正常拖走的情形就是如此），悬停态与折叠计时都会卡住，
+                // 这里补一次真实判定把它掰回来。
+                _liveInstance?.NotifyDragExit();
+            }
+        }
+
+        private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {            switch (msg)
             {
                 // 📋 剪贴板内容变化（事件驱动，仅在复制/剪切导致剪贴板内容变化时触发一次读取；开关关闭直接忽略）
                 case Win32.WM_CLIPBOARDUPDATE:
@@ -1360,6 +1570,8 @@ namespace NotchPeninsula
                 case Win32.WM_DESTROY:
                     // 📋 窗口销毁前反注册剪贴板监听，避免系统继续向已销毁窗口投递消息
                     _clipboardMonitor.Detach();
+                    // 🖱 同理：OLE 那边还捏着一个指向本窗口的拖入目标，销毁前必须摘掉
+                    RevokeIslandDropTarget();
                     break;
 
                 case Win32.WM_SETCURSOR:
@@ -1388,6 +1600,10 @@ namespace NotchPeninsula
                         // 🧩 记录鼠标逻辑坐标，供插件组件的悬停判定使用
                         Renderer.UpdatePluginMouse(mx, my);
                         float hitTopY = 12f * _currentStyleProgress;
+
+                        // 🖱 详情页展开时把鼠标移动也转给它 —— 插件靠「按下之后位移超过阈值」来发起拖出，
+                        //    没有这条就只能在按下那一瞬间进拖放循环，普通单击会被当成拖拽。
+                        if (Renderer.HasActiveDetailPage) Renderer.DispatchDetailPageMouseMove(mx, my - hitTopY);
 
                         // 1. 最高优先级拦截：唤醒按钮热区（位置真源在 Renderer.WakeButtonX，与渲染共用）
                         //    两种「整块不可见」的形态都要短路：穿透睡眠态、完全隐藏态（岛体基准离开顶部）
@@ -1475,6 +1691,14 @@ namespace NotchPeninsula
                     // 🎯 唤醒那次点击到此结束：解除岛外收起的抑制，之后用户再点岛外照常收起。
                     //    必须放在最前面 —— 上面拖动分支会 return，别让标记挂在拖动路径上漏掉。
                     _wakeClickPending = false;
+                    // 🖱 详情页展开时把「抬起」也转给它（按住拖出的收尾全靠这条）。同样放在最前面，
+                    //    免得被下面媒体拖动分支的 return 漏掉。
+                    if (Renderer.HasActiveDetailPage)
+                    {
+                        int ux = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int uy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        Renderer.DispatchDetailPageMouseUp(ux, uy - 12f * _currentStyleProgress);
+                    }
                     // 🎵 松手：解除状态锁并把落点提交给播放器（拖动期间攒下的所有改动只在这一刻提交一次）
                     if (_media.IsDragging)
                     {
@@ -1503,6 +1727,10 @@ namespace NotchPeninsula
                             _media.EndDrag();
                             Win32.ReleaseCapture();
                         }
+                        // 🖱 详情页展开时也通知一次「鼠标离开」：按下之后把鼠标拖出岛体再松手，
+                        //    WM_LBUTTONUP 不会来，详情页只能靠这条复位「按住」状态。
+                        if (Renderer.HasActiveDetailPage) Renderer.DispatchDetailPageMouseLeave();
+
                         // 🧩 鼠标离开灵动岛 → **展开的面板一律自动折叠**（媒体面板与插件详情页同一条管线，见 RequestPanelCollapse）。
                         //    WM_MOUSELEAVE 由系统按「岛体可见形状」派发（分层窗口的透明像素不吃鼠标消息），
                         //    所以这里判定等价于「鼠标真的离开了灵动岛」，不用轮询。
@@ -1559,10 +1787,13 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
-                        // 🧩 插件详情页展开时：岛内左键优先交给详情页（HitTest → OnAction）。
-                        //    即使没有命中任何动作也消费掉这次点击，避免误触到底层原生媒体按钮。
+                        // 🧩 插件详情页展开时：岛内左键优先交给详情页。
+                        //    先走新的「鼠标事件」通道（插件靠按下 + 移动的位移来发起拖出），
+                        //    再走老的 HitTest / OnAction（详情页的 HitTest 返回 None 时会自然跳过）。
+                        //    即使两边都没命中也消费掉这次点击，避免误触到底层原生媒体按钮。
                         if (_isHovered && Renderer.HasActiveDetailPage)
                         {
+                            Renderer.DispatchDetailPageMouseDown(cx, cy - hitTopY);
                             Renderer.DispatchDetailPageClick(cx, cy - hitTopY);
                             return (IntPtr)0;
                         }
@@ -1640,9 +1871,11 @@ namespace NotchPeninsula
                         if (_currentToast == null)
                         {
                             // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
+                            // 传 true：这是用户明确要关它，即使插件声明了「鼠标离开也不收起」也照收 ——
+                            // 否则选了那一档的详情页就彻底没有关闭入口了。
                             if (Renderer.HasActiveDetailPage)
                             {
-                                ClosePanelsNow();
+                                ClosePanelsNow(forceCloseDetail: true);
                                 return (IntPtr)0;
                             }
 
@@ -1709,8 +1942,20 @@ namespace NotchPeninsula
             if (Renderer.IsMediaExpanded) _mediaPanelCollapse.Schedule();
             if (Renderer.HasActiveDetailPage)
             {
-                _detailPanelCollapse.Schedule();
-                _detailCollapseWidgetId = PluginManager.Instance.Host.ActiveDetailWidgetId;
+                // 详情页可以自己指定「鼠标离开后多久收起」（IDetailPage.AutoCollapseDelay）：
+                // 需要用户离开面板去别处取东西的插件（比如文件中转站要从资源管理器挑文件再拖回来）
+                // 会把它调长，否则鼠标刚移开面板就没了、拖放目标当场消失。
+                // 没指定时返回 null，沿用宿主内置的 DetailCollapseDelayMs。
+                int? delay = Renderer.ActiveDetailCollapseDelayMs;
+
+                // CollapseNever：插件明确要求「鼠标移开也别收」→ 这次干脆不挂计时，面板一直开着。
+                // 不会因此关不掉：岛外点击走的是 ClosePanelsNow()（立即收，不经过这里），
+                // 岛内再右键、以及插件自己调 CloseDetailPage() 也都照常有效。
+                if (delay != Renderer.CollapseNever)
+                {
+                    _detailPanelCollapse.Schedule(delay);
+                    _detailCollapseWidgetId = PluginManager.Instance.Host.ActiveDetailWidgetId;
+                }
             }
         }
 
@@ -1736,7 +1981,14 @@ namespace NotchPeninsula
             _detailCollapseWidgetId = null;
 
             // 只收当初挂时间戳的那一张：期间插件若已经换了别的详情页，说明用户在看新东西，不动它
-            if (scheduled != null && Renderer.HasActiveDetailPage
+            //
+            // 🧲 这里必须再确认一次「插件此刻是否要求永不收起」：
+            //    计时是几秒前挂上的，这中间插件的 AutoCollapseDelay 完全可能已经变成负值
+            //    （同一个详情页改了策略）—— 挂计时那一刻检查过，不代表结算这一刻还成立。
+            //    少了这一判，声明「永不收起」的面板会被一个几秒前埋下的计时器收掉。
+            if (scheduled != null
+                && Renderer.HasActiveDetailPage
+                && !Renderer.ActiveDetailKeepsOpen
                 && string.Equals(PluginManager.Instance.Host.ActiveDetailWidgetId, scheduled, StringComparison.OrdinalIgnoreCase))
             {
                 PluginManager.Instance.Host.CloseDetailPage();
@@ -1744,11 +1996,25 @@ namespace NotchPeninsula
         }
 
         /// <summary>立即折叠全部展开面板（岛外点击这种明确的用户动作，不延迟）。</summary>
-        private static void ClosePanelsNow()
+        /// <param name="forceCloseDetail">
+        /// true = 连声明了「鼠标离开也不收起」的详情页也一并收掉。
+        /// 这个值专供「岛内右键」——那是用户明确冲着面板来的关闭手势，
+        /// 若也尊重插件的不收起，插件选了这个档之后就<b>再也没有任何办法关掉它</b>了。
+        ///
+        /// 岛外点击传 false（默认）。不过注意：岛外左键现在在渲染循环那段轮询里就已经被拦掉了
+        /// （详情页展开期间根本不会调到这里），这里保留这个判断是为了兜住将来可能新增的
+        /// 「岛外立即关闭」路径 —— 它们同样应当尊重插件的不收起选择。
+        /// </param>
+        private static void ClosePanelsNow(bool forceCloseDetail = false)
         {
             CancelPanelCollapse();
             Renderer.IsMediaExpanded = false;
-            if (Renderer.HasActiveDetailPage) PluginManager.Instance.Host.CloseDetailPage();
+
+            if (Renderer.HasActiveDetailPage
+                && (forceCloseDetail || !Renderer.ActiveDetailKeepsOpen))
+            {
+                PluginManager.Instance.Host.CloseDetailPage();
+            }
         }
 
         /// <summary>

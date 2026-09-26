@@ -551,6 +551,15 @@ public sealed class PluginHost
         return win;
     }
 
+    /// <summary>
+    /// 在灵动岛本体上发起一次系统拖放（详情页「拖出」用）。
+    ///
+    /// 详情页画在岛体上、没有自己的窗口，所以「把条目拖出去」这件事只能由宿主代为发起。
+    /// 会阻塞到用户松手或取消，语义详见 <see cref="IPluginHost.StartFileDrag"/>。
+    /// </summary>
+    public bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false)
+        => NotchWindow.StartFileDragOnIsland(paths, allowMove);
+
     /// <summary>窗口创建成功后由 <see cref="PluginWindow"/> 回调登记。</summary>
     internal void AttachWindow(string pluginId, IPluginWindow window)
     {
@@ -641,5 +650,7 @@ public sealed class ScopedPluginHost : IPluginHost
     public float GetPluginRowBudget() => _host.GetPluginRowBudgetFor(_pluginId);
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
+    public bool ToggleDetailPage(string widgetId) => _host.ToggleDetailPage(widgetId);
     public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(_pluginId, title, width, height);
+    public bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false) => _host.StartFileDrag(paths, allowMove);
 }
