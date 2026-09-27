@@ -463,7 +463,7 @@ namespace NotchPeninsula
             }
 
             DrawStyleOption(0, "经典刘海", 220, TITLE_BAR_HEIGHT + 50);
-            DrawStyleOption(1, "悬浮胶囊", 390, TITLE_BAR_HEIGHT + 50);
+            DrawStyleOption(1, "悬浮灵动岛", 390, TITLE_BAR_HEIGHT + 50);
 
             // 目标显示器卡片
             float monitorCardY = TITLE_BAR_HEIGHT + 172;
@@ -870,11 +870,11 @@ namespace NotchPeninsula
                     //    所以就地标明生效条件。
                     if (index == 7)
                     {
+                        // 与左侧子标签（「底部圆角」等）同字号、改用蓝色提示
                         float labelW = _subTextPaint.MeasureText(subLabels[i]);
-                        _dynamicTextPaint.TextSize = 10f;
-                        _dynamicTextPaint.Color = new SKColor(150, 150, 150);
-                        canvas.DrawText("刘海模式下生效", 216 + labelW + 8, cardBtnY + 16, _dynamicTextPaint);
-                        _dynamicTextPaint.TextSize = 13f; // 还原字号，防止污染后续文字渲染
+                        _subTextPaint.Color = new SKColor(0, 140, 240);
+                        canvas.DrawText("刘海模式下生效", 216 + labelW + 8, cardBtnY + 17, _subTextPaint);
+                        _subTextPaint.Color = new SKColor(170, 170, 170); // 还原，防止污染后续标签
                     }
 
                     // index 0 / 2 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
@@ -882,7 +882,9 @@ namespace NotchPeninsula
                     {
                         const string autoHint = "系统自动调整，无需设置";
                         float hintW = _subTextPaint.MeasureText(autoHint);
+                        _subTextPaint.Color = new SKColor(0, 140, 240); // 蓝色提示（与左侧标签同字号）
                         canvas.DrawText(autoHint, WIDTH - 36 - hintW, cardBtnY + 17, _subTextPaint);
+                        _subTextPaint.Color = new SKColor(170, 170, 170); // 还原，防止污染后续标签
                         continue;
                     }
 
