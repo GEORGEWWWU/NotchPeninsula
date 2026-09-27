@@ -193,9 +193,10 @@ namespace NotchPeninsula
                 // 数值变动时才更新字符串缓存，避免渲染循环产生 GC 垃圾
                 UpdateValueString(updateIdx);
 
+                // index 1（原「垂直高度」）已合并进 index 3「全局折叠态高度」，不再有处理器
                 if (updateIdx == 0) { Renderer.STANDBY_WIDTH = _customValues[0]; Program.SaveSetting("Custom_StandbyW", _customValues[0]); }
-                else if (updateIdx == 1) { Renderer.BASE_HEIGHT = _customValues[1]; Program.SaveSetting("Custom_BaseH", _customValues[1]); }
                 else if (updateIdx == 2) { Renderer.MEDIA_WIDTH = _customValues[2]; Program.SaveSetting("Custom_MediaW", _customValues[2]); }
+                // 🎯 全局折叠态高度：写回原媒体控制的键（Custom_MediaH），与 LoadSettings 的读取口径一致
                 else if (updateIdx == 3) { Renderer.MEDIA_HEIGHT = _customValues[3]; Program.SaveSetting("Custom_MediaH", _customValues[3]); }
                 else if (updateIdx == 4) { Renderer.TOAST_WIDTH = _customValues[4]; Program.SaveSetting("Custom_ToastW", _customValues[4]); }
                 else if (updateIdx == 5) { Renderer.TOAST_HEIGHT = _customValues[5]; Program.SaveSetting("Custom_ToastH", _customValues[5]); }

@@ -656,7 +656,8 @@ namespace NotchPeninsula
         private int _hoveredResetIndex = -1;
 
         private float[] _customValues = new float[8];
-        // 「恢复默认」用的出厂值，顺序 = [待机宽, 待机高, 媒体宽, 媒体高, 通知宽, 通知高, DPI, 底部圆角]。
+        // 「恢复默认」用的出厂值，顺序 = [待机宽, ~~待机高~~(已废弃), 媒体宽, 全局折叠态高, 通知宽, 通知高, DPI, 底部圆角]。
+        // ⚠️ 数组按下标取值，废弃项也不能删，只能留位（29f 已不再被任何行引用）。
         // ⚠️ 这三个地方必须同步改，否则「恢复默认」和首次安装会给出不同的值：
         //    ① 本数组 ② Program.LoadSettings 里 key.GetValue 的兜底值 ③ Renderer 的字段初值
 
@@ -741,7 +742,7 @@ namespace NotchPeninsula
             _instance = this;
             _isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
             _customValues[0] = Renderer.STANDBY_WIDTH;
-            _customValues[1] = Renderer.BASE_HEIGHT;
+            // index 1「垂直高度」已随「全局折叠态高度」合并删除：height 现在统一是 index 3
             _customValues[2] = Renderer.MEDIA_WIDTH;
             _customValues[3] = Renderer.MEDIA_HEIGHT;
             _customValues[4] = Renderer.TOAST_WIDTH;
@@ -1152,7 +1153,12 @@ namespace NotchPeninsula
 
                 IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
                 if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
+                {
+                    // 极端情况：位图建出来了但像素指针取不到 —— 必须把已建的 hBitmap 删掉再走，
+                    // 否则这一支会永久漏掉一块 DIB（外层 finally 只负责 DC）。
+                    if (hBitmap != IntPtr.Zero) Win32.DeleteObject(hBitmap);
                     return;
+                }
 
                 IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
                 try

@@ -66,9 +66,16 @@ namespace NotchPeninsula
 
                     // 读取个性化参数
                     Renderer.STANDBY_WIDTH = Convert.ToSingle(key.GetValue("Custom_StandbyW", 125f));
-                    Renderer.BASE_HEIGHT = Convert.ToSingle(key.GetValue("Custom_BaseH", 29f));
                     Renderer.MEDIA_WIDTH = Convert.ToSingle(key.GetValue("Custom_MediaW", 250f));
-                    Renderer.MEDIA_HEIGHT = Convert.ToSingle(key.GetValue("Custom_MediaH", 35f));
+                    // 🎯 全局折叠态高度：原「待机高度」与「媒体激活时高度」已合并，唯一真源 = MEDIA_HEIGHT，
+                    //    存储沿用原媒体控制的 Custom_MediaH（老用户的媒体高度照常生效）。
+                    //    向下兼容：老版本两个高度是分开存的，用户可能**只调过待机高度**（Custom_BaseH）
+                    //    而没碰过媒体高度 —— 那样 Custom_MediaH 这个键压根不存在，直接取默认值会把他
+                    //    调过的高度抹掉。所以 Custom_MediaH 缺席时回落到 Custom_BaseH，两者都没有才用默认 35。
+                    //    迁移是只读的：Custom_BaseH 留在注册表里不动（回退老版本仍能读到），
+                    //    用户下次调高度时会把新值写进 Custom_MediaH，此后一律以它为准。
+                    Renderer.MEDIA_HEIGHT = Convert.ToSingle(
+                        key.GetValue("Custom_MediaH", key.GetValue("Custom_BaseH", 35f)));
                     Renderer.TOAST_WIDTH = Convert.ToSingle(key.GetValue("Custom_ToastW", 260f));
                     Renderer.TOAST_HEIGHT = Convert.ToSingle(key.GetValue("Custom_ToastH", 55f));
                     Renderer.GLOBAL_DPI = Convert.ToSingle(key.GetValue("Custom_Dpi", 1.0f));

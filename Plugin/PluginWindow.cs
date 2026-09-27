@@ -62,6 +62,18 @@ public sealed class PluginWindow : IPluginWindow
 
     private IntPtr _memDc, _hBitmap, _oldBitmap, _pBits;
     private SKSurface? _surface;
+
+    /// <summary>
+    /// 复用同一支圆角路径给「背景 / 内容裁剪 / 边框」三处用（<c>Rewind</c> 后重建）。
+    /// 与 <see cref="_surface"/> 同生命周期：<see cref="InitBuffer"/> 建、<see cref="CleanupBuffer"/> 毁。
+    /// </summary>
+    /// <remarks>
+    /// 为什么不直接 <c>new SKRoundRect</c>：它在 SkiaSharp 2.88.8 里是 <c>SKObject</c> 子类
+    /// （与 <c>SKPaint</c> 同级，维护「native 指针 → 托管对象」全局注册表），
+    /// 建了不 Dispose 就是永久泄漏；而 <see cref="Redraw"/> 由 WM_APP_REDRAW 驱动、插件动画期高频调用。
+    /// </remarks>
+    private SKPath? _roundRectPath;
+
     private bool _closing;
     private int _posX, _posY;
 
@@ -499,24 +511,32 @@ public sealed class PluginWindow : IPluginWindow
     private void Redraw()
     {
         if (_surface == null || _draw == null) return;
+
+        // 圆角路径与 _surface 同生命周期（见 InitBuffer / CleanupBuffer）。
+        // 判空放在任何 Save 之前，避免提前 return 破坏画布 save 栈平衡。
+        var rrPath = _roundRectPath;
+        if (rrPath == null) return;
+
         var canvas = _surface.Canvas;
         canvas.Clear(SKColors.Transparent);
         canvas.Save();
         canvas.Scale(_dpiScale); // 让插件按逻辑坐标绘制
 
-        // 圆角背景
-        var bg = new SKRoundRect(new SKRect(0, 0, _width, _height), 14f);
-        canvas.DrawRoundRect(bg, _bgPaint);
+        // 圆角背景（复用路径，零对象分配 —— 见 _roundRectPath 的说明）
+        rrPath.Rewind();
+        rrPath.AddRoundRect(new SKRect(0, 0, _width, _height), 14f, 14f);
+        canvas.DrawPath(rrPath, _bgPaint);
 
         // 插件内容裁剪到圆角内，避免四角溢出
         canvas.Save();
-        canvas.ClipRoundRect(bg, antialias: true);
+        canvas.ClipPath(rrPath, SKClipOperation.Intersect, antialias: true);
         _draw(canvas, _width, _height);
         canvas.Restore();
 
         // 边框绘制在内容之上，始终可见（内缩半线宽避免被窗口边缘裁掉）
-        var border = new SKRoundRect(new SKRect(0.75f, 0.75f, _width - 0.75f, _height - 0.75f), 13f);
-        canvas.DrawRoundRect(border, _borderPaint);
+        rrPath.Rewind();
+        rrPath.AddRoundRect(new SKRect(0.75f, 0.75f, _width - 0.75f, _height - 0.75f), 13f, 13f);
+        canvas.DrawPath(rrPath, _borderPaint);
 
         DrawCloseButton(canvas);
         canvas.Restore();
@@ -564,6 +584,7 @@ public sealed class PluginWindow : IPluginWindow
         _oldBitmap = Win32.SelectObject(_memDc, _hBitmap);
         var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
         _surface = SKSurface.Create(info, _pBits, _scaledWidth * 4);
+        _roundRectPath = new SKPath();
         Win32.ReleaseDC(IntPtr.Zero, screenDc);
     }
 
@@ -571,9 +592,13 @@ public sealed class PluginWindow : IPluginWindow
     {
         _surface?.Dispose();
         _surface = null;
+        _roundRectPath?.Dispose();
+        _roundRectPath = null;
         if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero) Win32.SelectObject(_memDc, _oldBitmap);
         if (_hBitmap != IntPtr.Zero) Win32.DeleteObject(_hBitmap);
         if (_memDc != IntPtr.Zero) Win32.DeleteDC(_memDc);
+        // 句柄字段清零，让本方法可重复调用（幂等）—— 二次进来不会再删一次已删的句柄。
+        _hBitmap = _memDc = _oldBitmap = _pBits = IntPtr.Zero;
     }
 }
 

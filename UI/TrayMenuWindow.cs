@@ -692,7 +692,12 @@ namespace NotchPeninsula
                 };
 
                 IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
-                if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero) return;
+                if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
+                {
+                    // 同上：位图已建、指针未取到时也要删掉，不然这块 DIB 就漏了（外层 finally 只管 DC）。
+                    if (hBitmap != IntPtr.Zero) Win32.DeleteObject(hBitmap);
+                    return;
+                }
 
                 IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
                 try

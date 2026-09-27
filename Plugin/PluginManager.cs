@@ -102,6 +102,11 @@ public sealed class PluginManager
     // 有了这个序号就能只在真变了的时候重建一次。
     private int _changeVersion;
 
+    // 「显示内容」列表的缓存（判据见 DisplayItems 属性）：UI 每帧访问它，不缓存就是每帧一次 List 分配。
+    private readonly object _displayItemsLock = new();
+    private IReadOnlyList<DisplayItem>? _displayItemsCache;
+    private int _displayItemsVersion = -1;
+
     /// <summary>注册表变更序号（单调递增，只在 <see cref="Changed"/> 触发前自增）。</summary>
     public int ChangeVersion => System.Threading.Volatile.Read(ref _changeVersion);
     public string PluginsRoot { get; }
@@ -230,6 +235,17 @@ public sealed class PluginManager
     {
         get
         {
+            // 缓存判据 = ChangeVersion：任何「发现 / 加载 / 卸载 / 启用状态 / 排序 / 显隐 / 加载失败」
+            // 都会自增它（改 CompShow* 的 SetDisplayed 也 RaiseChanged），所以不必再单独比对内置开关。
+            // 不缓存的话，「显示内容」页每帧都要 new List + 逐项 new DisplayItem（还叠着 16ms 悬停动画）。
+            int version = ChangeVersion;
+            lock (_displayItemsLock)
+            {
+                if (_displayItemsCache != null && _displayItemsVersion == version)
+                    return _displayItemsCache;
+            }
+
+            IReadOnlyList<DisplayItem> built;
             lock (_lock)
             {
                 var list = new List<DisplayItem>(_order.Count + BuiltinWidgets.Default.Length);
@@ -259,8 +275,15 @@ public sealed class PluginManager
                     if (!list.Any(x => string.Equals(x.Key, b, StringComparison.OrdinalIgnoreCase)))
                         list.Add(new DisplayItem { Key = b, Name = BuiltinName(b), IsShown = IsBuiltinDisplayed(b), IsBuiltin = true });
 
-                return list;
+                built = list;
             }
+
+            lock (_displayItemsLock)
+            {
+                _displayItemsCache = built;
+                _displayItemsVersion = version;
+            }
+            return built;
         }
     }
 
@@ -559,11 +582,29 @@ public sealed class PluginManager
     private bool Load(PluginEntry e, bool dedupSameId)
     {
         if (e.State == PluginState.Loaded) return true;
+
+        // ⚠️ shadow / ctx 必须声明在 try 之外：C# 局部变量的作用域是整个 try 块，
+        //    catch 块看不到 try 内声明的变量 —— 失败路径就没法回收它们（这正是原先的泄漏点）。
+        string? shadow = null;
+        PluginLoadContext? ctx = null;
+
+        // 重试一个此前加载失败的条目时，先彻底拆掉上一次残留的 ALC 与影子目录，
+        // 否则下面的 e.Context = ctx 会把旧 ALC 直接覆盖成游离对象（永不 Unload）。
+        if (e.Context != null)
+        {
+            var staleShadow = e.ShadowDir;
+            try { Teardown(e); }
+            catch (Exception ex) { Logger.Warn($"[PluginManager] 重载前清理旧上下文失败: {e.Key} — {ex.Message}"); }
+            e.ShadowDir = null;
+            e.Id = "";
+            TryDeleteDir(staleShadow);
+        }
+
         try
         {
             e.Error = null;
-            var shadow = CreateShadowCopy(e);
-            var ctx = new PluginLoadContext(shadow);
+            shadow = CreateShadowCopy(e);
+            ctx = new PluginLoadContext(shadow);
             var dllInShadow = Path.Combine(shadow, Path.GetFileName(e.DllPath));
             var asm = ctx.LoadFromAssemblyPath(dllInShadow);
 
@@ -611,6 +652,21 @@ public sealed class PluginManager
             if (ex is ReflectionTypeLoadException rtle)
                 foreach (var le in rtle.LoaderExceptions)
                     if (le != null) Logger.Error($"[PluginManager] 类型加载失败: {le.Message}");
+
+            // 失败清理：把已经建起来的加载上下文与影子目录收干净。
+            // 不清理的后果 —— 影子目录残留到下次启动；而失败点若在 plugin.Initialize，
+            // e.Context 已赋值，那个 Failed 条目会一直强引用 ALC，永远回收不掉（每次启动重试再漏一份）。
+            if (e.Context != null)
+            {
+                // e.Context 已赋值 ⇒ 插件已（部分）注册进宿主，走完整拆解（Dispose + 注销 + Unload + 清字段）
+                try { Teardown(e); } catch { }
+            }
+            else
+            {
+                try { ctx?.Unload(); } catch { }
+            }
+            TryDeleteDir(e.ShadowDir ?? shadow);
+            e.ShadowDir = null;
 
             e.State = PluginState.Failed;
             e.Error = ex.Message;
@@ -691,6 +747,31 @@ public sealed class PluginManager
         TryDeleteDir(shadow);
         Logger.Info($"[PluginManager] 已卸载 {e.Key}");
         RaiseChanged();
+    }
+
+    /// <summary>
+    /// 程序退出前的收尾：让每个已加载的插件释放资源、摘除宿主登记、卸载 ALC。
+    ///
+    /// <para>
+    /// 与 <see cref="Unload"/> 的区别是**不做 GC / 终结器轮次验证** —— 进程马上就要退出，
+    /// 验证 ALC 是否真被回收既无意义也没时间；这里只保证「插件的 Dispose 与宿主注销都执行过」，
+    /// 插件自己开的线程 / 句柄 / 连接 / 临时文件因此有机会被正常收掉，而不是整块丢给进程终止。
+    /// </para>
+    /// </summary>
+    public void ShutdownAll()
+    {
+        foreach (var e in Entries)
+        {
+            if (e.Context == null) continue;
+            try
+            {
+                var shadow = e.ShadowDir;
+                Teardown(e);          // Dispose 插件 + 注销宿主登记 + ctx.Unload + 清空字段
+                e.ShadowDir = null;
+                TryDeleteDir(shadow);
+            }
+            catch (Exception ex) { Logger.Error($"[PluginManager] 退出卸载 {e.Key} 失败", ex); }
+        }
     }
 
     /// <summary>

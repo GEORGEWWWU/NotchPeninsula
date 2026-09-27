@@ -76,8 +76,9 @@ namespace NotchPeninsula
 
                 for (int i = 0; i < 8; i++)
                 {
-                    // index 0 / 4 无控件，不吃指针（与绘制侧保持一致）
-                    if (i == 0 || i == 4) continue;
+                    // 无控件的项不吃指针（与绘制侧保持一致）：
+                    // 0 / 2 / 4 是「系统自动调整」；1「垂直高度」已合并进 3「全局折叠态高度」删除。
+                    if (i == 0 || i == 1 || i == 2 || i == 4) continue;
 
                     float btnY = GetBtnY(i);
                     float rightX = WIDTH - 36; // 保持原有变量不动

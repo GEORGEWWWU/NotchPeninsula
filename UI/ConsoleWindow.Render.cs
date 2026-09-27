@@ -408,7 +408,7 @@ namespace NotchPeninsula
             var styleCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 160);
             canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("刘海形态", 216, TITLE_BAR_HEIGHT + 38, _uiTextPaint);
+            canvas.DrawText("显示形态", 216, TITLE_BAR_HEIGHT + 38, _uiTextPaint);
 
             void DrawStyleOption(int index, string name, float x, float y)
             {
@@ -426,7 +426,14 @@ namespace NotchPeninsula
                 float cx = x + 75; float cy = y + 35;
 
                 // 颜色直接同步真实的明暗逻辑，并完美兼容“跟随系统”模式
-                bool isLight = Renderer.ThemeMode == 1 || (Renderer.ThemeMode == 2 && Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")?.GetValue("AppsUseLightTheme") is int val && val == 1);
+                // 注意：OpenSubKey 返回的 RegistryKey 持有原生句柄，必须 using 掉 ——
+                // 本方法每次渲染显示设置页都会执行，漏掉就是每帧泄漏一个注册表句柄（靠终结器回收）。
+                bool isLight = Renderer.ThemeMode == 1;
+                if (Renderer.ThemeMode == 2)
+                {
+                    using var themeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                    isLight = themeKey?.GetValue("AppsUseLightTheme") is int val && val == 1;
+                }
                 _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
 
                 if (index == 0) // 调整经典刘海的矢量绘图比例，使其视觉高度和灵动岛保持一致
@@ -463,7 +470,7 @@ namespace NotchPeninsula
             }
 
             DrawStyleOption(0, "经典刘海", 220, TITLE_BAR_HEIGHT + 50);
-            DrawStyleOption(1, "悬浮胶囊", 390, TITLE_BAR_HEIGHT + 50);
+            DrawStyleOption(1, "悬浮灵动岛", 390, TITLE_BAR_HEIGHT + 50);
 
             // 目标显示器卡片
             float monitorCardY = TITLE_BAR_HEIGHT + 172;
@@ -822,11 +829,11 @@ namespace NotchPeninsula
         {
             void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
             {
-                // 该卡片的尺寸设置是否已被改动（index 0 / 4 已不可调，不参与判定）
+                // 该卡片的尺寸设置是否已被改动（index 0 / 2 / 4 已不可调，不参与判定）
                 bool isModified = false;
                 foreach (int index in indices)
                 {
-                    if (index == 0 || index == 4) continue;
+                    if (index == 0 || index == 2 || index == 4) continue;
                     if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
                     {
                         isModified = true;
@@ -865,12 +872,26 @@ namespace NotchPeninsula
 
                     canvas.DrawText(subLabels[i], 216, cardBtnY + 17, _subTextPaint);
 
-                    // index 0 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
-                    if (index == 0 || index == 4)
+                    // 🎯 底部圆角只在「经典刘海」样式下参与圆角插值：切到灵动岛样式后该项会被
+                    //    islandRadius 完全覆盖（见 Renderer.Draw 的 rBottom 计算），调了也看不出来，
+                    //    所以就地标明生效条件。
+                    if (index == 7)
+                    {
+                        // 与左侧子标签（「底部圆角」等）同字号、改用蓝色提示
+                        float labelW = _subTextPaint.MeasureText(subLabels[i]);
+                        _subTextPaint.Color = new SKColor(0, 140, 240);
+                        canvas.DrawText("刘海模式下生效", 216 + labelW + 8, cardBtnY + 17, _subTextPaint);
+                        _subTextPaint.Color = new SKColor(170, 170, 170); // 还原，防止污染后续标签
+                    }
+
+                    // index 0 / 2 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
+                    if (index == 0 || index == 2 || index == 4)
                     {
                         const string autoHint = "系统自动调整，无需设置";
                         float hintW = _subTextPaint.MeasureText(autoHint);
+                        _subTextPaint.Color = new SKColor(0, 140, 240); // 蓝色提示（与左侧标签同字号）
                         canvas.DrawText(autoHint, WIDTH - 36 - hintW, cardBtnY + 17, _subTextPaint);
+                        _subTextPaint.Color = new SKColor(170, 170, 170); // 还原，防止污染后续标签
                         continue;
                     }
 
@@ -958,10 +979,13 @@ namespace NotchPeninsula
                 canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
                 _dynamicTextPaint.TextSize = 13f;
             }
-            DrawMultiCard(147, "待机显示", ["水平宽度", "垂直高度", "底部圆角"], [0, 1, 7], "px");
-            DrawMultiCard(299, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
-            DrawMultiCard(417, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
-            DrawMultiCard(535, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+            // 🎯 「待机高度」与「媒体激活时高度」已合并为一个「全局折叠态高度」（index 3）：
+            //    它同时管待机态、媒体折叠态与剪贴板面板的高度，值沿用原媒体控制存储的
+            //    MEDIA_HEIGHT（注册表 Custom_MediaH），老用户的高度不会丢。
+            DrawMultiCard(147, "待机显示", ["水平宽度", "全局折叠态高度", "底部圆角"], [0, 3, 7], "px");
+            DrawMultiCard(299, "媒体控制", ["激活时宽度"], [2], "px");
+            DrawMultiCard(383, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
+            DrawMultiCard(501, "全局 DPI 缩放", ["视觉比例"], [6], "x");
         }
 
         // 页签：插件中心

@@ -10,8 +10,6 @@ namespace NotchPeninsula
         // 1. 布局核心参数 (改为无锁动态变量)
         private static volatile float _standbyWidth = 125f;
 
-        private static volatile float _baseHeight = 29f;
-
         private static volatile float _mediaWidth = 250f;
 
         private static volatile float _mediaHeight = 35f;
@@ -26,10 +24,13 @@ namespace NotchPeninsula
 
         public static float STANDBY_WIDTH { get => _standbyWidth; set => _standbyWidth = value; }
 
-        public static float BASE_HEIGHT { get => _baseHeight; set => _baseHeight = value; }
-
         public static float MEDIA_WIDTH { get => _mediaWidth; set => _mediaWidth = value; }
 
+        /// <summary>
+        /// 全局折叠态高度：待机态、媒体折叠态、剪贴板链接面板共用同一个值。
+        /// 原先「待机高度」(BASE_HEIGHT) 与它分开，2026-09-27 合并到本属性，
+        /// 存储沿用注册表 <c>Custom_MediaH</c>（见 Program.LoadSettings 的兼容回落）。
+        /// </summary>
         public static float MEDIA_HEIGHT { get => _mediaHeight; set => _mediaHeight = value; }
 
         public static float TOAST_WIDTH { get => _toastWidth; set => _toastWidth = value; }
@@ -164,7 +165,7 @@ namespace NotchPeninsula
             Math.Max(MAX_ISLAND_WIDTH,
                 Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))))) + 80f;
 
-        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(BASE_HEIGHT, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT))) + 45f);
+        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f);
 
         public const int OUTER_R = 14;
 

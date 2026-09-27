@@ -65,19 +65,25 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
+        // 个性化中心各行控件的 Y 坐标（index → 行）：
+        //   待机显示卡：0 水平宽度 / 3 全局折叠态高度 / 7 底部圆角
+        //   媒体控制卡：2 激活时宽度
+        //   消息通知卡：4 弹出的宽度 / 5 弹出的高度
+        //   DPI 卡    ：6 视觉比例
+        // ⚠️ 这里的行序必须与 DrawMultiCard 的调用、卡片高度（36 + 行数×34，卡间留 14）
+        //    严格对应 —— 改一处漏一处就会把控件画到卡片外面。
         private float GetBtnY(int index)
         {
             return index switch
             {
                 -1 => TITLE_BAR_HEIGHT + 35,
                 0 => TITLE_BAR_HEIGHT + 147 + 40,
-                1 => TITLE_BAR_HEIGHT + 147 + 40 + 34,
+                3 => TITLE_BAR_HEIGHT + 147 + 40 + 34,
                 7 => TITLE_BAR_HEIGHT + 147 + 40 + 68,
                 2 => TITLE_BAR_HEIGHT + 299 + 40,
-                3 => TITLE_BAR_HEIGHT + 299 + 40 + 34,
-                4 => TITLE_BAR_HEIGHT + 417 + 40,
-                5 => TITLE_BAR_HEIGHT + 417 + 40 + 34,
-                6 => TITLE_BAR_HEIGHT + 535 + 40,
+                4 => TITLE_BAR_HEIGHT + 383 + 40,
+                5 => TITLE_BAR_HEIGHT + 383 + 40 + 34,
+                6 => TITLE_BAR_HEIGHT + 501 + 40,
                 _ => 0
             };
         }
