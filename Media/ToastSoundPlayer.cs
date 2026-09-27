@@ -154,10 +154,16 @@ internal static class ToastSoundPlayer
                 return;
             }
 
-            provider = BuildProvider(reader);
+            // 🔇 音量必须走「软件增益」，**绝不能碰 `WasapiOut.Volume`**。
+            //    ⚠️ NAudio 里 WasapiOut.Volume 的 setter 实现是：
+            //        mmDevice.AudioEndpointVolume.MasterVolumeLevelScalar = value;
+            //      它改的是**系统主音量**（任务栏音量条），不是本程序的音频会话。
+            //      之前这里写过 `output.Volume = req.VolumePercent / 100f;`，
+            //      结果每响一声提示音就把系统音量强行改成提示音档位 —— 已移除。
+            //    提示音是独立音量通道，增益只在样本上做，与系统音量彻底解耦。
+            provider = new VolumeScaleProvider(BuildProvider(reader), req.VolumePercent / 100f);
 
             output = new WasapiOut(AudioClientShareMode.Shared, useEventSync: false, latency: 120);
-            output.Volume = req.VolumePercent / 100f;
             output.Init(provider);
 
             if (!PlayAndWait(output, (int)Math.Ceiling(seconds * 1000) + 1500))
@@ -267,6 +273,115 @@ internal static class ToastSoundPlayer
                 buffer[d + 3] = src[s + 3];
             }
             return gotFrames * outBlock;
+        }
+    }
+
+    /// <summary>
+    /// 软件增益（音量缩放）—— 提示音音量的**唯一**实现方式，与系统音量完全无关。
+    ///
+    /// ⚠️ 为什么不用 <c>WasapiOut.Volume</c>：
+    ///     NAudio 里那个属性的 setter 是
+    ///     <c>mmDevice.AudioEndpointVolume.MasterVolumeLevelScalar = value;</c>，
+    ///     改的是**系统主音量**（任务栏音量条），而不是本程序的音频会话。
+    ///     提示音是独立音量通道，必须与系统音量解耦，所以直接在样本上乘增益。
+    ///
+    /// 只做原地乘法，不改变格式 / 不改变块对齐，对 <see cref="WasapiOut"/> 完全透明。
+    /// 音量 ≥ 100% 时直接透传（零开销）；遇到无法识别的编码也原样透传（宁可响大声，不能变哑巴）。
+    /// </summary>
+    private sealed class VolumeScaleProvider : IWaveProvider
+    {
+        private readonly IWaveProvider _source;
+        private readonly float _volume;
+
+        public VolumeScaleProvider(IWaveProvider source, float volume)
+        {
+            _source = source;
+            _volume = Math.Clamp(volume, 0f, 1f);
+            WaveFormat = source.WaveFormat;
+        }
+
+        public WaveFormat WaveFormat { get; }
+
+        public int Read(byte[] buffer, int offset, int count)
+        {
+            int read = _source.Read(buffer, offset, count);
+            if (read <= 0 || _volume >= 0.999f) return read;
+
+            var fmt = WaveFormat;
+            int bits = fmt.BitsPerSample;
+            switch (fmt.Encoding)
+            {
+                case WaveFormatEncoding.Pcm:
+                    if (bits == 8) ScaleU8(buffer, offset, read, _volume);
+                    else if (bits == 16) ScaleS16(buffer, offset, read, _volume);
+                    else if (bits == 24) ScaleS24(buffer, offset, read, _volume);
+                    else if (bits == 32) ScaleS32(buffer, offset, read, _volume);
+                    break;
+                case WaveFormatEncoding.IeeeFloat:
+                    if (bits == 32) ScaleF32(buffer, offset, read, _volume);
+                    break;
+            }
+            return read;
+        }
+
+        /// <summary>8bit PCM 是无符号的，中点在 128。</summary>
+        private static void ScaleU8(byte[] b, int off, int len, float v)
+        {
+            for (int i = 0; i < len; i++)
+            {
+                int s = (int)MathF.Round((b[off + i] - 128) * v);
+                b[off + i] = (byte)Math.Clamp(s + 128, 0, 255);
+            }
+        }
+
+        private static void ScaleS16(byte[] b, int off, int len, float v)
+        {
+            int n = len / 2 * 2;
+            for (int i = 0; i < n; i += 2)
+            {
+                short s = (short)(b[off + i] | (b[off + i + 1] << 8));
+                int q = Math.Clamp((int)MathF.Round(s * v), short.MinValue, short.MaxValue);
+                b[off + i] = (byte)(q & 0xFF);
+                b[off + i + 1] = (byte)((q >> 8) & 0xFF);
+            }
+        }
+
+        private static void ScaleS24(byte[] b, int off, int len, float v)
+        {
+            int n = len / 3 * 3;
+            for (int i = 0; i < n; i += 3)
+            {
+                int s = b[off + i] | (b[off + i + 1] << 8) | (b[off + i + 2] << 16);
+                if ((s & 0x800000) != 0) s |= unchecked((int)0xFF000000); // 补符号位
+                int q = Math.Clamp((int)MathF.Round(s * v), -8388608, 8388607);
+                b[off + i] = (byte)(q & 0xFF);
+                b[off + i + 1] = (byte)((q >> 8) & 0xFF);
+                b[off + i + 2] = (byte)((q >> 16) & 0xFF);
+            }
+        }
+
+        private static void ScaleS32(byte[] b, int off, int len, float v)
+        {
+            int n = len / 4 * 4;
+            for (int i = 0; i < n; i += 4)
+            {
+                int s = b[off + i] | (b[off + i + 1] << 8) | (b[off + i + 2] << 16) | (b[off + i + 3] << 24);
+                int q = (int)Math.Clamp(s * (double)v, int.MinValue, int.MaxValue);
+                b[off + i] = (byte)(q & 0xFF);
+                b[off + i + 1] = (byte)((q >> 8) & 0xFF);
+                b[off + i + 2] = (byte)((q >> 16) & 0xFF);
+                b[off + i + 3] = (byte)((q >> 24) & 0xFF);
+            }
+        }
+
+        private static void ScaleF32(byte[] b, int off, int len, float v)
+        {
+            int n = len / 4 * 4;
+            for (int i = 0; i < n; i += 4)
+            {
+                float f = BitConverter.ToSingle(b, off + i) * v;
+                BitConverter.TryWriteBytes(new Span<byte>(b, off + i, 4), f);
+            }
         }
     }
 }
