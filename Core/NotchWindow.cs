@@ -216,18 +216,24 @@ namespace NotchPeninsula
         private bool _isYAnimating = false;
         private DateTime _yAnimStartTime;
         private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
-        // 🎯 「唤醒那一次左键按下还没松开」标记。
-        //    为什么需要它：点击屏幕顶边唤醒岛体时，用户点的是 y≈0 的位置，而岛体下沉后**可见矩形从
-        //    y = 12 才开始**（12f * _currentStyleProgress），所以这次点击的坐标**天然落在岛体之外**。
-        //    于是下面那段「左键按下 且 光标不在岛体矩形内 → 收起」的兜底轮询，会把**唤醒自己的这一次点击**
-        //    判成「岛外点击」，岛刚滑出来就被收回去 —— 用户看到的就是「抽一下又回去了」。
+        // 🎯 「刚引发状态变化的那一次左键按下还没松开」标记：本次 press 期间，一律不把「岛外点击」当收起手势。
+        //    两个来源，本质是同一件事 —— **按下那一刻的岛体几何，与随后的几何不一样**，
+        //    于是这次点击的坐标在变化之后落到了岛体之外，被兜底轮询误判：
+        //    ① 点击屏幕顶边唤醒岛体：用户点的是 y≈0 的位置，而岛体下沉后**可见矩形从
+        //       y = 12 才开始**（12f * _currentStyleProgress），这次点击的坐标**天然落在岛体之外**。
+        //       不屏蔽的话，唤醒自己的这一次点击会被判成「岛外点击」，岛刚滑出来就被收回去
+        //       —— 用户看到的就是「抽一下又回去了」。
+        //    ② 左键点媒体模块展开媒体面板：折叠态岛体可能比展开面板（锁死 320）**更宽**
+        //       （长歌词自适应 / 组合模式），展开瞬间岛体变窄，按下时还在岛内的坐标随即落到岛外。
+        //       不屏蔽的话，这次点击同样被判成「岛外点击」，面板刚展开就被 CollapseAllExpanded 收回
+        //       —— 用户看到的就是「点一下展开、又立刻收回去」。
         //    · 抑制范围 = **这一次按键的 down→up 全程**，不多不少。
         //      解除不靠 WM_LBUTTONUP，而是靠轮询里每帧读一次 `GetAsyncKeyState(0x01)`：
         //      岛体滑回后，光标所在的那条屏幕顶边在窗口里是**透明像素**，分层窗口的透明区域不参与
         //      命中测试，up 消息很可能根本派发不到本窗口。直接观察物理按键状态是精确且不丢信号的。
         //    · 刻意**不加时间上限**：上限会让「长按超过 N 秒」重新踩回这个 bug（实测 1.5s 上限时
         //      按住 1.6s 仍会抽一下又回去）。而按键松开是每帧实测的，不会漏，所以不需要兜底。
-        private bool _wakeClickPending = false;
+        private bool _suppressOutsideCollapse = false;
 
         // ================= 🧩 展开面板统一管理 =================
         // 媒体控制面板（builtin.media）与插件组件详情页共用同一套开合逻辑与时序，不再各写一份：
@@ -952,17 +958,17 @@ namespace NotchPeninsula
                 //    · 拖动中一律不收起 —— 拖时间轴时鼠标合法地待在岛外，此时收起会把面板从手里抽走；
                 //      松手若仍在岛外，由 WM_LBUTTONUP 补一次判定。
                 //    只在「确实有东西展开着」时才轮询，三个状态全 false 时这段直接跳过，稳态零开销。
-                //    · `_wakeClickPending` 也纳入轮询条件：它的解除靠下面每帧观察按键是否松开
+                //    · `_suppressOutsideCollapse` 也纳入轮询条件：它的解除靠下面每帧观察按键是否松开
                 //      （不能只靠 WM_LBUTTONUP —— 岛体滑回后，光标所在的那条屏幕顶边在窗口里是**透明像素**，
                 //       分层窗口的透明区域不参与命中测试，up 消息很可能根本派发不到本窗口）。
                 if (!_media.IsDragging
                     && (_isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage
-                        || _wakeClickPending))
+                        || _suppressOutsideCollapse))
                 {
                     bool leftDown = (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0;
 
-                    // 🎯 唤醒那一次点击的按键已经松开 → 立刻解除抑制，用户再点岛外照常收起。
-                    if (_wakeClickPending && !leftDown) _wakeClickPending = false;
+                    // 🎯 这一次点击的按键已经松开 → 立刻解除抑制，用户再点岛外照常收起。
+                    if (_suppressOutsideCollapse && !leftDown) _suppressOutsideCollapse = false;
 
                     float expLeft = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
                     float expTopY = 12f * _currentStyleProgress;
@@ -973,8 +979,9 @@ namespace NotchPeninsula
                     bool isOverIsland = expX >= expLeft && expX <= expLeft + _currentWidth
                                         && expY >= expTopY && expY <= expTopY + _currentHeight;
 
-                    // 🎯 唤醒那一次按键（还没松开）不算「岛外点击」—— 见 _wakeClickPending 上的说明：
-                    //    它点的屏幕顶边坐标天然落在岛体可见矩形之外，不排除掉就会「抽一下又回去」。
+                    // 🎯 刚引发状态变化的那一次按键（还没松开）不算「岛外点击」—— 见 _suppressOutsideCollapse
+                    //    上的说明：唤醒时点的屏幕顶边坐标天然在岛体可见矩形之外；左键展开媒体面板时岛体
+                    //    会变窄，按下时还在岛内的坐标随即落到岛外。两种都必须排除，否则「点一下就被收回」。
                     //
                     // 🧲 插件详情页展开期间，岛外的左键一律不管（末尾那个 !HasActiveDetailPage）：
                     //    ① 用左键点组件展开时，用户的手还按在按键上，紧接着这几帧都会落进这个判定；
@@ -983,7 +990,7 @@ namespace NotchPeninsula
                     //       （右键展开没这个问题：那时 leftDown 是 false，压根不进这个分支。）
                     //    ② 正在从资源管理器往面板里拖文件的用户，鼠标本来就该待在岛外。
                     //    收起详情页仍有两条明确路径：岛内右键、插件自己调 CloseDetailPage()。
-                    if (!isOverIsland && !_wakeClickPending && leftDown && !Renderer.HasActiveDetailPage)
+                    if (!isOverIsland && !_suppressOutsideCollapse && leftDown && !Renderer.HasActiveDetailPage)
                     {
                         CollapseAllExpanded();
                     }
@@ -1679,7 +1686,7 @@ namespace NotchPeninsula
                 case Win32.WM_LBUTTONUP:
                     // 🎯 唤醒那次点击到此结束：解除岛外收起的抑制，之后用户再点岛外照常收起。
                     //    必须放在最前面 —— 上面拖动分支会 return，别让标记挂在拖动路径上漏掉。
-                    _wakeClickPending = false;
+                    _suppressOutsideCollapse = false;
                     // 🖱 详情页展开时把「抬起」也转给它（按住拖出的收尾全靠这条）。同样放在最前面，
                     //    免得被下面媒体拖动分支的 return 漏掉。
                     if (Renderer.HasActiveDetailPage)
@@ -1765,7 +1772,7 @@ namespace NotchPeninsula
                             // 🎯 屏蔽掉「本次按键」引发的岛外点击收起判定。用户点的是屏幕顶边（y≈0），
                             //    而岛体下沉后可见区从 y=12 起，所以这次点击坐标天然在岛体之外；
                             //    不屏蔽的话岛刚滑回来就会被上面那段兜底轮询收走 —— 「抽一下又回去」。
-                            _wakeClickPending = true;
+                            _suppressOutsideCollapse = true;
                             return (IntPtr)0;
                         }
 
@@ -1838,6 +1845,11 @@ namespace NotchPeninsula
                             if (!hitButtons && Renderer.MediaInteractionMode == 1 && Renderer.HitMediaZone(cx))
                             {
                                 ExpandPanel(Plugins.BuiltinWidgets.Media);
+                                // 🎯 展开会让岛体在随后几帧里改变尺寸：折叠态可能比 320 的面板更宽
+                                //    （长歌词自适应 / 组合模式），展开瞬间变窄，按下时还在岛内的坐标随即
+                                //    落到岛外 —— 不屏蔽的话就会被上面的兜底轮询判成「岛外点击」，
+                                //    面板刚展开就被收回（用户只点了一次）。抑制到本次按键松开为止。
+                                _suppressOutsideCollapse = true;
                             }
                         }
                         break;
