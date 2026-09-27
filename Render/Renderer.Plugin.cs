@@ -494,7 +494,7 @@ namespace NotchPeninsula
                 for (int i = 0; i < _pluginWidgets.Length; i++)
                 {
                     float w = 0f;
-                    try { w = Math.Max(_pluginWidgets[i].MeasureWidth(BASE_HEIGHT), 0f); }
+                    try { w = Math.Max(_pluginWidgets[i].MeasureWidth(MEDIA_HEIGHT), 0f); }
                     catch (Exception ex) { MarkPluginBroken(i, ex); }
                     _pluginWidths[i] = w;
                 }

@@ -408,7 +408,7 @@ namespace NotchPeninsula
             var styleCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 160);
             canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("刘海形态", 216, TITLE_BAR_HEIGHT + 38, _uiTextPaint);
+            canvas.DrawText("显示形态", 216, TITLE_BAR_HEIGHT + 38, _uiTextPaint);
 
             void DrawStyleOption(int index, string name, float x, float y)
             {
@@ -822,11 +822,11 @@ namespace NotchPeninsula
         {
             void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
             {
-                // 该卡片的尺寸设置是否已被改动（index 0 / 4 已不可调，不参与判定）
+                // 该卡片的尺寸设置是否已被改动（index 0 / 2 / 4 已不可调，不参与判定）
                 bool isModified = false;
                 foreach (int index in indices)
                 {
-                    if (index == 0 || index == 4) continue;
+                    if (index == 0 || index == 2 || index == 4) continue;
                     if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
                     {
                         isModified = true;
@@ -865,8 +865,20 @@ namespace NotchPeninsula
 
                     canvas.DrawText(subLabels[i], 216, cardBtnY + 17, _subTextPaint);
 
-                    // index 0 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
-                    if (index == 0 || index == 4)
+                    // 🎯 底部圆角只在「经典刘海」样式下参与圆角插值：切到灵动岛样式后该项会被
+                    //    islandRadius 完全覆盖（见 Renderer.Draw 的 rBottom 计算），调了也看不出来，
+                    //    所以就地标明生效条件。
+                    if (index == 7)
+                    {
+                        float labelW = _subTextPaint.MeasureText(subLabels[i]);
+                        _dynamicTextPaint.TextSize = 10f;
+                        _dynamicTextPaint.Color = new SKColor(150, 150, 150);
+                        canvas.DrawText("刘海模式下生效", 216 + labelW + 8, cardBtnY + 16, _dynamicTextPaint);
+                        _dynamicTextPaint.TextSize = 13f; // 还原字号，防止污染后续文字渲染
+                    }
+
+                    // index 0 / 2 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
+                    if (index == 0 || index == 2 || index == 4)
                     {
                         const string autoHint = "系统自动调整，无需设置";
                         float hintW = _subTextPaint.MeasureText(autoHint);
@@ -958,10 +970,13 @@ namespace NotchPeninsula
                 canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
                 _dynamicTextPaint.TextSize = 13f;
             }
-            DrawMultiCard(147, "待机显示", ["水平宽度", "垂直高度", "底部圆角"], [0, 1, 7], "px");
-            DrawMultiCard(299, "媒体控制", ["激活时宽度", "激活时高度"], [2, 3], "px");
-            DrawMultiCard(417, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
-            DrawMultiCard(535, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+            // 🎯 「待机高度」与「媒体激活时高度」已合并为一个「全局折叠态高度」（index 3）：
+            //    它同时管待机态、媒体折叠态与剪贴板面板的高度，值沿用原媒体控制存储的
+            //    MEDIA_HEIGHT（注册表 Custom_MediaH），老用户的高度不会丢。
+            DrawMultiCard(147, "待机显示", ["水平宽度", "全局折叠态高度", "底部圆角"], [0, 3, 7], "px");
+            DrawMultiCard(299, "媒体控制", ["激活时宽度"], [2], "px");
+            DrawMultiCard(383, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
+            DrawMultiCard(501, "全局 DPI 缩放", ["视觉比例"], [6], "x");
         }
 
         // 页签：插件中心

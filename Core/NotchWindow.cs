@@ -43,9 +43,9 @@ namespace NotchPeninsula
         private float _currentWidth = Renderer.STANDBY_WIDTH;
         private float _startWidth = Renderer.STANDBY_WIDTH;
         private float _targetWidth = Renderer.STANDBY_WIDTH;
-        private float _currentHeight = Renderer.BASE_HEIGHT;
-        private float _startHeight = Renderer.BASE_HEIGHT;
-        private float _targetHeight = Renderer.BASE_HEIGHT;
+        private float _currentHeight = Renderer.MEDIA_HEIGHT;
+        private float _startHeight = Renderer.MEDIA_HEIGHT;
+        private float _targetHeight = Renderer.MEDIA_HEIGHT;
         // 形态弹簧动画状态
         private float _currentStyleProgress = Renderer.NotchStyle;
         private float _startStyleProgress = Renderer.NotchStyle;
@@ -1023,10 +1023,9 @@ namespace NotchPeninsula
                                   && !_isManuallyExpanded && !Renderer.IsMediaExpanded && !isToastActive
                                   && !isClipboardActive && !Renderer.HasActiveDetailPage;
 
-                // Y 轴的位移量必须基于「岛体自身的高度」计算，不能写死待机高度：
-                // 媒体控制器 / 组合模式会把岛体撑到 MEDIA_HEIGHT(35)，若仍按 BASE_HEIGHT(29) 算，
-                // 就会多露出 (35 - 29) = 6px 的尾巴 —— 待机露 4px、媒体模式露 10px，
-                // 全屏看视频时正好挡视野。（用户 2026-09-20 反馈）
+                // Y 轴的位移量必须基于「岛体自身的高度」计算，不能写死某个折叠态高度：
+                // 媒体展开面板（130 / 158）会明显撑高岛体，若仍按折叠态高度算，
+                // 就会多露出「面板高 − 折叠高」的尾巴，全屏看视频时正好挡视野。（用户 2026-09-20 反馈）
                 // 取 `Math.Min(_currentHeight, _targetHeight)` =「尺寸动画结束后岛体的高度」：
                 //   · 岛体正在**长高**（媒体刚接管）时取当前值 → 露出尾巴恒为 4px；
                 //   · 岛体正在**收缩**（收起 320×130 的媒体展开面板 / 关闭插件详情页）时取目标值，
@@ -1192,7 +1191,11 @@ namespace NotchPeninsula
                         ? Renderer.GetCompositeWidth(_media)
                         : nativeWidth + pluginReserve;
 
-                    expectedTargetHeight = currentActive ? (Renderer.IsMediaExpanded ? Renderer.GetExpandedHeight(_media) : Renderer.MEDIA_HEIGHT) : Renderer.BASE_HEIGHT;
+                    // 折叠态高度只有一个真源（MEDIA_HEIGHT = 全局折叠态高度），待机与媒体折叠态不再各用各的；
+                    // 只有媒体展开面板才另按 GetExpandedHeight 撑高。
+                    expectedTargetHeight = currentActive && Renderer.IsMediaExpanded
+                        ? Renderer.GetExpandedHeight(_media)
+                        : Renderer.MEDIA_HEIGHT;
                 }
 
                 // 🧩 注意：**不要**再把目标宽度喂给渲染侧去「按动画进度缩放插件行预留」。
