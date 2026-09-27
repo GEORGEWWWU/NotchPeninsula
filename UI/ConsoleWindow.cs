@@ -1153,7 +1153,12 @@ namespace NotchPeninsula
 
                 IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
                 if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
+                {
+                    // 极端情况：位图建出来了但像素指针取不到 —— 必须把已建的 hBitmap 删掉再走，
+                    // 否则这一支会永久漏掉一块 DIB（外层 finally 只负责 DC）。
+                    if (hBitmap != IntPtr.Zero) Win32.DeleteObject(hBitmap);
                     return;
+                }
 
                 IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
                 try

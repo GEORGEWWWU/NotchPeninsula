@@ -426,7 +426,14 @@ namespace NotchPeninsula
                 float cx = x + 75; float cy = y + 35;
 
                 // 颜色直接同步真实的明暗逻辑，并完美兼容“跟随系统”模式
-                bool isLight = Renderer.ThemeMode == 1 || (Renderer.ThemeMode == 2 && Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")?.GetValue("AppsUseLightTheme") is int val && val == 1);
+                // 注意：OpenSubKey 返回的 RegistryKey 持有原生句柄，必须 using 掉 ——
+                // 本方法每次渲染显示设置页都会执行，漏掉就是每帧泄漏一个注册表句柄（靠终结器回收）。
+                bool isLight = Renderer.ThemeMode == 1;
+                if (Renderer.ThemeMode == 2)
+                {
+                    using var themeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                    isLight = themeKey?.GetValue("AppsUseLightTheme") is int val && val == 1;
+                }
                 _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
 
                 if (index == 0) // 调整经典刘海的矢量绘图比例，使其视觉高度和灵动岛保持一致

@@ -524,6 +524,12 @@ namespace NotchPeninsula
 
             // 8) 媒体侧的后台连接（Just Solo LyricServer 的 WebSocket 重连循环）
             try { _media.Shutdown(); } catch { }
+
+            // 9) 插件：让每个插件走一遍 Dispose + 宿主注销 + ALC 卸载。
+            //    刻意不做 GC 验证（进程随后就退出），目的只是别让插件的清理逻辑被进程终止整块吞掉。
+            //    此刻渲染时钟已停（第 1 步），所以插件卸载不会与渲染帧并发。
+            try { Plugins.PluginManager.Instance.ShutdownAll(); }
+            catch (Exception ex) { Logger.Error("释放插件失败", ex); }
         }
 
         /// <summary>
