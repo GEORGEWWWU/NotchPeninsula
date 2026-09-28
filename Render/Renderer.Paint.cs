@@ -348,22 +348,13 @@ namespace NotchPeninsula
             if (_iconsLoaded) return;
             try
             {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string qqPath = Path.Combine(baseDir, "data", "image", "qq-icon.png");
-                string defaultPath = Path.Combine(baseDir, "data", "image", "wintoast-icon.png");
-
+                // 磁盘优先、exe 内嵌兜底：单文件发布时 data\image 可能不在磁盘上（exe 被单独拷走）
                 // 直接极速解码为位图
-                if (File.Exists(qqPath))
-                {
-                    using var stream = File.OpenRead(qqPath);
-                    _qqIcon = SKBitmap.Decode(stream);
-                }
+                using (var stream = DataResources.OpenRead("data/image/qq-icon.png"))
+                    if (stream != null) _qqIcon = SKBitmap.Decode(stream);
 
-                if (File.Exists(defaultPath))
-                {
-                    using var stream = File.OpenRead(defaultPath);
-                    _defaultToastIcon = SKBitmap.Decode(stream);
-                }
+                using (var stream = DataResources.OpenRead("data/image/wintoast-icon.png"))
+                    if (stream != null) _defaultToastIcon = SKBitmap.Decode(stream);
             }
             catch (Exception ex)
             {

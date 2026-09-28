@@ -786,14 +786,11 @@ namespace NotchPeninsula
                     _appSysIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (_appSysIcon != null) appIconHandle = _appSysIcon.Handle;
 
-                    string iconPath = Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-logo.ico");
-
                     // 使用 SkiaSharp 直接解码 ICO，绕过 System.Drawing 的低质缩放
                     // SKBitmap.Decode 对 ICO 会自动选取容器中最大/最匹配的帧，且支持 256px PNG 压缩帧
-                    if (File.Exists(iconPath))
-                    {
-                        _appIconBitmap = SKBitmap.Decode(iconPath);
-                    }
+                    // 磁盘优先、exe 内嵌兜底（单文件发布时这个 ico 可能不在磁盘上）
+                    using (var iconStream = DataResources.OpenRead("NPS_NotchPeninsula-logo.ico"))
+                        if (iconStream != null) _appIconBitmap = SKBitmap.Decode(iconStream);
 
                     // 兜底：如果外部文件丢失或解码失败，用系统图标转存
                     if (_appIconBitmap == null && _appSysIcon != null)

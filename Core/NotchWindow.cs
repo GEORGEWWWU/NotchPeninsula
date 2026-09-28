@@ -634,9 +634,16 @@ namespace NotchPeninsula
             {
                 if (!IsToastEnabled) return;              // 通知总开关关闭 → 提示音一起静默
                 if (!ToastSoundConfig.IsEnabled) return;  // 提示音自己的开关关闭（默认关）
-                string? path = ToastSoundConfig.ResolveCurrentPath();
-                if (path == null) return;
-                ToastSoundPlayer.Enqueue(path, ToastSoundConfig.VolumePercent);
+
+                // 音源有两种可能：磁盘上的文件，或 exe 内嵌资源
+                // （单文件发布时 data\sound 未必在磁盘上 —— exe 被单独拷走就只剩内嵌那份）
+                var src = ToastSoundConfig.ResolveCurrentSource();
+                if (!src.IsValid) return;
+
+                if (src.Path.Length > 0)
+                    ToastSoundPlayer.Enqueue(src.Path, ToastSoundConfig.VolumePercent);
+                else
+                    ToastSoundPlayer.EnqueueResource(src.ResourceName, ToastSoundConfig.VolumePercent);
             }
             catch (Exception ex)
             {

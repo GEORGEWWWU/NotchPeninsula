@@ -64,6 +64,28 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- 🔑 data\ 下的资源必须**同时**以嵌入资源打进 exe。
+		     单文件发布（PublishSingleFile）只打包托管程序集与原生库，上面那些 Content 文件
+		     仍会作为散文件留在 exe 旁边 —— 也就是说 exe 单独拷走就没了内置提示音和内置图标。
+		     嵌入之后由 Core/DataResources.cs 统一解析（磁盘优先 → 嵌入兜底）：
+		     data\ 在就优先用磁盘上的（用户可以往 data\sound 丢 wav 覆盖/新增），
+		     data\ 不在就用 exe 里这份，**单文件 exe 从此真正自足**。
+		     ⚠️ LogicalName 必须写，它把资源名固定成「相对路径」（如 data/sound/QQ.wav），
+		     DataResources 依赖这个约定；否则资源名会变成 <RootNamespace>.data.sound.QQ.wav。
+		     ⚠️ 这两个目录里新增文件不用改这里（*.* 通配），但**必须同步在上面登记 Content**，
+		     否则发布时不会拷进输出目录（嵌入与磁盘两份就只剩嵌入那份了）。 -->
+		<EmbeddedResource Include="data\image\*.*">
+			<LogicalName>data/image/%(Filename)%(Extension)</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="data\sound\*.*">
+			<LogicalName>data/sound/%(Filename)%(Extension)</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="NPS_NotchPeninsula-logo.ico">
+			<LogicalName>NPS_NotchPeninsula-logo.ico</LogicalName>
+		</EmbeddedResource>
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="SkiaSharp" Version="2.88.8" />
 		<PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.8" />
 		<!-- 音频采集库 -->

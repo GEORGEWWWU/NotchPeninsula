@@ -13,6 +13,8 @@ namespace NotchPeninsula;
 /// 1. **提示音列表是「动态扫描目录」得来的，不是硬编码数组**。
 ///    扫描 exe 同级 <c>data\sound\*.wav</c>，按文件名派生显示名；丢一个新 wav 进去
 ///    就自动出现在设置里的下拉菜单中，**不需要改一行代码**。
+///    ⚠️ 磁盘目录不存在时（单文件 exe 被单独拷走）自动回落到 **exe 内嵌的那份内置音**，
+///       所以「单文件 exe」本身就是自足的 —— 见 <see cref="DataResources"/>。
 ///    可选地放一个 <c>data\sound\sound.json</c> 覆盖显示名（见 <see cref="LoadDisplayNames"/>）。
 /// 2. **音频一律只记路径、不复制文件**。内置音也是引用 <c>data\sound\</c> 下的原文件。
 /// 3. **文件丢失 / 超限 / 格式不支持 → 一律回落到「无」**，并顺手清掉注册表里的失效记忆。
@@ -63,17 +65,26 @@ internal static class ToastSoundConfig
     //  动态内置列表
     // ------------------------------------------------------------------
 
-    /// <summary>内置音的一条：绝对路径 + 界面显示名（文件名去掉扩展名，或 sound.json 的覆盖）。</summary>
-    internal readonly record struct BuiltinEntry(string Path, string Label)
+    /// <summary>
+    /// 内置音的一条：**磁盘路径**或**exe 内嵌资源名**（二者必有一个非空）+ 界面显示名。
+    ///
+    /// 为什么要有 <see cref="ResourceName"/>：单文件发布时 <c>data\sound</c> 可能根本不在磁盘上
+    /// （exe 被单独拷走），内置音就得从 exe 内部的嵌入资源里拿。见 <see cref="DataResources"/>。
+    /// </summary>
+    internal readonly record struct BuiltinEntry(string Path, string Label, string ResourceName = "")
     {
-        /// <summary>不含扩展名的文件名，用作自定义显示名的查找键。</summary>
-        public string Stem => System.IO.Path.GetFileNameWithoutExtension(Path);
-
         /// <summary>
         /// 含扩展名的文件名，作为这条内置音的**稳定身份**（见 <see cref="SelectedKey"/>）。
         /// ⚠️ 不要拿它在列表里的位置当身份 —— 目录是动态扫描的，增删一个 wav 会让后面所有项平移。
         /// </summary>
-        public string FileName => System.IO.Path.GetFileName(Path);
+        public string FileName => System.IO.Path.GetFileName(
+            ResourceName.Length > 0 ? ResourceName : Path);
+
+        /// <summary>不含扩展名的文件名，用作自定义显示名的查找键。</summary>
+        public string Stem => System.IO.Path.GetFileNameWithoutExtension(FileName);
+
+        /// <summary>该条来自 exe 内嵌资源（磁盘上没有对应文件）。</summary>
+        public bool IsEmbedded => ResourceName.Length > 0;
     }
 
     private static BuiltinEntry[] _builtins = [];
@@ -135,11 +146,14 @@ internal static class ToastSoundConfig
     internal static int VolumePercent = DefaultVolumePercent;
 
     /// <summary>
-    /// 重新扫描 <c>data\sound\</c> 目录，重建内置列表。
+    /// 重建内置音列表：**磁盘目录 + exe 内嵌资源**两份合并（同名时磁盘版胜出）。
     ///
-    /// 扫描位置按优先级找（第一个存在的目录胜出）：
-    /// 1. exe 同级 <c>data\sound</c>（发布后的正常位置）
-    /// 2. 仓库根 <c>data\sound</c>（开发期直接从仓库运行 / 单文件发布的兜底）
+    /// 磁盘目录按优先级找（第一个存在的目录胜出）：
+    /// 1. exe 同级 <c>data\sound</c>（发布后的正常位置，也是「丢个 wav 进去就能用」的那个目录）
+    /// 2. 仓库根 <c>data\sound</c>（开发期直接从仓库运行的兜底）
+    ///
+    /// 磁盘目录**整个不存在**时（单文件 exe 被单独拷走）列表也不会空 ——
+    /// 内置音是随 exe 一起发出去的嵌入资源，由 <see cref="DataResources"/> 兜底读取。
     ///
     /// **必须在 <see cref="Restore"/> 之前调用一次**，否则下拉框里只有「无」和「浏览」。
     /// 之后想看到新丢进去的文件，再调一次即可（幂等，纯 IO 扫描，不缓存解码数据）。
@@ -149,9 +163,21 @@ internal static class ToastSoundConfig
         // 列表要重建了 → 先让下拉标签缓存失效（放在最前面，任何提前返回的分支都已失效）
         _optionLabelsCache = null;
 
-        var list = new List<BuiltinEntry>();
+        // 先按文件名收集（同一文件名只留一条，磁盘版优先、嵌入版补缺）
+        var byName = new Dictionary<string, BuiltinEntry>(StringComparer.OrdinalIgnoreCase);
         _folder = "";
 
+        // ① exe 内嵌资源：exe 里始终带着的那份内置音。
+        //    单文件发布时磁盘上可能根本没有 data\sound（exe 被单独拷走），这时全靠它。
+        foreach (string name in DataResources.ListEmbedded("data/sound", ".wav"))
+        {
+            string stem = Path.GetFileNameWithoutExtension(name);
+            if (stem.Length == 0) continue;
+            byName[name] = new BuiltinEntry("", stem, "data/sound/" + name);
+        }
+
+        // ② 磁盘目录（exe 同级 → 仓库根兜底）：同名时覆盖上面的嵌入版 ——
+        //    用户想换掉某个内置音，丢一个同名 wav 进去即可。
         foreach (string dir in CandidateFolders())
         {
             try
@@ -160,15 +186,11 @@ internal static class ToastSoundConfig
 
                 // 目录里可能会有 history / 备份之类的内容，这里只看顶层的 wav：
                 // 内置音强制 wav —— 它是唯一无需解码器探测就能拿到时长、且启动零依赖的格式。
-                string[] files = Directory.GetFiles(dir, "*.wav", SearchOption.TopDirectoryOnly);
-                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
-
-                foreach (string f in files)
+                foreach (string f in Directory.GetFiles(dir, "*.wav", SearchOption.TopDirectoryOnly))
                 {
-                    if (list.Count >= MaxBuiltinCount) break;
                     string stem = Path.GetFileNameWithoutExtension(f);
                     if (stem.Length == 0) continue;
-                    list.Add(new BuiltinEntry(f, stem));
+                    byName[Path.GetFileName(f)] = new BuiltinEntry(f, stem, "");
                 }
 
                 _folder = dir;
@@ -180,8 +202,14 @@ internal static class ToastSoundConfig
             }
         }
 
+        // 统一按文件名排序 —— 磁盘与嵌入两份混在一起也要有稳定、可预期的顺序
+        var list = byName.Values
+            .OrderBy(e => e.FileName, StringComparer.OrdinalIgnoreCase)
+            .Take(MaxBuiltinCount)
+            .ToList();
+
         // 应用 sound.json 里的显示名覆盖（可选文件，缺失即跳过）
-        ApplyDisplayNames(_folder, list);
+        ApplyDisplayNames(list);
         _builtins = list.ToArray();
 
         // 🔻 列表一变就必须把当前选择「按文件名身份」重新对齐一次：
@@ -202,16 +230,18 @@ internal static class ToastSoundConfig
     /// <summary>
     /// 可选的显示名覆盖：<c>data\sound\sound.json</c>，形如 <c>{ "Tri-Tone": "三全音", "QQ": "QQ 消息" }</c>。
     /// 键是不带扩展名的文件名，值是界面上显示的文本。解析失败一律静默忽略（用文件名当显示名）。
+    /// 磁盘上找不到时回落到 exe 内嵌的那一份（单文件 exe 单独拷走也能拿到中文显示名）。
     /// </summary>
-    private static void ApplyDisplayNames(string folder, List<BuiltinEntry> list)
+    private static void ApplyDisplayNames(List<BuiltinEntry> list)
     {
-        if (string.IsNullOrEmpty(folder) || list.Count == 0) return;
-        string json = Path.Combine(folder, "sound.json");
-        if (!File.Exists(json)) return;
+        if (list.Count == 0) return;
+
+        string? json = DataResources.ReadAllText("data/sound/sound.json");
+        if (string.IsNullOrEmpty(json)) return;
 
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(json));
+            using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return;
 
             for (int i = 0; i < list.Count; i++)
@@ -266,17 +296,30 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 解析出「现在该播哪个文件」。返回 null 表示不该播（选了无 / 文件失效）。
+    /// 一次播放请求的「音源」：磁盘文件路径 **或** exe 内嵌资源名（二者必有一个非空）。
     /// </summary>
-    internal static string? ResolveCurrentPath()
+    internal readonly record struct SoundSource(string Path, string ResourceName)
     {
-        if (SelectedIndex <= 0 || SelectedIndex >= OptionCount) return null;
+        internal bool IsValid => Path.Length > 0 || ResourceName.Length > 0;
+    }
+
+    /// <summary>
+    /// 解析出「现在该播哪个音源」。返回的 <see cref="SoundSource.IsValid"/> 为 false 表示不该播
+    /// （选了「无」/ 文件失效）。
+    ///
+    /// 内置音有两种形态：磁盘上还在 → 给路径（用户可以丢同名文件覆盖它）；
+    /// 磁盘上没有（单文件 exe 被单独拷走）→ 给 exe 内嵌资源名。
+    /// </summary>
+    internal static SoundSource ResolveCurrentSource()
+    {
+        if (SelectedIndex <= 0 || SelectedIndex >= OptionCount) return default;
 
         if (SelectedIndex == CustomIndex)
-            return IsUsableFile(CustomPath, out _) ? CustomPath : null;
+            return IsUsableFile(CustomPath, out _) ? new SoundSource(CustomPath, "") : default;
 
-        string path = _builtins[SelectedIndex - BuiltinOffset].Path;
-        return File.Exists(path) ? path : null;
+        var entry = _builtins[SelectedIndex - BuiltinOffset];
+        if (entry.IsEmbedded) return new SoundSource("", entry.ResourceName);
+        return File.Exists(entry.Path) ? new SoundSource(entry.Path, "") : default;
     }
 
     /// <summary>
@@ -339,6 +382,59 @@ internal static class ToastSoundConfig
             ".aif" or ".aiff" => new AiffFileReader(path),
             _ => new MediaFoundationReader(path),
         };
+    }
+
+    /// <summary>
+    /// 从**流**打开读取器（exe 内嵌资源走这条）。
+    /// ⚠️ <c>MediaFoundationReader</c> 只认路径 / URL，所以嵌入资源只支持 wav / aiff ——
+    ///    内置音本来就强制 wav，够用；其余格式抛异常由调用方吞掉。
+    /// </summary>
+    internal static WaveStream OpenReader(Stream stream, string extension)
+    {
+        return extension.ToLowerInvariant() switch
+        {
+            ".wav" => new WaveFileReader(stream),
+            ".aif" or ".aiff" => new AiffFileReader(stream),
+            _ => throw new NotSupportedException($"嵌入资源只支持 wav / aiff：{extension}"),
+        };
+    }
+
+    /// <summary>
+    /// 校验 exe 内嵌资源里的内置音是否可用（体积 + 时长，判据与 <see cref="IsUsableFile"/> 完全一致）。
+    /// 内置音是随 exe 一起发出去的，正常情况下必然可用；这里只是不让「资源被玩坏」变成静默失败。
+    /// </summary>
+    internal static bool IsUsableResource(string resourceName, out string reason)
+    {
+        reason = "";
+        if (string.IsNullOrEmpty(resourceName)) { reason = "内置提示音资源缺失"; return false; }
+
+        try
+        {
+            using var stream = DataResources.OpenRead(resourceName);
+            if (stream == null) { reason = "内置提示音资源缺失"; return false; }
+            if (stream.Length == 0) { reason = "内置提示音为空"; return false; }
+            if (stream.Length > MaxFileSizeBytes)
+            {
+                reason = $"文件过大（{stream.Length / 1024.0 / 1024.0:F1} MB，上限 {MaxFileSizeBytes / 1024 / 1024} MB）";
+                return false;
+            }
+
+            using WaveStream reader = OpenReader(stream, Path.GetExtension(resourceName));
+            double sec = reader.TotalTime.TotalSeconds;
+            if (sec <= 0.05) { reason = "音频时长过短或无法解析"; return false; }
+            if (sec > MaxDurationSec)
+            {
+                reason = $"音频过长（{sec:F1} 秒，上限 {MaxDurationSec:F0} 秒）";
+                return false;
+            }
+        }
+        catch
+        {
+            reason = "不支持的音频格式或资源已损坏";
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>界面展示用：把长路径压成「…\父目录\文件名.wav」。</summary>
@@ -455,9 +551,12 @@ internal static class ToastSoundConfig
         if (SelectedIndex == CustomIndex)
             return IsUsableFile(CustomPath, out string why) ? "" : why;
 
-        string path = _builtins[SelectedIndex - BuiltinOffset].Path;
-        if (!File.Exists(path)) return "内置提示音文件缺失（重新放入 data\\sound 目录即可）";
-        return IsUsableFile(path, out string why2) ? "" : why2;
+        var entry = _builtins[SelectedIndex - BuiltinOffset];
+        if (entry.IsEmbedded)
+            return IsUsableResource(entry.ResourceName, out string whyRes) ? "" : whyRes;
+
+        if (!File.Exists(entry.Path)) return "内置提示音文件缺失（重新放入 data\\sound 目录即可）";
+        return IsUsableFile(entry.Path, out string why2) ? "" : why2;
     }
 
     /// <summary>

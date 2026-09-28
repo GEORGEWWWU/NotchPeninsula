@@ -105,8 +105,10 @@ namespace NotchPeninsula
             {
                 if (!_cache.TryGetValue(relativePath, out var bmp))
                 {
-                    var path = Path.Combine(AppContext.BaseDirectory, relativePath);
-                    using var stream = File.OpenRead(path);
+                    // 磁盘优先、exe 内嵌兜底：单文件发布时 data\image 可能不在磁盘上（exe 被单独拷走）
+                    using var stream = DataResources.OpenRead(relativePath);
+                    if (stream == null) return null;
+
                     bmp = SKBitmap.Decode(stream);
                     _cache[relativePath] = bmp;
                 }

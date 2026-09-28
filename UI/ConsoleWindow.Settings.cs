@@ -238,12 +238,12 @@ namespace NotchPeninsula
         {
             try
             {
-                string? path = ToastSoundConfig.ResolveCurrentPath();
-                if (path == null)
+                var src = ToastSoundConfig.ResolveCurrentSource();
+                if (!src.IsValid)
                 {
                     // 只有「用户明确点了试听」才值得提示；切到「无」时静默即可。
-                    // ⚠️ 原因必须按**当前选中的那一项**去问：内置项要看内置文件本身，
-                    //    不能拿 CustomPath 去套 —— 那样内置音缺失时会糊上
+                    // ⚠️ 原因必须按**当前选中的那一项**去问：内置项要看内置音本身（磁盘上的文件
+                    //    或 exe 内嵌资源），不能拿 CustomPath 去套 —— 那样内置音缺失时会糊上
                     //    「尚未选择音频文件」这种完全对不上的文案（见 DescribeUnavailable）。
                     if (ToastSoundConfig.SelectedIndex != 0)
                         _soundHint = ToastSoundConfig.DescribeUnavailable();
@@ -252,7 +252,10 @@ namespace NotchPeninsula
                 }
                 // 试听走同一个队列：连续点几次也是依次响，不会叠成噪音
                 _soundHint = "";
-                ToastSoundPlayer.Enqueue(path, ToastSoundConfig.VolumePercent);
+                if (src.Path.Length > 0)
+                    ToastSoundPlayer.Enqueue(src.Path, ToastSoundConfig.VolumePercent);
+                else
+                    ToastSoundPlayer.EnqueueResource(src.ResourceName, ToastSoundConfig.VolumePercent);
                 Render();
             }
             catch (Exception ex)

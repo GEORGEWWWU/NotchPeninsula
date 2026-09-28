@@ -5,12 +5,44 @@ using System.Text.Json;
 using System.IO;
 using SkiaSharp;
 using System.Reflection;
+using Microsoft.Win32;
 
 namespace NotchPeninsula
 {
     public class UpdateManager
     {
         private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(8) };
+
+        /// <summary>被用户点过「不再提醒」的版本号（形如 1.9.0，不含 NPS-v 前缀）。</summary>
+        private const string SkipVersionValueName = "SkippedUpdateVersion";
+
+        /// <summary>
+        /// 读取用户「不再提醒」的版本号。空串表示没有跳过任何版本。
+        /// </summary>
+        public static string GetSkippedVersion()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\NotchPeninsula");
+                return key?.GetValue(SkipVersionValueName, "") as string ?? "";
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("读取已跳过的更新版本失败", ex);
+                return "";
+            }
+        }
+
+        /// <summary>
+        /// 记下「不再提醒」的版本号。**只对这一个版本生效** —— 之后出现更新的版本（版本号不同）
+        /// 会照常弹窗，所以老版本用户不会被永久静音。
+        /// </summary>
+        public static void MarkVersionSkipped(string version)
+        {
+            if (string.IsNullOrEmpty(version)) return;
+            Logger.Info($"[更新检测] 用户选择不再提醒 {version}");
+            Program.SaveSetting(SkipVersionValueName, version);
+        }
 
         public static void StartSilentCheck()
         {
@@ -40,13 +72,22 @@ namespace NotchPeninsula
 
                     if (latestVersion > currentVersion)
                     {
+                        // 「不再提醒」只针对被点过的那一个版本：版本号相同才跳过，
+                        // 一旦有更新的版本出现（latestVersionStr 变了）就照常提醒。
+                        var skipped = GetSkippedVersion();
+                        if (!string.IsNullOrEmpty(skipped) && skipped == latestVersionStr)
+                        {
+                            Logger.Info($"[更新检测] 用户已选择不再提醒 {latestVersionStr}，本次跳过弹窗");
+                            return;
+                        }
+
                         Logger.Info("[更新检测] 发现新版本！拉起全局弹窗...");
 
                         var notifyThread = new Thread(() =>
                         {
                             try
                             {
-                                var notifyWin = new NotifyWindow(tag, body ?? "修复了一些已知问题，建议立即更新。");
+                                var notifyWin = new NotifyWindow(tag, latestVersionStr, body ?? "修复了一些已知问题，建议立即更新。");
                                 notifyWin.Run();
                             }
                             catch (Exception ex)
@@ -69,6 +110,7 @@ namespace NotchPeninsula
     {
         private readonly IntPtr _hwnd;
         private readonly string _tag;
+        private readonly string _version;   // 归一化版本号（形如 1.9.0），「不再提醒」写注册表用它
         private readonly Win32.WndProc _wndProcDelegate;
 
         private const int WIDTH = 460;
@@ -77,13 +119,27 @@ namespace NotchPeninsula
         private float _dpiScale;
 
         // UI 交互与滚动状态
-        private bool _confirmHovered = false;
-        private bool _cancelHovered = false;
+        private int _hoveredButton = -1;    // 0=前往下载 1=不再提醒 2=取消，-1=无
         private float _scrollY = 0f;
         private float _maxScroll = 0f;
         private readonly List<string> _wrappedLines = new();
         private const float LINE_HEIGHT = 24f;
         private const float CONTENT_BOX_HEIGHT = 220f;
+
+        // 底部按钮组几何（绘制与命中同源，改布局只动这里）
+        private const float BTN_Y = HEIGHT - 65f;
+        private const float BTN_HEIGHT = 40f;
+        private const float BTN_WIDTH = 120f;
+        private const float BTN_GAP = 12f;
+        private const int BTN_COUNT = 3;
+
+        /// <summary>第 index 个底部按钮的矩形（0=前往下载 1=不再提醒 2=取消）。</summary>
+        private static SKRect GetButtonRect(int index)
+        {
+            float total = BTN_WIDTH * BTN_COUNT + BTN_GAP * (BTN_COUNT - 1);
+            float left = (WIDTH - total) / 2f + index * (BTN_WIDTH + BTN_GAP);
+            return new SKRect(left, BTN_Y, left + BTN_WIDTH, BTN_Y + BTN_HEIGHT);
+        }
 
         // 静态复用资源
         private static SKBitmap? _iconBitmap;
@@ -97,10 +153,12 @@ namespace NotchPeninsula
         private static readonly SKPaint _title2Paint = new() { Color = new SKColor(200, 200, 200), TextSize = 15f, IsAntialias = true, TextAlign = SKTextAlign.Center, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI", SKFontStyleWeight.SemiBold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright) };
         private static readonly SKPaint _contentPaint = new() { Color = new SKColor(170, 170, 170), TextSize = 13.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
         private static readonly SKPaint _btnTextPaint = new() { Color = SKColors.White, TextSize = 14f, IsAntialias = true, TextAlign = SKTextAlign.Center, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        private static readonly SKPaint _hintPaint = new() { Color = new SKColor(120, 120, 120), TextSize = 11.5f, IsAntialias = true, TextAlign = SKTextAlign.Center, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 
-        public NotifyWindow(string tag, string content)
+        public NotifyWindow(string tag, string version, string content)
         {
             _tag = tag;
+            _version = version;
             _wndProcDelegate = WndProc;
 
             LoadAppIcon();
@@ -143,12 +201,11 @@ namespace NotchPeninsula
             if (_iconBitmap != null) return;
             try
             {
-                string iconPath = Path.Combine(AppContext.BaseDirectory, "NPS_NotchPeninsula-logo.ico");
-                if (File.Exists(iconPath))
-                {
-                    _iconBitmap = SKBitmap.Decode(iconPath);
-                }
-                else
+                // 磁盘优先、exe 内嵌兜底：单文件发布时这个 ico 可能不在磁盘上（exe 被单独拷走）
+                using (var iconStream = DataResources.OpenRead("NPS_NotchPeninsula-logo.ico"))
+                    if (iconStream != null) _iconBitmap = SKBitmap.Decode(iconStream);
+
+                if (_iconBitmap == null)
                 {
                     var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (sysIcon != null)
@@ -207,15 +264,14 @@ namespace NotchPeninsula
                     int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                     int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
-                    // 确定按钮热区：X 居中偏左
-                    bool cHover = x >= 100 && x <= 220 && y >= HEIGHT - 65 && y <= HEIGHT - 25;
-                    // 取消按钮热区：X 居中偏右
-                    bool xHover = x >= 240 && x <= 360 && y >= HEIGHT - 65 && y <= HEIGHT - 25;
+                    // 命中判定与绘制共用 GetButtonRect，避免两边各写一套坐标
+                    int hit = -1;
+                    for (int i = 0; i < BTN_COUNT; i++)
+                        if (GetButtonRect(i).Contains(x, y)) { hit = i; break; }
 
-                    if (cHover != _confirmHovered || xHover != _cancelHovered)
+                    if (hit != _hoveredButton)
                     {
-                        _confirmHovered = cHover;
-                        _cancelHovered = xHover;
+                        _hoveredButton = hit;
                         Render();
                     }
                     break;
@@ -229,12 +285,18 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDOWN:
                     int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                    if (_confirmHovered)
+                    if (_hoveredButton == 0)
                     {
                         Process.Start(new ProcessStartInfo { FileName = "https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest", UseShellExecute = true });
                         Win32.DestroyWindow(hwnd);
                     }
-                    else if (_cancelHovered) Win32.DestroyWindow(hwnd);
+                    // 不再提醒：只跳过当前这个版本，写入注册表后关窗（更新版本出现时仍会提示）
+                    else if (_hoveredButton == 1)
+                    {
+                        UpdateManager.MarkVersionSkipped(_version);
+                        Win32.DestroyWindow(hwnd);
+                    }
+                    else if (_hoveredButton == 2) Win32.DestroyWindow(hwnd);
                     // 拖拽窗口
                     else if (clickY <= 150)
                     {
@@ -290,25 +352,31 @@ namespace NotchPeninsula
             }
             canvas.Restore();
 
-            // 5. 底部按钮组
-            float btnY = HEIGHT - 65f;
-            float btnHeight = 40f;
-            float btnWidth = 120f;
-            float centerX = WIDTH / 2f;
+            // 5. 底部按钮组（前往下载 / 不再提醒 / 取消）
+            DrawButton(canvas, 0, "前往下载", primary: true);
+            DrawButton(canvas, 1, "不再提醒", primary: false);
+            DrawButton(canvas, 2, "取消", primary: false);
 
-            // 确定按钮 (左边，带品牌色)
-            var confirmRect = new SKRect(centerX - btnWidth - 10, btnY, centerX - 10, btnY + btnHeight);
-            _dynamicFill.Color = _confirmHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-            canvas.DrawRoundRect(confirmRect, 6, 6, _dynamicFill);
-            canvas.DrawText("前往下载", confirmRect.MidX, btnY + 26, _btnTextPaint);
-
-            // 取消按钮 (右边，暗色调)
-            var cancelRect = new SKRect(centerX + 10, btnY, centerX + btnWidth + 10, btnY + btnHeight);
-            _dynamicFill.Color = _cancelHovered ? new SKColor(255, 255, 255, 25) : new SKColor(255, 255, 255, 10);
-            canvas.DrawRoundRect(cancelRect, 6, 6, _dynamicFill);
-            canvas.DrawText("取消", cancelRect.MidX, btnY + 26, _btnTextPaint);
+            // 6. 底部小字说明：让用户知道「不再提醒」不是永久静音
+            canvas.DrawText("「不再提醒」仅对当前版本有效，之后有新版本仍会提示", WIDTH / 2f, HEIGHT - 12f, _hintPaint);
 
             UpdateWindow(surface.PeekPixels());
+        }
+
+        /// <summary>画一个底部按钮。几何来自 <see cref="GetButtonRect"/>，与命中判定同源。</summary>
+        private void DrawButton(SKCanvas canvas, int index, string text, bool primary)
+        {
+            var rect = GetButtonRect(index);
+            bool hovered = _hoveredButton == index;
+
+            if (primary)
+                _dynamicFill.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+            else
+                // 次级按钮有两个（不再提醒 / 取消），hover 色比原来的 25 略提亮，否则挨着看不出哪个被悬停
+                _dynamicFill.Color = hovered ? new SKColor(255, 255, 255, 42) : new SKColor(255, 255, 255, 10);
+
+            canvas.DrawRoundRect(rect, 6, 6, _dynamicFill);
+            canvas.DrawText(text, rect.MidX, BTN_Y + 26, _btnTextPaint);
         }
 
         private unsafe void UpdateWindow(SKPixmap pixmap)

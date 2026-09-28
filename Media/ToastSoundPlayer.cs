@@ -34,8 +34,15 @@ internal static class ToastSoundPlayer
     private static Thread? _worker;
     private static int _queued; // 队列中尚未播放完的数量（含正在播放的），供 UI 判定
 
-    /// <summary>一次播放请求：路径 + 音量在入队时就冻结。</summary>
-    private readonly record struct SoundRequest(string Path, int VolumePercent);
+    /// <summary>
+    /// 一次播放请求：**磁盘路径或 exe 内嵌资源名** + 音量，两者都在入队时就冻结。
+    /// 两个来源字段必有一个非空 —— 内置音在磁盘上不存在时走 <see cref="ResourceName"/>
+    /// （单文件 exe 被单独拷走的情况，见 <see cref="DataResources"/>）。
+    /// </summary>
+    private readonly record struct SoundRequest(string Path, string ResourceName, int VolumePercent)
+    {
+        internal bool FromResource => ResourceName.Length > 0;
+    }
 
     /// <summary>当前是否有待播 / 正在播的提示音。</summary>
     internal static bool IsBusy => Volatile.Read(ref _queued) > 0;
@@ -47,7 +54,7 @@ internal static class ToastSoundPlayer
     }
 
     /// <summary>
-    /// 投递一条提示音。路径为空、文件不存在、队列已满时静默忽略。
+    /// 投递一条**磁盘文件**提示音。路径为空、文件不存在、队列已满时静默忽略。
     /// 此方法极快（只入队 + 唤醒线程），可以从渲染线程 / HTTP 监听线程任意调用。
     /// </summary>
     internal static void Enqueue(string? path, int volumePercent)
@@ -62,27 +69,52 @@ internal static class ToastSoundPlayer
 
             if (!File.Exists(fullPath)) return;
 
-            lock (_lock)
-            {
-                if (_queue.Count >= MaxQueue) return; // 队列满，丢弃（不阻塞调用方）
-                _queue.Enqueue(new SoundRequest(fullPath, Math.Clamp(volumePercent, 0, 100)));
-                Interlocked.Increment(ref _queued);
-
-                if (_worker is null || !_worker.IsAlive)
-                {
-                    _worker = new Thread(WorkerLoop)
-                    {
-                        IsBackground = true, // 不阻止进程退出
-                        Name = "NPS-ToastSound",
-                        Priority = ThreadPriority.BelowNormal, // 绝不和渲染线程抢 CPU
-                    };
-                    _worker.Start();
-                }
-            }
+            EnqueueCore(new SoundRequest(fullPath, "", Math.Clamp(volumePercent, 0, 100)));
         }
         catch (Exception ex)
         {
             Logger.Error("[提示音] 入队失败", ex);
+        }
+    }
+
+    /// <summary>
+    /// 投递一条 **exe 内嵌资源**提示音 —— 单文件发布时磁盘上没有 <c>data\sound</c> 的兜底通路。
+    /// 资源名形如 <c>data/sound/QQ.wav</c>；资源不存在或队列已满时静默忽略。
+    /// </summary>
+    internal static void EnqueueResource(string? resourceName, int volumePercent)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(resourceName)) return;
+            if (!DataResources.Exists(resourceName)) return;
+
+            EnqueueCore(new SoundRequest("", resourceName, Math.Clamp(volumePercent, 0, 100)));
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("[提示音] 入队失败（内嵌资源）", ex);
+        }
+    }
+
+    /// <summary>真正入队 + 按需拉起播放线程（两种音源共用一条队列，顺序与去重语义完全一致）。</summary>
+    private static void EnqueueCore(SoundRequest req)
+    {
+        lock (_lock)
+        {
+            if (_queue.Count >= MaxQueue) return; // 队列满，丢弃（不阻塞调用方）
+            _queue.Enqueue(req);
+            Interlocked.Increment(ref _queued);
+
+            if (_worker is null || !_worker.IsAlive)
+            {
+                _worker = new Thread(WorkerLoop)
+                {
+                    IsBackground = true, // 不阻止进程退出
+                    Name = "NPS-ToastSound",
+                    Priority = ThreadPriority.BelowNormal, // 绝不和渲染线程抢 CPU
+                };
+                _worker.Start();
+            }
         }
     }
 
@@ -140,11 +172,22 @@ internal static class ToastSoundPlayer
         WaveStream? reader = null;
         IWaveProvider? provider = null;
         WasapiOut? output = null;
+        Stream? resStream = null; // 内嵌资源流：读取器不拥有它，必须在 finally 里自己释放
 
         try
         {
-            reader = OpenReader(req.Path);
-            if (reader is null) { error = "不支持的音频格式或文件已损坏"; return; }
+            if (req.FromResource)
+            {
+                // 内置音来自 exe 内部（磁盘上没有 data\sound 时）—— 走流式读取
+                resStream = DataResources.OpenRead(req.ResourceName);
+                if (resStream is null) { error = "内置提示音资源缺失"; return; }
+                reader = ToastSoundConfig.OpenReader(resStream, Path.GetExtension(req.ResourceName));
+            }
+            else
+            {
+                reader = OpenReader(req.Path);
+                if (reader is null) { error = "不支持的音频格式或文件已损坏"; return; }
+            }
 
             // 读文件头就知道时长 → 超长文件直接拒播（防止一个几十小时的音频把设备占住）
             double seconds = reader.TotalTime.TotalSeconds;
@@ -178,6 +221,7 @@ internal static class ToastSoundPlayer
             SafeDispose(output);
             if (provider is IDisposable pd && !ReferenceEquals(provider, reader)) SafeDispose(pd);
             SafeDispose(reader);
+            SafeDispose(resStream);
         }
     }
 

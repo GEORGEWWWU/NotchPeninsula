@@ -205,11 +205,11 @@ namespace NotchPeninsula
             if (file == null)
                 return null;
 
-            string full = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "image", file);
-            if (!File.Exists(full))
+            // 磁盘优先、exe 内嵌兜底：单文件发布时 data\image 可能不在磁盘上（exe 被单独拷走）
+            using var fs = DataResources.OpenRead("data/image/" + file);
+            if (fs == null)
                 return null;
 
-            using var fs = File.OpenRead(full);
             return DecodeScaled(fs);
         }
 
@@ -227,7 +227,7 @@ namespace NotchPeninsula
                 foreach (string ext in exts)
                 {
                     string name = alias + kind + ext;
-                    if (File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "image", name)))
+                    if (DataResources.Exists("data/image/" + name))
                         return name;
                 }
             }

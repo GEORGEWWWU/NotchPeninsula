@@ -1111,7 +1111,16 @@ public sealed class PluginManager
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件隐藏清单失败", ex); }
     }
 
-    /// <summary>exe 所在目录：单文件发布时 AppContext.BaseDirectory 是临时解压目录，插件必须放 exe 同级。</summary>
+    /// <summary>
+    /// exe 所在目录 —— 插件必须放在 exe 同级 <c>plugins\</c>，所以这里要的是**进程可执行文件**的位置，
+    /// 而不是「程序集所在目录」。
+    ///
+    /// ⚠️ 更正（2026-09-27 实测）：单文件发布（<c>PublishSingleFile</c> + <c>IncludeNativeLibrariesForSelfExtract</c>）
+    ///    下 <see cref="AppContext.BaseDirectory"/> **仍然是 exe 所在目录**，只有原生库会被解压到
+    ///    <c>%TEMP%\.net\</c>；只有再打开 <c>IncludeAllContentForSelfExtract</c> 时它才会变成临时解压目录。
+    ///    这里继续走 <see cref="Environment.ProcessPath"/> 只是为了「无论哪种打包方式都对」，
+    ///    并且 <c>dotnet run</c> / <c>dotnet xxx.dll</c> 时 ProcessPath 是 dotnet.exe，故保留回退分支。
+    /// </summary>
     private static string GetAppDirectory()
     {
         var exe = Environment.ProcessPath;
