@@ -18,9 +18,13 @@ namespace NotchPeninsula
     ///   - 复用 ConsoleWindow 那套「layered + UpdateLayeredWindow + Skia」的成熟画法，
     ///     保证和设置面板同一套颜色常量、同一种字体、同样的圆角/间距节奏。
     ///   - 窗口带 WS_EX_NOACTIVATE：菜单弹出时**不抢焦点**。这很关键，托盘菜单本来就不该
-    ///     夺走前台窗口的激活态；同时也避免了「激活 → 失活 → 自己把自己关掉」的自杀循环。
-    ///   - 关闭走两条路：点在自己身上（执行命令后关） / 收到 WM_ACTIVATEAPP 失活通知
-    ///     （点了别的窗口，或者右键弹了系统任务栏菜单）。
+    ///     夺走前台窗口的激活态。
+    ///   - ⚠️ 代价：WS_EX_NOACTIVATE 的窗口**永远不是前台窗口**，于是所有「靠前台身份才能收到
+    ///     的通知」全都收不到 —— SetCapture 的捕获对后台窗口是残废的（见 CreateAndShow 的注释）、
+    ///     WM_ACTIVATEAPP 不会来、WM_KEYDOWN(ESC) 也不会来。所以「点菜单外面收起」这条唯一的
+    ///     出路是**主动轮询**鼠标状态（<see cref="PollDismiss"/>，和岛体「点岛外收起」同一套办法）。
+    ///     历史坑：曾经先写过「延迟 200ms 再 SetCapture」，后来又改成「立刻 SetCapture」，
+    ///     两条都不行 —— 不是时序问题，是这个窗口风格根本拿不到前台身份。
     ///
     /// 菜单项状态（尤其「开机自启」的 ✅）由 <see cref="SyncAutoStart"/> 双向同步：
     ///   设置面板改了 → 调 SyncAutoStart，托盘菜单下次弹出/立即刷新都对得上；
@@ -40,6 +44,13 @@ namespace NotchPeninsula
         private const float TEXT_SIZE = 13.5f;
 
         private const float HOVER_RADIUS = 5f;
+
+        // ==================== 收起轮询（菜单唯一的「点外面关掉」通路） ====================
+        // 菜单窗口带 WS_EX_NOACTIVATE → 不是前台窗口 → SetCapture 只对「光标压在自己身上」有效，
+        // 点菜单外面那一下会被正常投递给别的窗口，我们什么都收不到。所以只能自己按帧轮询按键状态。
+        // 20ms ≈ 一帧：远小于人手一次点击的按住时长（通常 50ms 以上），既不会漏也不会太费。
+        private const int POLL_TIMER_ID = 0x7EA1;  // 窗口私有定时器 ID，不会和别的 SetTimer 撞号
+        private const int POLL_INTERVAL_MS = 20;
 
         // 与 ConsoleWindow 同一套色板，避免两处 UI 出现两种"暗色"
         private static readonly SKColor COLOR_BG = new SKColor(32, 32, 32);
@@ -80,6 +91,17 @@ namespace NotchPeninsula
         private static IntPtr _classAtom = IntPtr.Zero;
         private static readonly Win32.WndProc _staticWndProc = StaticWndProc;
         private static TrayMenuWindow? _active;   // 全局同时只允许一个菜单实例
+        private static int _tokenSeed;            // 每个实例发一个唯一标记
+
+        /// <summary>
+        /// 本实例的唯一标记，随 <see cref="Win32.WM_TRAYMENU_CLOSE"/> 的 wParam 一起投递。
+        ///
+        /// 为什么需要它：关闭走的是 PostMessage（排队），而**窗口句柄会被系统复用** ——
+        /// 用户"菜单开着时再点一次托盘图标"时，旧菜单刚排队的那条关闭消息，可能在
+        /// CloseActive() 销毁旧窗、新菜单建好（并恰好拿到同一个 HWND 值）之后才被派发，
+        /// 于是把刚弹出的新菜单秒掉。带上 token 就能把这类"发给上一个菜单的消息"识别出来丢掉。
+        /// </summary>
+        private readonly int _token = ++_tokenSeed;
 
         private float _dpiScale = 1f;
         private readonly int _logicalWidth = MENU_WIDTH;
@@ -256,16 +278,27 @@ namespace NotchPeninsula
 
             // 立刻捕获鼠标。
             //
-            // 之前这里是"延迟 200ms 再武装"，那是为了躲 WM_ACTIVATEAPP 的假通知——
-            // 现在关闭逻辑改走捕获了，那个顾虑不存在。而且延迟是有害的：
-            // 弹窗后头 200ms 内点外面会因为还没捕获而漏掉，菜单就一直挂着。
+            // ⚠️ 但必须说清楚：这个捕获对**本窗口是残废的**，它不是收起菜单的依靠。
+            //    SetCapture 官方 Remarks 写得很死：
+            //      "Only the foreground window can capture the mouse. When a background window
+            //       attempts to do so, the window receives messages only for mouse events that
+            //       occur when the cursor hot spot is within the visible portion of the window."
+            //    而本窗口带 WS_EX_NOACTIVATE，**永远不可能成为前台窗口** —— 于是"捕获"退化成了
+            //    "光标在自己身上时才收消息"，点菜单外面那一下会被正常投递给别的窗口，我们收不到。
+            //    这就是"打开菜单后除了点菜单项，怎么都关不掉"的根因（不是时序问题，
+            //    所以之前"延迟 200ms 再武装"和"立刻武装"两种写法都一样不行）。
+            //    保留这次 SetCapture 只是因为：万一将来窗口变成前台，WM_LBUTTONDOWN / WM_RBUTTONUP
+            //    那两条既有路径立刻就能用；它对现状无害。
             //
-            // 另外必须处理一个边界：菜单是由**右键抬起**拉起来的，
-            // 如果用户此刻正按着右键（或者右键抬起事件的时序刚好落在同一个消息批次里），
-            // 捕获后第一个到达的可能就是我们自己那次右键的抬起。
-            // 用 _ignoreNextButtonUp 把这一下吃掉，避免菜单"刚弹出就自己关掉"。
+            //    另外还要处理一个边界：菜单是由**右键抬起**拉起来的，如果用户此刻正按着右键，
+            //    捕获后第一个到达的可能就是我们自己那次右键的抬起 —— 用 _ignoreNextButtonUp 吃掉。
             _ignoreNextButtonUp = (Win32.GetAsyncKeyState(Win32.VK_RBUTTON) & 0x8000) != 0;
             Win32.SetCapture(_hwnd);
+
+            // ✅ 真正负责"点菜单外面收起"的是这个 20ms 轮询（见 PollDismiss）。
+            //    走窗口自己的 SetTimer / WM_TIMER：回调天然在 UI 线程上，不用任何跨线程同步，
+            //    也不用像 System.Timers.Timer 那样在 Destroy 里退订+Dispose（窗口销毁会自动清掉）。
+            Win32.SetTimer(_hwnd, (IntPtr)POLL_TIMER_ID, POLL_INTERVAL_MS, IntPtr.Zero);
         }
 
         private static void EnsureClassRegistered()
@@ -365,6 +398,8 @@ namespace NotchPeninsula
 
             if (_hwnd != IntPtr.Zero)
             {
+                // 轮询定时器挂在窗口上，DestroyWindow 会一并清掉；显式 Kill 一次只是为了意图清楚
+                Win32.KillTimer(_hwnd, (IntPtr)POLL_TIMER_ID);
                 // 释放鼠标捕获，否则捕获会跟着句柄一起消失、还把点击吞在别处
                 Win32.ReleaseCapture();
                 Win32.DestroyWindow(_hwnd);
@@ -504,13 +539,27 @@ namespace NotchPeninsula
                     return IntPtr.Zero;
 
                 case Win32.WM_TRAYMENU_CLOSE:
+                    // 只认自己那条：句柄被复用的情况下，这条消息可能是发给"上一个菜单"的
+                    if (wParam.ToInt32() != _token) return IntPtr.Zero;
                     CloseActive();
                     return IntPtr.Zero;
 
                 case Win32.WM_KEYDOWN:
+                    // 事实上这条分支永远不会被触发：WS_EX_NOACTIVATE 的窗口拿不到键盘焦点。
+                    // ESC 收起实际由 PollDismiss 轮询 GetAsyncKeyState(VK_ESCAPE) 完成。
+                    // 保留它只是为了"窗口万一变前台"时不至于丢掉 ESC。
                     if (wParam.ToInt32() == Win32.VK_ESCAPE)
                     {
                         RequestDismiss();
+                        return IntPtr.Zero;
+                    }
+                    break;
+
+                case Win32.WM_TIMER:
+                    // 菜单存活期间唯一的"点外面关掉"通路（原因见 PollDismiss 的注释）
+                    if (wParam.ToInt32() == POLL_TIMER_ID)
+                    {
+                        PollDismiss();
                         return IntPtr.Zero;
                     }
                     break;
@@ -532,6 +581,8 @@ namespace NotchPeninsula
         private bool _tearingDown;   // 销毁过程中，用来屏蔽 WM_CAPTURECHANGED 的递归关闭
         private bool _tornDown;      // 已彻底销毁（计时器与画笔均已释放），禁止再次调度渲染
         private bool _ignoreNextButtonUp; // 吃掉"拉起菜单的那一下右键抬起"，防止刚弹出就自杀
+        private bool _pollArmed;     // 轮询是否已武装（先等所有鼠标键松开一次，躲开"拉起菜单的那一下"）
+        private bool _pollButtonDown;// 上一次轮询时是否有鼠标键按着，用来识别"新按下"
 
         private int HitTest(int x, int y)
         {
@@ -582,7 +633,8 @@ namespace NotchPeninsula
             _dismissRequested = true;
 
             // 回到消息循环后再销毁，不要在 WndProc 里直接 DestroyWindow
-            Win32.PostMessage(_hwnd, Win32.WM_TRAYMENU_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            // wParam 带本实例的 token，用来挡住"句柄复用导致旧菜单的消息误杀新菜单"（见 _token 注释）
+            Win32.PostMessage(_hwnd, Win32.WM_TRAYMENU_CLOSE, (IntPtr)_token, IntPtr.Zero);
         }
 
         private void RequestRender()
@@ -592,6 +644,78 @@ namespace NotchPeninsula
             if (_tornDown || _renderScheduled || _dismissRequested) return;
             _renderScheduled = true;
             _renderTimer.Start();
+        }
+
+        // ==================== 收起判定（20ms 轮询） ====================
+
+        /// <summary>
+        /// 每 20ms 走一次：光标在菜单外且鼠标**新按下** → 收起菜单。
+        ///
+        /// 为什么必须轮询：菜单窗口带 WS_EX_NOACTIVATE，永远不是前台窗口，而系统只把鼠标捕获
+        /// 交给前台窗口（见 CreateAndShow 里引的 SetCapture 文档原文）。所以
+        ///   · SetCapture + WM_LBUTTONDOWN  → 点外面那一下根本收不到；
+        ///   · WM_ACTIVATEAPP / WM_ACTIVATE → 窗口从不被激活，也收不到；
+        ///   · WM_KEYDOWN(ESC)             → 没有键盘焦点，同样收不到。
+        /// 三条路全被这个窗口风格堵死，只能主动去问系统"现在键按着没、光标在哪"。
+        /// 岛体的「点岛外收起」用的也是这套 GetAsyncKeyState 办法，行为一致。
+        /// </summary>
+        private void PollDismiss()
+        {
+            if (_dismissRequested || _tornDown) return;
+
+            bool anyDown = AnyMouseButtonDown();
+
+            // 武装：菜单可能是"右键还按着"的时候弹出来的，先等所有鼠标键松开一次，
+            // 否则拉起菜单的那一下会被当成"在菜单外新按下"，菜单刚弹出就自己关掉。
+            if (!_pollArmed)
+            {
+                if (anyDown) return;
+                _pollArmed = true;
+                _pollButtonDown = false;
+                return;
+            }
+
+            // ESC：菜单拿不到键盘焦点，WM_KEYDOWN 永远不会来，这里兜一下
+            if ((Win32.GetAsyncKeyState(Win32.VK_ESCAPE) & 0x8000) != 0)
+            {
+                DismissNow();
+                return;
+            }
+
+            // 只认「新按下」那一帧：在菜单里按住再拖出去不收起（和系统菜单一致），
+            // 一次完整点击（按下→抬起）不可能短于 20ms，所以不会漏。
+            bool freshPress = anyDown && !_pollButtonDown;
+            _pollButtonDown = anyDown;
+            if (!freshPress) return;
+
+            if (IsCursorInsideMenu()) return;
+            DismissNow();
+        }
+
+        private static bool AnyMouseButtonDown()
+        {
+            return (Win32.GetAsyncKeyState(Win32.VK_LBUTTON) & 0x8000) != 0
+                || (Win32.GetAsyncKeyState(Win32.VK_RBUTTON) & 0x8000) != 0
+                || (Win32.GetAsyncKeyState(Win32.VK_MBUTTON) & 0x8000) != 0
+                || (Win32.GetAsyncKeyState(Win32.VK_XBUTTON1) & 0x8000) != 0
+                || (Win32.GetAsyncKeyState(Win32.VK_XBUTTON2) & 0x8000) != 0;
+        }
+
+        /// <summary>光标是否落在菜单窗口矩形内（都用屏幕物理像素，不做 DPI 换算）。</summary>
+        private bool IsCursorInsideMenu()
+        {
+            if (_hwnd == IntPtr.Zero) return false;
+            if (!Win32.GetCursorPos(out var pt)) return true; // 取不到就当作在里面，宁可多等一帧也别误关
+            if (!Win32.GetWindowRect(_hwnd, out var r)) return false;
+
+            return pt.x >= r.Left && pt.x < r.Right && pt.y >= r.Top && pt.y < r.Bottom;
+        }
+
+        /// <summary>收起菜单：先交还捕获（对后台窗口是空操作，留着以防窗口日后变前台），再请求销毁。</summary>
+        private void DismissNow()
+        {
+            Win32.ReleaseCapture();
+            RequestDismiss();
         }
 
         // ==================== 绘制 ====================

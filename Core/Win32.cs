@@ -55,8 +55,11 @@ namespace NotchPeninsula
         public const int WM_CAPTURECHANGED = 0x0215;  // 鼠标捕获被抢占/释放
         public const int WM_KEYDOWN = 0x0100;
         public const int VK_ESCAPE = 0x1B;
-        public const int VK_RBUTTON = 0x02;
         public const int VK_LBUTTON = 0x01;
+        public const int VK_RBUTTON = 0x02;
+        public const int VK_MBUTTON = 0x04;
+        public const int VK_XBUTTON1 = 0x05;
+        public const int VK_XBUTTON2 = 0x06;
         public const int SWP_SHOWWINDOW = 0x0040;
 
         // 自绘托盘菜单的内部私有消息（WM_APP 之后的自定义区间，绝不会和系统消息撞号）
