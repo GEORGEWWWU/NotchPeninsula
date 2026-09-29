@@ -9,6 +9,58 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
+        // ============================================================
+        //  明暗外观（跟随系统「应用模式」自动切换）
+        //
+        //  设置窗口的底是**系统材质**（亚克力 / 云母）或自绘实色，标题栏 / 材质本来就跟着系统
+        //  深浅走，所以这里也只认系统「应用模式」（HKCU\...\Themes\Personalize\AppsUseLightTheme），
+        //  不去看岛体的 ThemeMode —— 否则会出现「浅色窗口配深色亚克力」这种不自洽的观感。
+        //
+        //  中性色的取反规则只有两条，别各写各的：
+        //    · Neutral(v)  —— 不透明中性灰：浅色外观 = 255 - v（灰度取反）。深色一列与历史硬编码
+        //                     值**逐位一致**，所以老外观一点没变。white(255) 取反就是纯黑，
+        //                     与岛体浅色主题的「黑字 + 80 灰副标题」也正好对得上。
+        //    · Overlay(a)  —— 半透明叠加层（卡片底 / 分隔线 / 悬停底 / 滚动条）：深色 = 白叠加，
+        //                     浅色 = 黑叠加，alpha 保持不变。白 a% 叠深底与黑 a% 叠浅底在亮度上
+        //                     是对称的，所以两套观感一致。
+        //
+        //  ⚠️ 这两个是「基准色」的来源：任何地方临时改了共享画笔的颜色，用完必须恢复到
+        //     Neutral / Overlay / _fgColor 的当前值，不能写死 SKColors.White（见 Render 里的
+        //     「恢复基准色」注释）—— 否则浅色外观下会残留白字 / 白线。
+        // ============================================================
+
+        private static bool _isLightAppearance;
+
+        /// <summary>主前景色（文字 / 图标 / 图形描边）。深色=白，浅色=纯黑。</summary>
+        private static SKColor _fgColor = SKColors.White;
+
+        /// <summary>不透明中性灰在当前外观下的同义色。</summary>
+        private static SKColor Neutral(byte v)
+            => _isLightAppearance
+                ? new SKColor((byte)(255 - v), (byte)(255 - v), (byte)(255 - v))
+                : new SKColor(v, v, v);
+
+        /// <summary>半透明叠加层在当前外观下的同义色（深色=白叠加，浅色=黑叠加）。</summary>
+        private static SKColor Overlay(byte alpha)
+            => _isLightAppearance
+                ? new SKColor(0, 0, 0, alpha)
+                : new SKColor(255, 255, 255, alpha);
+
+        /// <summary>系统「应用模式」是不是浅色。读不到（键不存在 / 权限）就按深色 —— 与历史外观一致。</summary>
+        private static bool IsSystemLightAppearance()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                return key?.GetValue("AppsUseLightTheme") is int val && val == 1;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         // 极致内存优化：全局复用画笔缓存
         private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(32, 32, 32), IsAntialias = true };
 

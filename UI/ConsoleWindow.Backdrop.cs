@@ -88,29 +88,60 @@ namespace NotchPeninsula
             Win32.ShowWindow(_hwnd, Win32.SW_MINIMIZE);
         }
 
+        // 明暗外观的唯一入口：读系统「应用模式」，把**前景 / 叠加层**的基准色刷到共享画笔上。
+        // 底色与材质相关的部分（_bgPaint / _menuBg / 边框…）随材质模式变化，收口在 ApplyBackdropPalette()，
+        // 所以窗口创建 / 重建 / 系统主题变化时都是「先 ApplyAppearance()，再 ApplyBackdropPalette()」。
+        //
+        // ⚠️ 必须在 TryEnableBackdropMaterial() **之前**调用：那里要按明暗决定
+        //    DWMWA_USE_IMMERSIVE_DARK_MODE 与亚克力 tint。
+        private void ApplyAppearance()
+        {
+            _isLightAppearance = IsSystemLightAppearance();
+
+            _fgColor = Neutral(255);   // 深色 = 白，浅色 = 纯黑
+
+            _uiTextPaint.Color = _fgColor;
+            _subTextPaint.Color = Neutral(170);
+            _titleTextPaint.Color = Neutral(200);
+            _iconPaint.Color = _fgColor;
+            _chevronPaint.Color = Neutral(150);
+
+            // 半透明叠加层：深色白叠加 / 浅色黑叠加，alpha 与原值一一对应（观感对称）
+            _tabBgSelected.Color = Overlay(15);
+            _tabBgHovered.Color = Overlay(8);
+            _separatorPaint.Color = Overlay(20);
+            _hoverMinPaint.Color = Overlay(20);
+        }
+
         private void ApplyBackdropPalette()
         {
+            bool light = _isLightAppearance;
+
             if (_backdropMode == BackdropMaterialMode.SolidDark)
             {
-                _bgPaint.Color = new SKColor(32, 32, 32);
-                _titleBarPaint.Color = new SKColor(40, 40, 40);
-                _cardBg.Color = new SKColor(255, 255, 255, 8);
-                _cardBorder.Color = new SKColor(255, 255, 255, 15);
-                _menuBg.Color = new SKColor(40, 40, 40);
-                _menuBorder.Color = new SKColor(80, 80, 80);
-                _globalBorderPaint.Color = new SKColor(60, 60, 60);
+                _bgPaint.Color = light ? new SKColor(243, 243, 243) : new SKColor(32, 32, 32);
+                _titleBarPaint.Color = light ? new SKColor(235, 235, 235) : new SKColor(40, 40, 40);
+                _cardBg.Color = Overlay(8);
+                _cardBorder.Color = Overlay(15);
+                _menuBg.Color = light ? new SKColor(250, 250, 250) : new SKColor(40, 40, 40);
+                _menuBorder.Color = light ? new SKColor(200, 200, 200) : new SKColor(80, 80, 80);
+                _globalBorderPaint.Color = light ? new SKColor(205, 205, 205) : new SKColor(60, 60, 60);
                 return;
             }
 
             bool mica = _backdropMode == BackdropMaterialMode.Mica;
-            _bgPaint.Color = mica ? new SKColor(22, 22, 22, 164) : new SKColor(18, 18, 18, 112);
+            _bgPaint.Color = light
+                ? (mica ? new SKColor(248, 248, 248, 164) : new SKColor(245, 245, 245, 112))
+                : (mica ? new SKColor(22, 22, 22, 164) : new SKColor(18, 18, 18, 112));
             // 标题栏不再单独盖一层深色底，否则顶栏会像“第二块面板”把亚克力吃掉。
             _titleBarPaint.Color = SKColors.Transparent;
-            _cardBg.Color = new SKColor(255, 255, 255, mica ? (byte)18 : (byte)22);
-            _cardBorder.Color = new SKColor(255, 255, 255, mica ? (byte)30 : (byte)38);
-            _menuBg.Color = mica ? new SKColor(26, 26, 26, 210) : new SKColor(22, 22, 22, 172);
-            _menuBorder.Color = new SKColor(255, 255, 255, mica ? (byte)28 : (byte)34);
-            _globalBorderPaint.Color = new SKColor(255, 255, 255, mica ? (byte)34 : (byte)40);
+            _cardBg.Color = Overlay(mica ? (byte)18 : (byte)22);
+            _cardBorder.Color = Overlay(mica ? (byte)30 : (byte)38);
+            _menuBg.Color = light
+                ? (mica ? new SKColor(248, 248, 248, 210) : new SKColor(250, 250, 250, 172))
+                : (mica ? new SKColor(26, 26, 26, 210) : new SKColor(22, 22, 22, 172));
+            _menuBorder.Color = Overlay(mica ? (byte)28 : (byte)34);
+            _globalBorderPaint.Color = Overlay(mica ? (byte)34 : (byte)40);
         }
 
         private void TryEnableBackdropMaterial()
@@ -145,7 +176,8 @@ namespace NotchPeninsula
 
         private void TrySetDarkMode()
         {
-            int enabled = 1;
+            // 沉浸式深色标题栏：跟着当前外观走，浅色外观下必须是 0，否则 DWM 会给浅色玻璃配深色边框。
+            int enabled = _isLightAppearance ? 0 : 1;
             int size = Marshal.SizeOf<int>();
             if (_backdropHwnd == IntPtr.Zero) return;
             _ = Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, size);
@@ -181,12 +213,14 @@ namespace NotchPeninsula
         }
 
         // 亚克力的 tint（ABGR）：alpha 不能为 0，否则只剩模糊没有底色。
-        // 这个 tint 故意比上一版更浅：上一版 alpha 太高，视觉更像“深色底板”而不是背景模糊。
+        // 深色是深灰底、浅色是浅灰底，alpha 保持一致（两套透明度观感才对得上）。
 
-        private static readonly uint ACRYLIC_TINT = ColorToAbgr(0x8C, 0x14, 0x14, 0x14); // 0x8C141414
+        private static uint AcrylicTint => _isLightAppearance
+            ? ColorToAbgr(0x8C, 0xF2, 0xF2, 0xF2)   // 0x8CF2F2F2
+            : ColorToAbgr(0x8C, 0x14, 0x14, 0x14);  // 0x8C141414
 
         private bool TryEnableAcrylicBackdrop()
-            => ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, ACRYLIC_TINT);
+            => ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, AcrylicTint);
 
         private bool ApplyAccentPolicy(int accentState, uint gradientColor)
         {
@@ -247,7 +281,7 @@ namespace NotchPeninsula
             switch (_backdropMode)
             {
                 case BackdropMaterialMode.Acrylic:
-                    Logger.Debug($"重贴亚克力材质: {(ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, ACRYLIC_TINT) ? "ok" : "fail")}");
+                    Logger.Debug($"重贴亚克力材质: {(ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, AcrylicTint) ? "ok" : "fail")}");
                     break;
 
                 case BackdropMaterialMode.Mica:
@@ -315,6 +349,7 @@ namespace NotchPeninsula
                 // 顺序严格照抄构造函数：region → 材质 → 调色板 → 压到内容窗正下方。
                 ApplyRoundedRegion(_backdropHwnd);
                 _backdropMode = BackdropMaterialMode.SolidDark;
+                ApplyAppearance();
                 TryEnableBackdropMaterial();
                 ApplyBackdropPalette();
                 SyncBackdropToContent();

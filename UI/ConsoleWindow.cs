@@ -848,6 +848,9 @@ namespace NotchPeninsula
             );
 
             ApplyRoundedRegion(_backdropHwnd);
+            // 先定明暗外观（前景 / 叠加层的基准色），因为 TryEnableBackdropMaterial 要按它决定
+            // DWMWA_USE_IMMERSIVE_DARK_MODE 与亚克力 tint；底色最后交给 ApplyBackdropPalette 收口。
+            ApplyAppearance();
             TryEnableBackdropMaterial();
             ApplyBackdropPalette();
 
@@ -981,6 +984,22 @@ namespace NotchPeninsula
                         return IntPtr.Zero;
                     }
                     break;
+
+                // 系统「应用模式」（浅色 / 深色）切换时系统会广播 WM_SETTINGCHANGE。
+                // 只有**明暗真的变了**才重刷：亚克力 tint / 材质窗深色标题栏 / 全套底色都要跟着换。
+                // （WM_SETTINGCHANGE 也用于很多其它设置，白刷一遍整帧没必要，所以先比对再动。）
+                case Win32.WM_SETTINGCHANGE:
+                {
+                    bool wasLight = _isLightAppearance;
+                    ApplyAppearance();
+                    if (_isLightAppearance != wasLight)
+                    {
+                        ReapplyBackdropMaterial();
+                        ApplyBackdropPalette();
+                        Render();
+                    }
+                    break;
+                }
 
                 case Win32.WM_MOUSEMOVE:
                     OnMouseMove(
