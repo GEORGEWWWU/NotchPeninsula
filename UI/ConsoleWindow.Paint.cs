@@ -100,9 +100,11 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _chevronPaint = new SKPaint { Color = new SKColor(150, 150, 150), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
 
-        private static readonly SKPaint _menuBg = new SKPaint { Color = new SKColor(40, 40, 40), IsAntialias = true };
+        // 下拉浮层：**不透明纯色**面板（alpha 固定 255）。色值由 ApplyBackdropPalette() 按明暗收口，
+        // 这里的初值只是窗口创建到首次刷调色板之间的兜底，不要再给它们加 alpha。
+        private static readonly SKPaint _menuBg = new SKPaint { Color = new SKColor(48, 48, 48), IsAntialias = true };
 
-        private static readonly SKPaint _menuBorder = new SKPaint { Color = new SKColor(80, 80, 80), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+        private static readonly SKPaint _menuBorder = new SKPaint { Color = new SKColor(88, 88, 88), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
 
         private static readonly SKPaint _globalBorderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
 

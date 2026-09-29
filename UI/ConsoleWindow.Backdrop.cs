@@ -117,14 +117,19 @@ namespace NotchPeninsula
         {
             bool light = _isLightAppearance;
 
+            // 🔻 下拉浮层永远是**不透明纯色面板**，与窗口是玻璃还是实色无关。
+            //    以前这里跟着材质模式走半透明（alpha 172 / 210），展开列表时底下的卡片和文字
+            //    会透上来，「看得见底下」很影响观感 —— 浮层本来就是盖住内容的实心层。
+            //    色值固定、不随材质变化：深色比卡片（≈ Overlay(22) 叠玻璃）略亮，做出「浮起」感。
+            _menuBg.Color = light ? new SKColor(252, 252, 252) : new SKColor(48, 48, 48);
+            _menuBorder.Color = light ? new SKColor(200, 200, 200) : new SKColor(88, 88, 88);
+
             if (_backdropMode == BackdropMaterialMode.SolidDark)
             {
                 _bgPaint.Color = light ? new SKColor(243, 243, 243) : new SKColor(32, 32, 32);
                 _titleBarPaint.Color = light ? new SKColor(235, 235, 235) : new SKColor(40, 40, 40);
                 _cardBg.Color = Overlay(8);
                 _cardBorder.Color = Overlay(15);
-                _menuBg.Color = light ? new SKColor(250, 250, 250) : new SKColor(40, 40, 40);
-                _menuBorder.Color = light ? new SKColor(200, 200, 200) : new SKColor(80, 80, 80);
                 _globalBorderPaint.Color = light ? new SKColor(205, 205, 205) : new SKColor(60, 60, 60);
                 return;
             }
@@ -137,10 +142,6 @@ namespace NotchPeninsula
             _titleBarPaint.Color = SKColors.Transparent;
             _cardBg.Color = Overlay(mica ? (byte)18 : (byte)22);
             _cardBorder.Color = Overlay(mica ? (byte)30 : (byte)38);
-            _menuBg.Color = light
-                ? (mica ? new SKColor(248, 248, 248, 210) : new SKColor(250, 250, 250, 172))
-                : (mica ? new SKColor(26, 26, 26, 210) : new SKColor(22, 22, 22, 172));
-            _menuBorder.Color = Overlay(mica ? (byte)28 : (byte)34);
             _globalBorderPaint.Color = Overlay(mica ? (byte)34 : (byte)40);
         }
 
