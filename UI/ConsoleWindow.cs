@@ -959,6 +959,7 @@ namespace NotchPeninsula
                         ReapplyBackdropMaterial();
                         // DWM 的合成初始化是异步的，紧贴 WM_ACTIVATE 补的这一次仍可能被随后的
                         // 初始化覆盖，所以再挂一个短定时器，等激活流程彻底走完再补一次兜底。
+                        // ⚠️ Win10 上真正起作用的是定时器里那次「重建材质窗」，别把这里删掉。
                         Win32.SetTimer(hwnd, BACKDROP_REFRESH_TIMER_ID, 150, IntPtr.Zero);
                     }
                     break;
@@ -967,7 +968,9 @@ namespace NotchPeninsula
                     if (wParam == BACKDROP_REFRESH_TIMER_ID)
                     {
                         Win32.KillTimer(hwnd, BACKDROP_REFRESH_TIMER_ID);
-                        ReapplyBackdropMaterial();
+                        // 激活流程彻底走完之后再补：Win11 重贴一次 accent；Win10 的 accent 重贴无效，
+                        // 这里会走「重建材质窗」那条路（见 RepairBackdropAfterActivate）。
+                        RepairBackdropAfterActivate();
                         return IntPtr.Zero;
                     }
                     if (wParam == DISPLAY_HOVER_TIMER_ID)

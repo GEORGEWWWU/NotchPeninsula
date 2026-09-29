@@ -11,6 +11,10 @@ namespace NotchPeninsula
     {
         private IntPtr _backdropHwnd;
 
+        // 重建材质窗时的重入保护：CreateWindowEx / ShowWindow 会同步派发 WM_SIZE、WM_SHOWWINDOW，
+        // 这些消息又会走到「激活修复」分支，不挡一下就会无限递归重建。
+        private bool _backdropRebuilding;
+
         // 「显示 / 激活之后延迟补一次材质」用的一次性定时器 id（只在本窗口内用，取个不会撞号的值）
 
         private static readonly IntPtr BACKDROP_REFRESH_TIMER_ID = new IntPtr(0x4E50); // "NP"
@@ -255,6 +259,92 @@ namespace NotchPeninsula
                 default:
                     break;
             }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Windows 10 专用：激活 / 从任务栏还原之后「整窗重建材质窗」。
+        //
+        // 背景：Win11（build 22000+）上 ReapplyBackdropMaterial() 重贴一次 accent 就能恢复；
+        //       但 Win10 的 DWM 把 accent 策略缓存在 HWND 上 —— 对**同一个** HWND 重贴**相同**的
+        //       accent 不会触发任何重新合成，窗口就一直是一块透明的洞（前景 UI 还在，背后直接
+        //       看到桌面）。用户实测「只有重新打开设置窗口才恢复」，而重新打开 = 全新的 HWND，
+        //       所以这里直接照搬那条已被验证的路径：销毁旧材质窗 → 用与构造函数完全相同的顺序重建。
+        //
+        // 内容窗（Skia 前景）不动，所以看不到 UI 闪断；重建后立刻 SyncBackdropToContent() 把新窗
+        // 压回内容窗正下方（新建窗口默认在 Z 序顶部，不压回去会盖住前景）。
+        // ─────────────────────────────────────────────────────────────────────────
+
+        private void RebuildBackdropWindow()
+        {
+            if (_backdropRebuilding || _hwnd == IntPtr.Zero)
+                return;
+
+            if (!Win32.GetWindowRect(_hwnd, out var rect))
+                return;
+
+            _backdropRebuilding = true;
+            try
+            {
+                // 先摘句柄再销毁：销毁期间若还有消息回来，StaticWndProc 不会再把它当成材质窗。
+                if (_backdropHwnd != IntPtr.Zero)
+                {
+                    IntPtr old = _backdropHwnd;
+                    _backdropHwnd = IntPtr.Zero;
+                    Win32.DestroyWindow(old);
+                }
+
+                IntPtr hInstance = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero;
+                _backdropHwnd = Win32.CreateWindowEx(
+                    Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
+                    "NotchConsoleClass", string.Empty,
+                    Win32.WS_POPUP | Win32.WS_VISIBLE,
+                    rect.Left, rect.Top,
+                    rect.Right - rect.Left, rect.Bottom - rect.Top,
+                    IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero);
+
+                if (_backdropHwnd == IntPtr.Zero)
+                {
+                    // 重建不出来就退回自绘实色外观，至少不是一块透明的洞。
+                    _backdropMode = BackdropMaterialMode.SolidDark;
+                    ApplyBackdropPalette();
+                    Render();
+                    Logger.Error("重建材质窗失败：CreateWindowEx 返回 0");
+                    return;
+                }
+
+                // 顺序严格照抄构造函数：region → 材质 → 调色板 → 压到内容窗正下方。
+                ApplyRoundedRegion(_backdropHwnd);
+                _backdropMode = BackdropMaterialMode.SolidDark;
+                TryEnableBackdropMaterial();
+                ApplyBackdropPalette();
+                SyncBackdropToContent();
+                Render();
+
+                Logger.Debug($"重建材质窗完成，材质模式 = {_backdropMode}");
+            }
+            finally
+            {
+                _backdropRebuilding = false;
+            }
+        }
+
+        // 激活 / 从任务栏还原之后把材质补回来，按系统分两条路：
+        //   · Win11（build 22000+）：重贴一次 accent 就够 —— 保持原有行为不变；
+        //   · Win10 + 亚克力：accent 挂在 HWND 上重贴无效，必须重建材质窗（见 RebuildBackdropWindow）。
+
+        private void RepairBackdropAfterActivate()
+        {
+            if (_backdropHwnd == IntPtr.Zero)
+                return;
+
+            if (_backdropMode == BackdropMaterialMode.Acrylic && !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                Logger.Debug("Win10 亚克力激活修复：重建材质窗");
+                RebuildBackdropWindow();
+                return;
+            }
+
+            ReapplyBackdropMaterial();
         }
 
         private static uint ColorToAbgr(byte a, byte r, byte g, byte b)
