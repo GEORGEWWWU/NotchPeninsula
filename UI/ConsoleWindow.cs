@@ -410,6 +410,9 @@ namespace NotchPeninsula
 
         private bool _mediaExpToggleHovered = false;
 
+        /// <summary>「双击媒体控制跳转应用」开关（交互设置页，排在「媒体交互方式」下面一格，默认开启）。</summary>
+        private bool _appLaunchToggleHovered = false;
+
         private bool _passToggleHovered = false;
 
         // 媒体设置状态

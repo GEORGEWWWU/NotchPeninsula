@@ -31,7 +31,10 @@ namespace NotchPeninsula
             canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, _uiTextPaint);
         }
 
-        // 画整张卡片底 + 一行开关内容
+        // 画整张卡片底 + 一行开关内容。
+        //
+        // ⚠️ 版式统一：一张卡片就是「标题 + 一行副标题 + 右侧开关」，不允许再往下叠第三行小字。
+        //    需要补充说明时把话压进副标题，或者写进 README —— 卡片里多出一层子标题会跟其他开关不一致。
         private void DrawToggleCard(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
         {
             var cardRect = new SKRect(200, TITLE_BAR_HEIGHT + yOffset, WIDTH - 20, TITLE_BAR_HEIGHT + yOffset + 62);
@@ -784,7 +787,12 @@ namespace NotchPeninsula
             DrawToggleCard(canvas, 270, "媒体交互方式", "开启为点击展开面板，关闭为悬停直接控制",
                 Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
-            DrawToggleCard(canvas, 342, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+            // 🖱 双击媒体控制跳转应用（2026-09-27 新增）：双击媒体控制把正在放媒体的那个应用切回前台。
+            //    与其余卡片保持同一版式：标题 + 一行副标题，不再往下叠第三层小字。
+            DrawToggleCard(canvas, 342, "双击媒体控制跳转应用", "折叠态双击左半边、展开态双击封面",
+                MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered);
+
+            DrawToggleCard(canvas, 414, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
         }
 
         // 页签：关于软件

@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -207,7 +207,9 @@ namespace NotchPeninsula
 
                 if (_iconBitmap == null)
                 {
-                    var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+                    // using：Icon 持有 HICON，必须确定性释放（本方法由 `_iconBitmap != null` 守卫，
+                    // 但解码失败时守卫不成立，会重复进入本分支）。
+                    using var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (sysIcon != null)
                     {
                         using var bmp = sysIcon.ToBitmap();

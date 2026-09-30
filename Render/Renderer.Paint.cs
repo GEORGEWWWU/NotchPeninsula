@@ -328,7 +328,10 @@ namespace NotchPeninsula
             {
                 try
                 {
-                    var icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+                    // using：Icon 持有 HICON，不释放就是句柄泄漏。
+                    // 注意这里由 `_defaultAppIcon == null` 守卫 —— 若上面 Decode 返回 null，守卫永远不成立、
+                    // 每次调用都会重进本分支，所以更必须 Dispose。
+                    using var icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (icon != null)
                     {
                         using var bmp = icon.ToBitmap();
