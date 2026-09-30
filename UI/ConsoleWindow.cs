@@ -872,6 +872,9 @@ namespace NotchPeninsula
 
             SyncBackdropToContent();
 
+            // 🧩 插件中心支持把 DLL 直接拖进来导入（见 ConsoleWindow.PluginDrop.cs）
+            SetupPluginDropTarget();
+
             for (int i = 0; i < 8; i++)
             {
                 UpdateValueString(i);
@@ -1064,6 +1067,8 @@ namespace NotchPeninsula
                     return IntPtr.Zero;
 
                 case Win32.WM_DESTROY:
+                    // 拖放目标必须在下层窗口销毁前摘掉，否则 OLE 还捏着一个指向已死窗口的接口。
+                    RevokePluginDropTarget();
                     if (_backdropHwnd != IntPtr.Zero)
                     {
                         IntPtr backdrop = _backdropHwnd;

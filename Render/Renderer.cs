@@ -325,6 +325,9 @@ namespace NotchPeninsula
                 // ---------------- [ Toast 消息通知 ] ----------------
                 if (toast != null)
                 {
+                    // 整块岛体被通知接管：详情页本帧不绘制，命中区必须显式作废
+                    //（它已不再每帧清理 —— 理由见 InvalidatePluginHitAreas 的线程模型说明）
+                    InvalidateDetailHitArea();
                     DrawToastLayer(canvas, toast, left, right, currentHeight);
                     canvas.Restore();
                     canvas.Restore();
@@ -337,6 +340,8 @@ namespace NotchPeninsula
                 // 所以这里只要拿到链接，就把整块岛体交给剪贴板面板绘制。
                 if (!string.IsNullOrEmpty(clipboardUrl))
                 {
+                    // 与 Toast 同理：整块岛体被剪贴板面板接管，详情页命中区显式作废
+                    InvalidateDetailHitArea();
                     DrawClipboard(canvas, clipboardUrl, left, right, currentHeight, textOffsetY);
                     canvas.Restore(); // 1. 恢复 ClipPath 裁切
                     canvas.Restore(); // 2. 闭合 SaveLayer 透明层

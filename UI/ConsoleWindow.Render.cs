@@ -1033,6 +1033,18 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
             canvas.DrawText($"已安装插件 ({_pluginView.Count})", 216, listY + 26, _uiTextPaint);
+
+            // 最近一次「拖入 DLL」的结果提示：贴在列表卡标题行右侧。用红色标失败（非插件的 DLL
+            // 导入后不会进列表，没有这行提示用户就完全不知道刚才那一下发生了什么）。
+            if (!string.IsNullOrEmpty(_pluginHint))
+            {
+                string header = $"已安装插件 ({_pluginView.Count})";
+                float hintMax = (WIDTH - 36) - 216 - _uiTextPaint.MeasureText(header) - 16;
+                _subTextPaint.Color = _pluginHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
+                string hint = TruncateText(_pluginHint, _subTextPaint, hintMax);
+                canvas.DrawText(hint, WIDTH - 36 - _subTextPaint.MeasureText(hint), listY + 26, _subTextPaint);
+                _subTextPaint.Color = Neutral(170);
+            }
             // ⚠️ 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
             //    插件中心只负责启用 / 禁用，不再提供任何排序入口（2026-09-25 用户要求）。
 
@@ -1108,6 +1120,31 @@ namespace NotchPeninsula
 
             if (_pluginView.Count > maxRows)
                 canvas.DrawText($"还有 {_pluginView.Count - maxRows} 个插件未显示，可在“打开目录”中管理", 216, HEIGHT - 32, _subTextPaint);
+
+            // ── 拖入 DLL 的蓝色反馈（光标落在右侧内容区时整体亮起，见 ConsoleWindow.PluginDrop.cs）──
+            // 静态高亮：亮 / 灭直接切换，没有淡入淡出与呼吸，也没有定时器 ——
+            // 拖走之后不存在任何后台重绘，不会留下空转的定时器。
+            if (_pluginDropHovering)
+            {
+                var zone = GetPluginDropZone();
+
+                _dynamicFillPaint.Color = new SKColor(0, 120, 212, 42);
+                _dynamicStrokePaint.Color = new SKColor(0, 140, 240, 215);
+                _dynamicStrokePaint.StrokeWidth = 2f;
+                canvas.DrawRoundRect(zone, 8, 8, _dynamicFillPaint);
+                canvas.DrawRoundRect(zone, 8, 8, _dynamicStrokePaint);
+                _dynamicStrokePaint.StrokeWidth = 1.5f;   // 复位：该画笔被多处共用
+
+                const string dropHint = "松开鼠标以导入插件 DLL";
+                float hintW = _uiTextPaint.MeasureText(dropHint);
+                float hintX = zone.MidX - hintW / 2f;
+                float hintY = zone.MidY + 5f;
+                _dynamicFillPaint.Color = new SKColor(0, 90, 170, 235);
+                canvas.DrawRoundRect(new SKRect(hintX - 14, hintY - 22, hintX + hintW + 14, hintY + 10), 6, 6, _dynamicFillPaint);
+                _uiTextPaint.Color = SKColors.White;
+                canvas.DrawText(dropHint, hintX, hintY, _uiTextPaint);
+                _uiTextPaint.Color = _fgColor;
+            }
         }
 
         // 各页签展开的下拉浮层（媒体平台 / 匹配方式 / 目标软件 / 通知内容 / 目标显示器）
