@@ -10,8 +10,8 @@ namespace NotchPeninsula
         // ================= 🧩 插件中心：把 DLL 拖进来即导入 =================
         //
         // 交互：从资源管理器把 *.dll 拖到「插件中心」右侧的内容区，松手即走 PluginManager.Import()。
-        // 拖动经过时内容区整体淡入一层蓝色高亮 + 呼吸描边，并给出「松开鼠标以导入插件 DLL」的提示，
-        // 让用户明确知道「这里能放」。
+        // 拖动经过时内容区立刻亮起一层蓝色反馈 + 提示「松开鼠标以导入插件 DLL」，让用户明确知道「这里能放」。
+        // 反馈是**直接亮 / 直接灭**的静态高亮，不带任何淡入淡出或呼吸动画（也没有定时器）。
         //
         // 为什么要 IDropTarget 而不是 WM_DROPFILES：后者只在松手那一刻投递一次消息，
         // 拖动过程中窗口收不到任何通知，做不了「拖过来就高亮」这类悬停反馈。两者的取舍与
@@ -20,16 +20,8 @@ namespace NotchPeninsula
         /// <summary>本轮拖放中解析出的 DLL 路径（DragEnter 解析一次，Drop 时直接取用）。</summary>
         private readonly List<string> _pluginDropDlls = new();
 
-        /// <summary>光标是否正停在右侧拖放区内（决定蓝色高亮的目标值）。</summary>
+        /// <summary>光标是否正停在右侧拖放区内 —— 为 true 时内容区整体亮起蓝色反馈。</summary>
         private bool _pluginDropHovering;
-
-        /// <summary>蓝色高亮的淡入进度（0 = 完全不可见，1 = 完全显示），由 16ms 定时器逐拍逼近。</summary>
-        private float _pluginDropAnim;
-
-        /// <summary>呼吸相位（0~1 循环），让高亮在拖动期间有轻微明暗起伏 —— 这就是那点「动画感」。</summary>
-        private float _pluginDropPulse;
-
-        private bool _pluginDropTimerOn;
 
         /// <summary>OLE 那边持有的引用：不存一份就会被 GC 掉，拖放回调随之失效。</summary>
         private Win32.IDropTarget? _pluginDropTarget;
@@ -38,12 +30,6 @@ namespace NotchPeninsula
         private string _pluginHint = "";
 
         private bool _pluginHintIsError;
-
-        // 拖放高亮动画的窗口定时器 id（与行悬停 / 材质刷新各自独立）
-        private static readonly IntPtr PLUGIN_DROP_TIMER_ID = new IntPtr(0x4E52); // "NR"
-
-        /// <summary>呼吸每拍推进的相位：16ms × 0.025 ≈ 640ms 一个来回，比心跳慢一点，不闹。</summary>
-        private const float PLUGIN_DROP_PULSE_STEP = 0.025f;
 
         /// <summary>
         /// 右侧拖放区（DIP 坐标）= 插件页两张卡片的整体范围。
@@ -182,53 +168,7 @@ namespace NotchPeninsula
         {
             if (_pluginDropHovering == hover) return;
             _pluginDropHovering = hover;
-            StartPluginDropAnim();   // 目标值变了：开表把进度推过去（跑完定时器自己停）
-            Render();
-        }
-
-        /// <summary>开表。已在跑、或窗口还没建好时什么都不做。</summary>
-        private void StartPluginDropAnim()
-        {
-            if (_pluginDropTimerOn || _hwnd == IntPtr.Zero) return;
-            if (Win32.SetTimer(_hwnd, PLUGIN_DROP_TIMER_ID, DISPLAY_HOVER_TICK_MS, IntPtr.Zero) == IntPtr.Zero) return;
-            _pluginDropTimerOn = true;
-        }
-
-        /// <summary>停表。</summary>
-        private void StopPluginDropAnim(IntPtr hwnd)
-        {
-            if (!_pluginDropTimerOn) return;
-            Win32.KillTimer(hwnd, PLUGIN_DROP_TIMER_ID);
-            _pluginDropTimerOn = false;
-        }
-
-        /// <summary>
-        /// 推进一拍动画并重绘；返回是否还要继续跑表。
-        /// 悬停期间常驻推进（呼吸相位一直在走）；未悬停时进度归 0 即停表，不留空转的定时器。
-        /// </summary>
-        private bool TickPluginDropAnim()
-        {
-            bool animating = false;
-
-            float target = _pluginDropHovering ? 1f : 0f;
-            if (Math.Abs(target - _pluginDropAnim) <= 0.01f)
-                _pluginDropAnim = target;
-            else
-            {
-                _pluginDropAnim += (target - _pluginDropAnim) * DISPLAY_HOVER_EASE;
-                animating = true;
-            }
-
-            if (_pluginDropHovering)
-            {
-                _pluginDropPulse += PLUGIN_DROP_PULSE_STEP;
-                if (_pluginDropPulse >= 1f) _pluginDropPulse -= 1f;
-                animating = true;
-            }
-
-            // 无条件重绘：最后那一拍会把进度吸附到目标值，这一帧必须画出来。
-            Render();
-            return animating;
+            Render();   // 静态反馈：状态一变就立刻重绘，没有动画、也不需要定时器
         }
 
         // ---------------- 导入 ----------------
@@ -245,12 +185,12 @@ namespace NotchPeninsula
                 foreach (var path in dlls)
                 {
                     var (ok, msg) = mgr.Import(path);
-                    lastMsg = $"拖入 {Path.GetFileName(path)}：{msg}";
+                    lastMsg = msg;   // 成功时就是「已导入并加载：中文名」，直接照用
                     if (ok) okCount++;
                     Logger.Info($"[PluginCenter] 拖入导入 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
-                _pluginHint = dlls.Count == 1 ? lastMsg : $"拖入 {dlls.Count} 个 DLL：成功 {okCount} 个";
+                _pluginHint = lastMsg;
                 _pluginHintIsError = okCount == 0;
 
                 ResetPluginHover();

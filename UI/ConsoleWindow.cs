@@ -989,13 +989,6 @@ namespace NotchPeninsula
                         if (!TickDisplayHoverAnim()) StopDisplayHoverAnim(hwnd);
                         return IntPtr.Zero;
                     }
-                    if (wParam == PLUGIN_DROP_TIMER_ID)
-                    {
-                        // 🧩 插件中心拖入高亮：同样的「逐拍逼近 + 跑完自停」，
-                        //    拖动期间靠它驱动蓝色呼吸，松手淡出后自己停表。
-                        if (!TickPluginDropAnim()) StopPluginDropAnim(hwnd);
-                        return IntPtr.Zero;
-                    }
                     break;
 
                 // 系统「应用模式」（浅色 / 深色）切换时系统会广播 WM_SETTINGCHANGE。
@@ -1085,7 +1078,6 @@ namespace NotchPeninsula
                     // 定时器本身随窗口一起消失，只是把这个标志归位：
                     // 否则万一在动画途中销毁窗口，标志会一直停在 true，下次开表会被自己挡掉。
                     _displayHoverTimerOn = false;
-                    _pluginDropTimerOn = false;
                     _instance = null;
                     break;
 

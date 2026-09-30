@@ -1121,16 +1121,15 @@ namespace NotchPeninsula
             if (_pluginView.Count > maxRows)
                 canvas.DrawText($"还有 {_pluginView.Count - maxRows} 个插件未显示，可在“打开目录”中管理", 216, HEIGHT - 32, _subTextPaint);
 
-            // ── 拖入 DLL 的蓝色高亮（只在拖动经过右侧内容区时出现，见 ConsoleWindow.PluginDrop.cs）──
-            // 淡入进度 _pluginDropAnim 决定透明度，呼吸相位 _pluginDropPulse 让蓝色轻微起伏，
-            // 合起来就是那点「蓝色动画」。松手 / 拖走后进度归 0，本分支自然不再绘制。
-            if (_pluginDropAnim > 0.01f)
+            // ── 拖入 DLL 的蓝色反馈（光标落在右侧内容区时整体亮起，见 ConsoleWindow.PluginDrop.cs）──
+            // 静态高亮：亮 / 灭直接切换，没有淡入淡出与呼吸，也没有定时器 ——
+            // 拖走之后不存在任何后台重绘，不会留下空转的定时器。
+            if (_pluginDropHovering)
             {
-                float breath = 0.72f + 0.28f * MathF.Sin(_pluginDropPulse * MathF.Tau);
                 var zone = GetPluginDropZone();
 
-                _dynamicFillPaint.Color = new SKColor(0, 120, 212, (byte)(42 * _pluginDropAnim * breath));
-                _dynamicStrokePaint.Color = new SKColor(0, 140, 240, (byte)(215 * _pluginDropAnim * breath));
+                _dynamicFillPaint.Color = new SKColor(0, 120, 212, 42);
+                _dynamicStrokePaint.Color = new SKColor(0, 140, 240, 215);
                 _dynamicStrokePaint.StrokeWidth = 2f;
                 canvas.DrawRoundRect(zone, 8, 8, _dynamicFillPaint);
                 canvas.DrawRoundRect(zone, 8, 8, _dynamicStrokePaint);
@@ -1140,7 +1139,7 @@ namespace NotchPeninsula
                 float hintW = _uiTextPaint.MeasureText(dropHint);
                 float hintX = zone.MidX - hintW / 2f;
                 float hintY = zone.MidY + 5f;
-                _dynamicFillPaint.Color = new SKColor(0, 90, 170, (byte)(235 * _pluginDropAnim));
+                _dynamicFillPaint.Color = new SKColor(0, 90, 170, 235);
                 canvas.DrawRoundRect(new SKRect(hintX - 14, hintY - 22, hintX + hintW + 14, hintY + 10), 6, 6, _dynamicFillPaint);
                 _uiTextPaint.Color = SKColors.White;
                 canvas.DrawText(dropHint, hintX, hintY, _uiTextPaint);
