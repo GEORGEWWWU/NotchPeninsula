@@ -107,6 +107,7 @@ namespace NotchPeninsula
             bool newAppDropdownHovered = false;
             int newHoveredAppIndex = -1;
             bool newMediaExpToggleHovered = false;
+            bool newAppLaunchToggleHovered = false; // 「双击媒体控制跳转应用」（媒体交互方式下面一格）
             bool newPassToggleHovered = false;
             bool newClipboardToggleHovered = false;
             bool newMonitorDropdownHovered = false;
@@ -349,8 +350,11 @@ namespace NotchPeninsula
                 // 媒体交互模式（组合模式同样可用：组合模式现在也能展开媒体面板）
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 290 && y <= TITLE_BAR_HEIGHT + 310)
                     newMediaExpToggleHovered = true;
+                // 🖱 双击媒体控制跳转应用（卡片排在「媒体交互方式」下面一格，行距 72）
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 362 && y <= TITLE_BAR_HEIGHT + 382)
+                    newAppLaunchToggleHovered = true;
                 // 使用局部变量，防止状态死锁
-                newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 362 && y <= TITLE_BAR_HEIGHT + 382;
+                newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 434 && y <= TITLE_BAR_HEIGHT + 454;
             }
             else if (_selectedTab == 6) // 插件中心
             {
@@ -455,6 +459,7 @@ namespace NotchPeninsula
                 newHoveredDisplayMoveDown != _hoveredDisplayMoveDown ||
                 newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                 newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
+                newAppLaunchToggleHovered != _appLaunchToggleHovered ||
                 newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
@@ -499,6 +504,7 @@ namespace NotchPeninsula
                 _hoveredResetIndex = newHoverReset;
                 _hoveredThemeIndex = newHoveredTheme;
                 _mediaExpToggleHovered = newMediaExpToggleHovered;
+                _appLaunchToggleHovered = newAppLaunchToggleHovered;
                 _hoveredOpacityIndex = newHoveredOpacityIndex;
                 _monitorDropdownHovered = newMonitorDropdownHovered;
                 _hoveredMonitorDropdownIndex = newHoveredMonitorDropdownIndex;

@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace NotchPeninsula
@@ -24,6 +24,12 @@ namespace NotchPeninsula
         public const int WM_SETTINGCHANGE = 0x001A; // 系统设置变化广播（含「应用模式」浅色/深色切换）
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
+        // 🖱 双击：**只有窗口类带 CS_DBLCLKS** 时系统才会派发它（同一位置的第二次按下由它取代
+        //    普通 WM_LBUTTONDOWN）。岛体类已在 NotchWindow 里声明该样式，媒体控制的双击跳转靠它。
+        public const int WM_LBUTTONDBLCLK = 0x0203;
+
+        // 窗口类样式：注册时声明「本类窗口要收双击消息」，否则系统永不派发 WM_LBUTTONDBLCLK
+        public const uint CS_DBLCLKS = 0x0008;
 
         /// <summary>滚轮消息：wParam 高字是 ±120 的整数倍，低字是按键状态；lParam 是屏幕坐标。</summary>
         public const int WM_MOUSEWHEEL = 0x020A;
@@ -46,6 +52,7 @@ namespace NotchPeninsula
         public const int WM_NCLBUTTONDOWN = 0x00A1;
         public const int HTCAPTION = 2;
         public const int SW_HIDE = 0;
+        public const int SW_SHOW = 5;
         public const int SW_SHOWNOACTIVATE = 4;
         public const int SW_MINIMIZE = 6;
         public const int SW_RESTORE = 9;
@@ -146,6 +153,11 @@ namespace NotchPeninsula
         public const int DWMSBT_MAINWINDOW = 2;
 
         // 核心修复1：指定 CharSet.Unicode 让字符串正确传递给 Windows
+        //
+        // ⚠️ 字段顺序必须与 Win32 的 WNDCLASS 完全一致 —— 这是纯内存布局的结构体，
+        //    少一个字段后面全体错位（历史坑：以前缺 `style`，于是 cbWndExtra 实际落在 cbClsExtra 的位置上，
+        //    类的样式也永远为 0，系统因此从不派发 WM_LBUTTONDBLCLK）。
+        //    `style` 自 2026-09-27 补上，岛体类借此声明 CS_DBLCLKS 以接收双击消息。
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct WNDCLASS
         {
@@ -160,6 +172,7 @@ namespace NotchPeninsula
             public string lpszMenuName;
             public string lpszClassName;
         }
+
 
         [StructLayout(LayoutKind.Sequential)]
         public struct MSG
@@ -336,6 +349,56 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        // ================= 🪟 窗口查询（媒体会话 → 应用窗口 的定位 / 前台激活） =================
+        // 媒体侧的「双击跳转对应应用」要用它们：
+        //   · GetForegroundWindow 在「会话刚被接管」那一刻顺手抓住应用的主窗口句柄；
+        //   · GetWindowThreadProcessId / IsWindow / IsWindowVisible / GetWindowLongPtr 做归属与可用性校验
+        //     （同时也是排除本程序自己窗口的手段 —— 岛体 / 设置窗 / 通知窗都同属本进程）；
+        //   · ShowWindow / IsIconic / SetForegroundWindow / AttachThreadInput 负责把窗口还原并切到前台。
+        //
+        // 注：这里以前还有 EnumWindows + EnumWindowsProc（用来按进程号枚举窗口），
+        //     改成「只在采集到正确归属的窗口」之后已无调用方，2026-09-30 删除。
+        //     要再按进程找窗口请用 Process.MainWindowHandle，别把这对声明当现成工具留着。
+
+        [DllImport("user32.dll")]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        /// <summary>GetWindowLongPtr 在 32 位系统上叫 GetWindowLong，所以按位数分派。</summary>
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+        private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+        private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+        /// <summary>按位数取窗口扩展样式（x86 下包一层，调用方不必关心平台）。</summary>
+        public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex)
+            => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : (IntPtr)GetWindowLong32(hWnd, nIndex);
+
+        /// <summary>GWL_EXSTYLE：用来排除 WS_EX_TOOLWINDOW（提示窗、托盘气泡之类的非主窗口）。</summary>
+        public const int GWL_EXSTYLE = -20;
+
+        [DllImport("user32.dll")]
+        public static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("kernel32.dll")]
+        public static extern uint GetCurrentThreadId();
+
+        /// <summary>
+        /// 把自己的输入队列临时挂到另一个线程上 —— 前台锁（foreground lock）会拒绝跨线程的
+        /// SetForegroundWindow，挂上之后再调用就能通过。用完必须立刻解挂（调用方用 finally 保证）。
+        /// </summary>
+        [DllImport("user32.dll")]
+        public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
         [DllImport("user32.dll")]
         public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINDOWCOMPOSITIONATTRIBDATA data);

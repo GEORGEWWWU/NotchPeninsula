@@ -282,7 +282,17 @@ namespace NotchPeninsula
             {
                 var opTask = listener.GetNotificationsAsync(NotificationKinds.Toast).AsTask();
                 var finished = await Task.WhenAny(opTask, Task.Delay(timeoutMs));
-                if (finished != opTask) return (true, null, null);   // 超时：这个调用会被永久搁置，不再等它
+                if (finished != opTask)
+                {
+                    // 超时：这个调用会被永久搁置，不再等它。
+                    // 但**必须补一个只观察、不等待的续体**：被放弃的 opTask 若以异常收场，
+                    // 它的异常会变成"未观察的任务异常"，而每次重连都会新建一个这样的任务 ——
+                    // 挂死的通知通道下（每 60 秒重试一次）会持续累积这类残留任务图。
+                    // 挂上续体把它标记为已观察，操作最终完成（或失败）后整条引用链即可被回收。
+                    _ = opTask.ContinueWith(static t => _ = t.Exception,
+                        CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    return (true, null, null);
+                }
                 return (false, await opTask, null);
             }
             catch (Exception ex)

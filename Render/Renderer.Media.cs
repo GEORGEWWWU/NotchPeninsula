@@ -19,7 +19,78 @@ namespace NotchPeninsula
 
         public static bool IsMediaExpanded = false;
 
+        /// <summary>
+        /// 本帧是否真的在画展开面板 —— 与 <c>DrawMediaControl</c> 内部分流用的是同一条判据
+        /// （媒体激活 + 已展开 + 高度已涨过 60 的动画闸门）。命中侧（如双击跳转）据此区分
+        /// 「点的是 130px 的面板」还是「点的是 35px 的折叠内联行」。
+        /// </summary>
+        public static bool IsMediaPanelShowing(MediaController? media)
+            => media is { IsActive: true } && Renderer.IsMediaExpanded && _currentHeightForHit > 60f;
+
+        /// <summary>
+        /// 命中判定用的岛体高度快照：由渲染循环每帧写入（见 Renderer.Draw 的入口），
+        /// 让命中侧不必再从 WndProc 一路传高度进来。
+        /// </summary>
+        private static float _currentHeightForHit;
+
+        /// <summary>渲染循环每帧同步一次当前岛体高度，供命中侧（<see cref="IsMediaPanelShowing(MediaController?)"/>）使用。</summary>
+        public static void SetHitTestHeight(float height) => _currentHeightForHit = height;
+
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
+
+        // ==================== 🎯 播放控件命中几何（唯一真源） ====================
+        // 展开态三颗按钮的**悬停高亮**与**点击**以前各写一套坐标，两套还不一样：
+        // 悬停区比点击区宽、垂直基准差 2px，两两之间还留着「亮着却点不动」的空隙 ——
+        // 用户感受就是「按钮不跟手」。现在统一从这里取，改一处两边同时生效。
+        //
+        // 几何规则（与 Renderer.MediaWidget 的绘制坐标严格对应）：
+        //   · 间距 54 —— 绘制在 center −60 / −7 / +45，图标宽约 13，所以圆心取 −54 / 0 / +54；
+        //   · 半径 20 —— 与悬停高亮圆的半径一致，手型、高亮、可点范围三者完全重合；
+        //   · 垂直圆心 = 按钮图标中心（绘制在 currentHeight − 34 起、高约 16 → 中心 = 当前高度 − 26）。
+        private const float MediaButtonSpacing = 54f;
+        private const float MediaButtonRadius = 20f;
+        private const float MediaButtonCenterOffsetY = 26f;
+
+        private static float MediaButtonCenterY(float currentHeight) => currentHeight - MediaButtonCenterOffsetY;
+
+        /// <summary>
+        /// 展开态播放控件命中：返回 0 = 上一首、1 = 播放/暂停、2 = 下一首、-1 = 没命中。
+        /// 悬停（高亮 / 手型）与点击共用本方法 —— 判据一旦同源，「亮着却点不动」就不可能再出现。
+        /// </summary>
+        public static int HitExpandedButton(float x, float y, float currentHeight)
+        {
+            float centerX = WINDOW_WIDTH / 2f;
+            float centerY = MediaButtonCenterY(currentHeight);
+
+            for (int i = 0; i < 3; i++)
+            {
+                float cx = centerX + (i - 1) * MediaButtonSpacing;
+                float dx = x - cx, dy = y - centerY;
+                if (dx * dx + dy * dy <= MediaButtonRadius * MediaButtonRadius) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// 折叠态内联行右端的播放控件命中（同为 0 / 1 / 2 / -1）。
+        /// 三颗图标绘制在媒体模块右边界 −90 / −60 / −30，各自再右移 11px 起画，
+        /// 所以圆心就是「右边界 −79 / −49 / −19」，半径与展开态一致。
+        /// </summary>
+        public static int HitInlineButton(float x, float y, float right, float currentHeight)
+        {
+            float centerY = currentHeight / 2f;
+            // 折叠态图标只有 10~12px，热区半径取 12 是「图标本身 + 一圈手感余量」：
+            // 相邻按钮间距 30，两块热区之间还剩 6px，不会连成一片；再大就会越出媒体模块右缘。
+            float radius = 12f;
+
+            for (int i = 0; i < 3; i++)
+            {
+                float cx = right - 79f + i * 30f;
+                float dx = x - cx, dy = y - centerY;
+                if (dx * dx + dy * dy <= radius * radius) return i;
+            }
+            return -1;
+        }
 
         // ==================== 🎵 展开态歌曲时间轴 ====================
         // 几何登记表：Draw 里「真的画了」才登记，帧首统一作废 —— 画与点因此共用同一套坐标，

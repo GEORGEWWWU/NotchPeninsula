@@ -178,6 +178,10 @@ namespace NotchPeninsula
             {
                 canvas.Clear(SKColors.Transparent);
 
+                // 🖱 把本帧岛体高度同步给命中侧：双击跳转要用它区分「展开面板」与「折叠内联行」
+                //    （判据必须与绘制分流同源，所以宁可每帧写一次快照，也不让命中侧另写一套高度条件）。
+                SetHitTestHeight(currentHeight);
+
                 // 🧩 每帧清空插件命中区，仅当本帧实际绘制插件行时才重新填充
                 // （防止 Toast / 媒体激活等不绘制插件的状态下残留上一帧的过期命中矩形）
                 InvalidatePluginHitAreas();

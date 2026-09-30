@@ -19,6 +19,10 @@ namespace NotchPeninsula
         internal static string ManualSessionAppId = "";
         // 系统当前是否存在任何 SMTC 会话（设置界面据此清空「手动选择软件」选项框）
         internal static bool HasActiveSessions { get; private set; }
+        // 🖱 双击媒体控制（折叠态与展开态都算）是否跳回正在放媒体的那个应用。
+        // 关掉后双击完全不消费、不做事，折叠态的「点一下展开」等原有交互不受影响。
+        internal static bool IsAppLaunchEnabled = true;
+
         internal static bool IsLyricsEnabled = true;
         internal static bool IsKaraokeEnabled = true;
         // 翻译歌词：开启后把当前句的译文作为第二行画在原文下方（仅在有译文时生效）
@@ -78,6 +82,12 @@ namespace NotchPeninsula
         // 当前会话 AppID 的镜像。渲染线程每帧都要做一次「歌词归属校验」，
         // 直接读 SourceAppUserModelId 会打 COM 调用，这里由 UpdateSession 同步写一份供它零成本比对。
         private string _currentAppId = "";
+
+        /// <summary>
+        /// 当前接管会话的 AUMID（没有会话时为空串）。供渲染线程零成本比对，
+        /// 也供「双击媒体控制 → 跳转对应应用」（<see cref="OpenCurrentApp"/>）取目标。
+        /// </summary>
+        public string CurrentAppId => _currentAppId;
 
         // ==================== 🎵 歌曲时间轴 ====================
         // 仅当 SMTC 会话提供完整时间轴（EndTime > 0）时启用，不区分平台。
@@ -305,6 +315,11 @@ namespace NotchPeninsula
             // 手动锁定会话的歌词拦截已由 IsNonLyricSession 单独豁免，不受这里影响。
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
             _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
+
+            // 🖱 双击跳转的定位采样：会话刚被接管时，前台窗口极可能就是它的主窗口 —— 顺手把句柄记下来。
+            //    放在这里（会话挑选之后、属性刷新之前）是因为每次接管 / 刷新都会路过，
+            //    采样因此始终跟着会话走，不需要额外的定时器；开关关闭时整个跳过。
+            if (IsAppLaunchEnabled) MediaAppLauncher.CaptureSession(newSession, isCurrent: true);
 
             // Just Solo 专属歌词通道：只有「当前接管的会话就是 justsolo」时才连接 LyricServer
             UpdateJustSoloConnection();
@@ -599,6 +614,22 @@ namespace NotchPeninsula
         public async void Previous() => await _currentSession?.TrySkipPreviousAsync();
 
         /// <summary>
+        /// 📺 双击媒体控制（折叠态 / 展开态都算）时调用：跳回正在放媒体的那个应用。
+        ///
+        /// <para>能做的：把已开着的应用窗口激活到前台；应用没开或拿不到窗口时按 AUMID 交给 Shell 拉起。
+        /// 不能做的：跳到那首歌 / 那个视频的具体播放页 —— SMTC 不提供任何深链接参数，
+        /// 这是协议本身的限制，只能到应用本体。</para>
+        ///
+        /// <para>所有重活（窗口枚举）都在 <see cref="MediaAppLauncher"/> 的线程池里，
+        /// 这里只是转发，保证双击不卡 UI。</para>
+        /// </summary>
+        public void OpenCurrentApp()
+        {
+            if (!IsAppLaunchEnabled) return;
+            MediaAppLauncher.OpenCurrentSessionApp();
+        }
+
+        /// <summary>
         /// 获取 Just Solo LyricServer 推送的实时频谱（12 频段，低频→高频）。
         /// 返回 false 表示不可用（未连接 / 服务端版本过低 / 已暂停），调用方应回退到本地音频采集。
         /// </summary>
@@ -795,7 +826,8 @@ namespace NotchPeninsula
                             new KeyValuePair<string, string>("offset", "0")
                         });
 
-                        var response = await _http.PostAsync("https://music.163.com/api/search/get/web", content);
+                        // using：HttpResponseMessage 本身持有内容流与连接租约，只释放它里面的流是不够的
+                        using var response = await _http.PostAsync("https://music.163.com/api/search/get/web", content);
                         using var searchStream = await response.Content.ReadAsStreamAsync();
                         using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 

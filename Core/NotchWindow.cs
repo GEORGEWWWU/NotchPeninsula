@@ -327,6 +327,10 @@ namespace NotchPeninsula
 
             var wc = new Win32.WNDCLASS
             {
+                // 🖱 CS_DBLCLKS：声明「本类窗口要收双击消息」，系统才会把同一位置的第二次按下
+                //    升格成 WM_LBUTTONDBLCLK（媒体控制的双击跳转就靠它）。
+                //    不给这个样式的话，第二次按下依然只是普通 WM_LBUTTONDOWN，双击无从判定。
+                style = Win32.CS_DBLCLKS,
                 lpfnWndProc = _wndProcDelegate,
                 hInstance = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero,
                 lpszClassName = "NotchPeninsulaClass",
@@ -444,6 +448,10 @@ namespace NotchPeninsula
 
             Info("程序退出");
             _instanceForExit?._audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
+            // 系统音量管理器持有 IMMDevice / IAudioEndpointVolume 两个 COM 对象。
+            // 它的 Dispose 以前从没被任何地方调用过（整个 IDisposable 实现是死代码），
+            // 退出路径上补一次，别把释放全推给进程终止。
+            try { _instanceForExit?.audio.Dispose(); } catch (Exception ex) { Error("释放系统音量管理器失败", ex); }
             Environment.Exit(0);
         }
 
@@ -486,6 +494,7 @@ namespace NotchPeninsula
                 {
                     _pollingTimer.Elapsed -= OnPollingTick;
                     _pollingTimer.Stop();
+                    _pollingTimer.Dispose(); // 与上面两个定时器同款收尾：只 Stop 不 Dispose 会留下未释放的定时器资源
                     _pollingTimer = null;
                 }
             }
@@ -704,7 +713,9 @@ namespace NotchPeninsula
             _clipboardEndTime = default;
             try
             {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                // using：Process 是可释放对象（持有进程句柄 / 内部状态），启动后立刻释放即可，
+                // 不会影响被启动的程序（Dispose 只放包装对象，不碰目标进程）
+                using (Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })) { }
                 Info($"[剪贴板] 已在默认浏览器打开链接: {url}");
             }
             catch (Exception ex) { Error("[剪贴板] 打开链接失败", ex); }
@@ -737,9 +748,20 @@ namespace NotchPeninsula
 
         private static string GetCurrentExePath()
         {
-            return Process.GetCurrentProcess().MainModule?.FileName
-                ?? Environment.ProcessPath
-                ?? string.Empty;
+            // Process / MainModule 都持有原生句柄，必须确定性释放 ——
+            // 本方法每次读写「开机自启」都会调用（设置界面、托盘菜单都走），不能靠 GC 兜底。
+            try
+            {
+                using var process = Process.GetCurrentProcess();
+                using var module = process.MainModule;
+                if (!string.IsNullOrEmpty(module?.FileName)) return module!.FileName;
+            }
+            catch
+            {
+                // 拿不到就退回环境变量给的路径（两者都拿不到才算失败）
+            }
+
+            return Environment.ProcessPath ?? string.Empty;
         }
 
         private static string NormalizeRunValue(string? value)
@@ -1662,15 +1684,12 @@ namespace NotchPeninsula
                         {
                             if (Renderer.IsMediaExpanded)
                             {
-                                float btnY = (_currentHeight - 32f) + hitTopY;
-                                float center = Renderer.WINDOW_WIDTH / 2f;
-                                bool inY = my >= btnY - 12 && my <= btnY + 30;
-                                bool hitPrev = mx >= center - 75 && mx <= center - 34;
-                                bool hitPlay = mx >= center - 20 && mx <= center + 22;
-                                bool hitNext = mx >= center + 32 && mx <= center + 75;
-                                Renderer.HoveredExpandedButton = inY ? (hitPrev ? 0 : (hitPlay ? 1 : (hitNext ? 2 : -1))) : -1;
+                                // 🎯 悬停与点击共用 Renderer.HitExpandedButton 一套几何：
+                                //    高亮圈、手型指针、可点范围三者完全重合，不再出现「亮着却点不动」。
+                                int hoveredBtn = Renderer.HitExpandedButton(mx, my - hitTopY, _currentHeight);
+                                Renderer.HoveredExpandedButton = hoveredBtn;
                                 // 🎵 悬停到时间轴上也要切小手（y 需扣掉岛体下沉偏移，与 Draw 共用同一套坐标）
-                                _isCursorOverIcon = Renderer.HoveredExpandedButton != -1 || Renderer.HitTimeline(mx, my - hitTopY);
+                                _isCursorOverIcon = hoveredBtn != -1 || Renderer.HitTimeline(mx, my - hitTopY);
                             }
                             else
                             {
@@ -1683,12 +1702,10 @@ namespace NotchPeninsula
                                 }
                                 else
                                 {
-                                    // 媒体按钮锚定「媒体模块右边界」，与 Renderer.Draw 保持一致
-                                    // （组合模式下插件可能被排到媒体右边，因此由渲染器给出真实边界）
+                                    // 折叠态按钮同样走共用的命中几何（Renderer.HitInlineButton），
+                                    // 锚点是渲染器给出的媒体模块真实右边界（组合模式下插件可能排在媒体右边）
                                     float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
-                                    int btnPrevX = (int)right - 90; int btnPlayX = (int)right - 60; int btnNextX = (int)right - 30;
-                                    float btnStartY = (_currentHeight - 18f) / 2f + hitTopY; float btnEndY = btnStartY + 18f;
-                                    _isCursorOverIcon = (my >= btnStartY && my <= btnEndY) && ((mx >= btnPrevX + 6 && mx <= btnPrevX + 24) || (mx >= btnPlayX + 6 && mx <= btnPlayX + 24) || (mx >= btnNextX + 6 && mx <= btnNextX + 24));
+                                    _isCursorOverIcon = Renderer.HitInlineButton(mx, my - hitTopY, right, _currentHeight) != -1;
                                 }
                             }
                         }
@@ -1748,6 +1765,33 @@ namespace NotchPeninsula
                         //    所以这里判定等价于「鼠标真的离开了灵动岛」，不用轮询。
                         //    注意：时间轴拖动中已在上面的分支里 break 掉，不会误伤正在拖动的面板。
                         RequestPanelCollapse();
+                        break;
+                    }
+
+                case Win32.WM_LBUTTONDBLCLK:
+                    {
+                        // 🖱 双击媒体控制（折叠态内联行与展开态面板同一条判定）→ 跳回正在放媒体的那个应用。
+                        //
+                        // 与单击的关系：双击必然先来一次 WM_LBUTTONDOWN，所以折叠态的「第一下」已经照常
+                        // 展开了媒体面板、展开态的「第一下」已经照常点了播放按钮 —— 这里只负责第二下的语义。
+                        // 落在不合法的地方（时间轴、播放按钮、通知 / 剪贴板接管期间）就**完全不消费**，
+                        // 消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
+                        int dx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                        int dy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        float dblTopY = 12f * _currentStyleProgress;
+
+                        // 岛体「整块不可见」的两种形态（穿透睡眠态 / 完全隐藏态）：双击只当唤醒用，
+                        // 与 WM_LBUTTONDOWN 里 HitWakeButton 的优先级保持一致，不在这里触发跳转。
+                        if ((Renderer.PassthroughModeEnabled && !_isPassthroughAwake) || Renderer.FullHideAlpha < 0.99f) break;
+
+                        if (MediaController.IsAppLaunchEnabled && _isHovered && _media.IsActive
+                            && _currentToast == null && !isClipboardActive
+                            && !Renderer.HasActiveDetailPage
+                            && Renderer.HitMediaLaunchZone(dx, dy, _currentHeight))
+                        {
+                            _media.OpenCurrentApp();
+                            return (IntPtr)0; // 消费掉：别再让第二下点到底下的播放按钮上
+                        }
                         break;
                     }
 
@@ -1830,13 +1874,13 @@ namespace NotchPeninsula
                             bool hitButtons = false;
                             if (Renderer.IsMediaExpanded)
                             {
-                                float btnY = (_currentHeight - 32f) + hitTopY;
-                                float center = Renderer.WINDOW_WIDTH / 2f;
-                                if (cy >= btnY - 5 && cy <= btnY + 25)
+                                // 🎯 与悬停高亮共用同一套命中几何（见 Renderer.HitExpandedButton）：
+                                //    高亮在哪儿，点下去就一定生效，不再有「亮着却点不动」的空隙。
+                                switch (Renderer.HitExpandedButton(cx, cy - hitTopY, _currentHeight))
                                 {
-                                    if (cx >= center - 65 && cx <= center - 35) { _media.Previous(); hitButtons = true; }
-                                    else if (cx >= center - 15 && cx <= center + 15) { _media.TogglePlayPause(); hitButtons = true; }
-                                    else if (cx >= center + 35 && cx <= center + 65) { _media.Next(); hitButtons = true; }
+                                    case 0: _media.Previous(); hitButtons = true; break;
+                                    case 1: _media.TogglePlayPause(); hitButtons = true; break;
+                                    case 2: _media.Next(); hitButtons = true; break;
                                 }
                             }
                             else if (Renderer.MediaInteractionMode == 0)
@@ -1846,12 +1890,11 @@ namespace NotchPeninsula
                                 // 落到下面「点媒体区即展开面板」的分支，与「悬停不显示控件」保持一致。
                                 // 位置与渲染侧共用同一个锚点：GetMediaRight 返回的就是媒体模块右缘。
                                 float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
-                                float btnStartY = (_currentHeight - 18f) / 2f + hitTopY;
-                                if (cy >= btnStartY && cy <= btnStartY + 18f)
+                                switch (Renderer.HitInlineButton(cx, cy - hitTopY, right, _currentHeight))
                                 {
-                                    if (cx >= right - 84 && cx <= right - 66) { _media.Previous(); hitButtons = true; }
-                                    else if (cx >= right - 54 && cx <= right - 36) { _media.TogglePlayPause(); hitButtons = true; }
-                                    else if (cx >= right - 24 && cx <= right - 6) { _media.Next(); hitButtons = true; }
+                                    case 0: _media.Previous(); hitButtons = true; break;
+                                    case 1: _media.TogglePlayPause(); hitButtons = true; break;
+                                    case 2: _media.Next(); hitButtons = true; break;
                                 }
                             }
 

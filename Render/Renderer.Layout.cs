@@ -352,6 +352,50 @@ namespace NotchPeninsula
         /// </summary>
         public static bool HitMediaZone(float x) => InZone(x, _mediaZoneL, _mediaZoneR);
 
+        /// <summary>
+        /// 📺 双击跳转的命中区 —— 折叠态与展开态是**两块位置完全不同的碰撞箱**（用户 2026-09-27 指定）：
+        ///
+        /// <list type="bullet">
+        /// <item><b>折叠态：媒体模块左半边</b>。右半边（频谱 / 播放按钮那一带）留给原有交互，
+        ///       双击不参与，也就不会跟「悬停直接控制」抢同一片区域。</item>
+        /// <item><b>展开态：封面那一行</b>。纵向就是封面自身的高度（绘制在 y = 20 ~ 70），
+        ///       横向取面板左半边（封面本身只占左端 50px 宽，单靠它太难点中，往右放到中线补足手感），
+        ///       所以双击标题 / 歌词 / 频谱都不算，播放按钮与时间轴更在它下方。</item>
+        /// </list>
+        ///
+        /// <para><b>为什么展开态只认封面那一行</b>（2026-09-27 实测两次收窄后定稿）：
+        /// 早先版本把整个上半区（歌名 / 歌手 / 歌词 / 频谱）都算成双击区，用户只是随手点一下面板
+        /// 就会飞到媒体应用去；同时那块热区还会跟底部按钮的命中判定贴在一起，按起来发涩。
+        /// 现在范围压到封面这一行，且与按钮热区之间隔着一整条歌词带，两条路径彻底互不干扰。</para>
+        /// </summary>
+        /// <param name="x">岛内逻辑坐标 x。</param>
+        /// <param name="y">岛内逻辑坐标 y（已含岛体下沉偏移，与 WndProc 的命中判定同一坐标系）。</param>
+        /// <param name="currentHeight">岛体当前高度（展开态按它判断面板是否已成型）。</param>
+        public static bool HitMediaLaunchZone(float x, float y, float currentHeight)
+        {
+            if (!InZone(x, _mediaZoneL, _mediaZoneR)) return false;
+
+            var media = MediaController.Instance;
+            if (media == null) return false;
+
+            float mid = (_mediaZoneL + _mediaZoneR) / 2f;
+
+            // ---------- 展开态：封面那一行 ----------
+            if (IsMediaPanelShowing(media))
+            {
+                // 与 Renderer.MediaWidget 的封面绘制严格同源：coverY = 20、coverSize = 50
+                const float CoverTop = 20f;
+                const float CoverBottom = 70f;
+                if (y < CoverTop || y > CoverBottom) return false;
+                return x <= mid;
+            }
+
+            // ---------- 折叠态：媒体模块的左半边 ----------
+            // 右半边（频谱 / 播放按钮）留给原有交互：直接交互模式下那里是真的播放控件，
+            // 展开交互模式下用户也习惯点右端，两边都不该被双击抢走。
+            return x <= mid;
+        }
+
         private static bool InZone(float x, float l, float r) => l >= 0f && x >= l && x <= r;
 
     }

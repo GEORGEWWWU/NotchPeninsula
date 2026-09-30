@@ -41,6 +41,8 @@ namespace NotchPeninsula
                     MediaController.ManualSessionAppId = (string)key.GetValue("ManualSessionAppId", "") ?? "";
                     MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
                     MediaController.IsTranslationEnabled = (int)key.GetValue("TranslationEnabled", 1) != 0;
+                    // 🖱 双击媒体控制跳回对应应用：默认开启（老用户注册表里没有这个键，取默认值即视为开启）
+                    MediaController.IsAppLaunchEnabled = (int)key.GetValue("MediaAppLaunchEnabled", 1) != 0;
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsClipboardEnabled = (int)key.GetValue("ClipboardEnabled", 1) != 0;

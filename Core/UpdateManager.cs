@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -207,7 +207,9 @@ namespace NotchPeninsula
 
                 if (_iconBitmap == null)
                 {
-                    var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+                    // using：Icon 持有 HICON，必须确定性释放（本方法由 `_iconBitmap != null` 守卫，
+                    // 但解码失败时守卫不成立，会重复进入本分支）。
+                    using var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (sysIcon != null)
                     {
                         using var bmp = sysIcon.ToBitmap();
@@ -287,7 +289,8 @@ namespace NotchPeninsula
                     int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                     if (_hoveredButton == 0)
                     {
-                        Process.Start(new ProcessStartInfo { FileName = "https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest", UseShellExecute = true });
+                        // using：启动浏览器后立刻释放 Process 包装对象，不影响浏览器本身
+                        using (Process.Start(new ProcessStartInfo { FileName = "https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest", UseShellExecute = true })) { }
                         Win32.DestroyWindow(hwnd);
                     }
                     // 不再提醒：只跳过当前这个版本，写入注册表后关窗（更新版本出现时仍会提示）
