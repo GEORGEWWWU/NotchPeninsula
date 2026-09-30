@@ -325,7 +325,26 @@ namespace NotchPeninsula
             return null;
         }
 
-        /// <summary>每帧绘制前清空插件命中区；只有本帧实际绘制了插件行才会重新填充。</summary>
+        /// <summary>
+        /// 每帧绘制前清空插件命中区；只有本帧实际绘制了插件行才会重新填充。
+        ///
+        /// <para>
+        /// ⚠️ <b>这里刻意不再清空详情页命中区</b>（<c>_detailHitPage</c> / <c>_detailHitRect</c>）：
+        /// 本方法跑在<b>渲染线程</b>（<c>NotchWindow</c> 的渲染定时器是一条
+        /// <c>System.Timers.Timer</c>，回调在线程池线程上），而 OLE 的拖放回调来自<b>岛体消息线程</b>。
+        /// 每帧清空等于在两帧之间留下一段「面板明明开着、命中页却是 null」的空窗，
+        /// 拖放回调只要落在空窗里就会把「拖入已被接受」误判成「已经拖出」——
+        /// 于是 <c>_accepted</c> 被置回 false，离场时的复位回调也不再发出，
+        /// 插件的高亮永远留在界面上（表现就是「一直卡在拖入页面」）。
+        /// </para>
+        ///
+        /// <para>
+        /// 详情页命中区本来就不是逐帧变化的量（面板开着的时候它一直是那一块矩形），
+        /// 所以改成「面板状态真的变了才作废」：由 <see cref="RefreshDetailPageState"/>（收起 / 换页）、
+        /// <see cref="InvalidatePluginSnapshot"/>（插件卸载）以及几处「别的面板接管整块岛体」的分支
+        /// （Toast / 剪贴板，见 <c>Renderer.Draw</c>）显式调用 <see cref="InvalidateDetailHitArea"/>。
+        /// </para>
+        /// </summary>
 
         private static void InvalidatePluginHitAreas()
         {
@@ -334,10 +353,34 @@ namespace NotchPeninsula
                 _pluginSlots.Clear();
                 // 每帧重置「已绘制」标记，让组合模式的顺序表混排能重新按位置分组绘制
                 if (_pluginDrawn != null) Array.Clear(_pluginDrawn);
-                // 详情页命中区同理：只有本帧真的画了详情页才重新登记
+            }
+        }
+
+        /// <summary>
+        /// 作废详情页命中区。只在「面板状态真的变了」时调用（面板收起 / 换页 / 别的面板接管岛体）。
+        /// <b>绝不要放回每帧路径</b> —— 理由见 <see cref="InvalidatePluginHitAreas"/> 的线程模型说明。
+        /// </summary>
+        public static void InvalidateDetailHitArea()
+        {
+            lock (_pluginSlotLock)
+            {
                 _detailHitPage = null;
                 _detailHitRect = default;
             }
+        }
+
+        /// <summary>
+        /// 当前展开的详情页实例（面板收起前一直有效，不参与落点判定）。
+        ///
+        /// <para>
+        /// 供拖放会话记账用：OLE 的拖放回调可能在任何一帧的空档里到达，
+        /// 「进入过哪个详情页」必须记在一个不受帧内时序影响的实例上，
+        /// 离场时才有稳定的对象可以复位（见 <see cref="DispatchDetailPageDragLeave(Plugins.IDetailPage?)"/>）。
+        /// </para>
+        /// </summary>
+        public static Plugins.IDetailPage? ActiveDetailPageOrNull
+        {
+            get { lock (_pluginSlotLock) return _detailBroken ? null : _detailPage; }
         }
 
         /// <summary>
@@ -764,6 +807,12 @@ namespace NotchPeninsula
                 _detailPage = page;
                 _detailBroken = false;
                 _detailWidth = _detailHeight = 0f;
+
+                // 换了一个详情页：上一页的命中矩形（位置 / 尺寸 / 归属）都不再适用，先作废，
+                // 等本帧 DrawDetailPage 用新实例重新登记。这一帧内不接落点判定是安全的 ——
+                // 拖放的 DragOver 本来就会持续重试接受（见 IslandDropTarget）。
+                _detailHitPage = null;
+                _detailHitRect = default;
                 try
                 {
                     float w = page.MeasureWidth();
@@ -1000,14 +1049,32 @@ namespace NotchPeninsula
         /// 拖出岛体 / 拖放被取消：让详情页把悬停态收掉。
         /// 这条回调一定会来（包括用户中途按 Esc），所以它是复位高亮的唯一可靠时机。
         /// </summary>
-        public static void DispatchDetailPageDragLeave()
+        public static void DispatchDetailPageDragLeave() => DispatchDetailPageDragLeave(null);
+
+        /// <summary>
+        /// 把「拖放离场」派发给指定详情页实例（<paramref name="page"/> 为 null 时退回当前命中页）。
+        ///
+        /// <para>
+        /// <b>为什么需要能指定实例</b>：拖放是跨线程的 OLE 回调，两次回调之间可能夹着
+        /// 「面板换页 / 被通知接管 / 已经收起」等状态变化 —— 这时按当前命中区去取会取到 null，
+        /// 复位回调就发不出去，插件的高亮会永远留在界面上。
+        /// 调用方在「拖入被接受」的那一刻记下实例，离场时直接还给它即可
+        /// （见 <c>IslandDropTarget</c> 的 <c>_hoverPage</c>）。
+        /// </para>
+        ///
+        /// <para>
+        /// 面板已经收起的实例同样应该收到这条回调：插件据此复位自己的状态，
+        /// 与面板是否还在屏幕上无关。
+        /// </para>
+        /// </summary>
+        public static void DispatchDetailPageDragLeave(Plugins.IDetailPage? page)
         {
             lock (_pluginSlotLock)
             {
-                var page = _detailHitPage;
-                if (page == null) return;
+                var target = page ?? _detailHitPage;
+                if (target == null) return;
 
-                try { page.OnFilesDragLeave(); }
+                try { target.OnFilesDragLeave(); }
                 catch (Exception ex) { Logger.Error("[Renderer] 详情页拖入离开回调异常", ex); }
             }
         }

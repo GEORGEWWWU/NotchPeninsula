@@ -40,6 +40,19 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
     /// <summary>本次拖入的条目数（DragEnter 时解析出来存着，供 DragOver 重试接受时复用）。</summary>
     private int _dragItemCount;
 
+    /// <summary>
+    /// 本次拖放**真正进入过**的详情页实例。
+    ///
+    /// <para>
+    /// 为什么要单独记这一笔、而不是离场时去问「当前命中页是哪个」：
+    /// 拖放回调是跨线程进来的，两次回调之间面板可能已经换页 / 被通知接管 / 收起，
+    /// 那时按当前命中区去取只会取到 null —— 复位回调发不出去，插件的悬停高亮就
+    /// 永远留在详情页上（表现就是<b>「一直卡在拖入页面」</b>，且此后每次打开面板都还挂着）。
+    /// 记下实例之后，只要这一轮进过某个详情页，离场时无条件还给它即可。
+    /// </para>
+    /// </summary>
+    private Plugins.IDetailPage? _hoverPage;
+
     internal IslandDropTarget(NotchWindow window) => _window = window;
 
     /// <summary>
@@ -93,8 +106,9 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
         // 上一次拖放若没能正常收尾（拖放源被强杀、进程崩掉之类，DragLeave / Drop 都收不到），
         // 悬停态会一直留在详情页上。新一次拖入之前先清干净，免得「上一次的高亮」粘在这一回上。
-        if (_accepted) Renderer.DispatchDetailPageDragLeave();
+        if (_accepted || _hoverPage != null) Renderer.DispatchDetailPageDragLeave(_hoverPage);
         _accepted = false;
+        _hoverPage = null;
         _dragItemCount = 0;   // 条目数也重置，免得上一轮的值残留到这一轮的重试逻辑里
 
         // 岛体自己拖出去的东西，别接回来 —— 用户从详情页往岛外拖时，光标起点就在岛体上
@@ -139,6 +153,7 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
         _window.KeepAliveForDrop();
 
         _accepted = true;
+        _hoverPage = Renderer.ActiveDetailPageOrNull;   // 记住是谁高亮的，离场时按它复位
         pdwEffect = Win32.DROPEFFECT_COPY;
         return 0;
     }
@@ -156,7 +171,9 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
             // 拖出了详情页矩形（比如滑到岛体另一头）→ 本次接受作废，光标给「不允许」
             if (!Renderer.DispatchDetailPageDragOver(x, y))
             {
-                Renderer.DispatchDetailPageDragLeave();
+                // 按记下的实例复位 —— 这一下判定为假也可能是「面板已被收起 / 被通知接管」，
+                // 那时命中区里已经取不到详情页，退回参数为 null 的旧写法会把高亮留在界面上。
+                Renderer.DispatchDetailPageDragLeave(_hoverPage);
                 _accepted = false;
             }
             else
@@ -180,6 +197,7 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
         {
             _window.KeepAliveForDrop();
             _accepted = true;
+            _hoverPage = Renderer.ActiveDetailPageOrNull;   // 与 DragEnter 一致：记住高亮对象
             pdwEffect = Win32.DROPEFFECT_COPY;
             Logger.Info($"[岛体拖放] 落点移入详情页，转为接受（{_dragItemCount} 项，{x:F0},{y:F0}）");
         }
@@ -193,8 +211,13 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
         SetFileDragInProgress(false);   // 拖放走了，穿透淡出照旧
 
-        if (_accepted) Renderer.DispatchDetailPageDragLeave();
+        // ⚠️ 判据不能只看 _accepted：中途面板被通知接管 / 收起时，DragOver 的落点判定会失败
+        //    并把 _accepted 置回 false，而那一刻命中区里已经没有详情页了 —— 只按 _accepted
+        //    决定发不发复位回调，插件的高亮就会永远留在详情页上（「一直卡在拖入页面」就是这么来的）。
+        //    所以只要这一轮拖放进过某个详情页（记在 _hoverPage），离场就必须把它复位。
+        if (_accepted || _hoverPage != null) Renderer.DispatchDetailPageDragLeave(_hoverPage);
         _accepted = false;
+        _hoverPage = null;
 
         // 拖放走了：补一次「鼠标离开岛体」的判定。
         // 拖放期间 OLE 接管鼠标，窗口收不到 WM_MOUSELEAVE，不补这一下，
@@ -208,13 +231,15 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
         pdwEffect = Win32.DROPEFFECT_NONE;
 
         bool accepted = _accepted;
+        var hoverPage = _hoverPage;      // 这一轮进过的详情页（可能已经被收起 / 换页，仍要复位它）
         _accepted = false;
+        _hoverPage = null;
 
         SetFileDragInProgress(false);   // 松手即收官：穿透淡出立刻恢复，不必等下一次状态轮询
 
         if (!_window.TryScreenToIslandLogical(pt, out float x, out float y))
         {
-            if (accepted) Renderer.DispatchDetailPageDragLeave();
+            if (accepted || hoverPage != null) Renderer.DispatchDetailPageDragLeave(hoverPage);
             return 0;
         }
 
@@ -229,12 +254,17 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
             // 走到这里说明这次接受是「补」出来的，前面没有 DragOver 替我们续过悬停 —— 补一口，
             // 免得详情页的延迟折叠在松手这一瞬间正好到点。
-            if (accepted) _window.KeepAliveForDrop();
+            if (accepted)
+            {
+                _window.KeepAliveForDrop();
+                hoverPage = Renderer.ActiveDetailPageOrNull;
+            }
         }
 
         if (!accepted)
         {
             Logger.Info("[岛体拖放] 放下，但本轮拖放此前未被接受（落点一直不在详情页内），忽略");
+            if (hoverPage != null) Renderer.DispatchDetailPageDragLeave(hoverPage);
             return 0;
         }
 
@@ -247,8 +277,8 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
         //    DispatchDetailPageDrop 会直接返回 false，并且**不会**回调 OnFilesDragLeave ——
         //    详情页的悬停态就此没人清，高亮永远留在界面上。
         //    表现就是「没拖到位就松手 → 一直卡在拖入页面」。这里兜一刀：
-        //    只要这一轮拖放曾被接受过，收尾就必须把悬停态复位。
-        if (!dropped) Renderer.DispatchDetailPageDragLeave();
+        //    只要这一轮拖放曾被接受过，收尾就必须把悬停态复位（按记下的实例发，面板已收起也照样发）。
+        if (!dropped) Renderer.DispatchDetailPageDragLeave(hoverPage);
         else pdwEffect = Win32.DROPEFFECT_COPY;
 
         Logger.Info($"[岛体拖放] 放下：落点 {x:F0},{y:F0}，详情页{(dropped ? "收下了" : "没收（落点在详情页外），已补复位悬停态")}");
