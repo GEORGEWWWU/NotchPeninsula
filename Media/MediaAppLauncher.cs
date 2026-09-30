@@ -40,6 +40,13 @@ namespace NotchPeninsula
         {
             public uint ProcessId;
             public IntPtr Window;
+            /// <summary>
+            /// 采到窗口那一刻顺手记下的 exe 完整路径。**这是「应用已经关了还能把它拉起来」的关键**：
+            /// 进程一旦退出，<c>Process.MainModule</c> 就再也读不到路径了，届时第 3 步会陷入
+            /// 「既没 AUMID 注册、又拿不到路径」的死局（实测就是这样，双击完全没反应）。
+            /// 路径在进程活着的时候取一次、一直留着，代价是一个字符串。
+            /// </summary>
+            public string? ExePath;
         }
 
         private static readonly ConcurrentDictionary<string, AppTarget> s_targets
@@ -116,6 +123,9 @@ namespace NotchPeninsula
                 {
                     target.ProcessId = pid;
                     target.Window = hwnd;
+                    // 进程还活着时顺手把 exe 路径记下来：应用关掉之后再双击，就靠它把应用拉回来
+                    // （进程一退，Process.MainModule 就读不到路径了，那时第 3 步会无路可走）
+                    if (string.IsNullOrEmpty(target.ExePath)) target.ExePath = TryGetProcessImagePath(pid);
                 }
                 // 用 Info 而不是 Debug：老版本只在调试模式下记这一行，导致「跳转跳错」时
                 // 日志里看不到到底把哪个句柄记下来了，只能靠猜。这行只在接管目标变化时出现，不刷屏。
@@ -197,24 +207,45 @@ namespace NotchPeninsula
             }
 
             // ---------- 第 3 步：把应用本体拉起来 ----------
-            // ⚠️ 绝不能无条件交给 `shell:AppsFolder`：AUMID 没注册 / 解析不出来时 Shell 不报错，
-            //    但会**打开一个资源管理器窗口** —— 这就是「跳转跳到了文件资源管理器」的成因。
-            //      · 注册过 → 交给 Shell 激活（Win32 与打包应用都适用，运行中会复用现有实例）；
-            //      · 没注册过 → 只认同名进程自己的 exe 路径，直接拉起；路径也拿不到就干脆不动。
-            if (IsRegisteredAumid(appId))
-            {
-                LaunchByAumid(appId);
-                return;
-            }
-
-            if (TryGetProcessImagePath(exeName, out string? exePath))
+            // 2026-09-30 深夜改：上一版在这里加了「AUMID 未注册就不交给 Shell」的闸门，
+            // 结果把**唯一还能用的**那条路也堵死了 —— Just Solo 这类应用只在开始菜单注册了带 AUMID 的快捷方式
+            // （`shell:AppsFolder\{AUMID}` 正是靠它解析的，实测 `Just Solo.lnk` 就带着这个 AUMID），
+            // 注册表里查不到 → 判定「未注册」→ 一旦应用已经关闭（进程没了，读不到 exe 路径）就彻底没反应。
+            // 现在按可靠性排序：
+            //   · 有 exe 路径（采集时缓存 / 从还活着的进程读到）→ 直接拉起它本人，最确定；
+            //   · 否则 → 交给 Shell 按 AUMID 激活，也就是「双击跳回应用」原先一直在用、也确实能用的方式。
+            if (TryGetExePath(appId, exeName, out string? exePath))
             {
                 LaunchByExe(appId, exePath);
                 return;
             }
 
-            Logger.Warn($"媒体跳转：没能定位到「{appId}」的窗口，且它既未注册 AUMID、也拿不到可执行文件路径，已放弃"
-                + "（不交给 Shell —— 那会打开一个资源管理器窗口）");
+            LaunchByAumid(appId);
+        }
+
+        /// <summary>
+        /// 取这个应用的 exe 路径，两条来源按可靠性排序：
+        ///   1. <b>采集时缓存的路径</b> —— 会话刚被接管、进程还在的时候记下来的，**进程退出后依然有效**
+        ///      （这是「应用关了也能把它拉起来」的关键：进程一退出 <c>Process.MainModule</c> 就再也读不到路径）；
+        ///   2. <b>从当前还活着的同名进程读</b>（进程名全等才认）。
+        /// 都没有就返回 false，调用方转去按 AUMID 交给 Shell。
+        /// </summary>
+        private static bool TryGetExePath(string appId, string exeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? exePath)
+        {
+            exePath = null;
+
+            lock (s_lock)
+            {
+                if (s_targets.TryGetValue(appId, out AppTarget? target)
+                    && !string.IsNullOrEmpty(target.ExePath)
+                    && File.Exists(target.ExePath))
+                {
+                    exePath = target.ExePath;
+                    return true;
+                }
+            }
+
+            return TryGetProcessImagePath(exeName, out exePath);
         }
 
         /// <summary>
@@ -313,6 +344,21 @@ namespace NotchPeninsula
             }
 
             return found != IntPtr.Zero;
+        }
+
+        /// <summary>从指定进程读它的 exe 完整路径；进程已退出 / 无权限读到时返回 null。</summary>
+        private static string? TryGetProcessImagePath(uint pid)
+        {
+            try
+            {
+                using var p = Process.GetProcessById((int)pid);
+                string? path = p.MainModule?.FileName;
+                return !string.IsNullOrEmpty(path) && File.Exists(path) ? path : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>

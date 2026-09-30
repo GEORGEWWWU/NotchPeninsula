@@ -1784,10 +1784,17 @@ namespace NotchPeninsula
                         // 与 WM_LBUTTONDOWN 里 HitWakeButton 的优先级保持一致，不在这里触发跳转。
                         if ((Renderer.PassthroughModeEnabled && !_isPassthroughAwake) || Renderer.FullHideAlpha < 0.99f) break;
 
-                        if (MediaController.IsAppLaunchEnabled && _isHovered && _media.IsActive
+                        bool launchEnabled = MediaController.IsAppLaunchEnabled;
+                        bool onCover = Renderer.HitMediaLaunchZone(dx, dy);
+                        Logger.Info($"媒体跳转[诊断]：双击 ({dx},{dy}) 开关={launchEnabled} 悬停={_isHovered} "
+                            + $"媒体激活={_media.IsActive} 通知={_currentToast != null} 剪贴板={isClipboardActive} "
+                            + $"详情页={Renderer.HasActiveDetailPage} 面板={Renderer.IsMediaPanelShowing(_media)} "
+                            + $"命中封面={onCover}");
+
+                        if (launchEnabled && _isHovered && _media.IsActive
                             && _currentToast == null && !isClipboardActive
                             && !Renderer.HasActiveDetailPage
-                            && Renderer.HitMediaLaunchZone(dx, dy))
+                            && onCover)
                         {
                             _media.OpenCurrentApp();
                             return (IntPtr)0; // 消费掉：别再让第二下点到底下的播放按钮上
