@@ -344,7 +344,7 @@ namespace NotchPeninsula
             }
             else if (_appLaunchToggleHovered)
             {
-                // 🖱 双击跳转开关：关掉后双击媒体控制完全不消费、不做事；
+                // 🖱 双击封面跳转开关：关掉后双击封面完全不消费、不做事；
                 //    已缓存的窗口句柄留在 MediaAppLauncher 里（几十字节），
                 //    重新打开时下一次接管刷新就会继续采样，不需要清缓存。
                 MediaController.IsAppLaunchEnabled = !MediaController.IsAppLaunchEnabled;

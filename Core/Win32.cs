@@ -351,15 +351,16 @@ namespace NotchPeninsula
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
         // ================= 🪟 窗口查询（媒体会话 → 应用窗口 的定位 / 前台激活） =================
-        // 媒体侧的「双击跳转对应应用」要用它们：
+        // 媒体侧的「双击封面跳转对应应用」要用它们：
         //   · GetForegroundWindow 在「会话刚被接管」那一刻顺手抓住应用的主窗口句柄；
         //   · GetWindowThreadProcessId / IsWindow / IsWindowVisible / GetWindowLongPtr 做归属与可用性校验
         //     （同时也是排除本程序自己窗口的手段 —— 岛体 / 设置窗 / 通知窗都同属本进程）；
         //   · ShowWindow / IsIconic / SetForegroundWindow / AttachThreadInput 负责把窗口还原并切到前台。
         //
-        // 注：这里以前还有 EnumWindows + EnumWindowsProc（用来按进程号枚举窗口），
-        //     改成「只在采集到正确归属的窗口」之后已无调用方，2026-09-30 删除。
-        //     要再按进程找窗口请用 Process.MainWindowHandle，别把这对声明当现成工具留着。
+        // 注：这里以前还有 EnumWindows + EnumWindowsProc（用来按进程号枚举窗口），2026-09-30 删除过一次；
+        //     同日又加回来 —— 兜底路径不再无条件相信 `shell:AppsFolder`（它解析不出来时会**打开资源管理器**，
+        //     表现就是「跳转跳到了文件资源管理器」），改成「先在已知进程里精确找窗口，找不到才考虑 Shell 激活」。
+        //     这里的枚举是**精确按进程号挑窗口**，不是按进程名猜应用，和当初被放弃的模糊匹配不是一回事。
 
         [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hWnd);
@@ -372,6 +373,19 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll")]
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        /// <summary>EnumWindows 的回调（返回 true 继续枚举；返回 false 立即停止）。</summary>
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        /// <summary>取窗口标题长度（字符数，不含结尾的 '\0'）。</summary>
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern int GetWindowTextLength(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
         /// <summary>GetWindowLongPtr 在 32 位系统上叫 GetWindowLong，所以按位数分派。</summary>
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
