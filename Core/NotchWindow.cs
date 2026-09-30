@@ -448,6 +448,10 @@ namespace NotchPeninsula
 
             Info("程序退出");
             _instanceForExit?._audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
+            // 系统音量管理器持有 IMMDevice / IAudioEndpointVolume 两个 COM 对象。
+            // 它的 Dispose 以前从没被任何地方调用过（整个 IDisposable 实现是死代码），
+            // 退出路径上补一次，别把释放全推给进程终止。
+            try { _instanceForExit?.audio.Dispose(); } catch (Exception ex) { Error("释放系统音量管理器失败", ex); }
             Environment.Exit(0);
         }
 

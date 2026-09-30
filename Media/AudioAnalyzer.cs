@@ -418,7 +418,13 @@ namespace NotchPeninsula
                 var enumerator = _enumerator;
                 if (enumerator == null) return;
 
-                var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                // using：device 是真正的 COM 包装对象（IMMDevice），用完必须确定性释放。
+                // 本方法是**捕获重建路径**上最高频的 COM 分配点（独占占用时最快 1 次/秒、切设备、
+                // 看门狗恢复都会走），之前只靠 RCW 终结器兜底 = 每次重建都留一批待 GC 的 COM 垃圾。
+                // 同一文件里 TryGetDefaultRenderDeviceId 早就用了 using，只有这处漏了。
+                // 注：AudioSessionManager 与 AudioSessionControl 都不实现 IDisposable（NAudio 的投影如此），
+                //     所以只有 device 能确定性释放，其余仍由 RCW 终结器负责。
+                using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = device.AudioSessionManager.Sessions;
                 uint pid = (uint)Environment.ProcessId;
 
@@ -427,6 +433,8 @@ namespace NotchPeninsula
                     var session = sessions[i];
                     if (session.GetProcessID != pid) continue;
 
+                    // ⚠️ session **必须留着**：既要在 ReleaseCapture 里做 UnRegisterEventClient，
+                    //    又要让 RegisterEventClient 挂上的回调持续有效 —— 它的寿命由 _sessionControl 持有。
                     session.RegisterEventClient(_sessionEvents);
                     _sessionControl = session;
                     return;

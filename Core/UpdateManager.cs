@@ -289,7 +289,8 @@ namespace NotchPeninsula
                     int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                     if (_hoveredButton == 0)
                     {
-                        Process.Start(new ProcessStartInfo { FileName = "https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest", UseShellExecute = true });
+                        // using：启动浏览器后立刻释放 Process 包装对象，不影响浏览器本身
+                        using (Process.Start(new ProcessStartInfo { FileName = "https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest", UseShellExecute = true })) { }
                         Win32.DestroyWindow(hwnd);
                     }
                     // 不再提醒：只跳过当前这个版本，写入注册表后关窗（更新版本出现时仍会提示）
