@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using Microsoft.Win32;
 using Windows.Media.Control;
@@ -10,26 +9,23 @@ namespace NotchPeninsula
     /// <summary>
     /// 「双击封面 → 跳回正在放媒体的那个应用」的全部落地逻辑。
     ///
-    /// <para><b>三级策略（自上而下依次尝试，一级都不成就不做事）：</b></para>
-    /// <list type="number">
-    /// <item><b>已采集到的窗口句柄</b>：把那个窗口还原并切到前台。句柄只在
-    ///       「该会话刚被接管、且前台窗口确实属于这个 App」时采集 —— 那一刻用户正在那个应用里操作，
-    ///       前台窗口就是它的主窗口。**激活前还会再复核一次归属**：句柄可能已经被系统回收、
-    ///       PID 也可能被复用给了别的程序，不复核就等于闭着眼睛按句柄切前台。</item>
-    /// <item><b>按进程精确找窗口</b>：把 AUMID 归一成可执行文件名，在**同名进程**里枚举顶层窗口，
-    ///       挑一个可见、带标题、非工具窗口的出来激活。找到的就是这个应用自己的窗口，
-    ///       不存在「按名字猜应用」的误伤面。</item>
-    /// <item><b>按 AUMID 交给 Shell 激活</b>：仅当这个 AUMID **确实在系统里注册过**
-    ///       （打包应用或注册了 AUMID 的 Win32 应用）时才执行
-    ///       <c>explorer.exe shell:AppsFolder\{AUMID}</c>。没注册过时强行调用不会报错，
-    ///       但 Shell 会**打开一个资源管理器窗口**（这正是「跳转跳到了文件资源管理器」的成因），
-    ///       所以未注册的 AUMID 一律不交给 Shell。</item>
-    /// </list>
+    /// <para><b>目标身份只有一个来源：正在展示的那个会话。</b>
+    /// <see cref="MediaController.CurrentAppId"/> 就是当前接管（画在岛上）的会话的
+    /// <c>SourceAppUserModelId</c>，本类的一切定位都以它为起点，绝不去猜「哪个进程像这个应用」。</para>
     ///
-    /// <para>穷举进程去猜「哪个进程是这个 AUMID」的做法依然被**刻意放弃**：按进程名模糊匹配
-    /// （比如 "potplayer"）在重名 / 套壳进程上会张冠李戴。这里第 2 级要求进程名与 AUMID
-    /// **同源到可执行文件级别**（见 <see cref="AppMatchesProcess"/>），匹配不上就跳过，
-    /// 绝不拿一个「差不多像」的进程去切前台。</para>
+    /// <para><b>三步定位（自上而下，一步都不成就不做事）：</b></para>
+    /// <list type="number">
+    /// <item><b>已采集到的窗口句柄</b>：把那个窗口还原并切到前台。句柄只在「该会话刚被接管、
+    ///       且前台窗口确实属于这个 App」时采集；激活前还会再复核一次归属 —— 句柄可能已被系统回收，
+    ///       PID 也可能被复用给了别的程序。</item>
+    /// <item><b>按可执行文件名精确找窗口</b>：AUMID 里带的消息源文件名就是进程名
+    ///       （<c>QQMusic.exe</c> → 进程 <c>QQMusic</c>），按**全等**取进程，再枚举它自己的顶层窗口。
+    ///       不做任何模糊匹配：名字对不上就是不认。</item>
+    /// <item><b>按 AUMID 交给 Shell 激活</b>：<c>explorer.exe shell:AppsFolder\{AUMID}</c>，
+    ///       也就是 <c>SourceAppUserModelId</c> 的原样用法。⚠️ 但**必须先确认这个 AUMID 注册过**
+    ///       （<see cref="IsRegisteredAumid"/>）：没注册时 Shell 不报错，而是打开一个资源管理器窗口
+    ///       —— 那正是「跳转跳到了文件资源管理器」的成因。未注册时改为直接拉起同名进程自己的 exe 路径。</item>
+    /// </list>
     ///
     /// <para><b>做不到的：</b>SMTC 不提供任何深链接参数，所以只能跳到应用本体（主窗口 / 首页），
     /// 无法跳到正在播放的那首歌 / 那个视频的页面。这是协议本身的限制，不是实现取舍。</para>
@@ -71,13 +67,11 @@ namespace NotchPeninsula
         /// <list type="number">
         /// <item><b>只在接管目标真的换了的时候采样</b>（见 <see cref="s_sampledAppId"/>）。
         ///       否则用户正在别的程序里忙着的时候，媒体一换歌就会把那个无关程序的前台窗口记成媒体窗口。</item>
-        /// <item><b>前台窗口的进程必须与 AUMID 同源</b>（<see cref="AppMatchesProcess"/>）。
-        ///       对不上、或完全推不出进程名，一律不采 —— 宁可双击时走第 2 级按进程找窗口，
-        ///       也绝不把另一个程序切到前台。只有第 1 条时，一旦第一次采错就再也没机会纠正。</item>
-        /// <item><b>句柄失效或前台已经换了别的窗口时可以重采</b>。旧版本「有句柄就永不重采」，
-        ///       结果是应用重启（换 PID）之后旧句柄一直留着，每次都掉进 Shell 兜底那条最不可靠的路。
-        ///       现在只要采到的句柄已经不是当前前台窗口，就先复核归属；仍然同源才更新，
-        ///       不同源就把这条脏记录丢掉。</item>
+        /// <item><b>前台窗口的进程名必须与 AUMID 里的文件名完全相等</b>（<see cref="IsProcessOfApp"/>）。
+        ///       对不上、或推不出进程名，一律不采 —— 宁可双击时走第 2 步按进程找窗口，
+        ///       也绝不把另一个程序切到前台。</item>
+        /// <item><b>激活前还要复核一次</b>（见 <see cref="OpenCurrentSessionApp"/> 第 1 步）：
+        ///       句柄可能已被回收、PID 也可能被复用，不复核就等于闭着眼睛按句柄切前台。</item>
         /// </list>
         /// </summary>
         /// <param name="session">当前接管的会话；为 null 表示没有接管会话。</param>
@@ -96,10 +90,9 @@ namespace NotchPeninsula
             }
             if (appId.Length == 0) return;
 
-            // 保险 1：接管目标没变就不重采（清空记录也算变了，用于「会话消失后再回来」）
+            // 保险 1：接管目标没变就不重采；变了就把旧记录作废（新目标一定不是旧窗口）
             if (string.Equals(appId, s_sampledAppId, StringComparison.OrdinalIgnoreCase)) return;
             s_sampledAppId = appId;
-            // 接管目标变了 → 这次双击的目标就换了，旧的记录先作废
             s_targets.TryRemove(appId, out _);
 
             try
@@ -115,8 +108,8 @@ namespace NotchPeninsula
                 uint pid = Win32.GetWindowThreadProcessId(hwnd, out _);
                 if (pid == 0) return;
 
-                // 保险 2：归属校验 —— 前台窗口的进程必须跟这个 AUMID 对得上
-                if (!AppMatchesProcess(appId, pid)) return;
+                // 保险 2：归属校验 —— 前台窗口的进程必须就是 AUMID 指向的那个可执行文件
+                if (!IsProcessOfApp(appId, pid)) return;
 
                 var target = s_targets.GetOrAdd(appId, _ => new AppTarget());
                 lock (s_lock)
@@ -136,138 +129,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 进程名是否与 AUMID 同源。判据是**可执行文件名级别的同源**，两侧都先做同一套归一
-        /// （去扩展名 + 只留字母数字，见 <see cref="NormalizeName"/>），所以 <c>douyin_tray</c> 与
-        /// <c>douyin_tray.exe</c> 这类只差标点的写法也能对上：
-        ///   · <c>JustSolo.JustSolo</c>（包名!应用名）→ <c>JustSolo</c>，进程 <c>JustSolo</c> ✅
-        ///   · <c>QQMusic.exe</c>                    → <c>QQMusic</c>，进程 <c>QQMusic</c> ✅
-        ///   · <c>chrome.exe</c>                     → <c>chrome</c>，进程 <c>chrome</c> ✅
-        ///
-        /// <para>⚠️ 这里**故意不再做「前 3 字符命中」**。老版本用 <c>token[..3]</c> 去 Contains 匹配，
-        /// 于是 AUMID 里推不出有效名字时（比如纯数字 / 极短的名字）任何进程都能对上，
-        /// 「双击跳到了 QQ / 浏览器」就出在这儿。现在推不出名字、或读不到进程名，一律**判定为不匹配**：
-        /// 宁可跳过这一级、退到按进程精确找窗口，也不赌一个「大概像」的进程。</para>
-        /// </summary>
-        private static bool AppMatchesProcess(string appId, uint pid)
-        {
-            string? processName = TryGetProcessName(pid);
-            return processName != null && NamesMatch(NormalizeAppToken(appId), NormalizeName(processName));
-        }
-
-        /// <summary>
-        /// 两个「可执行文件名」（都已归一：去扩展名、只留字母数字）是否指同一个应用。
-        /// 全等最好；否则只认**前缀 / 后缀**关系，且短的那个至少 4 个字符：
-        ///   · 后缀：<c>cloudmusic2</c> 以 <c>cloudmusic</c> 结尾、<c>msedgewebview2</c> 以 <c>msedge</c> 结尾 —— 同一家的不同壳 ✅
-        ///   · 前缀：<c>QQMusicHelper</c> 以 <c>QQMusic</c> 开头、<c>douyin_tray</c> 归一后同理 —— 同一个应用的辅助进程 ✅
-        ///   · <c>QQ</c> 只有 2 个字符，被长度门槛挡掉（否则它会命中 <c>QQMusic</c> / <c>QQBrowser</c>）❌
-        ///   · 中间包含**一律不算**：<c>MicrosoftZuneMusic</c> 含着 <c>Music</c>，可那是两个不相干的应用 ❌
-        ///
-        /// <para>⚠️ 还要挡住「只是长名字里的一个单词」：<c>MicrosoftZuneMusic</c> 确实以 <c>Music</c> 结尾，
-        /// 但那是个驼峰复合名，<c>Music</c> 只是其中一个词。判据是接缝处的大小写（见
-        /// <see cref="IsCamelSeam"/>）：上前缀的<b>右</b>接缝、或后缀的<b>左</b>接缝是「小写→大写」时，
-        /// 说明短的只是长的一个单词。唯一的例外是长名字正好由短名字重复拼成
-        /// （<c>JustSoloJustSolo</c>）—— 那是实打实的同源，不能因为接缝处大写就否掉。</para>
-        /// </summary>
-        private static bool NamesMatch(string a, string b)
-        {
-            if (a.Length == 0 || b.Length == 0) return false;
-            if (a.Equals(b, StringComparison.OrdinalIgnoreCase)) return true;
-
-            string shorter = a.Length <= b.Length ? a : b;
-            string longer = ReferenceEquals(shorter, a) ? b : a;
-            if (shorter.Length < 4) return false;
-
-            bool repeat = IsRepeatOf(longer, shorter);
-
-            // 前缀：longer = shorter + 尾巴。右接缝是驼峰就说明 shorter 只是它的第一个单词。
-            if (!repeat && longer.StartsWith(shorter, StringComparison.OrdinalIgnoreCase)
-                && IsCamelSeam(longer, shorter.Length))
-            {
-                return false;
-            }
-
-            // 后缀：longer = 头 + shorter。左接缝是驼峰就说明 shorter 只是它的最后一个单词。
-            if (!repeat && longer.EndsWith(shorter, StringComparison.OrdinalIgnoreCase)
-                && IsCamelSeam(longer, longer.Length - shorter.Length))
-            {
-                return false;
-            }
-
-            return longer.StartsWith(shorter, StringComparison.OrdinalIgnoreCase)
-                || longer.EndsWith(shorter, StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>接缝处是不是驼峰边界：前一个小写字母 + 后一个大写字母。例：<c>Zune|Music</c> ✅、<c>cloudmusic|2</c> ❌。</summary>
-        private static bool IsCamelSeam(string longer, int seam)
-        {
-            if (seam <= 0 || seam >= longer.Length) return false;
-            return char.IsLower(longer[seam - 1]) && char.IsUpper(longer[seam]);
-        }
-
-        /// <summary>长名字是不是由短名字重复拼成（<c>JustSoloJustSolo</c> = <c>JustSolo</c> × 2）。</summary>
-        private static bool IsRepeatOf(string longer, string shorter)
-        {
-            if (longer.Length % shorter.Length != 0) return false;
-
-            for (int i = 0; i < longer.Length; i += shorter.Length)
-            {
-                if (!longer.AsSpan(i, shorter.Length).Equals(shorter, StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
-            return true;
-        }
-
-        /// <summary>
-        /// 把 AUMID 归一成一个可比较的「可执行文件名」：
-        /// 取最后一个 <c>'!'</c> / <c>'\'</c> / <c>'/'</c> 之后那一段，再去掉扩展名与所有非字母数字字符。
-        /// 例：<c>JustSolo.JustSolo</c> → <c>JustSolo</c>；<c>QQMusic.exe</c> → <c>QQMusic</c>；
-        /// <c>Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic</c> → <c>MicrosoftZuneMusic</c>。
-        ///
-        /// <para>⚠️ <b>分隔符里刻意不含 <c>'.'</c></b>：老版本把 '.' 当分隔符，于是
-        /// <c>"QQMusic.exe"</c> 的「最后一段」是 <c>"exe"</c> → 归一成 <c>exe</c>。
-        /// 那正是「按 AUMID 定位进程」这条路的死因：token 永远是 <c>exe</c>，
-        /// 跟任何进程名都对不上，于是每次跳转都掉进最不可靠的 Shell 兜底。
-        /// 包标识 AUMID 里的点（<c>JustSolo.JustSolo</c>）靠「最后一段」自然取到应用名，不需要把点当分隔符。</para>
-        /// </summary>
-        private static string NormalizeAppToken(string appId)
-        {
-            int cut = appId.LastIndexOfAny(['!', '\\', '/']);
-            string tail = cut >= 0 && cut < appId.Length - 1 ? appId[(cut + 1)..] : appId;
-            return NormalizeName(tail);
-        }
-
-        /// <summary>去掉扩展名，只留字母与数字（大小写保留，比较侧统一用 OrdinalIgnoreCase）。零分配以外的开销可忽略。</summary>
-        private static string NormalizeName(string raw)
-        {
-            // 大小写不敏感地砍掉结尾的 .exe / .lnk：这两个后缀在进程名与 AUMID 里都可能出现
-            if (raw.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                || raw.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-            {
-                raw = raw[..^4];
-            }
-
-            var sb = new System.Text.StringBuilder(raw.Length);
-            foreach (char c in raw)
-                if (char.IsLetterOrDigit(c)) sb.Append(c);
-            return sb.ToString();
-        }
-
-        /// <summary>读进程名（不含 .exe 后缀之外的扩展信息）。进程已退出 / 无权限时返回 null。</summary>
-        private static string? TryGetProcessName(uint pid)
-        {
-            try
-            {
-                using var p = Process.GetProcessById((int)pid);
-                return p.ProcessName;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// 「双击封面」的入口：跳回当前接管会话所属的应用。三级策略依次尝试，全都不成就不做事。
+        /// 「双击封面」的入口：跳回**当前正在展示的那个会话**所属的应用。
+        /// 三步依次尝试，全都不成就不做事（绝不去激活一个不属于它的窗口）。
         /// 调用方（WndProc）已经保证「双击落点在封面上」，这里不再做任何命中判定。
         /// </summary>
         internal static void OpenCurrentSessionApp()
@@ -279,9 +142,10 @@ namespace NotchPeninsula
                 return;
             }
 
-            // 顺手回收：登记表很小（一般 1~3 条），每次跳转顺手扫一遍把死掉的窗口条目清掉
+            // 顺手回收：登记表很小（一般 1~3 条），每 16 次跳转扫一遍把死掉的条目清掉
             if (++s_openCount % 16 == 0) PruneDeadTargets();
 
+            // ---------- 第 1 步：已采集到的窗口 ----------
             IntPtr hwnd = IntPtr.Zero;
             uint pid = 0;
             lock (s_lock)
@@ -293,11 +157,10 @@ namespace NotchPeninsula
                 }
             }
 
-            // ---------- 第 1 级：已采集到的窗口 ----------
-            // 激活前必须复核归属（见 CaptureSession 保险 3）：句柄可能已被系统回收，PID 也可能被复用。
             if (hwnd != IntPtr.Zero && Win32.IsWindow(hwnd))
             {
-                if (AppMatchesProcess(appId, Win32.GetWindowThreadProcessId(hwnd, out _)))
+                // 复核归属：句柄可能已被回收，PID 也可能被复用给了别的程序
+                if (IsProcessOfApp(appId, Win32.GetWindowThreadProcessId(hwnd, out _)))
                 {
                     if (ActivateWindow(hwnd))
                     {
@@ -320,12 +183,10 @@ namespace NotchPeninsula
                 }
             }
 
-            string? exeName = TokenToExeName(appId);
-
-            // ---------- 第 2 级：按进程精确找窗口 ----------
-            // 这一级是「跳转跳到无关程序」的正解：只认同名进程自己的顶层窗口，找不到就往下走，
-            // 不会去猜「哪个进程像这个应用」。
-            if (exeName != null && TryFindAppWindow(exeName, appId, out IntPtr found, out uint foundPid))
+            // ---------- 第 2 步：按可执行文件名精确找窗口 ----------
+            // AUMID 里的文件名就是进程名（QQMusic.exe → QQMusic），按全等取进程，不做模糊匹配。
+            string exeName = ExeNameOf(appId);
+            if (TryFindAppWindow(exeName, out IntPtr found, out uint foundPid))
             {
                 if (ActivateWindow(found))
                 {
@@ -335,10 +196,9 @@ namespace NotchPeninsula
                 Logger.Warn($"媒体跳转：「{appId}」定位到的窗口激活被系统拒绝");
             }
 
-            // ---------- 第 3 级：把应用本体拉起来 ----------
-            // ⚠️ 这一级绝不能无条件交给 `shell:AppsFolder`：AUMID 没注册 / 解析不出来时 Shell 不报错，
+            // ---------- 第 3 步：把应用本体拉起来 ----------
+            // ⚠️ 绝不能无条件交给 `shell:AppsFolder`：AUMID 没注册 / 解析不出来时 Shell 不报错，
             //    但会**打开一个资源管理器窗口** —— 这就是「跳转跳到了文件资源管理器」的成因。
-            //    所以先判定 AUMID 是否真的注册过：
             //      · 注册过 → 交给 Shell 激活（Win32 与打包应用都适用，运行中会复用现有实例）；
             //      · 没注册过 → 只认同名进程自己的 exe 路径，直接拉起；路径也拿不到就干脆不动。
             if (IsRegisteredAumid(appId))
@@ -347,7 +207,7 @@ namespace NotchPeninsula
                 return;
             }
 
-            if (exeName != null && TryGetProcessImagePath(exeName, appId, out string? exePath))
+            if (TryGetProcessImagePath(exeName, out string? exePath))
             {
                 LaunchByExe(appId, exePath);
                 return;
@@ -358,24 +218,112 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 把 AUMID 归一成可执行文件名（用于按进程找窗口）。
-        /// <c>chrome.exe</c> → <c>chrome</c>；<c>JustSolo.JustSolo</c> → <c>JustSolo</c>。
-        /// 推不出有效名字（纯数字 / 太短）时返回 null —— 此时第 2 级直接跳过。
+        /// 从 AUMID 取出可执行文件名（不含扩展名），作为进程名使用。这是**确定性提取**，不是猜测：
+        ///   · <c>QQMusic.exe</c> → <c>QQMusic</c>
+        ///   · <c>chrome.exe</c> → <c>chrome</c>
+        ///   · <c>JustSolo.JustSolo</c>（包标识）→ <c>JustSolo</c>
+        ///   · <c>PotPlayerMini64.exe</c> → <c>PotPlayerMini64</c>
+        /// 取最后一个 <c>'!'</c> / <c>'\'</c> / <c>'/'</c> 之后那段再去掉扩展名与标点。
+        /// ⚠️ 分隔符里**不含 <c>'.'</c>**：把点当分隔符会让 <c>"QQMusic.exe"</c> 变成 <c>"exe"</c>。
         /// </summary>
-        private static string? TokenToExeName(string appId)
+        private static string ExeNameOf(string appId)
         {
-            string token = NormalizeAppToken(appId);
-            return token.Length >= 3 ? token : null;
+            int cut = appId.LastIndexOfAny(['!', '\\', '/']);
+            string tail = cut >= 0 && cut < appId.Length - 1 ? appId[(cut + 1)..] : appId;
+
+            if (tail.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                || tail.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+            {
+                tail = tail[..^4];
+            }
+
+            var sb = new System.Text.StringBuilder(tail.Length);
+            foreach (char c in tail)
+                if (char.IsLetterOrDigit(c)) sb.Append(c);
+            return sb.ToString();
         }
 
         /// <summary>
-        /// 取同名进程自己的可执行文件路径（第 3 级「直接拉起应用本体」用）。
-        /// 进程名必须与 AUMID 同源才认，所以拿到的路径一定属于这个应用，不会拉起别的程序。
-        /// 进程不存在、或读不到路径（权限不足）时返回 false。
+        /// 这个进程是不是 AUMID 指向的那个应用 —— **全等比较**（都归一成不含扩展名、只留字母数字的形式）。
+        /// 做成全等是刻意的：任何模糊匹配（包含 / 前缀 / 相似度）都可能在同类软件之间张冠李戴，
+        /// 而这个方法的返回值直接决定「要不要把一个窗口切到前台」，容不得猜。
+        /// 读不到进程名（进程已退出 / 无权限）时一律返回 false。
         /// </summary>
-        private static bool TryGetProcessImagePath(string exeName, string appId, [NotNullWhen(true)] out string? exePath)
+        private static bool IsProcessOfApp(string appId, uint pid)
+        {
+            string exeName = ExeNameOf(appId);
+            if (exeName.Length == 0) return false;
+
+            try
+            {
+                using var p = Process.GetProcessById((int)pid);
+                return string.Equals(p.ProcessName, exeName, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 按可执行文件名**全等**取进程，再枚举它自己的顶层窗口（按「有标题 + 可见」优先，
+        /// EnumWindows 本身按 Z 序返回，所以取到的是它最近用过的那个窗口）。找不到返回 false。
+        /// </summary>
+        private static bool TryFindAppWindow(string exeName, out IntPtr found, out uint foundPid)
+        {
+            found = IntPtr.Zero;
+            foundPid = 0;
+            if (exeName.Length == 0) return false;
+
+            Process[] candidates;
+            try
+            {
+                candidates = Process.GetProcessesByName(exeName);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"媒体跳转：按进程名「{exeName}」取进程列表失败", ex);
+                return false;
+            }
+
+            try
+            {
+                for (int i = 0; i < candidates.Length; i++)
+                {
+                    uint pid = (uint)candidates[i].Id;
+                    if (pid == (uint)Environment.ProcessId) continue;
+                    // GetProcessesByName 已按名字过滤，这里再全等确认一次（它的匹配规则比全等宽）
+                    if (!string.Equals(candidates[i].ProcessName, exeName, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    IntPtr hwnd = FindTopLevelWindow(pid);
+                    if (hwnd == IntPtr.Zero) continue;
+
+                    found = hwnd;
+                    foundPid = pid;
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"媒体跳转：按进程「{exeName}」找窗口失败", ex);
+            }
+            finally
+            {
+                foreach (var p in candidates) p.Dispose();
+            }
+
+            return found != IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// 取该应用的 exe 路径（第 3 步「直接拉起」用）。进程名全等才认，
+        /// 所以拿到的路径一定属于这个应用，不会拉起别的程序。
+        /// </summary>
+        private static bool TryGetProcessImagePath(string exeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? exePath)
         {
             exePath = null;
+            if (exeName.Length == 0) return false;
+
             Process[] candidates;
             try
             {
@@ -388,10 +336,9 @@ namespace NotchPeninsula
 
             try
             {
-                string token = NormalizeAppToken(appId);
                 for (int i = 0; i < candidates.Length; i++)
                 {
-                    if (!NamesMatch(token, NormalizeName(candidates[i].ProcessName))) continue;
+                    if (!string.Equals(candidates[i].ProcessName, exeName, StringComparison.OrdinalIgnoreCase)) continue;
                     try
                     {
                         string? path = candidates[i].MainModule?.FileName;
@@ -413,73 +360,6 @@ namespace NotchPeninsula
             }
 
             return false;
-        }
-
-        /// <summary>
-        /// 在同名进程里找一个可用的顶层窗口：进程名必须与 AUMID 同源（<see cref="NamesMatch"/>），
-        /// 再按「有标题 + 可见」优先挑（EnumWindows 本身按 Z 序返回，所以同类里取最靠前那个，
-        /// 与用户最近用过的那个窗口一致）。找不到返回 false。
-        ///
-        /// <para><b>两轮挑选，顺序很重要</b>：先只认「归一后完全同名」的进程，第二轮才放宽到同源变体
-        /// （<c>cloudmusic2</c> / <c>msedgewebview2</c> 这类）。这样只要当前展示的那个会话所属的应用
-        /// 有同名进程在跑，就一定是它被激活，不会因为家族里的辅助进程排在前面而挑错。
-        /// 找错窗口的代价是「切到了别的程序」，所以宁可多扫一轮。</para>
-        /// </summary>
-        private static bool TryFindAppWindow(string exeName, string appId, out IntPtr found, out uint foundPid)
-        {
-            found = IntPtr.Zero;
-            foundPid = 0;
-
-            Process[] candidates;
-            try
-            {
-                candidates = Process.GetProcessesByName(exeName);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"媒体跳转：按进程名「{exeName}」取进程列表失败", ex);
-                return false;
-            }
-
-            if (candidates.Length == 0) return false;
-
-            try
-            {
-                string token = NormalizeAppToken(appId);
-
-                // 第 1 轮：完全同名（归一后）—— 就是当前展示的那个会话所属的应用本体
-                for (int pass = 0; pass < 2 && found == IntPtr.Zero; pass++)
-                {
-                    for (int i = 0; i < candidates.Length; i++)
-                    {
-                        uint pid = (uint)candidates[i].Id;
-                        if (pid == (uint)Environment.ProcessId) continue;
-
-                        string procName = NormalizeName(candidates[i].ProcessName);
-                        bool ok = pass == 0
-                            ? procName.Equals(token, StringComparison.OrdinalIgnoreCase)
-                            : NamesMatch(token, procName);
-                        if (!ok) continue;
-
-                        IntPtr hwnd = FindTopLevelWindow(pid);
-                        if (hwnd == IntPtr.Zero) continue;
-
-                        found = hwnd;
-                        foundPid = pid;
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"媒体跳转：按进程「{exeName}」找窗口失败", ex);
-            }
-            finally
-            {
-                foreach (var p in candidates) p.Dispose();
-            }
-
-            return found != IntPtr.Zero;
         }
 
         /// <summary>
@@ -516,12 +396,11 @@ namespace NotchPeninsula
         /// 这个 AUMID 在系统里注册过吗（注册过才敢交给 <c>shell:AppsFolder</c> 激活）。
         /// 两条注册表路径覆盖两类应用，都很便宜、只读不写（HKCU / HKLM 都查，打包应用通常落在 HKLM）：
         ///   · <c>{HK??}\Software\Classes\AppUserModelId\{AUMID}</c> —— 自己注册了 AUMID 的 Win32 应用
-        ///     （剪映、PowerToys 这类都在这里，键名就是完整的 AUMID）；
+        ///     （键名就是完整的 AUMID）；
         ///   · <c>{HK??}\Software\Classes\ActivatableClasses\Package\{包族名}…</c> —— 打包应用（UWP / MSIX），
         ///     它的 AUMID 形如 <c>PackageFamilyName!AppId</c>。
-        /// 两条都查不到时返回 false：此时 <c>explorer.exe shell:AppsFolder\{AUMID}</c> **不会报错**，
-        /// 但 Shell 会退化成「打开资源管理器」，用户看到的就是「跳转跳到了文件资源管理器」——
-        /// 所以宁可返回 false 走「直接拉起它自己的 exe」那条保守路径。
+        /// 两条都查不到时返回 false：此时 Shell 会退化成「打开资源管理器」而不是应用，
+        /// 所以宁可走「直接拉起它自己的 exe」那条保守路径。
         /// </summary>
         private static bool IsRegisteredAumid(string appId)
         {
@@ -568,7 +447,7 @@ namespace NotchPeninsula
             return false;
         }
 
-        /// <summary>顺手回收登记表里窗口已失效 / 进程已换主的条目（每 16 次跳转一次，代价可忽略）。</summary>
+        /// <summary>顺手回收登记表里窗口已失效 / 进程已不在的条目（每 16 次跳转一次，代价可忽略）。</summary>
         private static void PruneDeadTargets()
         {
             foreach (var kv in s_targets)
@@ -583,7 +462,7 @@ namespace NotchPeninsula
 
                 bool dead = hwnd == IntPtr.Zero
                     || !Win32.IsWindow(hwnd)
-                    || !AppMatchesProcess(kv.Key, pid);
+                    || !IsProcessOfApp(kv.Key, pid);
 
                 if (dead) s_targets.TryRemove(kv.Key, out _);
             }
@@ -625,8 +504,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 兜底：按 AUMID 交给 Shell 激活（<c>shell:AppsFolder\{AUMID}</c>），也就是
-        /// <c>SourceAppUserModelId</c> 的原样用法。**调用前必须确认它已注册**（见 <see cref="IsRegisteredAumid"/>），
+        /// 按 AUMID 交给 Shell 激活（<c>shell:AppsFolder\{AUMID}</c>），也就是 <c>SourceAppUserModelId</c>
+        /// 的原样用法。**调用前必须确认它已注册**（见 <see cref="IsRegisteredAumid"/>），
         /// 否则 Shell 会打开一个资源管理器窗口而不是应用。
         /// </summary>
         private static void LaunchByAumid(string appId)
@@ -653,10 +532,9 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 第 3 级的保守分支：拿这个应用**自己的 exe 路径**直接把它拉起来。
-        /// 只在「AUMID 未注册」时才走这里（注册过就走 <see cref="LaunchByAumid"/> 更标准）。
-        /// 路径来自同名同源进程的模块信息，所以拉起来的必然是它本人；媒体类应用基本都是单实例，
-        /// 已在运行时再启动一次也只会激活现有实例，不会多开一个窗口。
+        /// 第 3 步的保守分支：拿这个应用**自己的 exe 路径**直接把它拉起来。
+        /// 只在「AUMID 未注册」时才走这里。路径来自同名进程的模块信息，所以拉起来的必然是它本人；
+        /// 媒体类应用基本都是单实例，已在运行时再启动一次也只会激活现有实例。
         /// </summary>
         private static void LaunchByExe(string appId, string exePath)
         {
@@ -666,7 +544,6 @@ namespace NotchPeninsula
                 {
                     FileName = exePath,
                     UseShellExecute = true,
-                    // 不继承当前目录：应用自己的启动目录应当由 Shell 决定
                     WorkingDirectory = Path.GetDirectoryName(exePath) ?? string.Empty
                 })) { }
                 Logger.Info($"媒体跳转：AUMID「{appId}」未注册，已直接拉起「{exePath}」");

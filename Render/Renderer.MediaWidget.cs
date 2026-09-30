@@ -64,12 +64,15 @@ namespace NotchPeninsula
             float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
             float textX = geometry.ContentLeft;
 
+            // 📺 双击跳转的命中区：**不管有没有封面位图都要登记**。
+            //    ⚠️ 曾经只在 Thumbnail != null 时登记，结果「封面还没加载出来 / 这个源根本没封面」
+            //    的时候命中区是空的 —— 表现就是「双击没反应」。热区只认位置，不认那张图在不在。
+            float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
+            RegisterMediaCover(new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize));
+
             if (media.Thumbnail != null)
             {
-                float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
                 var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
-                // 📺 登记封面矩形：折叠态的「双击封面 → 跳转应用」命中的就是这一块
-                RegisterMediaCover(thumbRect);
                 canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
                 canvas.Save();
                 _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
