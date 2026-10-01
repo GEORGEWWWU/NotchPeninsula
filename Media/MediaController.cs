@@ -61,6 +61,13 @@ namespace NotchPeninsula
         private DateTime _seekSettleUntil = DateTime.MinValue;
         private const double SeekSettleSeconds = 1.5;
 
+        // 上一次采样到的 SMTC 位置，用来判断「SMTC **自己**有没有往回走」——
+        // 那才说明用户把进度往回拖了。我们领先它，多半只是它报得慢 / 报得粗。
+        private TimeSpan _prevSmtcPos;
+        private bool _hasPrevSmtcPos;
+        // 本地位置领先 SMTC：接下来按慢速推进把偏差吃掉。位置始终单调不减，绝不往回退。
+        private bool _timelineAhead;
+
         private DateTime _lastUpdateTime = DateTime.UtcNow;
         private string _lastFetchedTitle = "";
         private string _lastFetchedArtist = "";
@@ -1770,11 +1777,14 @@ namespace NotchPeninsula
             if (_lyricSlot >= 0) _slotSessions[_lyricSlot] = null;
         }
 
-        // ---- 位置纠偏常数（见 AdvanceTimeline 的说明） ----
-        private const double TimelineJumpSeconds = 1.5;       // 与本地位置的差超过它 → 当作真实跳变，直接对齐
-        private const double TimelineNudgeDeadZoneSec = 0.02; // 误差小于它就不动，省掉无意义的微调
-        private const double TimelineNudgeRatio = 0.25;       // 每次采样吃掉 25% 的误差
-        private const double TimelineNudgeMaxStepSec = 0.08;  // 单步上限：即使误差偏大也看不出跳动
+        // ---- 位置推进/纠偏常数（见 AdvanceTimeline 的说明） ----
+        private const double TimelineJumpSeconds = 1.5;        // 与本地位置的差超过它 → 当作真实跳变，直接对齐
+        private const double TimelineNudgeDeadZoneSec = 0.02;  // 落后小于它就不动，省掉无意义的微调
+        private const double TimelineNudgeRatio = 0.25;        // 每次采样吃掉 25% 的落后量
+        private const double TimelineNudgeMaxStepSec = 0.08;   // 单次追赶上限
+        private const double TimelineSeekBackSeconds = 0.5;    // SMTC 自己往回走超过它 → 判定为用户往回 seek
+        private const double TimelineAheadDeadZoneSec = 0.08;  // 领先超过它 → 接下来走慢一点把偏差追平
+        private const double TimelineSlowRate = 0.8;           // 领先时每帧只推进 80% 的时间
 
         /// <summary>
         /// 推进当前歌词歌的时间轴。SMTC 采样已由 <see cref="UpdateLyrics"/> 统一完成（每帧最多一次），
@@ -1791,37 +1801,50 @@ namespace NotchPeninsula
             int slot = _lyricSlot;
             if (slot < 0 || _isDragging) return; // 状态锁：拖动期间禁止上游写入与自动推进
 
-            // 先按帧累加：本地位置是卡拉 OK 平滑推进的来源，SMTC 只用来纠正它。
-            if (IsPlaying) _recentSongs[slot].Position += dt;
+            // 推进：正常按实时走；一旦发现本地领先 SMTC，就按慢速走。
+            //
+            // ⚠️ 纠偏**只能靠「少走一点」，不能靠「往回退一点」** —— 这是卡拉 OK 不再来回滚的关键：
+            //    往回退是在**单帧**里退掉几十毫秒，比这一帧本来要前进的 16ms 还多，所以那一帧
+            //    看起来就是「退回去了」；下几帧再靠累加追回来，于是永远在「滚一点退一点」。
+            //    改成降速后位置**单调不减**，偏差由播放器自己追上，肉眼完全看不出来。
+            if (IsPlaying)
+            {
+                double rate = _timelineAhead ? TimelineSlowRate : 1.0;
+                _recentSongs[slot].Position += TimeSpan.FromSeconds(dt.TotalSeconds * rate);
+            }
 
             if (hasTimeline && newSample)
             {
-                // ⚠️ 误差必须和**本地当前位置**比，不能和「上一次对齐点」比 —— 这是卡拉 OK 不再突然
-                //    跳一块的关键。对齐点只在跳变时才更新，拿它当基准时本地累加与播放器真实位置的
-                //    偏差会一直攒着，攒过阈值就一次性跳过去（能到秒级，看起来就是「突然前进一块」）。
-                //    现在每 200ms 量一次误差：小的持续纠偏吃掉，大的才当作真实跳变对齐。
+                if (_forceResync) _hasPrevSmtcPos = false; // 换歌：不拿上一首的位置当基准
+
+                // 误差和**本地当前位置**比，不能和「上一次对齐点」比 —— 对齐点只在跳变时才更新，
+                // 拿它当基准时偏差会一直攒着，攒过阈值就一次性跳过去（能到秒级）。
                 double delta = (smtcPos - _recentSongs[slot].Position).TotalSeconds;
+
+                // 只有 SMTC **自己**往回走了，才是用户把进度往回拖了。
+                bool smtcWentBack = _hasPrevSmtcPos
+                    && smtcPos < _prevSmtcPos - TimeSpan.FromSeconds(TimelineSeekBackSeconds);
+                _prevSmtcPos = smtcPos;
+                _hasPrevSmtcPos = true;
                 bool settling = now < _seekSettleUntil; // 刚松手拖动：播放器还没执行完 seek
 
-                // 跳变对齐：往前跳随时认（换歌 / 播放器主动上报）；
-                // 往回跳只在非静默期认 —— 松手 seek 之后播放器短时间内上报的还是旧位置，
-                // 认了就会把进度条与歌词弹回原处。
-                if (_forceResync || delta > TimelineJumpSeconds || (!settling && delta < -TimelineJumpSeconds))
+                if (_forceResync || delta > TimelineJumpSeconds || (!settling && smtcWentBack))
                 {
+                    // 换歌 / 播放器往前跳 / 用户往回拖 —— 这三种才是该硬对齐的
                     _recentSongs[slot].Position = smtcPos;
+                    _timelineAhead = false;
                 }
                 else if (delta > TimelineNudgeDeadZoneSec)
                 {
-                    // ⚠️ **只往前纠偏，绝不往回拉。**
-                    //
-                    // 播放器上报的位置精度普遍只有整秒（有的还只在特定事件才刷新），采样值经常比我们
-                    // 「按帧累加」的位置**落后**几十到几百毫秒。这种情况下若按误差往回纠，每 200ms 就会
-                    // 往回退一小步 —— 用户看到的就是「卡拉 OK 往前滚一点又退回去」。
-                    //
-                    // 往回的方向只交给上面的跳变判定（那才是真正的 seek）。而「落后」这一侧必须持续纠，
-                    // 否则又会回到「误差攒够阈值再一次性跳一大块」的老毛病。
-                    double step = Math.Min(delta * TimelineNudgeRatio, TimelineNudgeMaxStepSec);
-                    _recentSongs[slot].Position += TimeSpan.FromSeconds(step);
+                    // 落后 → 往前追（单次封顶，免得一次追太多看着像跳）
+                    _recentSongs[slot].Position += TimeSpan.FromSeconds(
+                        Math.Min(delta * TimelineNudgeRatio, TimelineNudgeMaxStepSec));
+                    _timelineAhead = false;
+                }
+                else
+                {
+                    // 领先 → 只记标记，交给上面那趟「慢速推进」慢慢追平，绝不往回退
+                    _timelineAhead = delta < -TimelineAheadDeadZoneSec;
                 }
 
                 _forceResync = false;

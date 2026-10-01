@@ -356,7 +356,13 @@ namespace NotchPeninsula
                     if (score == 0 || (score == 1 && !strong)) continue;
 
                     if (score > bestScore) { bestScore = score; best = path; tied = false; }
-                    else if (score == bestScore) tied = true;
+                    // ⚠️ 只有「分数相同、但**不是同一个 exe**」才算并列。
+                    //    同一个应用常常同时跑多个进程（Electron / Chromium 的主进程 + 渲染进程 + GPU 进程…），
+                    //    它们的可执行文件路径**完全一样** —— 那只是重复，不是并列。
+                    //    以前这里无条件判 tied，于是这类多进程应用会**永远拿不到图标**
+                    //    （实测：哔哩哔哩 PC 版 com.bilibili.bilibiliPC，日志里稳定复现）。
+                    else if (score == bestScore && !string.Equals(path, best, StringComparison.OrdinalIgnoreCase))
+                        tied = true;
                 }
             }
             finally
