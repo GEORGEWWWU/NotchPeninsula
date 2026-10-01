@@ -91,6 +91,7 @@
 		<!-- 音频采集库 -->
 		<PackageReference Include="NAudio.Core" Version="2.2.1" />
 		<PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+        <PackageReference Include="System.Management" Version="10.0.12" />
 	</ItemGroup>
 
 </Project>
