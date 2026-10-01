@@ -155,6 +155,15 @@ namespace NotchPeninsula
             // 顺手回收：登记表很小（一般 1~3 条），每 16 次跳转扫一遍把死掉的条目清掉
             if (++s_openCount % 16 == 0) PruneDeadTargets();
 
+            // 它已经在前台就不用再折腾一次：用户双击的动机是「把它调到前面来」，
+            // 已经在前面时再激活只会重排一次焦点。这条同时让「连点两下」变成幂等操作。
+            IntPtr front = Win32.GetForegroundWindow();
+            if (front != IntPtr.Zero && IsProcessOfApp(appId, Win32.GetWindowThreadProcessId(front, out _)))
+            {
+                Logger.Info($"媒体跳转：「{appId}」已在前台，无需激活");
+                return;
+            }
+
             // ---------- 第 1 步：已采集到的窗口 ----------
             IntPtr hwnd = IntPtr.Zero;
             uint pid = 0;

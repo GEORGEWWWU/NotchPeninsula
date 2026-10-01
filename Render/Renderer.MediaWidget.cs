@@ -58,6 +58,8 @@ namespace NotchPeninsula
             // 🖱️ 本模块的右键命中区 = 文字 + 频谱 / 按钮锚点
             _mediaZoneL = geometry.ZoneLeft;
             _mediaZoneR = geometry.AnchorRight;
+            // 📺 折叠态双击热区按「模块左半边」算，需要模块本帧的真实左右端（见 Renderer.Layout）
+            RegisterMediaBlock(geometry.ZoneLeft, geometry.AnchorRight);
 
             _textPaint.Color = _currentTextColor.WithAlpha(alpha);
 

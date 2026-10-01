@@ -329,15 +329,18 @@ namespace NotchPeninsula
             _clockZoneL = _clockZoneR = -1f;
             _hardwareZoneL = _hardwareZoneR = -1f;
             _mediaZoneL = _mediaZoneR = -1f;
+            _mediaBlockL = _mediaBlockR = -1f;
             _mediaCoverRect = default;
         }
 
         /// <summary>
         /// 📺 本帧画出来的封面矩形（岛内逻辑坐标，与 WndProc 的命中坐标同一坐标系）。
-        /// 折叠内联行登记的是那张 22px 缩略图、展开面板登记的是 50px 封面 —— 都取**真正画出来的那一块**，
-        /// 所以「点封面跳转应用」在两种形态下共用同一条判据，不会有第二套坐标可以漂移。
+        /// 折叠内联行登记的是那张 22px 缩略图、展开面板登记的是 50px 封面 —— 都取**真正画出来的那一块**。
         /// </summary>
         private static SKRect _mediaCoverRect;
+
+        /// <summary>折叠态媒体模块的左右端（每帧由 <see cref="RegisterMediaBlock"/> 登记）。</summary>
+        private static float _mediaBlockL = -1f, _mediaBlockR = -1f;
 
         /// <summary>
         /// 绘制侧登记封面矩形：只有「这一帧真的把封面画出来了」才会被调用（见 Renderer.MediaWidget）。
@@ -348,6 +351,16 @@ namespace NotchPeninsula
             // 🖱 封面就是媒体模块最左端那一块，右键「直达媒体设置」的区间必须一并跟着走 ——
             //    否则封面落在媒体区间之外时，右键点封面会被判成「非媒体区域」而打开设置窗口的当前页签。
             if (_mediaZoneL < 0f || rect.Left < _mediaZoneL) _mediaZoneL = rect.Left;
+        }
+
+        /// <summary>
+        /// 折叠内联行登记媒体模块的左右端。折叠态的双击热区按「模块左半边」算（见
+        /// <see cref="HitMediaLaunchZone"/>），需要它才能覆盖缩略图 + 紧跟其后的文字起点那一段。
+        /// </summary>
+        private static void RegisterMediaBlock(float left, float right)
+        {
+            _mediaBlockL = left;
+            _mediaBlockR = right;
         }
 
         /// <summary>
@@ -395,14 +408,24 @@ namespace NotchPeninsula
         /// <param name="y">岛内逻辑坐标 y（已含岛体下沉偏移，与 WndProc 的命中判定同一坐标系）。</param>
         public static bool HitMediaLaunchZone(float x, float y)
         {
-            SKRect cover = _mediaCoverRect;
-            if (cover.Width <= 0f || cover.Height <= 0f) return false;
+            // ---------- 展开态：封面那一块 ----------
+            if (IsMediaPanelShowing(MediaController.Instance))
+            {
+                SKRect cover = _mediaCoverRect;
+                if (cover.Width <= 0f || cover.Height <= 0f) return false;
+                // 左右各放宽 5px：封面 50px 宽，够用了；再宽就会碰到右边的歌名（46.5px 字号起点）
+                return x >= cover.Left - 5f && x <= cover.Right + 5f
+                    && y >= cover.Top && y <= cover.Bottom;
+            }
 
-            // 横向左右各放宽 5px：折叠态那张缩略图只有 22px 宽，照搬矩形就成了要瞄准的细活。
-            // 放宽后仍落在「封面 + 一点点余量」范围内，够不到右侧的文字（文字至少还在封面右缘 10px 之外）。
-            const float CoverHitPadX = 5f;
-            return x >= cover.Left - CoverHitPadX && x <= cover.Right + CoverHitPadX
-                && y >= cover.Top && y <= cover.Bottom;
+            // ---------- 折叠态：整个媒体模块的左半边 ----------
+            // ⚠️ 折叠态**故意放宽到左半边**，不跟着那张 22px 缩略图收窄（2026-10-01 实测修正）：
+            //    缩略图只有 22×22，竖直方向还只占岛体高度的一半，用户按上去十次有两三次落在边上 ——
+            //    日志里就是「双击 (783,37) 命中封面=False，隔两秒再双击 (785,29) 命中封面=True」，
+            //    感受就是「要点两下」。左半边本身就是原先一直好用的那块热区，恢复它。
+            //    y 不再限制：折叠态岛体只有 35px 高，整条都在封面这一行里。
+            if (_mediaBlockL < 0f || _mediaBlockR <= _mediaBlockL) return false;
+            return x >= _mediaBlockL && x <= (_mediaBlockL + _mediaBlockR) / 2f;
         }
 
         private static bool InZone(float x, float l, float r) => l >= 0f && x >= l && x <= r;
