@@ -988,6 +988,10 @@ namespace NotchPeninsula
                 //    · 到点由下面这行统一结算（每帧一次 DateTime 比较，可忽略）。
                 TickPanelCollapse();
 
+                // 🧩 卸载插件时没关掉的窗口在这里逐帧重试（拖放进行中被禁用/重载的那类窗口）。
+                //    没有待办时只是一次 Count 判断，稳态零开销。
+                PluginManager.Instance.Host.DrainPendingWindowClose();
+
                 //    · 这里是一层兜底轮询：窗口只在鼠标进入它范围内时才收得到鼠标消息，岛外点击根本不会派发
                 //      WM_LBUTTONDOWN，且 SetCapture（拖时间轴）期间 WM_MOUSELEAVE 会被吞掉，
                 //      所以额外判断一次「左键按下 且 光标不在岛体矩形内」，命中就收起
@@ -1336,8 +1340,20 @@ namespace NotchPeninsula
             canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
 
             // 存档矩阵状态，避免缩放无限叠加
+            //
+            // ⚠️ Save / Restore 必须自己兜住异常（2026-10-02 修）：`Renderer.Draw` 内部还有三级
+            //    Save（含一次 `SaveLayer` 整窗离屏层 ≈2MB，高 DPI 下更大），全靠它自己的出口配平。
+            //    一旦某个媒体属性抛异常（`Thumbnail` 被并发 Dispose 后访问、COM 对象已断开……）穿过
+            //    Draw 冒到这里，**本帧的 save 就永久留在画布栈上**：离屏层被栈钉住不释放，
+            //    渲染循环是每 16ms 一次 —— 每帧漏一层就是每秒几十 MB，几分钟内就能把内存吃光。
+            //
+            //    关键是"回滚到基线"而不是"Restore 一次"：异常可能发生在 Draw 内部的第 N 级 save 之后，
+            //    弹一层只能退掉最外那层，里面几层照样留着。所以记下进入 Draw 之前的 SaveCount
+            //    （刚做完上面那次 Save，即基线），catch 里用 RestoreToCount 一次性退回基线。
             canvas.Save();
-
+            int saveBaseline = canvas.SaveCount;
+            try
+            {
                 // 让底层 C++ 引擎接管坐标放大
                 canvas.Scale(_dpiScale);
 
@@ -1348,8 +1364,17 @@ namespace NotchPeninsula
 
                 // 恢复原始矩阵状态
                 canvas.Restore();
+            }
+            catch
+            {
+                // 绘制中途失败：把画布保存栈退回到进入 Draw 之前的基线再往外抛
+                //（外层 finally 负责复位 _isRendering）。RestoreToCount 本身也可能抛
+                //（画布已被释放），所以吞掉它 —— 此时能做的只有别让栈继续涨。
+                try { canvas.RestoreToCount(saveBaseline); } catch { }
+                throw;
+            }
 
-                UpdateWindow();
+            UpdateWindow();
             }
             finally
             {
@@ -1374,28 +1399,38 @@ namespace NotchPeninsula
         private void UpdateWindow()
         {
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
+            if (screenDc == IntPtr.Zero) return;
 
-            var ptSrc = new Win32.POINT(0, 0);
-            var ptDst = new Win32.POINT { x = 0, y = 0 };
-
-            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
-            ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
-            // 垂直基准走 Renderer.IslandBaseY（岛体位置自定义的唯一真源，默认 0 = 贴顶）
-            ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
-
-            var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
-            var blend = new Win32.BLENDFUNCTION
+            // ⚠️ 从取到 DC 到归还之间**不许有裸异常路径**（2026-10-02 修）：
+            //    中间那句 UpdateMonitorBounds() 会走 Screen.AllScreens（多屏热插拔时可能抛），
+            //    一旦它抛出，这一帧的 screen DC 就再也回不去 —— 每帧一次，句柄很快见底。
+            //    包成 try/finally 后，无论中间发生什么，DC 一定归还。
+            try
             {
-                BlendOp = Win32.AC_SRC_OVER,
-                BlendFlags = 0,
-                SourceConstantAlpha = 255,
-                AlphaFormat = Win32.AC_SRC_ALPHA
-            };
+                var ptSrc = new Win32.POINT(0, 0);
+                var ptDst = new Win32.POINT { x = 0, y = 0 };
 
-            // 直接提交已经画好的 _memDc
-            Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
+                if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
+                ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
+                // 垂直基准走 Renderer.IslandBaseY（岛体位置自定义的唯一真源，默认 0 = 贴顶）
+                ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
 
-            Win32.ReleaseDC(IntPtr.Zero, screenDc);
+                var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
+                var blend = new Win32.BLENDFUNCTION
+                {
+                    BlendOp = Win32.AC_SRC_OVER,
+                    BlendFlags = 0,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = Win32.AC_SRC_ALPHA
+                };
+
+                // 直接提交已经画好的 _memDc
+                Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
+            }
+            finally
+            {
+                Win32.ReleaseDC(IntPtr.Zero, screenDc);
+            }
         }
 
         private void RaiseWindowClicked(int x, int y, string? hitTarget = null)

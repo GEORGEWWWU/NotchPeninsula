@@ -481,10 +481,27 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// <see cref="RefreshProperties"/> 是否正在执行。
+        ///
+        /// <para><b>为什么需要这道闸（2026-10-02 修）</b>：本方法有**三个互不等待的 async 入口**
+        /// （<c>OnMediaPropertiesChanged</c> / <c>OnPlaybackInfoChanged</c> / <c>UpdateSession</c>），
+        /// 而它内部有两处 await（取属性、开封面流）。两次调用真并发时，两边会各自读到**同一个**
+        /// <c>Thumbnail</c> 引用，然后各自 <c>oldThumb?.Dispose()</c> + 各自赋值 ——
+        /// 结果是一份位图被释放两次、或者被换掉之后仍被渲染线程读。
+        /// 实测 SkiaSharp 的 <c>SKBitmap.Dispose()</c> 二次调用是安全的，但**Dispose 之后再访问就是原生
+        /// 访问违例（0xC0000005，直接杀进程）** —— 也就是说这不只是"丢一份封面"，
+        /// 而是一条真实的进程级崩溃路径（渲染线程每帧都在读 <c>media.Thumbnail</c>）。
+        /// 丢掉这次刷新是安全的：下一次属性变化 / 轮询会重新拉一遍。</para>
+        /// </summary>
+        private int _refreshingProperties;
+
         private async Task RefreshProperties()
         {
             if (_currentSession == null) return;
 
+            // 已有一次刷新在跑：直接放弃本次（不排队 —— 排队只会在换歌瞬间堆起一串过期刷新）
+            if (Interlocked.Exchange(ref _refreshingProperties, 1) == 1) return;
             try
             {
                 var props = await _currentSession.TryGetMediaPropertiesAsync();
@@ -558,6 +575,12 @@ namespace NotchPeninsula
                 _lastFetchedTitle = Title;
                 _lastFetchedArtist = Artist;
                 _ = FetchLyricsAsync(Title, Artist, durationSec);
+            }
+            }
+            finally
+            {
+                // 闸门必须在 finally 里放开：中间任一处异常都不能让刷新永久锁死
+                Interlocked.Exchange(ref _refreshingProperties, 0);
             }
         }
 

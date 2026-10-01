@@ -1049,8 +1049,10 @@ namespace NotchPeninsula
                 string header = $"已安装插件 ({_pluginView.Count})";
                 float hintMax = (WIDTH - 36) - 216 - _uiTextPaint.MeasureText(header) - 16;
                 _subTextPaint.Color = _pluginHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
-                string hint = TruncateText(_pluginHint, _subTextPaint, hintMax);
-                canvas.DrawText(hint, WIDTH - 36 - _subTextPaint.MeasureText(hint), listY + 26, _subTextPaint);
+                // ⚠️ 必须走 Emoji 回退版：文案里的「☑️」（U+2611 + U+FE0F）不在 YaHei UI 里，
+                //    直接 DrawText 画出来是个豆腐块。渲染器那套逐码点回退在 Renderer 内部，
+                //    设置窗口这样单独绘制的文字得自己带一次（见 DrawTextWithEmoji 的说明）。
+                DrawTextWithEmoji(canvas, _pluginHint, _subTextPaint, hintMax, WIDTH - 36, listY + 26, rightAlign: true);
                 _subTextPaint.Color = Neutral(170);
             }
             // ⚠️ 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
@@ -1143,7 +1145,7 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(zone, 8, 8, _dynamicStrokePaint);
                 _dynamicStrokePaint.StrokeWidth = 1.5f;   // 复位：该画笔被多处共用
 
-                const string dropHint = "松开鼠标以导入插件 DLL";
+                const string dropHint = "松开鼠标以导入插件";
                 float hintW = _uiTextPaint.MeasureText(dropHint);
                 float hintX = zone.MidX - hintW / 2f;
                 float hintY = zone.MidY + 5f;

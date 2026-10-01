@@ -160,6 +160,112 @@ namespace NotchPeninsula
             return "…";
         }
 
+        /// <summary>
+        /// 设置窗口专用的 Windows 自带 Emoji 字体。**只用于给缺字的单行文案兜底**，不是全局字体替换。
+        /// </summary>
+        private static readonly SKTypeface _hintEmojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
+
+        /// <summary>
+        /// 画一行可能含 Emoji / 特殊符号的文案，缺字的码点自动改用 Segoe UI Emoji。
+        ///
+        /// <para><b>为什么设置窗口必须自带这一层</b>：渲染器（<c>Renderer</c>）内部有逐码点的字体回退
+        /// （缺字 → Emoji → 多语言兜底），但设置窗口的画笔固定是 Microsoft YaHei UI，
+        /// 单独 <c>DrawText</c> 一个 YaHei 没有的字形只会画出豆腐块。
+        /// 例如「☑️」（U+2611 + U+FE0F）两码点都不在 YaHei 里，而 <c>seguiemj.ttf</c> 两个都有
+        /// （已核对 cmap 表）。</para>
+        ///
+        /// <para>做法：把文本切成「YaHei 画得出来」与「要交给 Emoji 字体」的若干段，逐段 set_typeface 绘制。
+        /// 变体选择符（U+FE0F / U+FE0E）跟着前一个字符走，不单独成段 —— 否则会画出一个空框。
+        /// 只支持单行；本方法只服务于这一行提示文案，不做换行、不做双向文字。</para>
+        /// </summary>
+        private static void DrawTextWithEmoji(SKCanvas canvas, string text, SKPaint paint, float maxWidth, float rightEdge, float baselineY, bool rightAlign = false)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            var baseTypeface = paint.Typeface;
+            var emoji = _hintEmojiTypeface;
+            bool emojiUsable = emoji != null && !ReferenceEquals(emoji, baseTypeface);
+
+            // 截断先用基础字体量（与改动前口径一致，宽度略有偏差也只影响"是否省略"）
+            string shown = maxWidth > 0 ? TruncateText(text, paint, maxWidth) : text;
+            if (shown.Length == 0) return;
+
+            // 逐码点决定归属：true = 这段交给 Emoji 字体。变体选择符 / 零宽连字 / 组合用圈跟着前一个字符走
+            // （单独立段会画成一个空框）。
+            var useEmoji = new bool[shown.Length];
+            bool prev = false;
+            for (int i = 0; i < shown.Length; i++)
+            {
+                int cp = shown[i];
+                bool surrogatePair = false;
+                if (char.IsHighSurrogate(shown[i]) && i + 1 < shown.Length)
+                {
+                    cp = char.ConvertToUtf32(shown[i], shown[i + 1]);
+                    surrogatePair = true;
+                }
+
+                if (cp is 0xFE0E or 0xFE0F or 0x200D or 0x20E3)
+                {
+                    useEmoji[i] = prev;   // 跟随前一个字符
+                }
+                else if (emojiUsable)
+                {
+                    bool missingInBase = baseTypeface == null || baseTypeface.GetGlyph(cp) == 0;
+                    prev = missingInBase && emoji!.GetGlyph(cp) != 0;
+                    useEmoji[i] = prev;
+                }
+
+                // 代理对的第二个 char 与高代理同属一段（它自己不参与字体判断）
+                if (surrogatePair) { useEmoji[i + 1] = prev; i++; }
+            }
+
+            // 起点：按**每段实际字体的推进宽度**求和，不能直接用基础字体量整串 ——
+            // Emoji 段的宽和 YaHei 量的不一样，右对齐时会整体偏出去。
+            float total = 0f;
+            for (int i = 0; i < shown.Length; i++)
+            {
+                int j = i;
+                while (j < shown.Length && useEmoji[j] == useEmoji[i]) j++;
+                total += MeasureSegment(shown, i, j, paint, useEmoji[i] ? emoji! : baseTypeface);
+                i = j - 1;
+            }
+
+            float x = rightAlign ? rightEdge - total : rightEdge;
+            for (int i = 0; i < shown.Length; i++)
+            {
+                int j = i;
+                while (j < shown.Length && useEmoji[j] == useEmoji[i]) j++;
+                DrawSegment(canvas, shown, i, j, x, baselineY, paint, useEmoji[i] ? emoji! : baseTypeface, baseTypeface);
+                x += MeasureSegment(shown, i, j, paint, useEmoji[i] ? emoji! : baseTypeface);
+                i = j - 1;
+            }
+        }
+
+        /// <summary>逐段绘制：临时换字体，画完立刻还原（画笔是共用的静态对象，绝不能把字体留在上面）。</summary>
+        private static void DrawSegment(SKCanvas canvas, string text, int start, int end, float x, float y,
+            SKPaint paint, SKTypeface typeface, SKTypeface? baseTypeface)
+        {
+            if (end <= start) return;
+            string seg = text[start..end];
+            var baseColor = paint.Color;
+            paint.Typeface = typeface;
+            paint.Color = baseColor;          // 与渲染侧同一套纪律：字色按段显式带上，防止段间串色
+            canvas.DrawText(seg, x, y, paint);
+            paint.Typeface = baseTypeface;
+            paint.Color = baseColor;
+        }
+
+        /// <summary>量一段的宽度（同样临时换字体，量完还原）。</summary>
+        private static float MeasureSegment(string text, int start, int end, SKPaint paint, SKTypeface typeface)
+        {
+            if (end <= start) return 0f;
+            var baseTypeface = paint.Typeface;
+            paint.Typeface = typeface;
+            float w = paint.MeasureText(text[start..end]);
+            paint.Typeface = baseTypeface;
+            return w;
+        }
+
         /// <summary>收起所有下拉浮窗（同一时刻只允许展开一个）。</summary>
 
         private void CloseAllDropdowns()

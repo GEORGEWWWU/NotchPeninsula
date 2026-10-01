@@ -136,6 +136,31 @@ public sealed class PluginWindow : IPluginWindow
         _filesDrop != null || _dragEnter != null || _dragOver != null || _dragLeave != null;
 
     /// <summary>
+    /// 切断所有指向插件的回调委托（宿主卸载插件时调用）。
+    ///
+    /// <para><b>为什么必须有这一步</b>：这些委托是插件实例方法，直接引用插件类型 → Assembly → 可回收 ALC。
+    /// 而窗口本身被 <see cref="PluginWindow"/> 的静态路由表强引用着 —— 只要窗口还没销毁，
+    /// 光靠 <c>ctx.Unload()</c> + GC 是回收不掉那份程序集的。
+    /// 拖放进行中恰逢插件被禁用/重载时，<see cref="TryDestroyNow"/> 会拒绝销毁、<c>Close()</c> 也会被推迟，
+    /// 窗口因此可能多活一会儿；这一步保证「多活一会儿」不再等于「多钉一份旧程序集」。</para>
+    ///
+    /// <para>顺带把窗口标成 <c>_closing</c>：之后任何输入/绘制都不再进插件代码，
+    /// 也就不可能再回调一个已经 Dispose 过的插件实例。</para>
+    /// </summary>
+    internal void DetachPluginCallbacks()
+    {
+        _draw = null;
+        _mouseDown = null; _mouseMove = null; _mouseUp = null;
+        _key = null;
+        _filesDrop = null;
+        _dragEnter = null; _dragOver = null; _dragLeave = null;
+        _closing = true;
+    }
+
+    /// <summary>窗口是否已经销毁（HWND 已不在）。宿主用它判断重试队列里的窗口还需不需要继续关。</summary>
+    internal bool IsDestroyed => _hwnd == IntPtr.Zero;
+
+    /// <summary>
     /// 把窗口登记成 OLE 拖入目标（只需要登记一次）。
     ///
     /// 两条路径二选一，<b>不能并存</b>：挂了 IDropTarget 之后，OLE 拖放会走 IDropTarget，

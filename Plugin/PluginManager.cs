@@ -794,18 +794,30 @@ public sealed class PluginManager
         e.State = PluginState.NotLoaded;
         e.Error = null;
 
-        // 1) 给插件一个主动释放资源的机会（实现 IDisposable 即可，非强制）。
-        //    宿主交给插件的资源（刷新句柄 / 组件 / 设置页）会由 UnregisterPlugin 自动回收，
-        //    这里主要是给插件自己创建的线程、句柄、连接等一个清理时机。
-        if (instance is IDisposable disposable)
+        // 1) 先给插件一个主动释放资源的机会（实现 IDisposable 即可，非强制）。
+        //    ⚠️ 顺序不能反（2026-10-02 修真实泄漏）：**必须先挂上"正在卸载"标记，再调插件的 Dispose()**。
+        //    因为插件的 Dispose() 里完全可能再调 ScheduleRefresh / CreateWindow（"清理时重置一下定时刷新"
+        //    是很常见的写法），也可能有一次刷新回调正在别的线程上飞。以前是先 Dispose、后 UnregisterPlugin，
+        //    于是那时新建的登记条目落在已被摘掉的 key 上，**再也没有人遍历到它** ——
+        //    定时器一直跑 → 回调委托 → 插件类型 → Assembly → ALC 永远回收不掉，
+        //    正是日志里那条「加载上下文暂未被回收」的根因。
+        //    标记由 finally 保证一定解除：否则插件再次启用时会被自己的旧标记拒之门外。
+        if (!string.IsNullOrEmpty(id)) _host.SetUnregistering(id, true);
+        try
         {
-            try { disposable.Dispose(); }
-            catch (Exception ex) { Logger.Error($"[PluginManager] 插件 Dispose 异常: {e.Key}", ex); }
-        }
+            if (instance is IDisposable disposable)
+            {
+                try { disposable.Dispose(); }
+                catch (Exception ex) { Logger.Error($"[PluginManager] 插件 Dispose 异常: {e.Key}", ex); }
+            }
 
-        // 2) 摘除宿主中该插件的全部登记引用（组件 / 设置页 / 刷新句柄 / 设置事件）
-        if (!string.IsNullOrEmpty(id))
-            _host.UnregisterPlugin(id);
+            // 2) 摘除宿主中该插件的全部登记引用（组件 / 设置页 / 刷新句柄 / 窗口 / 设置事件）
+            if (!string.IsNullOrEmpty(id)) _host.UnregisterPlugin(id);
+        }
+        finally
+        {
+            if (!string.IsNullOrEmpty(id)) _host.SetUnregistering(id, false);
+        }
 
         if (ctx == null) return null;
 
@@ -824,8 +836,17 @@ public sealed class PluginManager
             GC.WaitForPendingFinalizers();
             Thread.Sleep(10);
         }
+
+        // ⚠️ 这条告警的含义要说准（2026-10-02 改口径）：宿主侧能摘的引用在 UnregisterPlugin 里已经全摘了
+        //    —— 组件 / 设置页 / 刷新句柄 / 窗口回调 / 详情页快照 / 跨 ALC 字符串，一个不留。
+        //    所以走到这里基本只剩**插件自己**持有的根：静态字段、没退订的事件、没结束的线程或定时器、
+        //    闭包捕获。旧措辞只说"插件可能仍持有外部引用"，看起来像在推卸，实际上这正是最可能的答案。
+        //    顺带说明：这不是"程序坏了"—— ALC 会在后续任意一次 GC 时回收，只是这份旧程序集多留一会儿。
         if (weak.IsAlive)
-            Logger.Warn($"[PluginManager] {key} 的加载上下文暂未被回收（插件可能仍持有外部引用），不影响重新加载。");
+        {
+            Logger.Warn($"[PluginManager] {key} 的加载上下文暂未被回收：宿主侧引用已全部摘除，"
+                + "多半是插件自己还握着静态状态 / 未退订的事件 / 未结束的线程或定时器（不影响重新加载）");
+        }
     }
 
     /// <summary>热重载：卸载后重新读取磁盘上的 DLL（可先在外部替换 DLL 再点重载）。</summary>

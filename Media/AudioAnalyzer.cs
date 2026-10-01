@@ -152,8 +152,10 @@ namespace NotchPeninsula
                 }
                 catch (Exception ex)
                 {
-                    // 独占占用期间会按退避反复重试，重试失败只记 Debug，避免刷屏
-                    if (isRetry) Logger.Debug($"音频捕获仍未就绪: {ex.Message}");
+                    // 独占占用期间会按退避反复重试（实测最快 1 次/秒、单次会话能刷上千行），
+                    // 所以重试失败走**去重**通道：10s 窗口内只留第一行 + 一行「重复 N 次」。
+                    // 首次失败仍然记 Error 带完整异常 —— 那条是"到底为什么不行"的关键证据。
+                    if (isRetry) Logger.DebugThrottled("音频捕获仍未就绪（按退避重试中，同类消息已折叠）");
                     else Logger.Error("音频捕获初始化失败，可能被独占占用或无音频设备", ex);
 
                     try { capture?.Dispose(); } catch { } // 失败时释放半成品，避免退避重试泄漏
@@ -185,9 +187,9 @@ namespace NotchPeninsula
                 capture.RecordingStopped -= OnRecordingStopped;
                 capture.Dispose();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Logger.Debug($"释放音频捕获失败: {ex.Message}");
+                Logger.DebugThrottled("释放音频捕获失败（同类消息已折叠）");
             }
             finally
             {
@@ -279,9 +281,10 @@ namespace NotchPeninsula
                 using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 return device.ID ?? "";
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Logger.Debug($"读取默认输出设备失败: {ex.Message}");
+                // 设备被独占 / 移除时这条会跟着看门狗按秒重试，同样走去重通道
+                Logger.DebugThrottled("读取默认输出设备失败（同类消息已折叠）");
                 return "";
             }
         }

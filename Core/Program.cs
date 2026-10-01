@@ -117,19 +117,36 @@ namespace NotchPeninsula
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
 
-                // 监听 Windows 系统偏好设置（如深浅色主题）变更事件
-                SystemEvents.UserPreferenceChanged += (s, e) =>
-                {
-                    // 如果当前设置了“跟随系统(2)”，当系统主题改变时立即重新渲染颜色
-                    if (Renderer.ThemeMode == 2)
-                    {
-                        Renderer.ApplyThemeColors();
-                    }
-                };
+                // 监听 Windows 系统偏好设置（如深浅色主题）变更事件。
+                // ⚠️ 必须是**具名静态方法 + 幂等订阅**：SystemEvents 的委托挂在进程级静态表上，
+                //    每次 Subscribe 都会累加一条，用 lambda 则连"退订"都无从下手。
+                //    现在 LoadSettings 只在启动时调一次所以不会漏，但它是 public static ——
+                //    将来加一个「重新载入配置」入口就会静默累积（每次系统主题变化触发 N 次重绘）。
+                SubscribeSystemPreferenceChanged();
             }
             catch (Exception ex)
             {
                 Logger.Error("加载注册表配置失败，将使用默认值", ex);
+            }
+        }
+
+        /// <summary>是否已订阅系统偏好变更（幂等闸门，见调用点的说明）。</summary>
+        private static bool _systemPreferenceSubscribed;
+
+        /// <summary>订阅 Windows 系统偏好设置变更（深浅色主题等），重复调用只会生效一次。</summary>
+        private static void SubscribeSystemPreferenceChanged()
+        {
+            if (_systemPreferenceSubscribed) return;
+            _systemPreferenceSubscribed = true;
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+        }
+
+        private static void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+        {
+            // 如果当前设置了“跟随系统(2)”，当系统主题改变时立即重新渲染颜色
+            if (Renderer.ThemeMode == 2)
+            {
+                Renderer.ApplyThemeColors();
             }
         }
 

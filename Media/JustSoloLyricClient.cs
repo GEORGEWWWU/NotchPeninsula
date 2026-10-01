@@ -285,9 +285,10 @@ namespace NotchPeninsula
                 {
                     break;
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    Logger.Debug($"Just Solo LyricServer 连接失败: {ex.Message}");
+                    // 服务端没开时这里会按 1s→30s 退避一直重连，走去重通道避免刷屏
+                    Logger.DebugThrottled("Just Solo LyricServer 连接失败（按退避重连中，同类消息已折叠）");
                 }
                 finally
                 {
