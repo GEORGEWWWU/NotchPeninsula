@@ -243,24 +243,21 @@ namespace NotchPeninsula
 
         /// <summary>逐段绘制：临时换字体，画完立刻还原（画笔是共用的静态对象，绝不能把字体留在上面）。</summary>
         private static void DrawSegment(SKCanvas canvas, string text, int start, int end, float x, float y,
-            SKPaint paint, SKTypeface typeface, SKTypeface? baseTypeface)
+            SKPaint paint, SKTypeface? typeface, SKTypeface? baseTypeface)
         {
             if (end <= start) return;
             string seg = text[start..end];
-            var baseColor = paint.Color;
-            paint.Typeface = typeface;
-            paint.Color = baseColor;          // 与渲染侧同一套纪律：字色按段显式带上，防止段间串色
+            if (typeface != null) paint.Typeface = typeface;
             canvas.DrawText(seg, x, y, paint);
             paint.Typeface = baseTypeface;
-            paint.Color = baseColor;
         }
 
         /// <summary>量一段的宽度（同样临时换字体，量完还原）。</summary>
-        private static float MeasureSegment(string text, int start, int end, SKPaint paint, SKTypeface typeface)
+        private static float MeasureSegment(string text, int start, int end, SKPaint paint, SKTypeface? typeface)
         {
             if (end <= start) return 0f;
             var baseTypeface = paint.Typeface;
-            paint.Typeface = typeface;
+            if (typeface != null) paint.Typeface = typeface;
             float w = paint.MeasureText(text[start..end]);
             paint.Typeface = baseTypeface;
             return w;

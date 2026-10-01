@@ -500,11 +500,25 @@ namespace NotchPeninsula
         {
             if (_currentSession == null) return;
 
-            // 已有一次刷新在跑：直接放弃本次（不排队 —— 排队只会在换歌瞬间堆起一串过期刷新）
+            // 已有一次刷新在跑：直接放弃本次（排队只会在换歌瞬间堆起一串过期刷新）
             if (Interlocked.Exchange(ref _refreshingProperties, 1) == 1) return;
             try
             {
-                var props = await _currentSession.TryGetMediaPropertiesAsync();
+                await RefreshPropertiesCore();
+            }
+            finally
+            {
+                // 闸门必须在 finally 里放开：中间任一处异常都不能让刷新永久锁死
+                Interlocked.Exchange(ref _refreshingProperties, 0);
+            }
+        }
+
+        /// <summary><see cref="RefreshProperties"/> 的主体（拿属性 / 换封面 / 同步播放状态与时长 / 触发取词）。</summary>
+        private async Task RefreshPropertiesCore()
+        {
+            try
+            {
+                var props = await _currentSession!.TryGetMediaPropertiesAsync();
                 if (props != null)
                 {
                     Title = string.IsNullOrEmpty(props.Title) ? (_isPotPlayerSession ? "" : "Unknown") : props.Title;
@@ -559,7 +573,7 @@ namespace NotchPeninsula
 
             try
             {
-                var playbackInfo = _currentSession.GetPlaybackInfo();
+                var playbackInfo = _currentSession!.GetPlaybackInfo();
                 IsPlaying = playbackInfo != null && playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
             }
             catch
@@ -568,19 +582,13 @@ namespace NotchPeninsula
             }
 
             long durationSec = 0;
-            try { if (_currentSession.GetTimelineProperties() is { } t) durationSec = (long)t.EndTime.TotalSeconds; } catch { }
+            try { if (_currentSession!.GetTimelineProperties() is { } t) durationSec = (long)t.EndTime.TotalSeconds; } catch { }
 
             if (Title != _lastFetchedTitle || Artist != _lastFetchedArtist)
             {
                 _lastFetchedTitle = Title;
                 _lastFetchedArtist = Artist;
                 _ = FetchLyricsAsync(Title, Artist, durationSec);
-            }
-            }
-            finally
-            {
-                // 闸门必须在 finally 里放开：中间任一处异常都不能让刷新永久锁死
-                Interlocked.Exchange(ref _refreshingProperties, 0);
             }
         }
 
