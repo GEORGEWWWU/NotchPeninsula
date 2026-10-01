@@ -235,6 +235,26 @@ namespace NotchPeninsula
         //      按住 1.6s 仍会抽一下又回去）。而按键松开是每帧实测的，不会漏，所以不需要兜底。
         private bool _suppressOutsideCollapse = false;
 
+        // ================= 🖱 折叠态媒体区的「单击展开 / 双击跳转」分辨 =================
+        /// <summary>
+        /// 折叠态左半边那一次点击**刚展开媒体面板**的时刻（<see cref="DateTime.MinValue"/> = 没有这种"待分辨"的手势）。
+        ///
+        /// <para><b>为什么必须记这一笔（2026-10-02 用户实测反馈）：</b>
+        /// 「展开交互」模式下，折叠态点媒体模块会立刻展开面板（<see cref="Win32.WM_LBUTTONDOWN"/> 的
+        /// 高度折叠态分支），而面板一铺开，第二下点击的坐标就落进了<b>展开面板封面</b>那块双击热区里
+        /// （折叠态缩略图与展开态封面同在岛内左端 ~20px 处，位置天然重合）。
+        /// 于是「点一下左半边」= 展开 + 跳转应用，用户看到的是<b>左半边根本展不开、直接被拽到媒体软件</b>。</para>
+        ///
+        /// <para><b>判定口径（单击 / 双击分别判断）：</b>
+        /// 第二下落在系统双击间隔内（<see cref="Win32.GetDoubleClickTime"/>）→ 认为它与上面那次展开是
+        /// <b>同一次手势</b>，此时<b>展开优先</b>：面板保持展开，这次双击不触发跳转应用；
+        /// 只有「不是紧跟展开手势」的双击（面板本来就已经展开着，或间隔已过）才照常跳转。
+        /// 于是折叠态左半边稳定表现为「点一下 → 展开」，想跳转就展开后在封面上双击。</para>
+        /// </summary>
+        private DateTime _collapsedMediaClickExpandTime = DateTime.MinValue;
+        /// <summary>上面那次展开是由哪个坐标点下去的（仅用于诊断日志，判定只看时刻）。</summary>
+        private int _collapsedMediaClickExpandX, _collapsedMediaClickExpandY;
+
         // ================= 🧩 展开面板统一管理 =================
         // 媒体控制面板（builtin.media）与插件组件详情页共用同一套开合逻辑与时序，不再各写一份：
         //   ExpandPanel(id)        展开某个组件的面板（同一时刻只留一块，另一块让位）
@@ -1777,6 +1797,13 @@ namespace NotchPeninsula
                         // 展开了媒体面板、展开态的「第一下」已经照常点了播放按钮 —— 这里只负责第二下的语义。
                         // 落在不合法的地方（标题 / 歌词 / 频谱 / 时间轴 / 播放按钮 / 通知 / 剪贴板接管期间）
                         // 就**完全不消费**，消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
+                        //
+                        // ⚠️ 例外的两种「展开优先」（2026-10-02 用户反馈「折叠态左半边展开功能用不上」）：
+                        //    · 折叠态左右两半的单双击本来就能分开判断 —— 左半边是媒体模块区（展开 + 跳转），
+                        //      右半边是频谱/按钮区，双击热区只覆盖封面那一格，所以右半边永远只走原有交互；
+                        //    · 左半边这第二下**不跳转**，因为它与上面那次展开是同一次手势（见
+                        //      _collapsedMediaClickExpandTime）。想跳转就等面板展开后在封面上双击，那次是
+                        //      独立发起的，照常生效。
                         int dx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int dy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
@@ -1786,10 +1813,30 @@ namespace NotchPeninsula
 
                         bool launchEnabled = MediaController.IsAppLaunchEnabled;
                         bool onCover = Renderer.HitMediaLaunchZone(dx, dy);
+
+                        // 🖱 单双击分别判断：第二下是否**紧跟**着「折叠态那次展开」。
+                        //    是 → 这两下属于同一次手势，**展开优先**：面板保持展开，本次双击不跳转应用
+                        //    （否则用户点折叠态左半边会被直接拽到媒体软件去，展开根本用不上）。
+                        //    间隔取系统双击时间：能收到本消息就说明第二下已在系统双击窗口内，
+                        //    这里再对一次表，是为了排除「展开是好几秒前的另一件事，随后用户自己双击封面」。
+                        bool sameAsCollapseExpand = _collapsedMediaClickExpandTime != DateTime.MinValue
+                            && (DateTime.Now - _collapsedMediaClickExpandTime).TotalMilliseconds
+                               <= Win32.GetDoubleClickTime();
+
                         Logger.Info($"媒体跳转[诊断]：双击 ({dx},{dy}) 开关={launchEnabled} 悬停={_isHovered} "
                             + $"媒体激活={_media.IsActive} 通知={_currentToast != null} 剪贴板={isClipboardActive} "
                             + $"详情页={Renderer.HasActiveDetailPage} 面板={Renderer.IsMediaPanelShowing(_media)} "
-                            + $"命中封面={onCover}");
+                            + $"命中封面={onCover} 紧跟折叠展开={sameAsCollapseExpand}");
+
+                        // 🖱 展开优先：这一次双击是「折叠态左半边那两下」时，只保留展开这个结果。
+                        //    消费掉消息（不再往下走），免得第二下又点到底下的播放按钮上。
+                        if (sameAsCollapseExpand && onCover && _isHovered && _media.IsActive)
+                        {
+                            Logger.Info($"媒体跳转：双击 ({dx},{dy}) 紧跟折叠态展开手势"
+                                + $"（展开于 ({_collapsedMediaClickExpandX},{_collapsedMediaClickExpandY})），按「展开优先」保持面板展开，不跳转应用");
+                            _collapsedMediaClickExpandTime = DateTime.MinValue; // 手势已结算：第三下起算新的一次
+                            return (IntPtr)0;
+                        }
 
                         if (launchEnabled && _isHovered && _media.IsActive
                             && _currentToast == null && !isClipboardActive
@@ -1911,6 +1958,12 @@ namespace NotchPeninsula
                             if (!hitButtons && Renderer.MediaInteractionMode == 1 && Renderer.HitMediaZone(cx))
                             {
                                 ExpandPanel(Plugins.BuiltinWidgets.Media);
+                                // 🖱 记下「这次展开是折叠态点出来的」：双击判定要靠它把「同一次手势」的第二下
+                                //    与「另一次独立的双击」分开（见 _collapsedMediaClickExpandTime 的说明）。
+                                //    必须在 ExpandPanel **之后**写：它一置位，下一帧画的就是展开面板了。
+                                _collapsedMediaClickExpandTime = DateTime.Now;
+                                _collapsedMediaClickExpandX = cx;
+                                _collapsedMediaClickExpandY = cy;
                                 // 🎯 展开会让岛体在随后几帧里改变尺寸：折叠态可能比 320 的面板更宽
                                 //    （长歌词自适应 / 组合模式），展开瞬间变窄，按下时还在岛内的坐标随即
                                 //    落到岛外 —— 不屏蔽的话就会被上面的兜底轮询判成「岛外点击」，
