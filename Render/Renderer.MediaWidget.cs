@@ -72,14 +72,19 @@ namespace NotchPeninsula
             float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
             RegisterMediaCover(new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize));
 
-            if (media.Thumbnail != null)
+            // ⚠️ 一次读取存进局部变量再用：Thumbnail 由后台线程换（属性刷新 / 网络封面到达），
+            //    写成 `if (media.Thumbnail != null) { …DrawBitmap(media.Thumbnail…) }` 时两次读之间
+            //    可能被换成 null，DrawBitmap(null) 会抛托管异常 —— 而这个异常会一路逃出无 catch 的
+            //    RenderLoop，直接把进程带走。
+            var thumb = media.Thumbnail;
+            if (thumb != null)
             {
                 var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
                 canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
                 canvas.Save();
                 _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                canvas.DrawBitmap(thumb, thumbRect, _highQualitySampling);
                 canvas.Restore();
                 textX += thumbSize + 10;
             }
@@ -173,13 +178,15 @@ namespace NotchPeninsula
             // 📺 登记封面矩形：展开态的「双击封面 → 跳转应用」命中的就是这一块。
             //    没有封面时这里画的是占位图标 —— 它同样占着封面这一格，双击照样算数，所以无条件登记。
             RegisterMediaCover(coverRect);
-            if (media.Thumbnail != null)
+            // 同折叠态：一次读取存进局部变量，避免两次读之间被换成 null
+            var cover = media.Thumbnail;
+            if (cover != null)
             {
                 canvas.DrawRoundRect(coverRect, 8f, 8f, _shadowPaint);
                 canvas.Save();
                 _clipPath.Rewind(); _clipPath.AddRoundRect(coverRect, 8f, 8f);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                canvas.DrawBitmap(media.Thumbnail, coverRect, _highQualitySampling);
+                canvas.DrawBitmap(cover, coverRect, _highQualitySampling);
                 canvas.Restore();
             }
             else

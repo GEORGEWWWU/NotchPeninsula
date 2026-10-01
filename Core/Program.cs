@@ -168,9 +168,44 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 装一个全局崩溃钩子，把「进程为什么没了」写进 app.log。
+        ///
+        /// <para>没有它的时候，一次 0xC0000005 会让进程当场消失、日志里**一行都不留** ——
+        /// 事后只能靠猜（本轮排查就是这么开始的）。这里只记不拦：崩溃照旧让进程退出，
+        /// 但至少留下异常类型、消息与调用栈，下次能直接定位。</para>
+        ///
+        /// <para>局限要清楚：原生访问违例属于「损坏状态异常」，运行时可能根本不派发这个事件，
+        /// 所以**它不能保证每次都记到**；它主要覆盖托管未处理异常与渲染 / UI 线程里的托管异常。</para>
+        /// </summary>
+        private static void InstallCrashLogger()
+        {
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                try
+                {
+                    string detail = e.ExceptionObject switch
+                    {
+                        Exception ex => $"{ex.GetType().Name}: {ex.Message}{Environment.NewLine}{ex.StackTrace}",
+                        var other => other?.ToString() ?? "(null)",
+                    };
+                    Logger.Error($"[崩溃] 未处理异常，进程即将退出（IsTerminating={e.IsTerminating}）{Environment.NewLine}{detail}");
+                }
+                catch
+                {
+                    // 记日志本身绝不能再抛
+                }
+            };
+
+            TaskScheduler.UnobservedTaskException += (_, e) =>
+                Logger.Error("[崩溃] 未观察的 Task 异常", e.Exception);
+        }
+
         [STAThread]
         static void Main(string[] args)
         {
+            InstallCrashLogger();
+
             // 使用 using 包裹 Mutex，确保底层系统句柄被严格释放
             using (Mutex mutex = new Mutex(true, "Local\\NotchPeninsula_SingleInstanceMutex", out bool createdNew))
             {

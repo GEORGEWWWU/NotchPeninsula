@@ -219,6 +219,19 @@ namespace NotchPeninsula
             public int bmiColors;
         }
 
+        // HBITMAP 的头部信息，GetObject 用它回读宽高与位深（应用图标提取用，见 Media/AppIconProvider.cs）
+        [StructLayout(LayoutKind.Sequential)]
+        public struct BITMAP
+        {
+            public int bmType;
+            public int bmWidth;
+            public int bmHeight;
+            public int bmWidthBytes;
+            public ushort bmPlanes;
+            public ushort bmBitsPixel;
+            public IntPtr bmBits;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct TRACKMOUSEEVENT
         {
@@ -306,6 +319,14 @@ namespace NotchPeninsula
 
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
+
+        // 应用图标提取专用（见 Media/AppIconProvider.cs）：从 HBITMAP 回读尺寸 / 取回 32bpp 像素
+        [DllImport("gdi32.dll")]
+        public static extern int GetObject(IntPtr hObject, int nCount, ref BITMAP lpObject);
+
+        [DllImport("gdi32.dll")]
+        public static extern int GetDIBits(IntPtr hdc, IntPtr hbm, uint start, uint cLines,
+            [Out] byte[] lpvBits, ref BITMAPINFO lpbmi, uint usage);
 
         [DllImport("gdi32.dll")]
         public static extern IntPtr CreateDIBSection(

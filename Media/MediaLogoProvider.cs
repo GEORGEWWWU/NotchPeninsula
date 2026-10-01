@@ -1,32 +1,26 @@
-using System.IO;
-using SkiaSharp;
-
 namespace NotchPeninsula
 {
-    // 封面策略：Always = 始终使用站标；Fallback = 仅当无 SMTC 封面时用站标兜底
-    public enum CoverStrategy
-    {
-        Always,
-        Fallback,
-    }
+    // 平台规则：通过 AppID 关键字确定应用身份。
+    //
+    // ⚠️ 这里**只负责「这个会话属于哪个平台」的判定**（歌词拦截、文本显示策略），
+    //    不再携带任何封面路径 —— 封面从 2026-10-01 起改为按会话动态取：
+    //      视频模式 → 该程序自己的应用图标（AppIconProvider）
+    //      音乐模式 → 网络封面 → SMTC 自带缩略图 → 应用图标
+    //    data\image 下的平台站标资源仍然保留在工程里，只是**不再被引用**。
+    public sealed record PlatformRule(
+        string Name,     // 平台/应用名（便于日志排查，也是 IsPlatform 的查询键）
+        string[] AppIds); // 匹配 SourceAppUserModelId 的关键字（小写）
 
-    // 平台封面规则：通过 AppID 关键字确定应用，再决定封面来源
-    public sealed record PlatformCoverRule(
-        string Name,     // 平台/应用名（便于日志排查）
-        string[] AppIds, // 匹配 SourceAppUserModelId 的关键字（小写）
-        string LogoPath, // 站标封面路径（相对程序根目录）
-        CoverStrategy Strategy);
-
-    // 统一封面管理器：根据媒体源 AppUserModelId 匹配平台，返回对应站标封面
+    /// <summary>平台身份判定：把 SMTC 会话的 AUMID 归类到已知平台 / 浏览器。</summary>
     public static class MediaLogoProvider
     {
         // 平台规则表：新增平台只需在此追加一条规则
-        private static readonly PlatformCoverRule[] PlatformRules =
+        private static readonly PlatformRule[] PlatformRules =
         [
-            new("PotPlayer", ["potplayer", "daum"], "data\\image\\potplayer-logo.jpg", CoverStrategy.Always),
-            new("Bilibili",  ["bilibili"],          "data\\image\\bilibili-logo.png", CoverStrategy.Always),
-            new("Chrome",    ["chrome"],            "data\\image\\chrome-logo.png",   CoverStrategy.Fallback),
-            new("Edge",      ["edge"],              "data\\image\\edge-logo.png",     CoverStrategy.Fallback),
+            new("PotPlayer", ["potplayer", "daum"]),
+            new("Bilibili",  ["bilibili"]),
+            new("Chrome",    ["chrome"]),
+            new("Edge",      ["edge"]),
         ];
 
         // 浏览器 SMTC 会话的 AppID 关键字（Chromium 系 + Firefox 系），新增浏览器只需在此追加。
@@ -36,9 +30,6 @@ namespace NotchPeninsula
             "chrome", "edge", "firefox", "brave", "opera", "vivaldi",
             "qqbrowser", "360se", "360chrome", "sogou",
         ];
-
-        // 路径 -> 已解码位图缓存，全进程共享，避免重复 IO + 解码
-        private static readonly Dictionary<string, SKBitmap> _cache = new(StringComparer.OrdinalIgnoreCase);
 
         // 判断会话是否来自浏览器。刻意用 OrdinalIgnoreCase 直接比较，
         // 不做 ToLowerInvariant 拷贝 —— 该方法在会话扫描的循环体内调用，必须零分配。
@@ -52,25 +43,6 @@ namespace NotchPeninsula
                     return true;
             }
             return false;
-        }
-
-        // 根据会话 AppUserModelId 返回对应平台站标封面副本；未命中返回 null
-        // hasThumbnail 表示会话是否提供了 SMTC 封面，Fallback 平台仅在其为空时才使用站标
-        public static SKBitmap? GetLogo(string? sourceAppUserModelId, bool hasThumbnail)
-        {
-            if (string.IsNullOrWhiteSpace(sourceAppUserModelId)) return null;
-
-            var id = sourceAppUserModelId.ToLowerInvariant();
-            foreach (var rule in PlatformRules)
-            {
-                if (!MatchesAppId(rule.AppIds, id)) continue;
-
-                // 一旦 AppID 命中即确定应用：Always 始终用站标；Fallback 仅无封面时兜底
-                if (rule.Strategy == CoverStrategy.Always || !hasThumbnail)
-                    return LoadAndCache(rule.LogoPath);
-                return null;
-            }
-            return null;
         }
 
         // 判断 AppUserModelId 是否命中指定平台（平台名为 PlatformRules 中的 Name，单一数据源）
@@ -96,29 +68,6 @@ namespace NotchPeninsula
                     return true;
             }
             return false;
-        }
-
-        // 读取并缓存平台站标封面，返回副本避免被调用方 Dispose 时误伤缓存
-        private static SKBitmap? LoadAndCache(string relativePath)
-        {
-            try
-            {
-                if (!_cache.TryGetValue(relativePath, out var bmp))
-                {
-                    // 磁盘优先、exe 内嵌兜底：单文件发布时 data\image 可能不在磁盘上（exe 被单独拷走）
-                    using var stream = DataResources.OpenRead(relativePath);
-                    if (stream == null) return null;
-
-                    bmp = SKBitmap.Decode(stream);
-                    _cache[relativePath] = bmp;
-                }
-                return bmp?.Copy();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"加载平台封面 {relativePath} 失败", ex);
-                return null;
-            }
         }
     }
 }
