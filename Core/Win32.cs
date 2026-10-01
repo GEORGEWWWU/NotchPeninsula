@@ -42,6 +42,17 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern uint GetDoubleClickTime();
 
+        /// <summary>取系统度量值（<see cref="SM_CXDOUBLECLK"/> 等）。</summary>
+        [DllImport("user32.dll")]
+        public static extern int GetSystemMetrics(int nIndex);
+
+        /// <summary>
+        /// 双击判定矩形的宽度（像素）：第二下必须落在以第一下为中心的这个矩形里才算双击。
+        /// 岛体的「折叠态单击展开」缓冲也照这个半径作废 —— 按下去之后把光标拖开，
+        /// 说明用户要做的不是展开（可能是想拖动 / 只是路过），别再补一次展开。
+        /// </summary>
+        public const int SM_CXDOUBLECLK = 36;
+
         /// <summary>滚轮消息：wParam 高字是 ±120 的整数倍，低字是按键状态；lParam 是屏幕坐标。</summary>
         public const int WM_MOUSEWHEEL = 0x020A;
         public const int WM_LBUTTONUP = 0x0202;

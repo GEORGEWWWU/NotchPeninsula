@@ -235,25 +235,81 @@ namespace NotchPeninsula
         //      按住 1.6s 仍会抽一下又回去）。而按键松开是每帧实测的，不会漏，所以不需要兜底。
         private bool _suppressOutsideCollapse = false;
 
-        // ================= 🖱 折叠态媒体区的「单击展开 / 双击跳转」分辨 =================
+        // ================= 🖱 折叠态媒体区：单击展开 / 双击跳转的**分别判断** =================
         /// <summary>
-        /// 折叠态左半边那一次点击**刚展开媒体面板**的时刻（<see cref="DateTime.MinValue"/> = 没有这种"待分辨"的手势）。
+        /// 已排队、等「双击判定窗口」过去才执行的**单击展开**（<see cref="DateTime.MinValue"/> = 没有排队）。
         ///
-        /// <para><b>为什么必须记这一笔（2026-10-02 用户实测反馈）：</b>
-        /// 「展开交互」模式下，折叠态点媒体模块会立刻展开面板（<see cref="Win32.WM_LBUTTONDOWN"/> 的
-        /// 高度折叠态分支），而面板一铺开，第二下点击的坐标就落进了<b>展开面板封面</b>那块双击热区里
-        /// （折叠态缩略图与展开态封面同在岛内左端 ~20px 处，位置天然重合）。
-        /// 于是「点一下左半边」= 展开 + 跳转应用，用户看到的是<b>左半边根本展不开、直接被拽到媒体软件</b>。</para>
+        /// <para><b>为什么单击要等这半秒（2026-10-02 用户两次实测反馈后定稿）：</b>
+        /// 「展开交互」模式下，折叠态点媒体模块会展开面板；可面板一铺开，<b>第二下点击的坐标就落进了
+        /// 展开面板封面那块双击热区里</b>（折叠态缩略图与展开态封面同在岛内左端 ~20px 处，位置天然重合）。
+        /// 于是「点一下左半边」= 展开 + 跳转应用 —— 用户的原话是「左半部分用不上，和展开态触发重合了」。</para>
         ///
-        /// <para><b>判定口径（单击 / 双击分别判断）：</b>
-        /// 第二下落在系统双击间隔内（<see cref="Win32.GetDoubleClickTime"/>）→ 认为它与上面那次展开是
-        /// <b>同一次手势</b>，此时<b>展开优先</b>：面板保持展开，这次双击不触发跳转应用；
-        /// 只有「不是紧跟展开手势」的双击（面板本来就已经展开着，或间隔已过）才照常跳转。
-        /// 于是折叠态左半边稳定表现为「点一下 → 展开」，想跳转就展开后在封面上双击。</para>
+        /// <para><b>反过来的做法（先展开、双击时再 veto 跳转）也试过，同样不行：</b>
+        /// 展开是不可撤销的副作用，双击那一下已经被展开吃掉了 —— 用户看到的就是「双击没反应」，
+        /// 而这一下本来应该是「跳回媒体应用」。所以判据必须落在**第一下**上：
+        /// 单击（没等到第二下）→ 到点展开；双击（第二下在系统判定窗口内）→ 取消展开、直接跳转。</para>
+        ///
+        /// <para><b>代价与兜底：</b>单击的展开会晚 <c>GetDoubleClickTime()</c> 毫秒（系统默认 500ms），
+        /// 这是「同一个坐标上的单击与双击本来就无法即刻分辨」的必然代价 —— 窗口取系统值，
+        /// 与「系统肯把第二下升格成 WM_LBUTTONDBLCLK」的窗口严格同源，不自己另定一套阈值。
+        /// 等待期间光标移开（超出系统双击矩形）或按下别的键，这次排队就作废，不会突然弹出一个面板。</para>
         /// </summary>
-        private DateTime _collapsedMediaClickExpandTime = DateTime.MinValue;
-        /// <summary>上面那次展开是由哪个坐标点下去的（仅用于诊断日志，判定只看时刻）。</summary>
-        private int _collapsedMediaClickExpandX, _collapsedMediaClickExpandY;
+        private DateTime _pendingMediaExpandedDeadline = DateTime.MinValue;
+        /// <summary>排队那次单击落下的坐标（岛内逻辑坐标）与容差：光标移出容差就作废这次排队。</summary>
+        private int _pendingMediaExpandX, _pendingMediaExpandY, _pendingMediaExpandTolerance = 4;
+
+        /// <summary>现在是否正排着一次「等双击判定窗口」的单击展开（只读，供渲染/命中侧参考）。</summary>
+        private bool HasPendingMediaExpand => _pendingMediaExpandedDeadline != DateTime.MinValue;
+
+        /// <summary>作废排队的单击展开（双击跳转、光标移开等情形都要走这里，保证状态一定被清干净）。</summary>
+        private void CancelPendingMediaExpand() => _pendingMediaExpandedDeadline = DateTime.MinValue;
+
+        /// <summary>
+        /// 每帧结算排队的单击展开（与 <see cref="TickPanelCollapse"/> 同一处调用，代价只有一次时间比较）。
+        ///
+        /// <para>到点的条件有三条，缺一不可：① 双击判定窗口已过（系统没把它升格成双击）；
+        /// ② 光标还停在当初按下的那个位置附近；③ 媒体模块此刻仍处于折叠态（用户没在等待期间用别的方式展开）。</para>
+        /// </summary>
+        private void TickPendingMediaExpand()
+        {
+            if (!HasPendingMediaExpand) return;
+            if (DateTime.Now < _pendingMediaExpandedDeadline) return;
+
+            bool moved;
+            try { moved = !Win32.GetCursorPos(out Win32.POINT p) || !IsNearPendingMediaExpand(p); }
+            catch { moved = false; } // 取不到光标位置时宁可按原意展开，也不要静默丢掉用户这一次点击
+            if (moved) { CancelPendingMediaExpand(); return; }
+
+            // 先取出日志要用的坐标，再清排队状态（CancelPendingMediaExpand 只清时刻，坐标留着也无所谓）
+            int px = _pendingMediaExpandX, py = _pendingMediaExpandY;
+            CancelPendingMediaExpand();
+
+            // ③ 期间媒体已经展开（用户又点了一次 / 用右键展开了）：什么都不用做
+            if (Renderer.IsMediaExpanded) return;
+
+            ExpandPanel(Plugins.BuiltinWidgets.Media);
+            // 🎯 与原先「按下即展开」同一条理由：展开会让岛体随后几帧改变尺寸（折叠态可能比 320 的面板更宽），
+            //    按下时还在岛内的坐标可能随即落到岛外，被兜底轮询判成「岛外点击」把面板当场收走。
+            //    （此刻按键多半已松开，所以这个标记下一帧就会被清掉，只覆盖展开那一瞬间。）
+            _suppressOutsideCollapse = true;
+            Logger.Info($"媒体展开：单击（等待双击判定窗口 {Win32.GetDoubleClickTime()}ms 内没有第二下）→ 已展开媒体面板 ({px},{py})");
+        }
+
+        /// <summary>
+        /// 光标（物理屏幕坐标）是否还停在「排队那次单击」的位置附近。
+        /// 换算走系统自己的 <see cref="Win32.ScreenToClient"/>：排队坐标是命中判定用的岛内逻辑坐标，
+        /// 中间绕开任何「显示器原点 + 窗口矩形」的手工推算，多屏 / 负坐标副屏 / DPI 缩放都不会算歪。
+        /// </summary>
+        private bool IsNearPendingMediaExpand(Win32.POINT screenPoint)
+        {
+            if (_hwnd == IntPtr.Zero) return true;       // 窗口都没了：这次排队马上会被 Tick 丢掉，不必判定
+            if (!Win32.ScreenToClient(_hwnd, ref screenPoint)) return true; // 换算失败 → 按原意展开，不静默丢点击
+
+            float cx = screenPoint.x / _dpiScale;
+            float cy = screenPoint.y / _dpiScale;
+            return Math.Abs(cx - _pendingMediaExpandX) <= _pendingMediaExpandTolerance
+                && Math.Abs(cy - _pendingMediaExpandY) <= _pendingMediaExpandTolerance;
+        }
 
         // ================= 🧩 展开面板统一管理 =================
         // 媒体控制面板（builtin.media）与插件组件详情页共用同一套开合逻辑与时序，不再各写一份：
@@ -1005,6 +1061,10 @@ namespace NotchPeninsula
                 //      自动隐藏的「手动展开」刻意不跟，理由也写在 ClosePanelsNow / CollapseAllExpanded 上。
                 //    · 到点由下面这行统一结算（每帧一次 DateTime 比较，可忽略）。
                 TickPanelCollapse();
+
+                // 🖱 折叠态单击排队的「展开媒体面板」也在这里结算：双击判定窗口过去仍没有第二下才真的展开
+                //    （同一处调用，同样是每帧一次时间比较）。见 _pendingMediaExpandedDeadline。
+                TickPendingMediaExpand();
 
                 //    · 这里是一层兜底轮询：窗口只在鼠标进入它范围内时才收得到鼠标消息，岛外点击根本不会派发
                 //      WM_LBUTTONDOWN，且 SetCapture（拖时间轴）期间 WM_MOUSELEAVE 会被吞掉，
@@ -1793,17 +1853,18 @@ namespace NotchPeninsula
                         // 🖱 双击封面（折叠态是左端缩略图、展开态是那块封面，两种形态同一条判据）
                         //    → 跳回正在放媒体的那个应用。
                         //
-                        // 与单击的关系：双击必然先来一次 WM_LBUTTONDOWN，所以折叠态的「第一下」已经照常
-                        // 展开了媒体面板、展开态的「第一下」已经照常点了播放按钮 —— 这里只负责第二下的语义。
+                        // 与单击的关系：折叠态那一次单击**不会立刻展开**（它先在
+                        // _pendingMediaExpandedDeadline 上排着队，等双击判定窗口过去），所以这里能干净地
+                        // 把「同一次手势的第二下」判出来并作废那次展开 —— 见下面的 secondClickOfCollapsed。
                         // 落在不合法的地方（标题 / 歌词 / 频谱 / 时间轴 / 播放按钮 / 通知 / 剪贴板接管期间）
                         // 就**完全不消费**，消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
                         //
-                        // ⚠️ 例外的两种「展开优先」（2026-10-02 用户反馈「折叠态左半边展开功能用不上」）：
-                        //    · 折叠态左右两半的单双击本来就能分开判断 —— 左半边是媒体模块区（展开 + 跳转），
-                        //      右半边是频谱/按钮区，双击热区只覆盖封面那一格，所以右半边永远只走原有交互；
-                        //    · 左半边这第二下**不跳转**，因为它与上面那次展开是同一次手势（见
-                        //      _collapsedMediaClickExpandTime）。想跳转就等面板展开后在封面上双击，那次是
-                        //      独立发起的，照常生效。
+                        // ⚠️ 于是折叠态左右两半各有明确归属，单双击也分得开：
+                        //    · **左半边**（媒体模块左半，双击热区覆盖的封面那一格）：单击 → 展开媒体面板；
+                        //      双击 → 跳回媒体应用，且**不展开**（排队的单击展开被作废）。
+                        //    · **右半边**（频谱 / 播放按钮那一带）：双击热区压根不覆盖，永远只走原有交互
+                        //      （直接交互模式下是播放控件，展开交互模式下是「点媒体区即展开」）。
+                        //    · 展开态：封面那一格双击 → 跳转，与上面那条单击链路互不干扰（此时没有排队）。
                         int dx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int dy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
@@ -1814,34 +1875,22 @@ namespace NotchPeninsula
                         bool launchEnabled = MediaController.IsAppLaunchEnabled;
                         bool onCover = Renderer.HitMediaLaunchZone(dx, dy);
 
-                        // 🖱 单双击分别判断：第二下是否**紧跟**着「折叠态那次展开」。
-                        //    是 → 这两下属于同一次手势，**展开优先**：面板保持展开，本次双击不跳转应用
-                        //    （否则用户点折叠态左半边会被直接拽到媒体软件去，展开根本用不上）。
-                        //    间隔取系统双击时间：能收到本消息就说明第二下已在系统双击窗口内，
-                        //    这里再对一次表，是为了排除「展开是好几秒前的另一件事，随后用户自己双击封面」。
-                        bool sameAsCollapseExpand = _collapsedMediaClickExpandTime != DateTime.MinValue
-                            && (DateTime.Now - _collapsedMediaClickExpandTime).TotalMilliseconds
-                               <= Win32.GetDoubleClickTime();
+                        // 🖱 单击 / 双击分别判断（见 _pendingMediaExpandedDeadline）：
+                        //    这一下若是**折叠态那次单击的第二下**，那两下是同一个坐标上的一次双击 ——
+                        //    此刻应当「跳回媒体应用」，而上面排队的**单击展开要当场作废**（用户从没要展开）。
+                        //    这正是「不要优先展开」：展开只是单击的结果，双击的结果只有跳转。
+                        bool secondClickOfCollapsed = HasPendingMediaExpand;
+                        CancelPendingMediaExpand();
 
                         Logger.Info($"媒体跳转[诊断]：双击 ({dx},{dy}) 开关={launchEnabled} 悬停={_isHovered} "
                             + $"媒体激活={_media.IsActive} 通知={_currentToast != null} 剪贴板={isClipboardActive} "
                             + $"详情页={Renderer.HasActiveDetailPage} 面板={Renderer.IsMediaPanelShowing(_media)} "
-                            + $"命中封面={onCover} 紧跟折叠展开={sameAsCollapseExpand}");
-
-                        // 🖱 展开优先：这一次双击是「折叠态左半边那两下」时，只保留展开这个结果。
-                        //    消费掉消息（不再往下走），免得第二下又点到底下的播放按钮上。
-                        if (sameAsCollapseExpand && onCover && _isHovered && _media.IsActive)
-                        {
-                            Logger.Info($"媒体跳转：双击 ({dx},{dy}) 紧跟折叠态展开手势"
-                                + $"（展开于 ({_collapsedMediaClickExpandX},{_collapsedMediaClickExpandY})），按「展开优先」保持面板展开，不跳转应用");
-                            _collapsedMediaClickExpandTime = DateTime.MinValue; // 手势已结算：第三下起算新的一次
-                            return (IntPtr)0;
-                        }
+                            + $"命中封面={onCover} 折叠态第二下={secondClickOfCollapsed}");
 
                         if (launchEnabled && _isHovered && _media.IsActive
                             && _currentToast == null && !isClipboardActive
                             && !Renderer.HasActiveDetailPage
-                            && onCover)
+                            && (onCover || secondClickOfCollapsed))
                         {
                             _media.OpenCurrentApp();
                             return (IntPtr)0; // 消费掉：别再让第二下点到底下的播放按钮上
@@ -1955,20 +2004,24 @@ namespace NotchPeninsula
                             // 🎵 展开交互：点在媒体模块上（且没点到按钮）就展开 —— 组合 / 非组合同一套判定，
                             //    热区用渲染时登记的媒体区间，所以组合模式下点时钟 / 硬件不会误展开媒体。
                             //    直接交互模式不提供展开入口（点空白处不做事）。
+                            //
+                            // 🖱 但**不在这里立刻展开**：先按系统双击窗口排个队，等窗口过去再展开
+                            //    （见 _pendingMediaExpandedDeadline）。这样同一个坐标上的单击与双击才分得开：
+                            //    · 单击 → 窗口内没有第二下 → TickPendingMediaExpand 到点展开；
+                            //    · 双击 → 第二下以 WM_LBUTTONDBLCLK 到来 → 取消排队、直接跳回媒体应用，不展开。
+                            //    以前按下即展开，第二下就落在刚铺开的封面上被双击跳转吃掉，用户看到的是
+                            //    「点左半边直接被拽到媒体软件」。
                             if (!hitButtons && Renderer.MediaInteractionMode == 1 && Renderer.HitMediaZone(cx))
                             {
-                                ExpandPanel(Plugins.BuiltinWidgets.Media);
-                                // 🖱 记下「这次展开是折叠态点出来的」：双击判定要靠它把「同一次手势」的第二下
-                                //    与「另一次独立的双击」分开（见 _collapsedMediaClickExpandTime 的说明）。
-                                //    必须在 ExpandPanel **之后**写：它一置位，下一帧画的就是展开面板了。
-                                _collapsedMediaClickExpandTime = DateTime.Now;
-                                _collapsedMediaClickExpandX = cx;
-                                _collapsedMediaClickExpandY = cy;
-                                // 🎯 展开会让岛体在随后几帧里改变尺寸：折叠态可能比 320 的面板更宽
-                                //    （长歌词自适应 / 组合模式），展开瞬间变窄，按下时还在岛内的坐标随即
-                                //    落到岛外 —— 不屏蔽的话就会被上面的兜底轮询判成「岛外点击」，
-                                //    面板刚展开就被收回（用户只点了一次）。抑制到本次按键松开为止。
-                                _suppressOutsideCollapse = true;
+                                _pendingMediaExpandedDeadline = DateTime.Now.AddMilliseconds(Win32.GetDoubleClickTime());
+                                _pendingMediaExpandX = cx;
+                                _pendingMediaExpandY = cy;
+                                // 容差取系统双击矩形的一半（默认 ±4）：光标按下去之后挪得比这还远，
+                                // 说明用户不是想展开（在拖 / 只是路过），队就作废。
+                                int metric = Win32.GetSystemMetrics(Win32.SM_CXDOUBLECLK);
+                                _pendingMediaExpandTolerance = metric > 0 ? Math.Max(2, metric / 2) : 4;
+                                Logger.Info($"媒体展开：折叠态单击 ({cx},{cy}) 已排队，等 {Win32.GetDoubleClickTime()}ms "
+                                    + "双击判定窗口（窗口内来第二下就改成跳转应用，不来才展开面板）");
                             }
                         }
                         break;
