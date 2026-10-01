@@ -147,20 +147,29 @@ namespace NotchPeninsula
         public bool IsActive { get; private set; } = false;
         public SKBitmap? Thumbnail { get; private set; }
 
-        // 封面位图的**唯一写入口**。三处互不等待的路径都会换图 —— 属性刷新、网络封面下载完成、
-        // 会话被清空 —— 而属性刷新那道 _refreshingProperties 闸门管不到网络封面那条异步链，
-        // 所以「换引用 + 释放旧图」必须在这里自己串起来：否则两次并发换图会把同一张位图 Dispose 两次，
-        // 而渲染线程每帧都在读 Thumbnail —— Dispose 之后再访问就是原生访问违例（0xC0000005，直接杀进程）。
+        // 封面位图的**唯一写入口**。三条互不等待的路径都会换图（属性刷新 / 网络封面下载完成 / 会话清空），
+        // 而属性刷新那道 _refreshingProperties 闸门管不到网络封面那条异步链 ——
+        // 所以「换引用」必须在这里自己串起来，否则两次并发换图会把同一份位图换乱。
         private readonly object _thumbSwap = new();
 
+        /// <summary>
+        /// 换上新的封面位图。
+        ///
+        /// <para><b>⚠️ 刻意不 Dispose 被换下的那一张。</b>渲染线程（<c>NotchWindow.RenderLoop</c>，16ms 线程池定时器）
+        /// 每帧都在 <c>canvas.DrawBitmap(media.Thumbnail, …)</c> 里直接读这个属性，而它<b>不持有本锁</b>：
+        /// 这里一 Dispose，正在绘制的那张原生位图就被释放 —— 这正是 SkiaSharp 的 use-after-free，
+        /// 表现为原生访问违例 <b>0xC0000005</b>，直接杀进程，且托管层的 try/catch 拦不住。</para>
+        ///
+        /// <para>放弃 Dispose 是安全的：<c>SKBitmap</c> 有终结器会释放原生内存，丢掉最后一个引用后由 GC 回收，
+        /// 代价只是让一张封面多存活一小段时间（300×300 约 300KB）。同一取舍在
+        /// <c>ToastIconProvider</c> 的图标缓存里已经用过一次。</para>
+        /// </summary>
         private void SetThumbnail(SKBitmap? next)
         {
             lock (_thumbSwap)
             {
-                var old = Thumbnail;
-                if (ReferenceEquals(old, next)) return;
+                if (ReferenceEquals(Thumbnail, next)) return;
                 Thumbnail = next;
-                old?.Dispose();
                 // 换图即作废「当前放的是哪个程序的图标」这条记账：调用方（SetAppIcon）换完之后自己补上，
                 // 其余所有来源（网络封面 / 清空）都天然落到「不是程序图标」，不需要每处都记得清。
                 _appIconKey = "";
