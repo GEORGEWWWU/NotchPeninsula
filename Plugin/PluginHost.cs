@@ -820,6 +820,8 @@ public sealed class ScopedPluginHost : IPluginHost
     /// <summary>本插件所在位置的**剩余**可用宽度（已扣掉排在它前面的插件占用）——见 PluginHost.GetPluginRowBudgetFor。</summary>
     public float GetPluginRowBudget() => _host.GetPluginRowBudgetFor(_pluginId);
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
+    /// <summary>与 <see cref="OpenDetailPage"/> 同一动作，但把宿主内部的成功 / 失败结果带回给插件。</summary>
+    public bool TryOpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
     public bool ToggleDetailPage(string widgetId) => _host.ToggleDetailPage(widgetId);
     public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(_pluginId, title, width, height);

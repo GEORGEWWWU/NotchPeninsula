@@ -398,6 +398,30 @@ public interface IPluginHost
     /// <summary>异步取到数据后主动请求重绘（常驻 60FPS 渲染下等价于空操作，作为事件驱动化预留）。</summary>
     void RequestRedraw();
     void OpenDetailPage(string widgetId);
+
+    /// <summary>
+    /// 展开指定组件的详情页，并返回这次到底有没有展开成功
+    /// —— <see cref="OpenDetailPage"/> 的「带结果」版本。
+    ///
+    /// <para>
+    /// 为什么要单独加一个：<see cref="OpenDetailPage"/> 在插件侧是 <c>void</c>，
+    /// 宿主包装层把内部的结果丢掉了（<c>ScopedPluginHost</c> 里是
+    /// <c>=&gt; _host.OpenDetailPage(...)</c>），插件无从判断该组件是否存在 / 有没有详情页。
+    /// 本方法把这个结果原样带给插件。
+    /// </para>
+    ///
+    /// <para>
+    /// 什么时候用它：想「有就开、没有就算了」，<b>且不希望</b>收起已经展开的面板时。
+    /// <see cref="ToggleDetailPage"/> 虽然也返回 <c>bool</c>，但它的语义是<b>切换</b>
+    /// —— 目标已展开时会把它收起，不是「只开不收」。
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// true = 目标详情页已处于展开状态（本次展开，或它本来就开着）；
+    /// false = 该组件不存在、没有详情页，或读取详情页时抛了异常（宿主不展开）。
+    /// </returns>
+    bool TryOpenDetailPage(string widgetId);
+
     void CloseDetailPage();
 
     /// <summary>
