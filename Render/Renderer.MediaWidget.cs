@@ -58,15 +58,22 @@ namespace NotchPeninsula
             // 🖱️ 本模块的右键命中区 = 文字 + 频谱 / 按钮锚点
             _mediaZoneL = geometry.ZoneLeft;
             _mediaZoneR = geometry.AnchorRight;
+            // 📺 折叠态双击热区按「模块左半边」算，需要模块本帧的真实左右端（见 Renderer.Layout）
+            RegisterMediaBlock(geometry.ZoneLeft, geometry.AnchorRight);
 
             _textPaint.Color = _currentTextColor.WithAlpha(alpha);
 
             float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
             float textX = geometry.ContentLeft;
 
+            // 📺 双击跳转的命中区：**不管有没有封面位图都要登记**。
+            //    ⚠️ 曾经只在 Thumbnail != null 时登记，结果「封面还没加载出来 / 这个源根本没封面」
+            //    的时候命中区是空的 —— 表现就是「双击没反应」。热区只认位置，不认那张图在不在。
+            float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
+            RegisterMediaCover(new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize));
+
             if (media.Thumbnail != null)
             {
-                float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
                 var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
                 canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
                 canvas.Save();
@@ -162,19 +169,22 @@ namespace NotchPeninsula
             float coverY = 20f;    // 封面微调光学居中
 
             // 封面
+            var coverRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
+            // 📺 登记封面矩形：展开态的「双击封面 → 跳转应用」命中的就是这一块。
+            //    没有封面时这里画的是占位图标 —— 它同样占着封面这一格，双击照样算数，所以无条件登记。
+            RegisterMediaCover(coverRect);
             if (media.Thumbnail != null)
             {
-                var thumbRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
-                canvas.DrawRoundRect(thumbRect, 8f, 8f, _shadowPaint);
+                canvas.DrawRoundRect(coverRect, 8f, 8f, _shadowPaint);
                 canvas.Save();
-                _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, 8f, 8f);
+                _clipPath.Rewind(); _clipPath.AddRoundRect(coverRect, 8f, 8f);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                canvas.DrawBitmap(media.Thumbnail, thumbRect, _highQualitySampling);
+                canvas.DrawBitmap(media.Thumbnail, coverRect, _highQualitySampling);
                 canvas.Restore();
             }
             else
             {
-                canvas.DrawRoundRect(new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize), 8f, 8f, _fallbackIconPaint);
+                canvas.DrawRoundRect(coverRect, 8f, 8f, _fallbackIconPaint);
             }
 
             // 双行文字

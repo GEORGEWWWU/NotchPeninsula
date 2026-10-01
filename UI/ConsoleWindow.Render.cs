@@ -787,9 +787,10 @@ namespace NotchPeninsula
             DrawToggleCard(canvas, 270, "媒体交互方式", "开启为点击展开面板，关闭为悬停直接控制",
                 Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
-            // 🖱 双击媒体控制跳转应用（2026-09-27 新增）：双击媒体控制把正在放媒体的那个应用切回前台。
-            //    与其余卡片保持同一版式：标题 + 一行副标题，不再往下叠第三层小字。
-            DrawToggleCard(canvas, 342, "双击媒体控制跳转应用", "折叠态双击左半边、展开态双击封面",
+            // 🖱 双击封面跳转应用（2026-09-27 新增，2026-09-30 把「双击哪里」统一到封面）：
+            //    双击封面把正在放媒体的那个应用切回前台 —— 折叠态双击左端缩略图、展开态双击封面，
+            //    两种形态同一块热区。与其余卡片保持同一版式：标题 + 一行副标题。
+            DrawToggleCard(canvas, 342, "双击封面跳转应用", "折叠态双击左上角缩略图，展开态双击封面",
                 MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered);
 
             DrawToggleCard(canvas, 414, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);

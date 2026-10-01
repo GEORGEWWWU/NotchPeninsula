@@ -350,7 +350,7 @@ namespace NotchPeninsula
                 // 媒体交互模式（组合模式同样可用：组合模式现在也能展开媒体面板）
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 290 && y <= TITLE_BAR_HEIGHT + 310)
                     newMediaExpToggleHovered = true;
-                // 🖱 双击媒体控制跳转应用（卡片排在「媒体交互方式」下面一格，行距 72）
+                // 🖱 双击封面跳转应用（卡片排在「媒体交互方式」下面一格，行距 72）
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 362 && y <= TITLE_BAR_HEIGHT + 382)
                     newAppLaunchToggleHovered = true;
                 // 使用局部变量，防止状态死锁

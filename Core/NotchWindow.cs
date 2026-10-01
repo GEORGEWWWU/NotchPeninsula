@@ -1770,24 +1770,31 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDBLCLK:
                     {
-                        // 🖱 双击媒体控制（折叠态内联行与展开态面板同一条判定）→ 跳回正在放媒体的那个应用。
+                        // 🖱 双击封面（折叠态是左端缩略图、展开态是那块封面，两种形态同一条判据）
+                        //    → 跳回正在放媒体的那个应用。
                         //
                         // 与单击的关系：双击必然先来一次 WM_LBUTTONDOWN，所以折叠态的「第一下」已经照常
                         // 展开了媒体面板、展开态的「第一下」已经照常点了播放按钮 —— 这里只负责第二下的语义。
-                        // 落在不合法的地方（时间轴、播放按钮、通知 / 剪贴板接管期间）就**完全不消费**，
-                        // 消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
+                        // 落在不合法的地方（标题 / 歌词 / 频谱 / 时间轴 / 播放按钮 / 通知 / 剪贴板接管期间）
+                        // 就**完全不消费**，消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
                         int dx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int dy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                        float dblTopY = 12f * _currentStyleProgress;
 
                         // 岛体「整块不可见」的两种形态（穿透睡眠态 / 完全隐藏态）：双击只当唤醒用，
                         // 与 WM_LBUTTONDOWN 里 HitWakeButton 的优先级保持一致，不在这里触发跳转。
                         if ((Renderer.PassthroughModeEnabled && !_isPassthroughAwake) || Renderer.FullHideAlpha < 0.99f) break;
 
-                        if (MediaController.IsAppLaunchEnabled && _isHovered && _media.IsActive
+                        bool launchEnabled = MediaController.IsAppLaunchEnabled;
+                        bool onCover = Renderer.HitMediaLaunchZone(dx, dy);
+                        Logger.Info($"媒体跳转[诊断]：双击 ({dx},{dy}) 开关={launchEnabled} 悬停={_isHovered} "
+                            + $"媒体激活={_media.IsActive} 通知={_currentToast != null} 剪贴板={isClipboardActive} "
+                            + $"详情页={Renderer.HasActiveDetailPage} 面板={Renderer.IsMediaPanelShowing(_media)} "
+                            + $"命中封面={onCover}");
+
+                        if (launchEnabled && _isHovered && _media.IsActive
                             && _currentToast == null && !isClipboardActive
                             && !Renderer.HasActiveDetailPage
-                            && Renderer.HitMediaLaunchZone(dx, dy, _currentHeight))
+                            && onCover)
                         {
                             _media.OpenCurrentApp();
                             return (IntPtr)0; // 消费掉：别再让第二下点到底下的播放按钮上

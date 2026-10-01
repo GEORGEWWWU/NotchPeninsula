@@ -19,7 +19,7 @@ namespace NotchPeninsula
         internal static string ManualSessionAppId = "";
         // 系统当前是否存在任何 SMTC 会话（设置界面据此清空「手动选择软件」选项框）
         internal static bool HasActiveSessions { get; private set; }
-        // 🖱 双击媒体控制（折叠态与展开态都算）是否跳回正在放媒体的那个应用。
+        // 🖱 双击封面（折叠态与展开态都算）是否跳回正在放媒体的那个应用。
         // 关掉后双击完全不消费、不做事，折叠态的「点一下展开」等原有交互不受影响。
         internal static bool IsAppLaunchEnabled = true;
 
@@ -316,10 +316,11 @@ namespace NotchPeninsula
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
             _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
 
-            // 🖱 双击跳转的定位采样：会话刚被接管时，前台窗口极可能就是它的主窗口 —— 顺手把句柄记下来。
-            //    放在这里（会话挑选之后、属性刷新之前）是因为每次接管 / 刷新都会路过，
-            //    采样因此始终跟着会话走，不需要额外的定时器；开关关闭时整个跳过。
-            if (IsAppLaunchEnabled) MediaAppLauncher.CaptureSession(newSession, isCurrent: true);
+            // 🖱 跳转应用的定位采样：会话刚被接管时，前台窗口极可能就是它的主窗口 —— 顺手把句柄记下来。
+            //    放在这里（会话挑选之后、属性刷新之前）是因为每次接管 / 刷新都会路过；
+            //    「要不要真的重采」由 MediaAppLauncher 自己按「接管目标是否变了」裁决
+            //    （只在换应用 / 换平台那一刻采一次，避免用户正在别的程序里时把无关窗口记成媒体窗口）。
+            if (IsAppLaunchEnabled) MediaAppLauncher.CaptureSession(newSession);
 
             // Just Solo 专属歌词通道：只有「当前接管的会话就是 justsolo」时才连接 LyricServer
             UpdateJustSoloConnection();
@@ -614,14 +615,15 @@ namespace NotchPeninsula
         public async void Previous() => await _currentSession?.TrySkipPreviousAsync();
 
         /// <summary>
-        /// 📺 双击媒体控制（折叠态 / 展开态都算）时调用：跳回正在放媒体的那个应用。
+        /// 📺 双击封面（折叠态是左端缩略图、展开态是那块封面，两种形态同一条判据）时调用：
+        /// 跳回正在放媒体的那个应用。
         ///
-        /// <para>能做的：把已开着的应用窗口激活到前台；应用没开或拿不到窗口时按 AUMID 交给 Shell 拉起。
+        /// <para>能做的：把已开着的应用窗口激活到前台；应用没开时按注册信息把它拉起来。
         /// 不能做的：跳到那首歌 / 那个视频的具体播放页 —— SMTC 不提供任何深链接参数，
         /// 这是协议本身的限制，只能到应用本体。</para>
         ///
-        /// <para>所有重活（窗口枚举）都在 <see cref="MediaAppLauncher"/> 的线程池里，
-        /// 这里只是转发，保证双击不卡 UI。</para>
+        /// <para>定位（前台窗口采样 / 进程内枚举窗口 / 注册表核验）都在
+        /// <see cref="MediaAppLauncher"/> 里，UI 线程上只做几次极廉价的 API 调用。</para>
         /// </summary>
         public void OpenCurrentApp()
         {
