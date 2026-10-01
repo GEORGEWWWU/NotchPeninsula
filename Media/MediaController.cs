@@ -56,7 +56,11 @@ namespace NotchPeninsula
         // 当前这首歌的时间轴里是否有译文：高度补偿只认它，避免逐句有无译文导致岛体忽高忽低
         public bool HasLyricTranslation { get; private set; }
         public float CurrentLyricProgress { get; private set; } = 0f;
-        private TimeSpan _lastSmtcPosition = TimeSpan.Zero;
+        // 拖动松手后的静默期。播放器执行 seek 要几十~几百毫秒，这段时间它上报的仍是旧位置；
+        // 直接按跳变处理会把进度条与歌词弹回原处，所以静默期内只做缓慢纠偏、不做跳变对齐。
+        private DateTime _seekSettleUntil = DateTime.MinValue;
+        private const double SeekSettleSeconds = 1.5;
+
         private DateTime _lastUpdateTime = DateTime.UtcNow;
         private string _lastFetchedTitle = "";
         private string _lastFetchedArtist = "";
@@ -1440,8 +1444,10 @@ namespace NotchPeninsula
 
             // ★ 全帧唯一一次 SMTC 时间轴采样（200ms 节流，换歌后立即补采）：
             //   歌词推进、进度条、总时长三处共用这份快照，杜绝每帧重复打 COM。
+            bool sampledNow = false;
             if (_forceResync || (now - _smtcProbeAt).TotalSeconds >= SmtcProbeIntervalSec)
             {
+                sampledNow = true;
                 _smtcProbeAt = now;
                 try
                 {
@@ -1484,7 +1490,7 @@ namespace NotchPeninsula
             }
 
             // 自己接管进度！不管有没有拿到歌词，底层的时间轴必须一直跟着播放状态往前走！
-            AdvanceTimeline(_currentSession, HasTimeline, _smtcPos, dt, now);
+            AdvanceTimeline(HasTimeline, _smtcPos, sampledNow, dt, now);
 
             // 只有等时间轴正确走完后，如果还没歌词，我们再退出渲染拦截
             if (_lyrics.Length == 0) { SetLyric("", "", 0f, false); return; }
@@ -1575,27 +1581,53 @@ namespace NotchPeninsula
             if (_lyricSlot >= 0) _slotSessions[_lyricSlot] = null;
         }
 
-        // 推进当前歌词歌的时间轴。SMTC 采样已由 UpdateLyrics 统一完成（每帧最多一次），这里只做纯计算。
-        // 提供真实时间轴的播放器（Apple Music / QQ音乐 / Echo Music 等，EndTime 有效）以 SMTC 为准：
-        // 接管新歌后第一次采样强制对齐，之后位置跳变超过 1.5 秒也直接对齐（播放器内拖动 / 主动上报）。
-        // 不提供时间轴的播放器（网易云、酷狗等，EndTime 恒为 0）才按播放状态自行累加。
-        private void AdvanceTimeline(GlobalSystemMediaTransportControlsSession? session, bool hasTimeline, TimeSpan smtcPos, TimeSpan dt, DateTime now)
+        // ---- 位置纠偏常数（见 AdvanceTimeline 的说明） ----
+        private const double TimelineJumpSeconds = 1.5;       // 与本地位置的差超过它 → 当作真实跳变，直接对齐
+        private const double TimelineNudgeDeadZoneSec = 0.02; // 误差小于它就不动，省掉无意义的微调
+        private const double TimelineNudgeRatio = 0.25;       // 每次采样吃掉 25% 的误差
+        private const double TimelineNudgeMaxStepSec = 0.08;  // 单步上限：即使误差偏大也看不出跳动
+
+        /// <summary>
+        /// 推进当前歌词歌的时间轴。SMTC 采样已由 <see cref="UpdateLyrics"/> 统一完成（每帧最多一次），
+        /// 这里只做纯计算。提供真实时间轴的播放器（Apple Music / QQ音乐 等，EndTime 有效）以 SMTC 为准；
+        /// 不提供时间轴的播放器（网易云、酷狗等，EndTime 恒为 0）才按播放状态自行累加。
+        /// </summary>
+        /// <param name="newSample">
+        /// 本帧是否刚采到一份新的 SMTC 快照。纠偏与跳变判定只在拿到新快照的那一帧做 ——
+        /// 采样是 200ms 一次、渲染是 16ms 一次，若每帧都按同一份快照纠偏，纠偏量会被放大十几倍。
+        /// </param>
+        private void AdvanceTimeline(bool hasTimeline, TimeSpan smtcPos, bool newSample, TimeSpan dt, DateTime now)
         {
             // 快照槽位：异步线程可能在本方法执行期间换掉 _lyricSlot，逐次读取会写串槽位。
             int slot = _lyricSlot;
             if (slot < 0 || _isDragging) return; // 状态锁：拖动期间禁止上游写入与自动推进
 
-            if (hasTimeline)
+            // 先按帧累加：本地位置是卡拉 OK 平滑推进的来源，SMTC 只用来纠正它。
+            if (IsPlaying) _recentSongs[slot].Position += dt;
+
+            if (hasTimeline && newSample)
             {
-                if (_forceResync || Math.Abs((smtcPos - _lastSmtcPosition).TotalSeconds) > 1.5)
+                // ⚠️ 误差必须和**本地当前位置**比，不能和「上一次对齐点」比 —— 这是卡拉 OK 不再突然
+                //    跳一块的关键。对齐点只在跳变时才更新，拿它当基准时本地累加与播放器真实位置的
+                //    偏差会一直攒着，攒过阈值就一次性跳过去（能到秒级，看起来就是「突然前进一块」）。
+                //    现在每 200ms 量一次误差：小的持续纠偏吃掉，大的才当作真实跳变对齐。
+                double delta = (smtcPos - _recentSongs[slot].Position).TotalSeconds;
+                bool settling = now < _seekSettleUntil; // 刚松手拖动：播放器还没执行完 seek，不按跳变处理
+
+                if (_forceResync || (!settling && Math.Abs(delta) > TimelineJumpSeconds))
                 {
-                    _recentSongs[slot].Position = smtcPos;
-                    _lastSmtcPosition = smtcPos;
+                    _recentSongs[slot].Position = smtcPos; // 换歌 / 拖动进度条 / 播放器主动上报
                 }
+                else if (Math.Abs(delta) > TimelineNudgeDeadZoneSec)
+                {
+                    // 缓慢纠偏：每次采样只走误差的一小段。单步封顶 80ms，
+                    // 于是「按帧累加」与「播放器真实位置」的偏差被持续抹平，而不是攒到某刻突然跳过去。
+                    double step = Math.Clamp(delta * TimelineNudgeRatio, -TimelineNudgeMaxStepSec, TimelineNudgeMaxStepSec);
+                    _recentSongs[slot].Position += TimeSpan.FromSeconds(step);
+                }
+
                 _forceResync = false;
             }
-
-            if (IsPlaying) _recentSongs[slot].Position += dt;
 
             _recentSongs[slot].TickedAt = now; // 标记这个进度是刚推算过的，换歌时据此判断能否续用
             _timelinePos = _recentSongs[slot].Position; // 进度条与歌词同源：永远读同一份位置
@@ -1632,13 +1664,14 @@ namespace NotchPeninsula
             UpdateTimelineTexts();
         }
 
-        /// <summary>松手：解除状态锁，把落点登记为 SMTC 对齐基准，再异步提交一次 seek。</summary>
+        /// <summary>松手：解除状态锁，给一段静默期，再异步提交一次 seek。</summary>
         public void EndDrag()
         {
             if (!_isDragging) return;
             _isDragging = false;
-            // 播放器执行 seek 的几十~几百毫秒里，落点会被判成「跳变」而把进度弹回原处，所以先把它写成对齐基准
-            _lastSmtcPosition = _timelinePos;
+            // 播放器执行 seek 的几十~几百毫秒里它上报的仍是旧位置，静默期内不按跳变处理，
+            // 否则落点会被判成跳变而把进度条与歌词弹回原处。
+            _seekSettleUntil = DateTime.UtcNow.AddSeconds(SeekSettleSeconds);
             if (_currentSession != null) CommitSeek(_currentSession, _timelinePos.Ticks);
         }
 
