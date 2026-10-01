@@ -783,14 +783,21 @@ namespace NotchPeninsula
                 !isModeDisabled && _fsHideToggleHovered,
                 isModeDisabled);
 
-            // 🎵 媒体交互方式：组合模式同样可展开媒体面板（2026-09-25 起），因此不再置灰
-            DrawToggleCard(canvas, 270, "媒体交互方式", "开启为点击展开面板，关闭为悬停直接控制",
+            // 🎵 媒体交互方式：组合模式同样可展开媒体面板（2026-09-25 起），因此不再置灰。
+            //    ⚠️ 副标题必须与命中侧同口径（见 NotchWindow.WM_RBUTTONDOWN）：开启后**展开入口是右键**，
+            //       左键单击不再展开（左键只留给「双击封面跳转应用」）。写成「点击展开」会让用户去左键点，
+            //       点完发现没反应 —— 2026-10-02 用户改口径时明确要求同步文案。
+            DrawToggleCard(canvas, 270, "媒体交互方式", "开启为右键展开面板，关闭为右键打开媒体设置",
                 Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
             // 🖱 双击封面跳转应用（2026-09-27 新增，2026-09-30 把「双击哪里」统一到封面）：
-            //    双击封面把正在放媒体的那个应用切回前台 —— 折叠态双击左端缩略图、展开态双击封面，
-            //    两种形态同一块热区。与其余卡片保持同一版式：标题 + 一行副标题。
-            DrawToggleCard(canvas, 342, "双击封面跳转应用", "折叠态双击左上角缩略图，展开态双击封面",
+            //    双击封面把正在放媒体的那个应用切回前台 —— 折叠态双击媒体模块**左半边**（整条高度都算，
+            //    不是只有缩略图那一小块）、展开态双击封面，两种形态同一块热区。
+            //    与其余卡片保持同一版式：标题 + 一行副标题。
+            //    ⚠️ 副标题必须与命中侧（Renderer.HitMediaLaunchZone）同口径：折叠态是「左半边」而不是
+            //       「左上角」—— 命中判定完全不看 y（折叠态整条都在封面这一行里），写成左上角会让用户
+            //       只敢往缩略图上点，恰好复现 2026-10-01 那次「按十次有两三次落在边上、感觉要点两下」。
+            DrawToggleCard(canvas, 342, "双击封面跳转应用", "折叠态双击左半边，展开态双击封面",
                 MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered);
 
             DrawToggleCard(canvas, 414, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
