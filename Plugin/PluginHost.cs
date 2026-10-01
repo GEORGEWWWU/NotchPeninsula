@@ -53,6 +53,35 @@ public sealed class PluginHost
     // 承载它的可回收 ALC 就永远回收不掉（热重载持续泄漏旧版本程序集）。
     private readonly Dictionary<string, List<IPluginWindow>> _windows = new();
 
+    /// <summary>
+    /// 正在卸载中的插件 id。卸载期间**拒绝新的登记**（刷新句柄 / 窗口）。
+    ///
+    /// <para><b>为什么必须有这道闸（2026-10-02 修的真实泄漏）</b>：卸载顺序是
+    /// 「先让插件 Dispose、再 UnregisterPlugin」，而插件的 <c>Dispose()</c> 里完全可能再调一次
+    /// <see cref="ScheduleRefresh"/>（"清理时顺手重置一下定时刷新"是很常见的写法），
+    /// 也可能有一次刷新回调正在别的线程上飞（<see cref="RefreshHandle.OnElapsed"/>）。
+    /// 那时 <c>_refreshes</c> 里的条目已经/即将被摘掉，于是它新建的条目**再也没有人遍历到**：
+    /// 定时器一直跑 → 回调委托 → 插件类型 → Assembly → ALC（可回收上下文）永远回收不掉。
+    /// 这类幽灵定时器同时会让下一次加载的同一插件被旧回调反复打扰。</para>
+    ///
+    /// <para>所以卸载期间一律拒绝登记：新的句柄当场 Dispose 掉、新的窗口直接不建。</para>
+    /// </summary>
+    private readonly HashSet<string> _unregistering = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 卸载时没能立刻销毁的窗口（拖放进行中：<see cref="PluginWindow.TryDestroyNow"/> 会拒绝，
+    /// 而 <c>Close()</c> 只是投一条 WM_CLOSE 又被 <c>_closePending</c> 推后）。
+    ///
+    /// <para><b>为什么不能像以前那样"关不掉就算了"</b>：以前是先把 <c>_windows[pluginId]</c> 整表摘掉、
+    /// 再尝试关窗。一旦这一次关不掉（拖放不返回就是关不掉），宿主就**永久失去**了这个窗口的记账 ——
+    /// 窗口本身还被 <see cref="PluginWindow"/> 的静态路由表强引用着，谁也再不会去关它，
+    /// 于是 HWND + DIB 位图 + 内存 DC + 插件程序集一起永久留下。现在改成留着记账、每帧重试。</para>
+    /// </summary>
+    private readonly List<IPluginWindow> _pendingWindowClose = new();
+
+    /// <summary>重试关窗的累计次数，只用于「极长时间关不掉就不再重试」那条兜底判定。</summary>
+    private int _windowCloseAttempts;
+
     // 组件注册表版本号：任何 Register/Unregister/排序 都会自增。
     // 渲染侧（Renderer）用它做快照缓存 —— 只有版本变化时才重新拷贝组件数组，
     // 稳态 60FPS 下读取零分配，插件禁用/卸载后渲染侧下一帧自动感知。
@@ -273,13 +302,38 @@ public sealed class PluginHost
     public IDisposable ScheduleRefresh(string pluginId, TimeSpan interval, Action callback)
     {
         var handle = new RefreshHandle(interval, callback);
+
         lock (_lock)
         {
+            // 🚫 卸载中的插件一律拒绝登记：它的 Dispose 里 / 正在飞的刷新回调里再调本方法时，
+            //    _refreshes 里的条目已经或即将被摘掉，收下它就等于留一个永远没人 Dispose 的定时器
+            //    （定时器 → 回调委托 → 插件类型 → ALC 永不回收）。见 _unregistering 的说明。
+            if (_unregistering.Contains(pluginId))
+            {
+                handle.Dispose();
+                Logger.Debug($"[PluginHost] 插件 {pluginId} 正在卸载，已忽略其新的刷新登记");
+                return handle;
+            }
+
             if (!_refreshes.TryGetValue(pluginId, out var list))
                 _refreshes[pluginId] = list = new List<IDisposable>();
             list.Add(handle);
         }
         return handle;
+    }
+
+    /// <summary>
+    /// 标记 / 解除「某个插件正在卸载」。卸载期间新的刷新登记与窗口登记一律被拒绝。
+    /// 由 <see cref="PluginManager"/> 的卸载流程包住「插件 Dispose + 宿主注销」这一整段。
+    /// </summary>
+    internal void SetUnregistering(string pluginId, bool value)
+    {
+        if (string.IsNullOrEmpty(pluginId)) return;
+        lock (_lock)
+        {
+            if (value) _unregistering.Add(pluginId);
+            else _unregistering.Remove(pluginId);
+        }
     }
 
     // ---- 提醒（接现有 Toast 流） ----
@@ -413,11 +467,13 @@ public sealed class PluginHost
             }
             // 该插件打开的窗口一并收回：窗口的绘制/输入委托引用插件类型，
             // 不关掉的话下面 PluginManager 的 ctx.Unload() + GC 永远回收不到这个 ALC。
+            //
+            // ⚠️ 这里**不再 Remove(pluginId)**（2026-10-02 修泄漏）：以前是先把记账整表摘掉、再尝试关窗，
+            //    一旦这一次关不掉（拖放进行中就是这样，见 _pendingWindowClose 的说明），宿主就永久失去了它，
+            //    窗口连同 HWND / DIB / 内存 DC / 插件程序集一起留在 PluginWindow 的静态路由表里没人管。
+            //    现在记账保留到窗口**真的销毁**（WM_DESTROY 里会回调 DetachWindow 摘掉），关不掉的进重试队列。
             if (_windows.TryGetValue(pluginId, out var winList))
-            {
                 windows = winList;
-                _windows.Remove(pluginId);
-            }
         }
 
         // 定时器在锁外释放，避免 Dispose 回调再次进入宿主造成死锁
@@ -425,23 +481,124 @@ public sealed class PluginHost
             foreach (var r in refreshes)
                 try { r.Dispose(); } catch { }
 
-        // 窗口同样在锁外关闭（销毁过程会回调 DetachWindow，再进宿主锁）
+        // 窗口同样在锁外处理（销毁过程会回调 DetachWindow，再进宿主锁）
         if (windows != null)
         {
-            foreach (var w in windows)
+            foreach (var w in windows.ToArray())
             {
                 try
                 {
-                    // 优先同步销毁：卸载路径紧接着就要做同步 GC，PostMessage 那种异步关窗赶不上，
-                    // 会让 ALC 回收判定失败。非同线程时回退到 Close()。
+                    // 🔗 第一步永远是**切断插件委托**，与能不能关掉无关：
+                    //    这些委托是插件实例方法 → 插件类型 → Assembly → ALC，是"旧程序集回收不掉"的主链。
+                    //    窗口还被 PluginWindow 的静态路由表强引用，所以哪怕窗口多活一会儿，
+                    //    也必须先让它不再引用插件，否则 ctx.Unload() 之后的同步 GC 一定判失败。
+                    if (w is PluginWindow pw0) pw0.DetachPluginCallbacks();
+
+                    // 优先同步销毁：卸载路径紧接着就要做同步 GC，PostMessage 那种异步关窗赶不上。
+                    // 销毁成功时 WM_DESTROY 会回调 DetachWindow 把记账摘掉，这里不用管。
                     if (w is PluginWindow pw && pw.TryDestroyNow()) continue;
+
+                    // 关不掉（典型：该窗口正在拖放循环里）→ 交给 Close() + 逐帧重试，不要再"算了"
                     w.Close();
+                    ScheduleWindowCloseRetry(w);
                 }
-                catch { /* 单个窗口关不掉不影响其余资源回收 */ }
+                catch { /* 单个窗口关不掉不影响其余资源回收，重试队列会继续尝试 */ }
             }
         }
 
         if (detailInvalidated) DetailPageChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// 把「这次没关掉的窗口」挂进重试队列（去重）。之后由 <see cref="DrainPendingWindowClose"/>
+    /// 每帧重试，直到窗口真的销毁（<see cref="DetachWindow"/> 会顺手把它从队列里摘掉）。
+    /// </summary>
+    private void ScheduleWindowCloseRetry(IPluginWindow window)
+    {
+        lock (_lock)
+        {
+            // 已经销毁了（WM_DESTROY 可能就在 Close() 之后立刻到达）就不用排队
+            if (window is PluginWindow pw && pw.IsDestroyed) return;
+            if (!_pendingWindowClose.Contains(window)) _pendingWindowClose.Add(window);
+        }
+    }
+
+    /// <summary>
+    /// 重试关闭卸载时没关掉的窗口。由渲染循环每帧调用一次（与 TickPanelCollapse 同一处），
+    /// 没有待办时只做一次 <c>Count == 0</c> 判断，稳态零开销。
+    ///
+    /// <para>拖放结束后 <see cref="PluginWindow"/> 自己也会补做那次 Close（见 StartDragFiles 的 finally），
+    /// 所以正常情况下这个队列在一两帧内就空了；这里的重试是为了兜住"拖放循环卡死 / 用户一直不松手"
+    /// 那类窗口，保证它不会因为"没人再管"而永久占着 HWND、DIB 和插件程序集。</para>
+    /// </summary>
+    internal void DrainPendingWindowClose()
+    {
+        if (_pendingWindowClose.Count == 0) return;
+
+        IPluginWindow[] batch;
+        lock (_lock) batch = _pendingWindowClose.ToArray();
+
+        foreach (var w in batch)
+        {
+            _windowCloseAttempts++;
+            try
+            {
+                if (w is PluginWindow pw && pw.IsDestroyed)
+                {
+                    lock (_lock) _pendingWindowClose.Remove(w);
+                    continue;
+                }
+                if (w is PluginWindow pw2 && pw2.TryDestroyNow())
+                {
+                    lock (_lock) _pendingWindowClose.Remove(w);
+                    continue;
+                }
+                w.Close();
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"[PluginHost] 重试关闭插件窗口失败：{ex.GetType().Name}");
+            }
+        }
+
+        // 兜底：极长时间（约 10 分钟 @60FPS）都关不掉的窗口说明那次拖放循环已经卡死，
+        // 这时**必须连宿主记账一起摘掉** —— 否则 _windows 会攒下永远不销毁的条目（列表又变成新的常驻）。
+        // 窗口的插件回调在第一次尝试时就已经切断，所以这里丢掉它不会让程序集回收失败。
+        if (_windowCloseAttempts >= 36000 && _pendingWindowClose.Count > 0)
+        {
+            IPluginWindow[] giveUp;
+            lock (_lock)
+            {
+                giveUp = _pendingWindowClose.ToArray();
+                _pendingWindowClose.Clear();
+            }
+            _windowCloseAttempts = 0;
+
+            foreach (var w in giveUp)
+            {
+                try { w.Close(); } catch { }
+                ForgetWindowAccounting(w);
+            }
+            Logger.Warn($"[PluginHost] {giveUp.Length} 个插件窗口长时间无法销毁，已停止重试并注销记账（它们的插件回调早已切断）");
+        }
+    }
+
+    /// <summary>
+    /// 摘掉某个窗口在宿主这里的全部记账（<c>_windows</c> 归属表 + 待关队列）。
+    /// 与 <see cref="DetachWindow"/> 的区别：那个由窗口自己回调（真销毁时），这个给"放弃重试"用。
+    /// </summary>
+    private void ForgetWindowAccounting(IPluginWindow window)
+    {
+        lock (_lock)
+        {
+            _pendingWindowClose.Remove(window);
+            foreach (var kv in _windows)
+            {
+                if (!kv.Value.Remove(window)) continue;
+                if (kv.Value.Count == 0) _windows.Remove(kv.Key);
+                return;
+            }
+        }
     }
 
     // ---- 交互调度：详情页（右键展开） ----
@@ -565,6 +722,16 @@ public sealed class PluginHost
     {
         lock (_lock)
         {
+            // 卸载中的插件不再收新窗口：收下来就又是一个"卸载之后没人管"的窗口
+            //（它的回调链指向即将被卸载的程序集）。这里只登记到待关队列、交给逐帧重试，
+            //**绝不能同步销毁** —— 本方法可能正处于 PluginWindow.Show() 建窗流程中间。
+            if (_unregistering.Contains(pluginId))
+            {
+                Logger.Debug($"[PluginHost] 插件 {pluginId} 正在卸载，已拒绝其新窗口的登记");
+                if (!_pendingWindowClose.Contains(window)) _pendingWindowClose.Add(window);
+                return;
+            }
+
             if (!_windows.TryGetValue(pluginId, out var list))
                 _windows[pluginId] = list = new List<IPluginWindow>(1);
             if (!list.Contains(window)) list.Add(window);
@@ -576,6 +743,10 @@ public sealed class PluginHost
     {
         lock (_lock)
         {
+            // 只有真的销毁了才允许摘记账 —— 这正是"关不掉的窗口不再被遗忘"的关键：
+            // WM_CLOSE 被推迟（拖放中）时不会走这里，条目因此留着，由重试队列继续关。
+            if (_pendingWindowClose.Contains(window)) _pendingWindowClose.Remove(window);
+
             if (!_windows.TryGetValue(pluginId, out var list)) return;
             list.Remove(window);
             if (list.Count == 0) _windows.Remove(pluginId);

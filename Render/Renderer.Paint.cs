@@ -117,12 +117,27 @@ namespace NotchPeninsula
             // 绑定悬浮圆圈底色为文字颜色的 25% 透明度，实现系统级无缝浅色适配
             _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
 
-            // 渐变着色器需要重新生成一次，但必须先手动释放旧的，防止非托管内存泄漏
-            _fadePaint.Shader?.Dispose();
-            _fadePaint.Shader = SKShader.CreateLinearGradient(
-                new SKPoint(0, 0), new SKPoint(1, 0),
-                [bg.WithAlpha(0), bg],
-                null, SKShaderTileMode.Clamp);
+            // 渐变着色器需要重新生成一次，但必须先手动释放旧的，防止非托管内存泄漏。
+            //
+            // ⚠️ 这一段必须与渲染线程互斥（2026-10-02 修）：本方法除了 UI 线程，还会被
+            //    SystemEvents 的 UserPreferenceChanged（系统深浅色切换）在**别的线程**上调用，
+            //    而渲染线程每 16ms 正在用同一支 `_fadePaint` 画渐变。
+            //    没有互斥时，「先 Dispose 旧 shader 再赋值」中间那一瞬，渲染线程手里拿的是一个
+            //    已被释放的 native shader → use-after-free，实测这类调用是**进程级 AV**（0xC0000005）。
+            //    取渲染锁即可：Draw 用的是 TryEnter，抢不到只是跳过这一帧，绝不会把 UI 线程堵住。
+            bool locked = System.Threading.Monitor.TryEnter(_renderLock, 50);
+            try
+            {
+                _fadePaint.Shader?.Dispose();
+                _fadePaint.Shader = SKShader.CreateLinearGradient(
+                    new SKPoint(0, 0), new SKPoint(1, 0),
+                    [bg.WithAlpha(0), bg],
+                    null, SKShaderTileMode.Clamp);
+            }
+            finally
+            {
+                if (locked) System.Threading.Monitor.Exit(_renderLock);
+            }
 
             _tagTextPaint.Color = _currentTextColor;
             _tagBgPaint.Color = _currentTextColor.WithAlpha(25);  // 浅色半透明背景标签
@@ -280,6 +295,7 @@ namespace NotchPeninsula
 
         private static SKPath ClipboardCapsule(float w, float h, float cx, float cy)
         {
+            // 只造这一个路径对象并返回（调用方负责它的归属），全程没有临时对象要释放
             var path = new SKPath();
             path.AddRoundRect(new SKRect(-w / 2f, -h / 2f, w / 2f, h / 2f), h / 2f, h / 2f);
             path.Transform(SKMatrix.Concat(SKMatrix.CreateTranslation(cx, cy), SKMatrix.CreateRotationDegrees(45f)));
@@ -298,11 +314,16 @@ namespace NotchPeninsula
             disc.AddCircle(12f, 12f, 10.5f);
 
             // 折角箭头：斜杆 + 右上角的两笔折角（横臂、竖臂）
-            var arrow = new SKPath();
+            // ⚠️ 这两个是**临时路径**，用完必须 Dispose：SKPath 的轮廓在 native 侧，
+            //    本方法只由静态字段初始化调用一次，所以漏了不会"增长"，但白占一份 native 路径直到终结器跑。
+            using var arrow = new SKPath();
             arrow.MoveTo(7f, 17f); arrow.LineTo(17f, 7f);
             arrow.MoveTo(7f, 7f); arrow.LineTo(17f, 7f); arrow.LineTo(17f, 17f);
 
-            // 把描边展开成填充轮廓，再与圆底做差集
+            // 把描边展开成填充轮廓，再与圆底做差集。
+            // ⚠️ arrow / arrowFill 是**临时路径**，用完必须释放：SKPath 的轮廓在 native 侧，
+            //    本方法只由静态字段初始化调用一次，所以漏了不会"增长"，但会白占一份 native 轮廓直到终结器跑。
+            //    （disc 不临时 —— 下面 Op 结果为空时要把它交出去当兜底。）
             using var stroke = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 2.2f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
             using var arrowFill = new SKPath();
             stroke.GetFillPath(arrow, arrowFill);
