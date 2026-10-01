@@ -123,6 +123,23 @@ namespace NotchPeninsula
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
 
+        // ================= 🖱 折叠态媒体区的**展开入口**（唯一真源） =================
+        // 规则（2026-10-02 定下「展开走右键」，2026-10-03 用户细化为「入口跟着跳转开关走」）：
+        //   · 「媒体交互方式」（MediaInteractionMode）= **展开功能总闸**。关掉它就没有展开这一说，
+        //     折叠态媒体区的右键照旧直达「媒体设置」，左键只剩（直接交互模式的）悬停播放控件。
+        //   · 总闸开着时，入口由「双击封面跳转应用」（MediaController.IsAppLaunchEnabled）决定 ——
+        //     开启：左键被**双击跳转**占用（双击折叠态左半边 / 展开态封面），展开让位给**右键**；
+        //     关闭：左键空闲，恢复**左键单击**展开（2026-10-02 之前的老口径），右键直达「媒体设置」。
+        //
+        // ⚠️ 命中侧（NotchWindow 的 WM_MOUSEMOVE / WM_LBUTTONDOWN / WM_RBUTTONDOWN）与设置页文案
+        //    一律从这里取，不要再各自写 `MediaInteractionMode == 1` 之类的复合判断 —— 三处口径一分叉，
+        //    就会出现「手型给了却点不动」或「设置里写着左键、实际要右键」。
+        /// <summary>折叠态媒体区是否用**右键**展开（总闸开启 + 「双击封面跳转应用」开启）。</summary>
+        public static bool MediaExpandByRightClick => MediaInteractionMode == 1 && MediaController.IsAppLaunchEnabled;
+
+        /// <summary>折叠态媒体区是否用**左键单击**展开（总闸开启 + 「双击封面跳转应用」关闭）。</summary>
+        public static bool MediaExpandByLeftClick => MediaInteractionMode == 1 && !MediaController.IsAppLaunchEnabled;
+
         /// <summary>
         /// 岛体总长度上限：Toast / 剪贴板面板的自适应宽度、组合模式总宽、以及插件行的取舍都以它封顶。
         ///

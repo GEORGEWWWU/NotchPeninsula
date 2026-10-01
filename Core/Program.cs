@@ -41,8 +41,12 @@ namespace NotchPeninsula
                     MediaController.ManualSessionAppId = (string)key.GetValue("ManualSessionAppId", "") ?? "";
                     MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
                     MediaController.IsTranslationEnabled = (int)key.GetValue("TranslationEnabled", 1) != 0;
-                    // 🖱 双击媒体控制跳回对应应用：默认开启（老用户注册表里没有这个键，取默认值即视为开启）
-                    MediaController.IsAppLaunchEnabled = (int)key.GetValue("MediaAppLaunchEnabled", 1) != 0;
+                    // 🖱 双击媒体控制跳回对应应用：**默认关闭**（2026-10-03 用户要求）。
+                    //    老版本升级上来的用户注册表里没有 MediaAppLaunchEnabled 这个键，取默认值即视为关闭 ——
+                    //    跳转会抢前台焦点，不该不告而开；同时他们的折叠态展开入口因此保持在
+                    //    「左键单击展开」（跳转关掉时的口径，见 Renderer.MediaExpandByLeftClick）。
+                    //    用户手动开过（键 = 1）或关过（键 = 0）的，一律以注册表里的值为准，不受默认值影响。
+                    MediaController.IsAppLaunchEnabled = (int)key.GetValue("MediaAppLaunchEnabled", 0) != 0;
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsClipboardEnabled = (int)key.GetValue("ClipboardEnabled", 1) != 0;

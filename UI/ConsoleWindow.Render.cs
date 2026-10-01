@@ -783,21 +783,37 @@ namespace NotchPeninsula
                 !isModeDisabled && _fsHideToggleHovered,
                 isModeDisabled);
 
-            // 🎵 媒体交互方式：组合模式同样可展开媒体面板（2026-09-25 起），因此不再置灰。
-            //    ⚠️ 副标题必须与命中侧同口径（见 NotchWindow.WM_RBUTTONDOWN）：开启后**展开入口是右键**，
-            //       左键单击不再展开（左键只留给「双击封面跳转应用」）。写成「点击展开」会让用户去左键点，
-            //       点完发现没反应 —— 2026-10-02 用户改口径时明确要求同步文案。
-            DrawToggleCard(canvas, 270, "媒体交互方式", "开启为右键展开面板，关闭为右键打开媒体设置",
+            // 🎵 媒体交互方式 = **展开功能总闸**（2026-10-03 起口径）：组合模式同样可展开媒体面板
+            //    （2026-09-25 起），因此不再置灰。总闸开着时，折叠态的**展开入口由下一张卡片
+            //    「双击封面跳转应用」决定** —— 跳转开着走右键（左键留给双击跳转），跳转关掉走左键单击。
+            //    ⚠️ 副标题必须与命中侧同口径（见 Renderer.MediaExpandByRightClick / MediaExpandByLeftClick
+            //       与 NotchWindow 的 WM_LBUTTONDOWN / WM_RBUTTONDOWN）：写成「点击展开」会让用户去左键点，
+            //       点完发现没反应 —— 2026-10-02 用户改口径、2026-10-03 细化时都明确要求同步文案。
+            DrawToggleCard(canvas, 270, "媒体交互方式",
+                Renderer.MediaInteractionMode == 1
+                    ? "展开功能已开启：入口见下方「双击封面跳转应用」"
+                    : "展开功能已关闭：折叠态右键直达媒体设置",
                 Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
             // 🖱 双击封面跳转应用（2026-09-27 新增，2026-09-30 把「双击哪里」统一到封面）：
             //    双击封面把正在放媒体的那个应用切回前台 —— 折叠态双击媒体模块**左半边**（整条高度都算，
             //    不是只有缩略图那一小块）、展开态双击封面，两种形态同一块热区。
-            //    与其余卡片保持同一版式：标题 + 一行副标题。
-            //    ⚠️ 副标题必须与命中侧（Renderer.HitMediaLaunchZone）同口径：折叠态是「左半边」而不是
-            //       「左上角」—— 命中判定完全不看 y（折叠态整条都在封面这一行里），写成左上角会让用户
-            //       只敢往缩略图上点，恰好复现 2026-10-01 那次「按十次有两三次落在边上、感觉要点两下」。
-            DrawToggleCard(canvas, 342, "双击封面跳转应用", "折叠态双击左半边，展开态双击封面",
+            //    它同时也是**折叠态展开入口的开关**（2026-10-03）：开着时左键被双击跳转占用，展开走右键；
+            //    关掉后左键空闲，恢复左键单击展开。
+            //    ⚠️ 副标题必须与命中侧（Renderer.MediaExpandByRightClick / MediaExpandByLeftClick、
+            //      Renderer.HitMediaLaunchZone）同口径：折叠态是「左半边」而不是「左上角」——
+            //      命中判定完全不看 y（折叠态整条都在封面这一行里），写成左上角会让用户
+            //      只敢往缩略图上点，恰好复现 2026-10-01 那次「按十次有两三次落在边上、感觉要点两下」。
+            //      四档文案分别对应两个开关的四种组合，把「现在到底怎么展开」写清楚，不多写。
+            //      ⚠️ 副标题（x=216 起、12px、开关左缘 522）宽度上限约 298px ≈ 24 个汉字，再长会压到开关上。
+            string appLaunchSub = Renderer.MediaInteractionMode == 0
+                ? (MediaController.IsAppLaunchEnabled
+                    ? "折叠态双击左半边，展开态双击封面"
+                    : "双击跳转已关闭（展开功能已关闭）")
+                : (MediaController.IsAppLaunchEnabled
+                    ? "开启后展开走右键；双击左半边 / 封面跳转"
+                    : "关闭时左键单击展开；开启后展开走右键");
+            DrawToggleCard(canvas, 342, "双击封面跳转应用", appLaunchSub,
                 MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered);
 
             DrawToggleCard(canvas, 414, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
