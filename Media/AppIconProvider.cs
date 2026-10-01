@@ -234,24 +234,41 @@ namespace NotchPeninsula
 
         private static SKBitmap? Resolve(string aumid)
         {
+            // 诊断留痕：四级全落空时把「每一级的结果」一次性写进日志。
+            // 「拿不到图标」只看最终结果是查不出原因的 —— 必须知道是没找到 exe 路径，
+            // 还是找到了路径但 shell 取图失败。分别对应完全不同的修法。
+            string diag = "";
+
             // 1) AUMID 本身就是可执行文件路径
             if (aumid.Contains('\\') || aumid.Contains('/'))
             {
-                if (File.Exists(aumid) && ShellIcon.Load(aumid, IconPixels) is { } fromPath) return fromPath;
+                if (!File.Exists(aumid)) diag += "L1=AUMID是路径但文件不存在; ";
+                else
+                {
+                    diag += $"L1={aumid}; ";
+                    if (ShellIcon.Load(aumid, IconPixels) is { } fromPath) return fromPath;
+                }
             }
 
             // 2) UWP / MSIX 包标识：交给 shell:AppsFolder 解析（shell 按包清单取图标）
-            if (aumid.Contains('!') && ShellIcon.Load("shell:AppsFolder\\" + aumid, IconPixels) is { } fromPackage)
-                return fromPackage;
+            if (aumid.Contains('!'))
+            {
+                diag += "L2=shell:AppsFolder; ";
+                if (ShellIcon.Load("shell:AppsFolder\\" + aumid, IconPixels) is { } fromPackage) return fromPackage;
+            }
 
             // 3) 按 AUMID 推出应用名 → 进程表里找同名 exe
             string exe = FindExeByAumid(aumid);
+            diag += $"L3={(exe.Length == 0 ? "没找到进程" : exe)}; ";
             if (exe.Length > 0 && ShellIcon.Load(exe, IconPixels) is { } fromExe) return fromExe;
 
             // 4) 词元重叠兜底（exe 名与 AUMID 毫无字面关系时，比如中文 exe 名 + 反向域名 AUMID）
             string byToken = FindExeByTokenOverlap(aumid);
+            diag += $"L4={(byToken.Length == 0 ? "没找到/被判并列" : byToken)}; ";
             if (byToken.Length > 0 && ShellIcon.Load(byToken, IconPixels) is { } fromToken) return fromToken;
 
+            // L3/L4 找到了路径却走到这里 ⇒ 是 shell 取图那一步失败（路径本身没问题）
+            Logger.Debug($"应用图标四级全部落空：{diag}");
             return null;
         }
 

@@ -1619,6 +1619,15 @@ namespace NotchPeninsula
             var dt = now - _lastUpdateTime;
             _lastUpdateTime = now; // 无论是否在播放，每一帧都更新绝对时间差
 
+            // ★ 封面兜底重试。
+            // 图标解析在「刚接管会话」那一刻很容易瞬时失败（播放器进程还没就绪 / 时序），
+            // 而会驱动 UpdateCover 的 MediaPropertiesChanged **只在元数据变化时**触发 ——
+            // 播放期间通常一次都不会再来。结果就是：播放时一直没有图标，一按暂停（播放状态变化
+            // 触发一次属性刷新）反而冒出来了 —— 用户实测到的正是这个现象。
+            // 所以借渲染循环这个稳定时钟补一次重试；真正的解析由 AppIconProvider 自带退避节流，
+            // 未命中时这里只是一次字段比较，几乎不花钱。
+            if (Thumbnail == null) UpdateCover();
+
             // 被切走的那首歌若还在后台播放，继续替它推算进度（内部按 1 秒节流，无挂起时立即返回）
             AdvanceSuspendedTimeline(now);
 
