@@ -20,8 +20,15 @@ namespace NotchPeninsula
         // 系统当前是否存在任何 SMTC 会话（设置界面据此清空「手动选择软件」选项框）
         internal static bool HasActiveSessions { get; private set; }
         // 🖱 双击封面（折叠态与展开态都算）是否跳回正在放媒体的那个应用。
-        // 关掉后双击完全不消费、不做事，折叠态的「点一下展开」等原有交互不受影响。
-        internal static bool IsAppLaunchEnabled = true;
+        // 关掉后双击完全不消费、不做事，折叠态媒体区的展开入口同时变成**左键单击**
+        // （见 Renderer.MediaExpandByLeftClick / MediaExpandByRightClick）。
+        //
+        // ⚠️ **默认关闭**（2026-10-03 用户要求）：这是「跳回媒体软件」这种会抢走前台焦点的动作，
+        //    不该在老用户升级后不告而开 —— 注册表里没有 MediaAppLaunchEnabled 这个键时一律按关闭处理
+        //    （见 Program.LoadSettings）。顺带的好处是：升级用户默认拿到的就是他们熟悉的
+        //    「左键单击展开媒体面板」（2026-10-02 之前的老口径），而双击跳转变成显式开启的功能。
+        //    用户手动开过 / 关过的，注册表里的值照旧优先，不会被这次改默认值影响。
+        internal static bool IsAppLaunchEnabled = false;
 
         internal static bool IsLyricsEnabled = true;
         internal static bool IsKaraokeEnabled = true;
