@@ -1030,24 +1030,36 @@ namespace NotchPeninsula
                         using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
                         long songId = 0;
-                        if (searchDoc.RootElement.TryGetProperty("result", out var result) &&
-                            result.TryGetProperty("songs", out var songs))
+                        if (searchDoc.RootElement.TryGetProperty("result", out var result)
+                            && result.ValueKind == JsonValueKind.Object
+                            && result.TryGetProperty("songs", out var songs)
+                            && songs.ValueKind == JsonValueKind.Array)
                         {
                             foreach (var song in songs.EnumerateArray())
                             {
-                                string name = song.GetProperty("name").GetString() ?? "";
+                                // ⚠️ 一律 TryGetProperty + 先验 ValueKind：这些字段在真实响应里会缺、
+                                //    甚至类型不对（实测到过 album 是字符串）。裸 GetProperty 或在非对象元素上
+                                //    调 TryGetProperty 都会抛异常，而异常会被外层 catch 吞成一行 WARN ——
+                                //    代价却是**整个网易云引擎中断**，歌词与封面一起没了。
+                                if (song.ValueKind != JsonValueKind.Object) continue;
+
+                                string name = song.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
                                 string singer = "";
-                                if (song.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
-                                    singer = artists[0].GetProperty("name").GetString() ?? "";
+                                if (song.TryGetProperty("artists", out var artists)
+                                    && artists.ValueKind == JsonValueKind.Array && artists.GetArrayLength() > 0
+                                    && artists[0].ValueKind == JsonValueKind.Object
+                                    && artists[0].TryGetProperty("name", out var singerEl))
+                                    singer = singerEl.GetString() ?? "";
 
                                 // 精度优化：匹配歌名+歌手，并引入时长校验（误差4秒内）屏蔽 Live/伴奏 版
                                 if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
                                     (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
                                 {
-                                    long durationMs = song.GetProperty("duration").GetInt64();
-                                    if (durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4)
+                                    // 时长缺失（0）时不做校验：宁可取回搜索结果里的第一条，也别因为缺字段整首歌没歌词
+                                    long durationMs = song.TryGetProperty("duration", out var durEl) && durEl.TryGetInt64(out long d) ? d : 0;
+                                    if (durationMs <= 0 || durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4)
                                     {
-                                        songId = song.GetProperty("id").GetInt64();
+                                        if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out songId)) continue;
                                         break;
                                     }
                                 }
@@ -1133,7 +1145,13 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 搜索顺带命中的封面地址带回给调用方，由取封面那条链消费
+                // ====== 封面兜底：整条链一个地址都没给出时，走 QQ 直连再试一次 ======
+                // 落月的搜索一旦没匹配上，songmid 与封面会一起拿不到（封面地址同样出自那次搜索），
+                // 而封面恰恰是最显眼的一项 —— 这里给出一个完全不依赖落月的来源。
+                // 视频模式不取网络封面（FetchCoverAsync 会直接返回），所以这里也不白花请求。
+                if (coverUrl.Length == 0 && !IsVideoMode)
+                    coverUrl = await FetchQqCoverAsync(title, artist);
+
                 return coverUrl;
             }
             finally
@@ -1236,6 +1254,12 @@ namespace NotchPeninsula
         // 但本接口仍然可用 —— 前提是有 songmid，而 songmid 由落月搜索提供，所以不需要搜索这一步。
         private const string QQMusicLyricApi = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
 
+        // QQ 音乐另外两个仍然可用的直连接口（都不需要登录），只服务于「封面兜底」这一条路。
+        // 之所以要它们：落月的搜索一旦没匹配上，songmid 与封面会一起拿不到（封面地址也出自那次搜索），
+        // 而封面恰恰是最显眼的一项 —— 这两步给出一个完全不依赖落月的来源。
+        private const string QQMusicSmartBoxApi = "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg";
+        private const string QQMusicSingleSongApi = "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg";
+
         /// <summary>QQ 歌词接口返回的正文是 HTML 实体转义的（换行写成 <c>&#10;</c>），统一还原成普通文本。</summary>
         private static string UnescapeQqText(string? raw)
             => raw?.Replace("&#10;", "\n").Replace("&#13;", "\r")
@@ -1297,33 +1321,195 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 落月搜索结果里歌名与歌手全字匹配的第一条。
-        /// <paramref name="cover"/> 带出专辑封面地址，<paramref name="mid"/> 带出 QQ 的 songmid；
-        /// 匹配不上返回 0（此时两者都是 null）。
+        /// 落月搜索结果里最匹配的一条。<paramref name="cover"/> 带出专辑封面地址、
+        /// <paramref name="mid"/> 带出 QQ 的 songmid；没匹配上返回 0（此时两者都是 null）。
+        ///
+        /// <para><b>为什么要「宽容匹配」而不是全等</b>：全等在真实曲库里命中率偏低，实测两类情况直接落空 ——</para>
+        /// <list type="bullet">
+        /// <item><b>多歌手</b>：落月给 <c>Daoko/米津玄師</c>，播放器上报的歌手却只是 <c>DAOKO</c>（合作曲的常态）；</item>
+        /// <item><b>标题带后缀</b>：落月给 <c>夜曲 - A35</c>、<c>晴天 (Live)</c>，播放器给的是 <c>夜曲</c>、<c>晴天</c>。</item>
+        /// </list>
+        /// <para>而一旦落空，歌词与封面会**一起**拿不到 —— 封面地址同样出自这次搜索。表现就是「有概率获取不到」。</para>
+        ///
+        /// <para>规则：两侧先归一化（只留字母 / 数字 / 汉字假名，转小写，去掉空格括号连字符），
+        /// 标题要求归一化后全等（分更高）或互相包含；歌手按分隔符拆成多个名字，任一对得上即算过。
+        /// 取分数最高的那一条；歌手完全不沾边的不候用，免得挂到翻唱 / 同名曲上。</para>
         /// </summary>
         private static long MatchSong(JsonElement list, string title, string artist, out string? cover, out string? mid)
         {
             cover = null;
             mid = null;
 
+            string wantTitle = NormalizeToken(title);
+            if (wantTitle.Length == 0) return 0;
+            var wantArtists = SplitArtists(artist);
+
+            long bestId = 0;
+            int bestScore = 0;
+
             foreach (var song in list.EnumerateArray())
             {
+                if (song.ValueKind != JsonValueKind.Object) continue; // 数组里混进非对象元素：跳过而不是抛
+
                 string name = song.TryGetProperty("song", out var nameEl) ? nameEl.GetString() ?? "" : "";
                 string singer = song.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
 
-                if (!string.Equals(name, title, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!string.IsNullOrEmpty(artist) && !string.Equals(singer, artist, StringComparison.OrdinalIgnoreCase)) continue;
-
+                int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer));
+                if (score <= bestScore) continue;
                 if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out long id)) continue;
 
-                if (song.TryGetProperty("cover", out var coverEl) && coverEl.GetString() is { Length: > 0 } c)
-                    cover = NormalizeCoverUrl(c);
-                if (song.TryGetProperty("mid", out var midEl) && midEl.GetString() is { Length: > 0 } m)
-                    mid = m;
-
-                return id;
+                bestScore = score;
+                bestId = id;
+                cover = song.TryGetProperty("cover", out var coverEl) && coverEl.GetString() is { Length: > 0 } c
+                    ? NormalizeCoverUrl(c) : null;
+                mid = song.TryGetProperty("mid", out var midEl) && midEl.GetString() is { Length: > 0 } m ? m : null;
             }
-            return 0;
+
+            if (bestId <= 0) { cover = null; mid = null; }
+            return bestId;
+        }
+
+        /// <summary>候选打分：标题全等 2 分 / 互相包含 1 分（0 分直接淘汰）；歌手另计，最高 2 分。0 表示不候用。</summary>
+        private static int ScoreCandidate(string wantTitle, HashSet<string> wantArtists, string candTitle, HashSet<string> candArtists)
+        {
+            int titleScore;
+            if (candTitle == wantTitle) titleScore = 2;
+            else if (candTitle.Length > 0
+                     && (candTitle.Contains(wantTitle, StringComparison.Ordinal)
+                         || wantTitle.Contains(candTitle, StringComparison.Ordinal))) titleScore = 1;
+            else return 0;
+
+            if (wantArtists.Count == 0 || candArtists.Count == 0) return titleScore * 10 + 1; // 一侧没给歌手：不因此淘汰
+
+            if (wantArtists.Overlaps(candArtists)) return titleScore * 10 + 2;
+            return HasPartialArtistOverlap(wantArtists, candArtists) ? titleScore * 10 + 1 : 0;
+        }
+
+        /// <summary>
+        /// 歌手「简称 ↔ 全称」的兜底：任一名字互为包含且都不短，就算对上。
+        /// </summary>
+        private static bool HasPartialArtistOverlap(HashSet<string> a, HashSet<string> b)
+        {
+            foreach (string x in a)
+            {
+                if (x.Length < 2) continue;
+                foreach (string y in b)
+                {
+                    if (y.Length >= 2 && (x.Contains(y, StringComparison.Ordinal) || y.Contains(x, StringComparison.Ordinal)))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        // ==================== 🖼 QQ 直连封面兜底 ====================
+
+        /// <summary>
+        /// 只走 QQ 音乐自己的两个接口取专辑封面，**完全不依赖落月**。
+        /// 调用点在整条歌词链跑完之后、且一个封面地址都没拿到时。
+        ///
+        /// <list type="number">
+        /// <item><c>smartbox_new.fcg</c> —— QQ 的搜索建议接口。官方主搜索 <c>client_search_cp</c> 已恒 500，
+        ///       但这个仍然可用，且正好给出曲名 / 歌手 / songmid，可以直接复用同一套匹配打分；</item>
+        /// <item><c>fcg_play_single_song.fcg?songmid=</c> —— 用 songmid 换回 <c>album.mid</c>（albummid），
+        ///       拼成 QQ 专辑图地址（与落月给的 cover 同一个 CDN 格式）。</item>
+        /// </list>
+        ///
+        /// <para>任何一步失败都返回空串，调用方保持原有的兜底封面（程序图标）。</para>
+        /// </summary>
+        private async Task<string> FetchQqCoverAsync(string title, string artist)
+        {
+            try
+            {
+                _http.DefaultRequestHeaders.Clear();
+                _http.DefaultRequestHeaders.Add("User-Agent", HttpUserAgent);
+                _http.DefaultRequestHeaders.Add("Referer", "https://y.qq.com/");
+
+                // 1) 搜索建议：拿到候选曲目及其 songmid
+                string word = Uri.EscapeDataString(string.IsNullOrEmpty(artist) ? title : $"{title} {artist}");
+                using var searchStream = await _http.GetStreamAsync($"{QQMusicSmartBoxApi}?key={word}&format=json&utf8=1");
+                using var searchDoc = await JsonDocument.ParseAsync(searchStream);
+
+                if (!searchDoc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object
+                    || !data.TryGetProperty("song", out var songBox) || songBox.ValueKind != JsonValueKind.Object
+                    || !songBox.TryGetProperty("itemlist", out var items) || items.ValueKind != JsonValueKind.Array)
+                    return "";
+
+                string? songMid = PickBestMid(items, title, artist);
+                if (songMid == null) return "";
+
+                // 2) 用 songmid 换 albummid
+                using var detailStream = await _http.GetStreamAsync($"{QQMusicSingleSongApi}?songmid={songMid}&platform=yqq&format=json");
+                using var detailDoc = await JsonDocument.ParseAsync(detailStream);
+
+                if (!detailDoc.RootElement.TryGetProperty("data", out var list) || list.ValueKind != JsonValueKind.Array
+                    || list.GetArrayLength() == 0 || list[0].ValueKind != JsonValueKind.Object
+                    || !list[0].TryGetProperty("album", out var album) || album.ValueKind != JsonValueKind.Object
+                    || !album.TryGetProperty("mid", out var albumMidEl))
+                    return "";
+
+                string albumMid = albumMidEl.GetString() ?? "";
+                return albumMid.Length == 0 ? "" : $"https://y.gtimg.cn/music/photo_new/T002R300x300M000{albumMid}.jpg";
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"QQ 直连封面获取失败: {ex.Message}");
+                return "";
+            }
+        }
+
+        /// <summary>在 smartbox 的歌曲列表里挑最匹配的一条，返回 songmid；没有合格的返回 null。</summary>
+        private static string? PickBestMid(JsonElement items, string title, string artist)
+        {
+            string wantTitle = NormalizeToken(title);
+            if (wantTitle.Length == 0) return null;
+            var wantArtists = SplitArtists(artist);
+
+            string? bestMid = null;
+            int bestScore = 0;
+
+            foreach (var item in items.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+
+                string name = item.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                string singer = item.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
+
+                int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer));
+                if (score <= bestScore) continue;
+                if (!item.TryGetProperty("mid", out var midEl) || midEl.GetString() is not { Length: > 0 } mid) continue;
+
+                bestScore = score;
+                bestMid = mid;
+            }
+            return bestMid;
+        }
+
+        /// <summary>
+        /// 归一化：只保留字母 / 数字 / 汉字假名谚文，其余（空格、括号、连字符、全角标点…）全部去掉并转小写。
+        /// 于是 <c>晴天 (Live)</c> → <c>晴天live</c>、<c>夜曲 - A35</c> → <c>夜曲a35</c>、<c>DAOKO</c> → <c>daoko</c>。
+        /// </summary>
+        private static string NormalizeToken(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s)
+                if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+            return sb.ToString();
+        }
+
+        // 歌手串里的分隔符：中英日常见的并列写法都收进来
+        private static readonly char[] ArtistSeparators = ['/', '、', ',', '，', '&', '×', ';', '；', '|', '+'];
+
+        /// <summary>把歌手串拆成名字集合并归一化：<c>Daoko/米津玄師</c> → <c>{daoko, 米津玄師}</c>。</summary>
+        private static HashSet<string> SplitArtists(string s)
+        {
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string part in s.Split(ArtistSeparators, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string n = NormalizeToken(part);
+                if (n.Length > 0) set.Add(n);
+            }
+            return set;
         }
 
         /// <summary>
