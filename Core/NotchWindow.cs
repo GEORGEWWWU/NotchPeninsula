@@ -223,10 +223,12 @@ namespace NotchPeninsula
         //       y = 12 才开始**（12f * _currentStyleProgress），这次点击的坐标**天然落在岛体之外**。
         //       不屏蔽的话，唤醒自己的这一次点击会被判成「岛外点击」，岛刚滑出来就被收回去
         //       —— 用户看到的就是「抽一下又回去了」。
-        //    ② 左键点媒体模块展开媒体面板：折叠态岛体可能比展开面板（锁死 320）**更宽**
-        //       （长歌词自适应 / 组合模式），展开瞬间岛体变窄，按下时还在岛内的坐标随即落到岛外。
-        //       不屏蔽的话，这次点击同样被判成「岛外点击」，面板刚展开就被 CollapseAllExpanded 收回
-        //       —— 用户看到的就是「点一下展开、又立刻收回去」。
+        //    ② 右键点折叠态媒体区展开媒体面板（2026-10-02 起展开入口从左键改到右键）：折叠态岛体可能比
+        //       展开面板（锁死 320）**更宽**（长歌词自适应 / 组合模式），展开瞬间岛体变窄，
+        //       按下时还在岛内的坐标随即落到岛外。不屏蔽的话，这次点击同样被判成「岛外点击」，
+        //       面板刚展开就被 CollapseAllExpanded 收回 —— 用户看到的就是「点一下展开、又立刻收回去」。
+        //       注：右键不产生 WM_LBUTTONUP，解除只靠下面那条「每帧读一次左键是否按下」——
+        //       右键场景下左键本来就是抬起的，所以下一帧即自动复位。
         //    · 抑制范围 = **这一次按键的 down→up 全程**，不多不少。
         //      解除不靠 WM_LBUTTONUP，而是靠轮询里每帧读一次 `GetAsyncKeyState(0x01)`：
         //      岛体滑回后，光标所在的那条屏幕顶边在窗口里是**透明像素**，分层窗口的透明区域不参与
@@ -1695,10 +1697,11 @@ namespace NotchPeninsula
                             {
                                 if (Renderer.MediaInteractionMode == 1)
                                 {
-                                    // 🎵 展开交互：媒体模块自身就是「点击展开」的热区，所以鼠标落在它上面就给小手。
-                                    //    组合模式下媒体只是岛体里的一段（左右还挨着时钟 / 硬件 / 插件），
-                                    //    用渲染时登记的真实区间判定 —— 不能整岛都给小手，否则点时钟也会展开媒体。
-                                    _isCursorOverIcon = Renderer.HitMediaZone(mx) && my >= hitTopY && my <= hitTopY + _currentHeight;
+                                    // 🖱 展开交互下的折叠态：**左键什么也不做**（展开走右键，左键只留给双击跳转），
+                                    //    所以这里不再给小手 —— 手型是「点下去有反应」的承诺，折叠态左键已经没有反应了。
+                                    //    悬停高亮的播放控件本来也只在直接交互模式下画（见 Renderer.MediaWidget），
+                                    //    两种口径在这里保持一致：折叠态 + 展开交互 = 不出现可点提示。
+                                    _isCursorOverIcon = false;
                                 }
                                 else
                                 {
@@ -1770,13 +1773,20 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDBLCLK:
                     {
-                        // 🖱 双击封面（折叠态是左端缩略图、展开态是那块封面，两种形态同一条判据）
+                        // 🖱 双击封面（折叠态是媒体模块左半边那一格、展开态是那块封面，两种形态同一条判据）
                         //    → 跳回正在放媒体的那个应用。
                         //
-                        // 与单击的关系：双击必然先来一次 WM_LBUTTONDOWN，所以折叠态的「第一下」已经照常
-                        // 展开了媒体面板、展开态的「第一下」已经照常点了播放按钮 —— 这里只负责第二下的语义。
+                        // 与折叠态单击的关系：**折叠态左键单击什么都不做**（2026-10-02 用户定的口径：
+                        // 展开走右键，左键只负责双击跳转）。所以这里不存在「第二下被展开吃掉」的问题，
+                        // 也不需要再分辨单双击 —— 一次干净的双击直接跳转。
                         // 落在不合法的地方（标题 / 歌词 / 频谱 / 时间轴 / 播放按钮 / 通知 / 剪贴板接管期间）
                         // 就**完全不消费**，消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
+                        //
+                        // ⚠️ 折叠态左右两半的归属（与 HitMediaLaunchZone 同口径）：
+                        //    · **左半边**（媒体模块左半，**整条高度都算**，不是只有缩略图那一小块）：双击 → 跳转；
+                        //    · **右半边**（频谱那一带）：双击热区压根不覆盖，永远只走原有交互
+                        //      （直接交互模式下是悬停显示播放控件，展开交互模式下左键不做事、右键展开）；
+                        //    · 展开态：封面那一格双击 → 跳转。
                         int dx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int dy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
@@ -1786,6 +1796,7 @@ namespace NotchPeninsula
 
                         bool launchEnabled = MediaController.IsAppLaunchEnabled;
                         bool onCover = Renderer.HitMediaLaunchZone(dx, dy);
+
                         Logger.Info($"媒体跳转[诊断]：双击 ({dx},{dy}) 开关={launchEnabled} 悬停={_isHovered} "
                             + $"媒体激活={_media.IsActive} 通知={_currentToast != null} 剪贴板={isClipboardActive} "
                             + $"详情页={Renderer.HasActiveDetailPage} 面板={Renderer.IsMediaPanelShowing(_media)} "
@@ -1878,45 +1889,44 @@ namespace NotchPeninsula
                                 return (IntPtr)0;
                             }
 
-                            bool hitButtons = false;
+                            // 🎵 播放控件：展开态走面板底部那三颗，折叠态只在**直接交互**模式下有
+                            //    （见 Renderer.MediaWidget.cs 的 DrawMediaInline）。两边都不需要再记
+                            //    「点到了按钮」——折叠态已经没有「没点到按钮就展开」的兜底分支了。
                             if (Renderer.IsMediaExpanded)
                             {
                                 // 🎯 与悬停高亮共用同一套命中几何（见 Renderer.HitExpandedButton）：
                                 //    高亮在哪儿，点下去就一定生效，不再有「亮着却点不动」的空隙。
                                 switch (Renderer.HitExpandedButton(cx, cy - hitTopY, _currentHeight))
                                 {
-                                    case 0: _media.Previous(); hitButtons = true; break;
-                                    case 1: _media.TogglePlayPause(); hitButtons = true; break;
-                                    case 2: _media.Next(); hitButtons = true; break;
+                                    case 0: _media.Previous(); break;
+                                    case 1: _media.TogglePlayPause(); break;
+                                    case 2: _media.Next(); break;
                                 }
                             }
                             else if (Renderer.MediaInteractionMode == 0)
                             {
                                 // 折叠态播放按钮只在**直接交互**模式下绘制（见 Renderer.MediaWidget.cs 的
-                                // DrawMediaInline），因此也只有该模式吃这里的点击；展开交互模式点这一带会
-                                // 落到下面「点媒体区即展开面板」的分支，与「悬停不显示控件」保持一致。
+                                // DrawMediaInline），因此也只有该模式吃这里的点击；展开交互模式不画这两颗按钮，
+                                // 点这一带不会命中任何控件（折叠态的展开入口已在右键，见 WM_RBUTTONDOWN），
+                                // 与「悬停不显示控件」保持一致。
                                 // 位置与渲染侧共用同一个锚点：GetMediaRight 返回的就是媒体模块右缘。
                                 float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
                                 switch (Renderer.HitInlineButton(cx, cy - hitTopY, right, _currentHeight))
                                 {
-                                    case 0: _media.Previous(); hitButtons = true; break;
-                                    case 1: _media.TogglePlayPause(); hitButtons = true; break;
-                                    case 2: _media.Next(); hitButtons = true; break;
+                                    case 0: _media.Previous(); break;
+                                    case 1: _media.TogglePlayPause(); break;
+                                    case 2: _media.Next(); break;
                                 }
                             }
 
-                            // 🎵 展开交互：点在媒体模块上（且没点到按钮）就展开 —— 组合 / 非组合同一套判定，
-                            //    热区用渲染时登记的媒体区间，所以组合模式下点时钟 / 硬件不会误展开媒体。
-                            //    直接交互模式不提供展开入口（点空白处不做事）。
-                            if (!hitButtons && Renderer.MediaInteractionMode == 1 && Renderer.HitMediaZone(cx))
-                            {
-                                ExpandPanel(Plugins.BuiltinWidgets.Media);
-                                // 🎯 展开会让岛体在随后几帧里改变尺寸：折叠态可能比 320 的面板更宽
-                                //    （长歌词自适应 / 组合模式），展开瞬间变窄，按下时还在岛内的坐标随即
-                                //    落到岛外 —— 不屏蔽的话就会被上面的兜底轮询判成「岛外点击」，
-                                //    面板刚展开就被收回（用户只点了一次）。抑制到本次按键松开为止。
-                                _suppressOutsideCollapse = true;
-                            }
+                            // 🖱 折叠态的**左键不再展开面板**（2026-10-02 用户改的交互口径）：
+                            //    「媒体如果开启了展开功能就右键展开，否则右键打开设置；左键双击打开媒体应用」。
+                            //    所以这里既不做单击展开、也不做单双击分辨 —— 折叠态左键只剩「双击封面跳转应用」
+                            //    一件事（在 WM_LBUTTONDBLCLK 里），单击天然什么都不做。
+                            //    展开入口整体挪到右键（见 WM_RBUTTONDOWN 里的 HitMediaZone 分支）。
+                            //
+                            // ⚠️ 不要在这里恢复「点一下即展开」：那正是折叠态左半边单双击互相吃掉的根源
+                            //    （缩略图与展开态封面同在岛内左端，第二下会落进封面的双击热区）。
                         }
                         break;
                     }
@@ -1924,13 +1934,7 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
-                        // 🧩 岛内右键的优先级：详情页收起 → 插件组件广播 → 设置窗口。
-                        //
-                        // ⚠️ 原生媒体控制器区域（标题文字 / 歌词 / 频谱 / 播放按钮 / 空白）**一律不消费右键**，
-                        //    整个媒体控制器的右键都只打开设置窗口 —— 用户 2026-09-19 明确要求。
-                        //    早先这里有个「右键折叠态媒体标题 → 展开媒体面板」的快捷入口（05df004 加的），
-                        //    它把标题文字那一段的右键整片吃掉（热区高 = 整个岛体高），用户想开设置窗口
-                        //    还得精确点到岛体最右侧那条窄边。已整体删除，不再登记任何媒体标题热区。
+                        // 🧩 岛内右键的优先级：详情页收起 → 插件组件广播 → 媒体面板展开 → 设置窗口。
                         int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         float rtY = 12f * _currentStyleProgress;
@@ -1956,10 +1960,34 @@ namespace NotchPeninsula
                             }
                         }
 
+                        // 🖱 折叠态媒体区右键 = **展开媒体面板**（2026-10-02 用户定的口径）：
+                        //    「媒体如果开启了展开功能就右键展开，否则右键打开设置；展开态右键打开设置」。
+                        //    三条判据缺一不可：① 消息提示音接管岛体时不抢（_currentToast == null，与上面同一道闸）；
+                        //    ② 展开了「媒体交互方式」——关掉它就没有展开这一说，右键照旧直达设置页签；
+                        //    ③ 面板此刻确实还没展开（展开态右键归设置窗口，且面板已展开时再展开一次没有意义）。
+                        //    媒体没激活时绘制侧压根不登记媒体区间（HitMediaZone 恒 false），这里不必另判。
+                        if (_currentToast == null
+                            && Renderer.MediaInteractionMode == 1
+                            && !Renderer.IsMediaExpanded
+                            && Renderer.HitMediaZone(rx))
+                        {
+                            ExpandPanel(Plugins.BuiltinWidgets.Media);
+                            // 🎯 与原先「左键展开」同一条理由：折叠态岛体可能比 320 的面板更宽，展开瞬间变窄，
+                            //    按下时还在岛内的坐标可能随即落到岛外，被兜底轮询判成「岛外点击」把面板当场收走。
+                            //    右键不产生 WM_LBUTTONUP，所以靠按下时置位、由每帧观察左键状态的那段逻辑清掉 ——
+                            //    右键场景下左键本来就是抬起的，下一帧即自动复位，只覆盖展开那一瞬间。
+                            _suppressOutsideCollapse = true;
+                            Logger.Info($"媒体展开：折叠态右键 ({rx},{ry}) 命中媒体区 → 已展开媒体面板"
+                                + "（展开态右键仍打开设置）");
+                            return (IntPtr)0;
+                        }
+
                         // 🖱️ 按「右键落在哪块原生内容上」直达对应设置页签（用户 2026-09-23 建议）：
                         //    媒体控制器 → 媒体设置；时间/日期、CPU/RAM → 显示设置；
                         //    其他（空白待机 / 插件行 / 剪贴板面板…）→ 保持原行为，打开设置窗口的当前页签。
                         //    命中区由渲染器本帧登记（Renderer.Layout.cs），所以通知 / 详情页接管岛体期间不会误命中。
+                        //    ⚠️ 这里**不消费**媒体区的右键：整个媒体控制器的右键都照旧只打开设置窗口
+                        //       （用户 2026-09-19 定的），上面那条分支只是「折叠态 + 开启展开」这一种情况下的例外。
                         int targetTab = Renderer.NativeRightClickTab(rx);
                         if (targetTab >= 0) ConsoleWindow.ShowTab(targetTab);
                         else ConsoleWindow.Toggle();

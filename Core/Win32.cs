@@ -31,6 +31,17 @@ namespace NotchPeninsula
         // 窗口类样式：注册时声明「本类窗口要收双击消息」，否则系统永不派发 WM_LBUTTONDBLCLK
         public const uint CS_DBLCLKS = 0x0008;
 
+        /// <summary>
+        /// 系统的「双击判定间隔」（毫秒）。
+        ///
+        /// <para>岛体用它把一次<b>左键按下</b>与紧随其后的 <see cref="WM_LBUTTONDBLCLK"/> 认成**同一次手势**：
+        /// 折叠态左半边单击会展开媒体面板（见 NotchWindow 的高度折叠态分支），若第二下也被当成独立点击，
+        /// 它就会落在刚铺开的展开面板封面上、被双击跳转吃掉 —— 用户看到的正是「点一下左半边，应用被打开了」。
+        /// 取系统值而不是写死 300ms，是为了与「系统肯把第二下升格成双击消息」的那个窗口严格同源。</para>
+        /// </summary>
+        [DllImport("user32.dll")]
+        public static extern uint GetDoubleClickTime();
+
         /// <summary>滚轮消息：wParam 高字是 ±120 的整数倍，低字是按键状态；lParam 是屏幕坐标。</summary>
         public const int WM_MOUSEWHEEL = 0x020A;
         public const int WM_LBUTTONUP = 0x0202;
