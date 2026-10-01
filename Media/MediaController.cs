@@ -35,6 +35,9 @@ namespace NotchPeninsula
         // 翻译歌词：开启后把当前句的译文作为第二行画在原文下方（仅在有译文时生效）
         internal static bool IsTranslationEnabled = true;
         internal static float LyricDelayOffset = 0f;
+        // 四个歌词引擎与网络封面下载共用同一个 UA
+        private const string HttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
         private static readonly HttpClient _http = new(new HttpClientHandler // 注入无条件放行的证书校验回调，彻底解决 SSL 报错，同时增加超时容错
         {
             ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
@@ -57,6 +60,15 @@ namespace NotchPeninsula
         private DateTime _lastUpdateTime = DateTime.UtcNow;
         private string _lastFetchedTitle = "";
         private string _lastFetchedArtist = "";
+
+        // 已经换上网络封面的曲目标识（见 SongKey）。命中时属性刷新不再碰封面 ——
+        // 那条路径会把网络封面 Dispose 掉、换成程序图标，封面就会在网络图到达后又被顶回去。
+        private string _networkCoverKey = "";
+
+        // 当前 Thumbnail 里放的到底是「哪个程序的应用图标」；为其他来源的封面时置空。
+        // 少了它，视频模式下每次属性刷新都会新建一张 SKBitmap 再把旧的那张 Dispose 掉 ——
+        // 不是泄漏（旧的确实放掉了），但白白在原生堆上反复分配 / 释放，且每帧都要走一遍取图逻辑。
+        private string _appIconKey = "";
 
         // 最近播放过的歌曲及其进度。进度挂在「歌曲槽位」上而不是全局变量，
         // 所以切平台来回（音乐↔浏览器、音乐↔音乐）时能取回进度，歌词不会从头开始。
@@ -127,15 +139,62 @@ namespace NotchPeninsula
         public bool IsActive { get; private set; } = false;
         public SKBitmap? Thumbnail { get; private set; }
 
-        // 当前会话是否不具备歌词能力（浏览器 / 视频类 / PotPlayer）：它们没有可用的歌词时间轴，
-        // 既不该显示歌词，也不该污染歌词进度。三处判断共用一份定义，避免规则漂移。
-        //
-        // 例外：用户在设置里手动锁定的软件越过全部自动判定（含浏览器判定），一律按普通媒体源
-        // 走歌词校验 —— 用户明确指定了它，就不该再被「进程名带 edge / chrome」这种猜测否掉。
-        // 否则 msedgewebview2（Pake / Tauri 等 WebView2 套壳播放器）会被当成浏览器直接掐掉歌词，
-        // 手动选择等于白选。手动锁定的判据见 _isManualLockedSession。
-        private bool IsNonLyricSession =>
-            !_isManualLockedSession && (_isBilibiliSession || _isBrowserSession || _isPotPlayerSession);
+        // 封面位图的**唯一写入口**。三处互不等待的路径都会换图 —— 属性刷新、网络封面下载完成、
+        // 会话被清空 —— 而属性刷新那道 _refreshingProperties 闸门管不到网络封面那条异步链，
+        // 所以「换引用 + 释放旧图」必须在这里自己串起来：否则两次并发换图会把同一张位图 Dispose 两次，
+        // 而渲染线程每帧都在读 Thumbnail —— Dispose 之后再访问就是原生访问违例（0xC0000005，直接杀进程）。
+        private readonly object _thumbSwap = new();
+
+        private void SetThumbnail(SKBitmap? next)
+        {
+            lock (_thumbSwap)
+            {
+                var old = Thumbnail;
+                if (ReferenceEquals(old, next)) return;
+                Thumbnail = next;
+                old?.Dispose();
+                // 换图即作废「当前放的是哪个程序的图标」这条记账：调用方（SetAppIcon）换完之后自己补上，
+                // 其余所有来源（网络封面 / 清空）都天然落到「不是程序图标」，不需要每处都记得清。
+                _appIconKey = "";
+            }
+        }
+
+        /// <summary>
+        /// 换上「当前会话那个程序」的应用图标。
+        /// 同一个程序的图标已经在位时直接返回 —— 视频模式下每次属性刷新都会走到这里，
+        /// 没有这道闸就会反复新建 / 释放原生位图（<see cref="AppIconProvider"/> 只发副本，那个副本由我们持有）。
+        /// </summary>
+        private void SetAppIcon()
+        {
+            // 同一个程序的图标已经在位：什么都不做。为 null（解析失败）时 _appIconKey 是空串，
+            // 下一次仍会重试 —— 但 AppIconProvider 那边有失败冷却，重试本身几乎不花钱。
+            if (_appIconKey.Length > 0 && string.Equals(_appIconKey, _currentAppId, StringComparison.Ordinal)) return;
+
+            var icon = AppIconProvider.Get(_currentAppId);
+            SetThumbnail(icon);            // 内部会把 _appIconKey 清空，所以这一步必须排在下面那行之前
+            if (icon != null) _appIconKey = _currentAppId;
+        }
+
+        /// <summary>
+        /// 视频模式：这个会话只能展示「程序图标 + 名称」，没有可用的歌曲信息。
+        ///
+        /// <para>判据对**所有软件一致**，只有一条 —— SMTC 没同时给出歌名与歌手。
+        /// 反过来只要有歌名 + 歌手就是音乐模式：取歌词、取网络封面（见 <see cref="UpdateMediaMode"/>）。</para>
+        ///
+        /// <para>B站 / 浏览器天然落在视频模式：B站的 Artist 在刷新时就被清空（网页不提供歌手），
+        /// 浏览器则要靠网页标题里的「正在播放: 歌名 - 歌手」才能解析出歌手 —— 解析得出来就是音乐模式
+        /// （网易云 / QQ音乐网页版这类），解析不出来就是视频模式。</para>
+        /// </summary>
+        private bool IsVideoMode => !_isMusicMode;
+
+        /// <summary>
+        /// 当前会话是否不具备歌词能力 —— 视频模式，外加「用户手动锁定」这一条豁免。
+        ///
+        /// <para>豁免的理由：用户明确指定了某个软件，就不该再被「进程名带 edge / chrome」这种猜测否掉，
+        /// 否则 msedgewebview2（Pake / Tauri 等 WebView2 套壳播放器）会被当成浏览器直接掐掉歌词，
+        /// 手动选择等于白选。手动锁定的判据见 <see cref="_isManualLockedSession"/>。</para>
+        /// </summary>
+        private bool IsNonLyricSession => !_isManualLockedSession && IsVideoMode;
 
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _currentSession;
@@ -145,8 +204,16 @@ namespace NotchPeninsula
         // 所以给系统里每个会话都挂一份监听，任何一个开始播放都能立刻重新挑选接管目标。
         private readonly Dictionary<string, GlobalSystemMediaTransportControlsSession> _watchedSessions = new(StringComparer.OrdinalIgnoreCase);
         private readonly object _watcherLock = new();
-        private bool _isBilibiliSession;  // 通用模式下当前会话是否为 bilibili，用于隐藏 Artist
-        private bool _isPotPlayerSession; // 当前会话是否为 PotPlayer，无歌名/歌手时隐藏文本
+        private bool _isBilibiliSession;  // 当前会话是否为 bilibili，用于清空 Artist（视频模式只显示标题）
+        // 音乐模式：SMTC 同时给出歌名与歌手即成立（判据对所有软件一致）。
+        // 成立 → 取歌词 + 网络封面；不成立 → 视频模式（程序图标 + 名称）。
+        //
+        // ⚠️ 判定按「曲目」为粒度，不是每次刷新都重算（见 UpdateMediaMode）：
+        //    Artist 在 seek / 换轨瞬间可能短暂缺失，逐次重算会让模式来回翻转，
+        //    而渲染线程的「非歌词会话」闸门会在翻成视频模式的那一帧把歌词清掉。
+        private bool _isMusicMode;
+        // 上次判定所依据的「会话 + 曲目」标识（AppId + 标题）。它变了才允许把音乐模式降级。
+        private string _musicModeKey = "";
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
         // 当前接管的会话是不是「用户在设置里手动锁定」的那一个。
         // 手动锁定的会话不参与任何自动分类的歌词拦截（见 IsNonLyricSession）：
@@ -188,7 +255,7 @@ namespace NotchPeninsula
         public void Shutdown()
         {
             try { _justSoloLyric.Stop(); } catch { }
-            try { Thumbnail?.Dispose(); Thumbnail = null; } catch { }
+            try { SetThumbnail(null); } catch { }
         }
 
         /// <summary>
@@ -306,7 +373,7 @@ namespace NotchPeninsula
                 }
             }
 
-            // 命中 bilibili / PotPlayer / 浏览器 会话时打标记，供刷新时应用文本显示策略
+            // 命中 bilibili / 浏览器 会话时打标记，供刷新时应用文本显示策略
             bool wasNonLyric = IsNonLyricSession;
             _currentAppId = newSession?.SourceAppUserModelId ?? "";
 
@@ -317,7 +384,6 @@ namespace NotchPeninsula
                 && string.Equals(_currentAppId, ManualSessionAppId, StringComparison.OrdinalIgnoreCase);
 
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
-            _isPotPlayerSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "PotPlayer");
             // 浏览器标记照常保留：它同时还驱动网页标题清理（CleanBrowserTitle）。
             // 手动锁定会话的歌词拦截已由 IsNonLyricSession 单独豁免，不受这里影响。
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
@@ -373,8 +439,8 @@ namespace NotchPeninsula
                 Title = "No Media";
                 Artist = "";
                 IsPlaying = false;
-                Thumbnail?.Dispose();
-                Thumbnail = null;
+                _networkCoverKey = "";
+                SetThumbnail(null);
             }
         }
 
@@ -528,54 +594,28 @@ namespace NotchPeninsula
                 var props = await _currentSession!.TryGetMediaPropertiesAsync();
                 if (props != null)
                 {
-                    Title = string.IsNullOrEmpty(props.Title) ? (_isPotPlayerSession ? "" : "Unknown") : props.Title;
+                    // 标题 / 歌手只取 SMTC 的原始值，不再按平台特判 ——
+                    // 「视频模式只显示标题、不显示歌手」统一由 UpdateMediaMode 收口。
+                    // 唯一的预处理是浏览器：网页标题里的「正在播放: 歌名 - 歌手」要拆成歌名 + 歌手。
+                    string smtcTitle = props.Title ?? "";
+                    string smtcArtist = props.Artist ?? "";
+                    if (_isBrowserSession) smtcTitle = CleanBrowserTitle(smtcTitle, out smtcArtist);
+                    else if (_isBilibiliSession) smtcArtist = ""; // 网页不提供歌手，别让标题尾部被当成歌手
 
-                    string browserArtist = "";
-                    if (_isBrowserSession)
-                        Title = CleanBrowserTitle(Title, out browserArtist);
-
-                    Artist = _isBilibiliSession ? "" : (!string.IsNullOrEmpty(browserArtist) ? browserArtist
-                            : (string.IsNullOrEmpty(props.Artist) ? "" : props.Artist));
-
-                    var platformLogo = MediaLogoProvider.GetLogo(_currentSession.SourceAppUserModelId, props.Thumbnail != null);
-                    if (platformLogo != null)
-                    {
-                        var oldThumb = Thumbnail;
-                        Thumbnail = platformLogo;
-                        oldThumb?.Dispose();
-                    }
-                    else if (props.Thumbnail != null)
-                    {
-                        try
-                        {
-                            using var stream = await props.Thumbnail.OpenReadAsync();
-                            using var dotNetStream = stream.AsStreamForRead();
-
-                            var oldThumb = Thumbnail;
-                            Thumbnail = SKBitmap.Decode(dotNetStream);
-                            oldThumb?.Dispose();
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Error("封面解析失败", ex);
-                            Thumbnail = null;
-                        }
-                    }
-                    else
-                    {
-                        // 与上面两条分支保持一致的释放纪律：丢引用前先放掉原生位图
-                        Thumbnail?.Dispose();
-                        Thumbnail = null;
-                    }
+                    UpdateMediaMode(smtcTitle, smtcArtist);
+                    UpdateCover();
                 }
             }
             catch (Exception ex)
             {
                 Logger.Error("读取媒体属性失败，可能遇到不规范的媒体源", ex);
-                Title = _isPotPlayerSession ? "" : "Unknown";
-                Artist = (_isBilibiliSession || _isPotPlayerSession) ? "" : "Unknown";
-                Thumbnail?.Dispose();
-                Thumbnail = null;
+                // 属性读失败：退回视频模式（只显示标题 + 程序图标），
+                // 并清掉判定标识让下一次成功刷新重新判
+                _isMusicMode = false;
+                _musicModeKey = "";
+                Title = "Unknown";
+                Artist = "";
+                UpdateCover();
             }
 
             try
@@ -595,8 +635,66 @@ namespace NotchPeninsula
             {
                 _lastFetchedTitle = Title;
                 _lastFetchedArtist = Artist;
-                _ = FetchLyricsAsync(Title, Artist, durationSec);
+                _ = FetchMediaAsync(Title, Artist, durationSec);
             }
+        }
+
+        // ==================== 🎵 曲目标识 / 音乐模式判定 ====================
+
+        /// <summary>当前接管会话的「会话 + 曲目」标识。</summary>
+        private string SongKey() => SongKey(_currentAppId, Title, Artist);
+
+        /// <summary>
+        /// 「会话 + 曲目」标识：<see cref="_networkCoverKey"/> 与音乐模式判定共用。
+        /// 分隔符用不可见字符，避免「标题结尾恰好撞上歌手开头」这种拼接歧义。
+        /// </summary>
+        private static string SongKey(string appId, string title, string artist)
+            => appId + "\u0001" + title + "\u0001" + artist;
+
+        /// <summary>
+        /// 判定「音乐模式」并落定最终显示的标题 / 歌手。
+        ///
+        /// <para><b>判据（对所有软件一致）</b>：SMTC 同时给出歌名与歌手 → 音乐模式（取歌词 + 网络封面）；
+        /// 否则视频模式 —— <b>只显示标题，歌手一律不显示</b>。</para>
+        ///
+        /// <para><b>按曲目为粒度</b>，不是每次刷新都重算。Artist 在 seek / 换轨瞬间可能短暂缺失，
+        /// 逐次重算会让模式来回翻转，而渲染线程的「非歌词会话」闸门
+        /// （<see cref="IsNonLyricSession"/>）会在翻成视频模式的那一帧把已经显示出来的歌词清掉。
+        /// 规则：换曲（会话或标题变了）才允许降级为视频模式；同一首曲目内只允许升级
+        /// （视频 → 音乐），后者覆盖「歌名先到、歌手后到」这种 SMTC 逐步填充元数据的情况。</para>
+        /// </summary>
+        /// <param name="smtcTitle">SMTC 原始标题（浏览器已按网页标题规则清理过）</param>
+        /// <param name="smtcArtist">SMTC 原始歌手（B站恒为空串）</param>
+        private void UpdateMediaMode(string smtcTitle, string smtcArtist)
+        {
+            string key = _currentAppId + "\u0001" + smtcTitle;
+            if (!string.Equals(_musicModeKey, key, StringComparison.Ordinal))
+            {
+                _musicModeKey = key;
+                _isMusicMode = false; // 换了曲目 / 换了会话：重新判定
+            }
+
+            if (!_isMusicMode) _isMusicMode = smtcTitle.Length > 0 && smtcArtist.Length > 0;
+
+            Title = smtcTitle.Length > 0 ? smtcTitle : "Unknown";
+            Artist = _isMusicMode ? smtcArtist : ""; // 视频模式：只要标题，歌手不要
+        }
+
+        /// <summary>
+        /// 选封面。**视频模式** → 该程序自己的应用图标；**音乐模式** → 网络封面 → 应用图标兜底。
+        ///
+        /// <para>网络封面由 <see cref="FetchLyricsAsync"/> 拿到搜索结果时异步补上，在它到达之前先用应用图标顶着。
+        /// 一旦某首曲目的网络封面就位（<see cref="_networkCoverKey"/> 命中），这里整段跳过 ——
+        /// 再走一遍会把那张图 Dispose 掉、换成更差的图。</para>
+        ///
+        /// <para><b>不再引用 data\image 下的平台站标</b>（资源保留，只是不再被任何代码路径读到）。</para>
+        /// </summary>
+        private void UpdateCover()
+        {
+            if (!IsVideoMode && string.Equals(_networkCoverKey, SongKey(), StringComparison.Ordinal)) return;
+
+            // 视频模式的唯一来源 / 音乐模式的兜底：该程序自己的应用图标
+            SetAppIcon();
         }
 
         private static readonly string[] BrowserVideoSuffixes =
@@ -714,7 +812,20 @@ namespace NotchPeninsula
                 await RefreshProperties();
         }
 
-        private async Task FetchLyricsAsync(string title, string artist, long durationSec)
+        // ==================== 🎵 媒体资源获取（歌词 + 封面）====================
+        // 「取词」与「取封面」是两件独立的事，各自成一个函数：
+        //   · FetchLyricsAsync —— 四个歌词引擎依次兜底，命中即写 _lyrics；
+        //   · FetchCoverAsync  —— 只负责把网络封面下载下来换上，失败就保持程序图标兜底。
+        //
+        // 唯一的调用点是 FetchMediaAsync：排队、换歌清理、以及「这首歌还该不该被取」的校验都在那里，
+        // 两条链因此共用同一张网络通行证（_fetchLock），不会各打一遍搜索 ——
+        // 封面地址就是取词时的搜索顺带带回来的（见 FetchLyricsAsync 的返回值）。
+
+        /// <summary>
+        /// 媒体资源获取的**唯一入口**：先取歌词，再取封面。由 <see cref="RefreshPropertiesCore"/>
+        /// 在「歌名或歌手变化」时触发一次。
+        /// </summary>
+        private async Task FetchMediaAsync(string title, string artist, long durationSec)
         {
             // 无歌词能力的会话（浏览器 / 视频类 / PotPlayer）：完全不动已有歌词与时间轴，
             // 让上一首歌的状态原样冻结，切回来时可以立即续播
@@ -774,6 +885,17 @@ namespace NotchPeninsula
             HasLyricTranslation = false;
             CurrentLyricProgress = 0f;
 
+            // ---- 取词 → 取封面：两条链各自成一个函数，各自排队、各自校验归属 ----
+            string coverUrl = await FetchLyricsAsync(title, artist, durationSec);
+            await FetchCoverAsync(title, artist, coverUrl);
+        }
+
+        /// <summary>
+        /// 取歌词：四个引擎依次兜底（QQ音乐 → 网易云 → LRCLIB → 落月 API），命中即解析时间轴并写入。
+        /// </summary>
+        /// <returns>本次搜索顺带命中的网络封面地址；没有则空串（交给 <see cref="FetchCoverAsync"/> 消费）。</returns>
+        private async Task<string> FetchLyricsAsync(string title, string artist, long durationSec)
+        {
             // 等待获取通行证（防止多首歌同时修改 HttpClient 导致程序崩溃）
             await _fetchLock.WaitAsync();
             try
@@ -781,7 +903,7 @@ namespace NotchPeninsula
                 // 极速拦截：排队轮到自己时，这首歌若已不是时间轴归属者（换歌了）就直接丢弃任务，0 性能浪费。
                 // 判据是槽位而不是 Title —— 切到浏览器期间 Title 会变成网页标题，
                 // 但那首歌并没有被换掉，此时不该丢弃请求。
-                if (!IsLyricOwner(title, artist)) return;
+                if (!IsLyricOwner(title, artist)) return "";
 
                 string query = Uri.EscapeDataString($"{title} {artist}");
                 string lrcText = "";
@@ -789,13 +911,15 @@ namespace NotchPeninsula
                 string transText = "";
                 // QQ 搜索命中的 songmid，QQ 引擎取歌词用
                 string qqSongmid = "";
-                string ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+                // 搜索时顺带拿到的网络封面地址（QQ 给 albummid、网易云给 album.picUrl）。
+                // 仅音乐模式会用；两个源都没命中就保持兜底封面。
+                string coverUrl = "";
 
                 // ====== 引擎 1：QQ音乐 (优先) ======
                 try
                 {
                     _http.DefaultRequestHeaders.Clear();
-                    _http.DefaultRequestHeaders.Add("User-Agent", ua);
+                    _http.DefaultRequestHeaders.Add("User-Agent", HttpUserAgent);
 
                     // 内存优化：使用 Stream 流直接解析 JSON，避免生成大字符串吃内存
                     using var searchStream = await _http.GetStreamAsync($"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={query}&n=5&format=json");
@@ -817,6 +941,10 @@ namespace NotchPeninsula
                                 (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
                             {
                                 qqSongmid = song.GetProperty("songmid").GetString() ?? "";
+                                // 顺带取专辑封面：albummid 拼成 gtimg 的固定封面地址
+                                if (song.TryGetProperty("albummid", out var albumEl)
+                                    && albumEl.GetString() is { Length: > 0 } albumMid)
+                                    coverUrl = $"https://y.gtimg.cn/music/photo_new/T002R300x300M000{albumMid}.jpg";
                                 break;
                             }
                         }
@@ -849,12 +977,14 @@ namespace NotchPeninsula
                 catch (Exception ex) { Logger.Warn($"QQ音乐引擎失败: {ex.Message}"); }
 
                 // ====== 引擎 2：网易云 API ======
-                if (string.IsNullOrEmpty(lrcText))
+                // 判据是「有没有可用时间轴」而不是「字符串空不空」：引擎 1 可能返回非空但一行时间轴都没有的
+                // 结果（版权提示 / 空壳响应），只判空的话网易云与 LRCLIB 会被整段跳过，最终就是「没歌词」。
+                if (!HasTimedLyric(lrcText))
                 {
                     try
                     {
                         _http.DefaultRequestHeaders.Clear();
-                        _http.DefaultRequestHeaders.Add("User-Agent", ua);
+                        _http.DefaultRequestHeaders.Add("User-Agent", HttpUserAgent);
                         _http.DefaultRequestHeaders.Add("Referer", "https://music.163.com");
                         _http.DefaultRequestHeaders.Add("X-Real-IP", $"114.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}");
 
@@ -890,6 +1020,10 @@ namespace NotchPeninsula
                                     if (durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4)
                                     {
                                         songId = song.GetProperty("id").GetInt64();
+                                        // 顺带取专辑封面（网易云给的 picUrl 已经是完整地址）
+                                        if (song.TryGetProperty("album", out var albumEl)
+                                            && albumEl.TryGetProperty("picUrl", out var picEl))
+                                            coverUrl = picEl.GetString() ?? "";
                                         break;
                                     }
                                 }
@@ -918,12 +1052,12 @@ namespace NotchPeninsula
                 }
 
                 // ====== 引擎 3：LRCLIB ======
-                if (string.IsNullOrEmpty(lrcText))
+                if (!HasTimedLyric(lrcText))
                 {
                     try
                     {
                         _http.DefaultRequestHeaders.Clear();
-                        _http.DefaultRequestHeaders.Add("User-Agent", ua);
+                        _http.DefaultRequestHeaders.Add("User-Agent", HttpUserAgent);
                         string lrclibUrl = $"https://lrclib.net/api/get?track_name={Uri.EscapeDataString(title)}&artist_name={Uri.EscapeDataString(artist)}";
                         if (durationSec > 0) lrclibUrl += $"&duration={durationSec}";
 
@@ -942,9 +1076,9 @@ namespace NotchPeninsula
                 // ====== 引擎 4：落月 API（原文 + 译文兜底）======
                 // 先按「歌名 歌手」搜到 QQ songid，再用 songid 取原文与译文（data.lrc / data.trans）；
                 // 原文或译文缺失时发这一次请求，一起补齐。
-                if (string.IsNullOrEmpty(lrcText) || BuildTransTable(transText).Length == 0)
+                if (!HasTimedLyric(lrcText) || BuildTransTable(transText).Length == 0)
                 {
-                    var fallback = await FetchFromLuoYueAsync(title, artist, ua);
+                    var fallback = await FetchFromLuoYueAsync(title, artist, HttpUserAgent);
                     if (string.IsNullOrEmpty(lrcText) && !string.IsNullOrEmpty(fallback.Lrc)) lrcText = fallback.Lrc;
                     if (BuildTransTable(transText).Length == 0 && !string.IsNullOrEmpty(fallback.Trans)) transText = fallback.Trans;
                 }
@@ -960,7 +1094,7 @@ namespace NotchPeninsula
                     {
                         if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
                         {
-                            if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
+                            if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), LyricTimeFormats, null, out var ts))
                             {
                                 string text = line.Substring(idx + 1).Trim();
                                 if (!string.IsNullOrEmpty(text))
@@ -980,10 +1114,63 @@ namespace NotchPeninsula
                         _lyricsHasTranslation = lines.Exists(l => !string.IsNullOrEmpty(l.Item3));
                     }
                 }
+
+                // 搜索顺带命中的封面地址带回给调用方，由取封面那条链消费
+                return coverUrl;
             }
             finally
             {
                 // 必须释放锁，让下一首歌可以正常获取
+                _fetchLock.Release();
+            }
+        }
+
+        /// <summary>
+        /// 取封面：下载 <paramref name="coverUrl"/> 并换上。地址来自 <see cref="FetchLyricsAsync"/>
+        /// 搜索时顺带命中的专辑图（QQ 给 albummid、网易云给 album.picUrl）。
+        ///
+        /// <para>任何一步失败都**什么都不做** —— 保持 <see cref="UpdateCover"/> 已经选好的兜底封面
+        /// （该程序的应用图标），绝不清空。</para>
+        /// </summary>
+        private async Task FetchCoverAsync(string title, string artist, string coverUrl)
+        {
+            // 视频模式不取网络封面；搜索没命中封面地址时也没什么可取的
+            if (IsVideoMode || coverUrl.Length == 0) return;
+
+            // 与取词共用同一张网络通行证：串行执行，不会两条链同时打请求
+            await _fetchLock.WaitAsync();
+            try
+            {
+                // 排队轮到自己时可能已经换歌：直接丢弃，别把上一首的封面贴到新歌上
+                if (!IsLyricOwner(title, artist)) return;
+
+                _http.DefaultRequestHeaders.Clear();
+                _http.DefaultRequestHeaders.Add("User-Agent", HttpUserAgent);
+                _http.DefaultRequestHeaders.Add("Referer", "https://y.qq.com/");
+
+                using var stream = await _http.GetStreamAsync(coverUrl);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                buffer.Position = 0;
+
+                var cover = SKBitmap.Decode(buffer);
+                // 下载期间又换歌了：当场丢掉
+                if (cover != null && IsLyricOwner(title, artist))
+                {
+                    _networkCoverKey = SongKey(_currentAppId, title, artist);
+                    SetThumbnail(cover);
+                }
+                else
+                {
+                    cover?.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"网络封面获取失败: {ex.Message}");
+            }
+            finally
+            {
                 _fetchLock.Release();
             }
         }
@@ -1044,6 +1231,31 @@ namespace NotchPeninsula
                 if (song.TryGetProperty("id", out var idEl) && idEl.TryGetInt64(out long id)) return id;
             }
             return 0;
+        }
+
+        // LRC 时间标签的几种写法（百分秒 / 毫秒 / 十分之一秒 / 整秒）。
+        // 解析时间轴与「这段 LRC 有没有可用时间轴」两处共用同一份，避免规则漂移。
+        private static readonly string[] LyricTimeFormats =
+            [@"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss"];
+
+        /// <summary>
+        /// 这段 LRC 里**至少有一行能被解析出时间戳**吗。
+        ///
+        /// <para>引擎链按这个判据短路，而不是 <c>string.IsNullOrEmpty</c>：QQ 音乐在搜得到歌、
+        /// 但歌词接口返回纯文本（版权提示、空壳响应）时会给出「非空却一行时间轴都没有」的结果 ——
+        /// 只判空的话网易云与 LRCLIB 会被整段跳过，最终歌词是空的，表现就是「有时候没歌词」。</para>
+        /// </summary>
+        private static bool HasTimedLyric(string lrc)
+        {
+            if (string.IsNullOrEmpty(lrc)) return false;
+
+            foreach (var line in lrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5
+                    && TimeSpan.TryParseExact(line.Substring(1, idx - 1), LyricTimeFormats, null, out _))
+                    return true;
+            }
+            return false;
         }
 
         // 译文行与原文行的时间戳允许的最大偏差。两个源（QQ 官方 trans / 落月 API）与歌词正文
