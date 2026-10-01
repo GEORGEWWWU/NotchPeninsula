@@ -2,7 +2,12 @@ using System;
 
 namespace NotchPeninsula;
 
-
+public enum BrightnessCapability
+{
+    NotSupported,
+    SoftwareOnly,
+    Hardware
+}
 /// <summary>
 /// 内置音量后端（系统主音量）。程序和插件只认它，落到哪儿由 <see cref="VolumeSink"/> 决定：
 ///
@@ -113,7 +118,55 @@ public sealed class SystemSettingsManager : IDisposable
             Logger.Error($"设置系统音量失败，level={level}", ex);
         }
     }
+// ====== 亮度 ======
+    public BrightnessCapability BrightnessCapability
+    {
+        get
+        {
+            var cap = BrightnessManager.Capability;
+            Logger.Debug($"读取亮度能力：{cap}");
+            return cap;
+        }
+    }
 
+    /// <summary>硬件亮度（-1 为不支持）</summary>
+    public int GetScreenBrightness()
+    {
+        var b = BrightnessManager.Get();
+        Logger.Debug($"读取硬件亮度：{b}");
+        return b;
+    }
+
+    /// <summary>硬件写亮度</summary>
+    public bool TrySetScreenBrightness(int percent)
+    {
+        Logger.Info($"设置硬件亮度：{percent}%");
+        var ok = BrightnessManager.TrySet(percent);
+        if (!ok) Logger.Warn($"设置硬件亮度失败（不支持？）：{percent}%");
+        return ok;
+    }
+
+    /// <summary>模拟读</summary>
+    public int GetSimulatedBrightness()
+    {
+        var b = BrightnessManager.GetSimulated();
+        Logger.Debug($"读取模拟亮度：{b}");
+        return b;
+    }
+
+    /// <summary>模拟写（台式机可用）</summary>
+    public void SetSimulatedBrightness(int percent)
+    {
+        Logger.Info($"设置模拟亮度：{percent}%");
+        try
+        {
+            BrightnessManager.SetSimulated(percent);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"设置模拟亮度失败，percent={percent}", ex);
+        }
+    }
     public void Dispose()
     {
         if (_disposed) return;
