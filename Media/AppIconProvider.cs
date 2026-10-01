@@ -166,14 +166,19 @@ namespace NotchPeninsula
         private const int CacheCap = 32;
 
         /// <summary>
-        /// 解析失败的冷却时间。**失败也必须记一笔**，否则每次属性刷新都会去枚举一遍进程表找图标 ——
-        /// 那既慢又毫无意义（同一个 AUMID 在一分钟内失败，绝大多数情况下就是解析不出来）。
+        /// 解析失败后的重试冷却（退避）。**失败也必须记一笔**，否则每次属性刷新都会去枚举一遍进程表；
+        /// 但**不能像以前那样一律等 60 秒** —— 媒体程序刚启动、或刚切歌那一刻，它的进程名常常还查不到
+        /// （进程尚未完全就绪 / 权限时序），一两秒后就正常了，干等一分钟的表现就是
+        /// 「有时候拿不到应用 logo」。所以：第一次失败只等 1 秒，连续失败再逐级翻倍到 30 秒上限。
         /// </summary>
-        private static readonly TimeSpan MissTtl = TimeSpan.FromSeconds(60);
+        private const double MissRetryBaseSeconds = 1.0;
+        private const double MissRetryMaxSeconds = 30.0;
 
-        // 值里的 Icon 为 null 表示「解析失败，冷却中」。缓存的位图**永远不直接交给调用方**
-        // （只给副本），所以淘汰 / 替换时可以安全地 Dispose。
-        private static readonly Dictionary<string, (SKBitmap? Icon, DateTime At)> _cache = new(StringComparer.OrdinalIgnoreCase);
+        // 条目：Icon 为 null 表示解析失败，RetryAt 是下次允许重试的时刻（成功后为 MaxValue）。
+        // 缓存的位图**永远不直接交给调用方**（只给副本），所以淘汰 / 替换时可以安全地 Dispose。
+        private readonly record struct IconEntry(SKBitmap? Icon, int Misses, DateTime RetryAt);
+
+        private static readonly Dictionary<string, IconEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Queue<string> _cacheOrder = new();
         private static readonly object _gate = new();
 
@@ -186,15 +191,21 @@ namespace NotchPeninsula
             // 换来的是「同一时刻只有一个线程在解析」，顺带根治并发解析下换图的竞态。
             lock (_gate)
             {
-                if (_cache.TryGetValue(aumid, out var hit))
+                bool known = _cache.TryGetValue(aumid, out var hit);
+                if (known)
                 {
                     if (hit.Icon != null) return hit.Icon.Copy();
-                    if (DateTime.UtcNow - hit.At < MissTtl) return null; // 冷却期内，不再重试
+                    if (DateTime.UtcNow < hit.RetryAt) return null; // 退避冷却中
                 }
 
                 var icon = Resolve(aumid);
 
-                if (!_cache.ContainsKey(aumid))
+                // 只在这个 AUMID「本轮第一次」失败时留痕：下次用户报「拿不到 logo」时，
+                // 日志里能直接看到是哪个程序、省的又只能靠猜。退避重试期间不重复刷。
+                if (icon == null && (!known || hit.Misses == 0))
+                    Logger.Debug($"应用图标解析失败，{MissRetryBaseSeconds:F0}s 后重试：AUMID=[{aumid}]");
+
+                if (!known)
                 {
                     _cacheOrder.Enqueue(aumid);
                     while (_cacheOrder.Count > CacheCap)
@@ -203,13 +214,21 @@ namespace NotchPeninsula
                         if (_cache.Remove(oldest, out var evicted)) evicted.Icon?.Dispose();
                     }
                 }
-                else if (_cache[aumid].Icon is { } stale && !ReferenceEquals(stale, icon))
+                else if (hit.Icon is { } stale && !ReferenceEquals(stale, icon))
                 {
                     stale.Dispose(); // 覆盖旧条目：那张图已无人持有（Get 只发副本），放掉原生内存
                 }
 
-                _cache[aumid] = (icon, DateTime.UtcNow);
-                return icon?.Copy();
+                if (icon != null)
+                {
+                    _cache[aumid] = new IconEntry(icon, 0, DateTime.MaxValue);
+                    return icon.Copy();
+                }
+
+                int misses = known ? hit.Misses + 1 : 1;
+                double wait = Math.Min(MissRetryBaseSeconds * Math.Pow(2, misses - 1), MissRetryMaxSeconds);
+                _cache[aumid] = new IconEntry(null, misses, DateTime.UtcNow.AddSeconds(wait));
+                return null;
             }
         }
 

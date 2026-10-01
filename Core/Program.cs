@@ -199,9 +199,6 @@ namespace NotchPeninsula
 
             TaskScheduler.UnobservedTaskException += (_, e) =>
                 Logger.Error("[崩溃] 未观察的 Task 异常", e.Exception);
-
-            AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
-                Logger.DebugThrottled($"[崩溃] 首次异常（可能被内部吞掉）：{e.Exception.GetType().Name}");
         }
 
         [STAThread]

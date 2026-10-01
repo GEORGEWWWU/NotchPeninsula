@@ -205,13 +205,13 @@ namespace NotchPeninsula
         private bool IsVideoMode => !_isMusicMode;
 
         /// <summary>
-        /// 当前会话是否不具备歌词能力 —— 视频模式，外加「用户手动锁定」这一条豁免。
+        /// 当前会话是否不具备歌词能力 —— 就是视频模式，**没有例外**。
         ///
-        /// <para>豁免的理由：用户明确指定了某个软件，就不该再被「进程名带 edge / chrome」这种猜测否掉，
-        /// 否则 msedgewebview2（Pake / Tauri 等 WebView2 套壳播放器）会被当成浏览器直接掐掉歌词，
-        /// 手动选择等于白选。手动锁定的判据见 <see cref="_isManualLockedSession"/>。</para>
+        /// <para>「用户手动锁定某个软件」过去是一条豁免（手动选中的会话即使被判成视频类，也照样去搜歌词）。
+        /// 现在取消了：判据收成一条 —— <b>SMTC 没给出歌手就一律按视频模式处理</b>：
+        /// 不搜歌词、不取网络封面，只显示标题 + 该程序自己的应用图标。</para>
         /// </summary>
-        private bool IsNonLyricSession => !_isManualLockedSession && IsVideoMode;
+        private bool IsNonLyricSession => IsVideoMode;
 
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _currentSession;
@@ -241,10 +241,6 @@ namespace NotchPeninsula
         private int _musicModeMisses;
         private const int MusicModeMissGrace = 3;
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
-        // 当前接管的会话是不是「用户在设置里手动锁定」的那一个。
-        // 手动锁定的会话不参与任何自动分类的歌词拦截（见 IsNonLyricSession）：
-        // 用户手动选了它，就必须按普通媒体源走歌词校验，校验命中就正常加载歌词。
-        private bool _isManualLockedSession;
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
 
@@ -403,15 +399,9 @@ namespace NotchPeninsula
             bool wasNonLyric = IsNonLyricSession;
             _currentAppId = newSession?.SourceAppUserModelId ?? "";
 
-            // 手动锁定的会话必须真的是用户选中的那个 AppID 才算数 ——
-            // 否则「手动选了 A、系统里只有 B」时会错误地放行 B 的自动判定。
-            // 判定只做一次字符串比较，不落在 60FPS 路径上。
-            _isManualLockedSession = IsManualLockActive && newSession != null
-                && string.Equals(_currentAppId, ManualSessionAppId, StringComparison.OrdinalIgnoreCase);
-
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
-            // 浏览器标记照常保留：它同时还驱动网页标题清理（CleanBrowserTitle）。
-            // 手动锁定会话的歌词拦截已由 IsNonLyricSession 单独豁免，不受这里影响。
+            // 浏览器标记只驱动网页标题清理（CleanBrowserTitle）。
+            // 会不会出歌词跟它无关 —— 判据只有「SMTC 有没有给出歌手」这一条（见 IsVideoMode）。
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
             _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
 
@@ -1092,7 +1082,11 @@ namespace NotchPeninsula
                 }
 
                 // ====== 引擎 4：LRCLIB ======
-                if (!HasTimedLyric(lrcText))
+                // ⚠️ /api/get 要求 track_name 与 artist_name **都非空**，缺任一个直接回 400（实测：
+                //    artist_name 为空 → 400、track_name 为空 → 400），而不是「这首歌它没有」的 404。
+                //    歌名为空在上游已提前返回，所以这里只需挡住歌手为空 —— 否则就是白花一次往返，
+                //    还往日志里刷一条看不懂的 400 WARN，而它其实是最后一个兜底引擎。
+                if (!HasTimedLyric(lrcText) && artist.Length > 0)
                 {
                     try
                     {
@@ -1807,17 +1801,26 @@ namespace NotchPeninsula
                 //    偏差会一直攒着，攒过阈值就一次性跳过去（能到秒级，看起来就是「突然前进一块」）。
                 //    现在每 200ms 量一次误差：小的持续纠偏吃掉，大的才当作真实跳变对齐。
                 double delta = (smtcPos - _recentSongs[slot].Position).TotalSeconds;
-                bool settling = now < _seekSettleUntil; // 刚松手拖动：播放器还没执行完 seek，不按跳变处理
+                bool settling = now < _seekSettleUntil; // 刚松手拖动：播放器还没执行完 seek
 
-                if (_forceResync || (!settling && Math.Abs(delta) > TimelineJumpSeconds))
+                // 跳变对齐：往前跳随时认（换歌 / 播放器主动上报）；
+                // 往回跳只在非静默期认 —— 松手 seek 之后播放器短时间内上报的还是旧位置，
+                // 认了就会把进度条与歌词弹回原处。
+                if (_forceResync || delta > TimelineJumpSeconds || (!settling && delta < -TimelineJumpSeconds))
                 {
-                    _recentSongs[slot].Position = smtcPos; // 换歌 / 拖动进度条 / 播放器主动上报
+                    _recentSongs[slot].Position = smtcPos;
                 }
-                else if (Math.Abs(delta) > TimelineNudgeDeadZoneSec)
+                else if (delta > TimelineNudgeDeadZoneSec)
                 {
-                    // 缓慢纠偏：每次采样只走误差的一小段。单步封顶 80ms，
-                    // 于是「按帧累加」与「播放器真实位置」的偏差被持续抹平，而不是攒到某刻突然跳过去。
-                    double step = Math.Clamp(delta * TimelineNudgeRatio, -TimelineNudgeMaxStepSec, TimelineNudgeMaxStepSec);
+                    // ⚠️ **只往前纠偏，绝不往回拉。**
+                    //
+                    // 播放器上报的位置精度普遍只有整秒（有的还只在特定事件才刷新），采样值经常比我们
+                    // 「按帧累加」的位置**落后**几十到几百毫秒。这种情况下若按误差往回纠，每 200ms 就会
+                    // 往回退一小步 —— 用户看到的就是「卡拉 OK 往前滚一点又退回去」。
+                    //
+                    // 往回的方向只交给上面的跳变判定（那才是真正的 seek）。而「落后」这一侧必须持续纠，
+                    // 否则又会回到「误差攒够阈值再一次性跳一大块」的老毛病。
+                    double step = Math.Min(delta * TimelineNudgeRatio, TimelineNudgeMaxStepSec);
                     _recentSongs[slot].Position += TimeSpan.FromSeconds(step);
                 }
 
