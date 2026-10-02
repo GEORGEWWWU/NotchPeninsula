@@ -551,11 +551,23 @@ namespace NotchPeninsula
              || id.Contains("wechatappex", StringComparison.OrdinalIgnoreCase))
             && !id.Contains("justsolo", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// 这个 AUMID 是不是「网易云音乐」。
+        ///
+        /// <para><b>单一数据源</b>：既供 <see cref="MatchesTargetPlatform"/> 判目标平台，也供取词链判
+        /// 「要不要走网易优先那两档」（见 <see cref="FetchLyricsAsync"/>）—— 两处必须同源，
+        /// 否则会出现「接管的是网易云、取词却按 QQ 优先」这种半吊子状态。</para>
+        /// </summary>
+        private static bool IsNeteaseAppId(string? id)
+            => id != null
+               && (id.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase)
+                   || id.Contains("netease", StringComparison.OrdinalIgnoreCase));
+
         // 目标平台与会话 AppID 的匹配规则（单一数据源）。
         // browser 模式在上游已单独分流，这里只管具体应用；未列出的平台走 ID 直配。
         private static bool MatchesTargetPlatform(string id) => TargetPlatform switch
         {
-            "netease" => id.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase) || id.Contains("netease", StringComparison.OrdinalIgnoreCase),
+            "netease" => IsNeteaseAppId(id),
             "qqmusic" => id.Contains("qqmusic", StringComparison.OrdinalIgnoreCase) || id.Contains("tencent", StringComparison.OrdinalIgnoreCase),
             "applemusic" => id.Contains("apple", StringComparison.OrdinalIgnoreCase) && id.Contains("music", StringComparison.OrdinalIgnoreCase),
             "lxmusic" => id.Contains("cn.toside.music.desktop", StringComparison.OrdinalIgnoreCase) || id.Contains("lxmusic", StringComparison.OrdinalIgnoreCase),
@@ -939,8 +951,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 取歌词：四个引擎依次兜底（落月 API → QQ 音乐官方歌词 → 网易云 → LRCLIB），
-        /// 命中即解析时间轴并写入。译文与封面都随主歌词一起回来，不额外单开接口。
+        /// 取歌词：五个引擎依次兜底（落月 API(QQ音乐) → QQ 音乐官方歌词 → 落月 API(网易云) →
+        /// 网易云官方 → LRCLIB），命中即解析时间轴并写入。译文与封面都随主歌词一起回来，不额外单开接口。
         /// </summary>
         /// <returns>网络封面地址；没有则空串（交给 <see cref="FetchCoverAsync"/> 消费）。</returns>
         private async Task<string> FetchLyricsAsync(string title, string artist, long durationSec)
@@ -957,11 +969,42 @@ namespace NotchPeninsula
                 string lrcText = "";
                 // 译文 LRC：与原文同一套时间戳，解析后按时间对齐成「原文行 → 译文」的映射
                 string transText = "";
-                // 网络封面地址（落月搜索的 cover / 网易云 song/detail 的 picUrl）。
+                // 网络封面地址（网易系优先段 / 落月搜索的 cover / 网易云 song/detail 的 picUrl）。
                 // 仅音乐模式会用；都没拿到就保持兜底封面（程序图标）。
                 string coverUrl = "";
 
-                // ====== 引擎 1：落月 API（主源：原文 + 译文 + 封面 + songmid 一次到位）======
+                // 正在放歌的是不是网易云音乐。是的话，网易系两档会被提到整条链的最前面（见下面「网易优先」段），
+                // **歌词与封面都优先网易云的源**；其余播放器一切照旧。
+                bool preferNetease = IsNeteaseAppId(_currentAppId);
+
+                // ====== 网易优先：会话是网易云音乐时，把网易系两档提到最前 ======
+                // 正在放歌的就是网易云，用网易云曲库最贴：同一曲库来源，版本能对上、译文更全、专辑图也更对版。
+                // 歌词与封面**一起**前置，顺序钉死 —— **落月 API - 网易云 在前、网易云官方在后**。
+                // 其他播放器不受影响：那时这两档仍在原位置（引擎 3 / 引擎 4）当兜底，歌词与封面都照旧。
+                if (preferNetease)
+                {
+                    // ① 落月 API - 网易云：歌词 + 网易云 CDN 专辑图（同一次搜索顺带给出）
+                    var neteaseFirst = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent);
+                    if (!string.IsNullOrEmpty(neteaseFirst.Lrc)) lrcText = neteaseFirst.Lrc;
+                    if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseFirst.Trans))
+                        transText = neteaseFirst.Trans;
+                    if (!string.IsNullOrEmpty(neteaseFirst.Cover)) coverUrl = neteaseFirst.Cover;
+
+                    // ② 网易云官方：歌词兜底 + 封面兜底（它给出的同样是网易云的专辑图）。
+                    //    条件是「没歌词**或**没封面」—— 也就是这一档可能**只为封面**而跑。
+                    if (!HasTimedLyric(lrcText) || coverUrl.Length == 0)
+                    {
+                        var neteaseOfficialFirst = await FetchFromNeteaseOfficialAsync(title, artist, durationSec, allowCover: true);
+                        // 已经有可用歌词时不覆盖 —— 这一趟可能只是为了补封面
+                        if (!HasTimedLyric(lrcText) && !string.IsNullOrEmpty(neteaseOfficialFirst.Lrc))
+                            lrcText = neteaseOfficialFirst.Lrc;
+                        if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseOfficialFirst.Trans))
+                            transText = neteaseOfficialFirst.Trans;
+                        if (coverUrl.Length == 0) coverUrl = neteaseOfficialFirst.Cover;
+                    }
+                }
+
+                // ====== 引擎 1：落月 API - QQ音乐（主源：原文 + 译文 + 封面 + songmid 一次到位）======
                 // ⚠️ 这里原本是 QQ 官方搜索接口 c.y.qq.com/soso/fcgi-bin/client_search_cp，
                 //    该接口现已**恒返回 HTTP 500**（空响应）—— 拿不到 songmid，它后面那次取词也永远走不到，
                 //    整条链等于全废还白花一次请求。所以换成落月：同样是 QQ 曲库，一次响应把四样东西给齐：
@@ -970,9 +1013,18 @@ namespace NotchPeninsula
                 //      · 搜索响应里的 mid 就是 QQ 的 songmid（交给引擎 2）。
                 //    放在最前面还有个好处：命中就不必再问后面的引擎，总请求数反而更少。
                 var luoYue = await FetchFromLuoYueAsync(title, artist, HttpUserAgent);
-                if (!string.IsNullOrEmpty(luoYue.Cover)) coverUrl = luoYue.Cover;
-                if (!string.IsNullOrEmpty(luoYue.Lrc)) lrcText = luoYue.Lrc;
-                if (!string.IsNullOrEmpty(luoYue.Trans)) transText = luoYue.Trans;
+                // 封面：**只在还没有封面时**才采纳。
+                //   · 非网易云会话：coverUrl 必然为空（本档就是封面第一档），行为与改造前完全一致；
+                //   · 网易云会话：上面的「网易优先」段可能已经从网易云拿到图了，此时不覆盖它 —— 封面也优先网易云的源。
+                if (coverUrl.Length == 0 && !string.IsNullOrEmpty(luoYue.Cover)) coverUrl = luoYue.Cover;
+                // 歌词与译文只在「还没拿到可用时间轴」时才采纳：网易云会话下上面的「网易优先」段
+                // 可能已经命中，此时本档退化为「只提供封面 + songmid」。
+                // 非网易云会话下本条件必然成立，行为与改造前逐字一致。
+                if (!HasTimedLyric(lrcText))
+                {
+                    if (!string.IsNullOrEmpty(luoYue.Lrc)) lrcText = luoYue.Lrc;
+                    if (!string.IsNullOrEmpty(luoYue.Trans)) transText = luoYue.Trans;
+                }
 
                 // ====== 引擎 2：QQ 音乐官方歌词接口 ======
                 // 落月搜索给出的 mid 就是 QQ 的 songmid（实测可直接喂给本接口取回同一份歌词），
@@ -1001,94 +1053,41 @@ namespace NotchPeninsula
                     catch (Exception ex) { Logger.Warn($"QQ音乐引擎失败: {ex.Message}"); }
                 }
 
-                // ====== 引擎 3：网易云 API ======
-                // 判据是「有没有可用时间轴」而不是「字符串空不空」：前面的引擎可能返回非空但一行时间轴都没有的
-                // 结果（版权提示 / 空壳响应），只判空的话网易云与 LRCLIB 会被整段跳过，最终就是「没歌词」。
-                if (!HasTimedLyric(lrcText))
+                // ====== 引擎 3：落月 API - 网易云（网易云曲库：原文 + 译文）======
+                // 排在 QQ 系两档**之后**，而不是取代它们：
+                //   · 从 QQ 音乐或别家播放器放歌时，前两档（同为 QQ 曲库）基本已经命中，压根走不到这里
+                //     —— 也就是「其他软件照旧走 QQ 音乐」；
+                //   · 真落到这一档的，多半是「只在网易云上架 / 版本与 QQ 曲库对不上」的歌，
+                //     正好由网易云曲库补上。
+                // 它与引擎 4 的网易云官方接口是同一个曲库、两套实现，互为兜底。
+                // ⚠️ 网易云会话下这一档已经在方法开头的「网易优先」段跑过了，这里直接跳过，不重复请求。
+                if (!preferNetease && !HasTimedLyric(lrcText))
                 {
-                    try
-                    {
-                        _http.DefaultRequestHeaders.Clear();
-                        _http.DefaultRequestHeaders.Add("User-Agent", HttpUserAgent);
-                        _http.DefaultRequestHeaders.Add("Referer", "https://music.163.com");
-                        _http.DefaultRequestHeaders.Add("X-Real-IP", $"114.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}");
-
-                        var content = new FormUrlEncodedContent(new[]
-                        {
-                            new KeyValuePair<string, string>("s", $"{title} {artist}"),
-                            new KeyValuePair<string, string>("type", "1"),
-                            new KeyValuePair<string, string>("limit", "5"),
-                            new KeyValuePair<string, string>("offset", "0")
-                        });
-
-                        // using：HttpResponseMessage 本身持有内容流与连接租约，只释放它里面的流是不够的
-                        using var response = await _http.PostAsync("https://music.163.com/api/search/get/web", content);
-                        using var searchStream = await response.Content.ReadAsStreamAsync();
-                        using var searchDoc = await JsonDocument.ParseAsync(searchStream);
-
-                        long songId = 0;
-                        if (searchDoc.RootElement.TryGetProperty("result", out var result)
-                            && result.ValueKind == JsonValueKind.Object
-                            && result.TryGetProperty("songs", out var songs)
-                            && songs.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var song in songs.EnumerateArray())
-                            {
-                                // ⚠️ 一律 TryGetProperty + 先验 ValueKind：这些字段在真实响应里会缺、
-                                //    甚至类型不对（实测到过 album 是字符串）。裸 GetProperty 或在非对象元素上
-                                //    调 TryGetProperty 都会抛异常，而异常会被外层 catch 吞成一行 WARN ——
-                                //    代价却是**整个网易云引擎中断**，歌词与封面一起没了。
-                                if (song.ValueKind != JsonValueKind.Object) continue;
-
-                                string name = song.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                                string singer = "";
-                                if (song.TryGetProperty("artists", out var artists)
-                                    && artists.ValueKind == JsonValueKind.Array && artists.GetArrayLength() > 0
-                                    && artists[0].ValueKind == JsonValueKind.Object
-                                    && artists[0].TryGetProperty("name", out var singerEl))
-                                    singer = singerEl.GetString() ?? "";
-
-                                // 精度优化：匹配歌名+歌手，并引入时长校验（误差4秒内）屏蔽 Live/伴奏 版
-                                if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
-                                    (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
-                                {
-                                    // 时长缺失（0）时不做校验：宁可取回搜索结果里的第一条，也别因为缺字段整首歌没歌词
-                                    long durationMs = song.TryGetProperty("duration", out var durEl) && durEl.TryGetInt64(out long d) ? d : 0;
-                                    if (durationMs <= 0 || durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4)
-                                    {
-                                        if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out songId)) continue;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (songId > 0)
-                        {
-                            using var lyricStream = await _http.GetStreamAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1");
-                            using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
-                            if (lyricDoc.RootElement.TryGetProperty("lrc", out var lrc) &&
-                                lrc.TryGetProperty("lyric", out var lyricStr))
-                            {
-                                lrcText = lyricStr.GetString() ?? "";
-                            }
-
-                            // 网易云译文：独立字段 tlyric，时间戳与原文一一对应
-                            if (lyricDoc.RootElement.TryGetProperty("tlyric", out var tl) &&
-                                tl.TryGetProperty("lyric", out var tlStr))
-                            {
-                                transText = tlStr.GetString() ?? "";
-                            }
-
-                            // 封面兜底：搜索响应的 album 里只有 picId（不是地址），要拿歌曲 id
-                            // 再请求一次 song/detail 才有 album.picUrl。落月已经给过封面就跳过。
-                            if (coverUrl.Length == 0) coverUrl = await FetchNeteaseCoverAsync(songId);
-                        }
-                    }
-                    catch (Exception ex) { Logger.Warn($"网易云引擎失败: {ex.Message}"); }
+                    var netease = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent);
+                    if (!string.IsNullOrEmpty(netease.Lrc)) lrcText = netease.Lrc;
+                    // 译文只在前面一个都没给到时才采纳，免得把一份好译文覆盖成空（与引擎 2 同一套保护）
+                    if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(netease.Trans))
+                        transText = netease.Trans;
+                    // ⚠️ 封面**刻意不采纳**：封面链维持原有三档（落月 QQ 搜索 → 网易云官方 → QQ 直连兜底），
+                    //    本引擎只进歌词，不改变任何封面的来源与优先级。
                 }
 
-                // ====== 引擎 4：LRCLIB ======
+                // ====== 引擎 4：网易云官方 API ======
+                // 判据是「有没有可用时间轴」而不是「字符串空不空」：前面的引擎可能返回非空但一行时间轴都没有的
+                // 结果（版权提示 / 空壳响应），只判空的话网易云与 LRCLIB 会被整段跳过，最终就是「没歌词」。
+                // ⚠️ 网易云会话下本档已在「网易优先」段跑过一次，这里跳过（封面也已在那边顺带取到）。
+                //    非网易云会话下条件退化为原来的 `!HasTimedLyric(lrcText)`，行为与改造前一致。
+                if (!preferNetease && !HasTimedLyric(lrcText))
+                {
+                    var neteaseOfficial = await FetchFromNeteaseOfficialAsync(title, artist, durationSec, allowCover: true);
+                    if (!string.IsNullOrEmpty(neteaseOfficial.Lrc)) lrcText = neteaseOfficial.Lrc;
+                    if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseOfficial.Trans))
+                        transText = neteaseOfficial.Trans;
+                    // 封面兜底第二档：落月（引擎 1）没给过封面时才用网易云这张
+                    if (coverUrl.Length == 0) coverUrl = neteaseOfficial.Cover;
+                }
+
+                // ====== 引擎 5：LRCLIB ======
                 // ⚠️ /api/get 要求 track_name 与 artist_name **都非空**，缺任一个直接回 400（实测：
                 //    artist_name 为空 → 400、track_name 为空 → 400），而不是「这首歌它没有」的 404。
                 //    歌名为空在上游已提前返回，所以这里只需挡住歌手为空 —— 否则就是白花一次往返，
@@ -1274,6 +1273,12 @@ namespace NotchPeninsula
         /// <param name="Mid">QQ 的 songmid（搜索项的 mid），交给 <see cref="QQMusicLyricApi"/> 用</param>
         private readonly record struct LuoYueResult(string? Lrc, string? Trans, string? Cover, string? Mid);
 
+        /// <summary>落月「网易云」一次取词的产出；没命中的项为 null。</summary>
+        /// <param name="Lrc">原文 LRC（实测字段是 <c>data.lrc</c>，兼容文档里的 <c>data.rc</c>）</param>
+        /// <param name="Trans">译文 LRC（<c>data.trans</c>，实测常为空）</param>
+        /// <param name="Cover">网易云 CDN 专辑图地址（搜索项的 <c>cover</c>，已换成 300×300 变体）</param>
+        private readonly record struct LuoYueNeteaseResult(string? Lrc, string? Trans, string? Cover);
+
         /// <summary>
         /// 落月 API：先 /v2/music/tencent/search/song?word= 搜到曲目，再用 /v2/music/tencent/lyric?id=
         /// 取原文（data.lrc）与译文（data.trans）；搜索响应里顺带拿到专辑封面（cover）与 QQ songmid（mid）。
@@ -1317,6 +1322,176 @@ namespace NotchPeninsula
             catch (Exception ex)
             {
                 Logger.Debug($"落月API歌词获取失败: {ex.Message}");
+                return default;
+            }
+        }
+
+        /// <summary>
+        /// 落月 API - 网易云：先 <c>/v2/music/netease?word=</c> 搜到曲目拿到 <c>id</c>，
+        /// 再用 <c>/v2/music/netease/lyric?id=</c> 取原文 / 译文
+        /// —— 落月的歌词接口是**独立**的，搜索响应里并不含歌词，必须分两步。
+        /// 搜索响应里会**顺带**给出网易云 CDN 的专辑图（<c>cover</c>），一并带回去。
+        ///
+        /// <para><b>与 QQ 版的异同</b>：两条路的搜索响应字段**完全同构**（<c>song</c> / <c>singer</c> /
+        /// <c>id</c> / <c>cover</c>），所以候选匹配直接复用 <see cref="MatchSong"/> 同一套打分；
+        /// 但网易云响应里**没有时长**（<c>time</c> 是发行日期字符串），因此这一档做不了时长校验，
+        /// 只能靠「歌名 + 歌手」判定候选。</para>
+        ///
+        /// <para><b>字段名以实测为准</b>：歌词接口返回 <c>data.lrc</c>（部分文档写作 <c>rc</c>）
+        /// 与 <c>data.trans</c>，原文两个名字都收、按 <c>lrc</c> 优先。
+        /// 响应里另有一份 <c>yrc</c> 逐字歌词，本项目**不使用**，直接忽略。</para>
+        /// </summary>
+        private async Task<LuoYueNeteaseResult> FetchFromLuoYueNeteaseAsync(string title, string artist, string ua)
+        {
+            try
+            {
+                _http.DefaultRequestHeaders.Clear();
+                _http.DefaultRequestHeaders.Add("User-Agent", ua);
+
+                // 1. 搜索：按「歌名 歌手」搜，复用同一套「宽容匹配」打分选最像的那条
+                string word = Uri.EscapeDataString(string.IsNullOrEmpty(artist) ? title : $"{title} {artist}");
+                using var searchStream = await _http.GetStreamAsync($"{LuoYueHost}/v2/music/netease?word={word}");
+                using var searchDoc = await JsonDocument.ParseAsync(searchStream);
+                if (!searchDoc.RootElement.TryGetProperty("data", out var list) || list.ValueKind != JsonValueKind.Array)
+                    return default;
+
+                // 搜索结果里顺带给出网易云 CDN 专辑图：网易云会话下它是封面链的**第一档**（见「网易优先」段），
+                // 其他会话下这个值不参与封面（那时封面由引擎 1 / 引擎 4 提供）。
+                long songId = MatchSong(list, title, artist, out string? cover, out _);
+                if (songId <= 0) return default;
+
+                // 2. 取歌词。任何一步失败都直接放弃这一档交给下一个引擎，绝不抛给调用方
+                //    （失败也要静默 —— 它是兜底链中的一环，报错只会刷日志）
+                using var lyricStream = await _http.GetStreamAsync($"{LuoYueHost}/v2/music/netease/lyric?id={songId}");
+                using var lyricDoc = await JsonDocument.ParseAsync(lyricStream);
+                var root = lyricDoc.RootElement;
+
+                // 取词失败也要把封面带回去 —— 三者互不依赖，能拿到一样算一样（网易云会话下封面是优先档）
+                if (root.TryGetProperty("code", out var codeEl) && codeEl.TryGetInt32(out int code) && code != 200)
+                    return new LuoYueNeteaseResult(null, null, cover);
+                if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                    return new LuoYueNeteaseResult(null, null, cover);
+
+                string lrc = ReadJsonString(data, "lrc");
+                if (lrc.Length == 0) lrc = ReadJsonString(data, "rc"); // 兼容文档里的另一种字段名
+                string trans = ReadJsonString(data, "trans");
+
+                return new LuoYueNeteaseResult(
+                    string.IsNullOrEmpty(lrc) ? null : lrc,
+                    string.IsNullOrEmpty(trans) ? null : trans,
+                    cover);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"落月API-网易云歌词获取失败: {ex.Message}");
+                return default;
+            }
+        }
+
+        /// <summary>从 JSON 对象里取一个字符串字段：字段缺失或类型不对一律返回空串，绝不抛。</summary>
+        private static string ReadJsonString(JsonElement obj, string name)
+            => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() ?? "" : "";
+
+        /// <summary>网易云官方接口一次的产出；没命中的项为空串（<c>default</c> 下是 null，读取一律走 IsNullOrEmpty）。</summary>
+        /// <param name="Lrc">原文 LRC（<c>lrc.lyric</c>）</param>
+        /// <param name="Trans">译文 LRC（<c>tlyric.lyric</c>）</param>
+        /// <param name="Cover">专辑封面地址（<c>album.picUrl</c>，需 <c>allowCover</c> 才取）</param>
+        private readonly record struct NeteaseOfficialResult(string Lrc, string Trans, string Cover);
+
+        /// <summary>
+        /// 网易云官方接口：搜索 → 取词（原文 + 译文）→ 可选取封面。
+        ///
+        /// <para><b>为什么要单独抽成一个方法</b>：它在链上有**两个调用位置** ——
+        /// 网易云音乐会话下被提到最前（「网易优先」），其他会话下仍是原位置的兜底档；
+        /// 抽出来才能保证两条路走的是同一份实现，不会两边各改一半。</para>
+        ///
+        /// <para><paramref name="allowCover"/> = false 时**只取词不取封面**：用在「网易优先」段，
+        /// 好让封面链的第一档始终留给落月的 QQ 搜索（封面来源与优先级不因会话类型而变）。</para>
+        /// </summary>
+        private async Task<NeteaseOfficialResult> FetchFromNeteaseOfficialAsync(string title, string artist, long durationSec, bool allowCover)
+        {
+            try
+            {
+                _http.DefaultRequestHeaders.Clear();
+                _http.DefaultRequestHeaders.Add("User-Agent", HttpUserAgent);
+                _http.DefaultRequestHeaders.Add("Referer", "https://music.163.com");
+                _http.DefaultRequestHeaders.Add("X-Real-IP", $"114.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}.{new Random().Next(1, 255)}");
+
+                var content = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("s", $"{title} {artist}"),
+                    new KeyValuePair<string, string>("type", "1"),
+                    new KeyValuePair<string, string>("limit", "5"),
+                    new KeyValuePair<string, string>("offset", "0")
+                });
+
+                // using：HttpResponseMessage 本身持有内容流与连接租约，只释放它里面的流是不够的
+                using var response = await _http.PostAsync("https://music.163.com/api/search/get/web", content);
+                using var searchStream = await response.Content.ReadAsStreamAsync();
+                using var searchDoc = await JsonDocument.ParseAsync(searchStream);
+
+                long songId = 0;
+                if (searchDoc.RootElement.TryGetProperty("result", out var result)
+                    && result.ValueKind == JsonValueKind.Object
+                    && result.TryGetProperty("songs", out var songs)
+                    && songs.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var song in songs.EnumerateArray())
+                    {
+                        // ⚠️ 一律 TryGetProperty + 先验 ValueKind：这些字段在真实响应里会缺、
+                        //    甚至类型不对（实测到过 album 是字符串）。裸 GetProperty 或在非对象元素上
+                        //    调 TryGetProperty 都会抛异常，而异常会被外层 catch 吞成一行 WARN ——
+                        //    代价却是**整个网易云引擎中断**，歌词与封面一起没了。
+                        if (song.ValueKind != JsonValueKind.Object) continue;
+
+                        string name = song.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                        string singer = "";
+                        if (song.TryGetProperty("artists", out var artists)
+                            && artists.ValueKind == JsonValueKind.Array && artists.GetArrayLength() > 0
+                            && artists[0].ValueKind == JsonValueKind.Object
+                            && artists[0].TryGetProperty("name", out var singerEl))
+                            singer = singerEl.GetString() ?? "";
+
+                        // 精度优化：匹配歌名+歌手，并引入时长校验（误差4秒内）屏蔽 Live/伴奏 版
+                        if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
+                            (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            // 时长缺失（0）时不做校验：宁可取回搜索结果里的第一条，也别因为缺字段整首歌没歌词
+                            long durationMs = song.TryGetProperty("duration", out var durEl) && durEl.TryGetInt64(out long d) ? d : 0;
+                            if (durationMs <= 0 || durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4)
+                            {
+                                if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out songId)) continue;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (songId <= 0) return default;
+
+                string lrc = "", trans = "";
+                using (var lyricStream = await _http.GetStreamAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1"))
+                using (var lyricDoc = await JsonDocument.ParseAsync(lyricStream))
+                {
+                    if (lyricDoc.RootElement.TryGetProperty("lrc", out var lrcEl) &&
+                        lrcEl.TryGetProperty("lyric", out var lyricStr))
+                        lrc = lyricStr.GetString() ?? "";
+
+                    // 网易云译文：独立字段 tlyric，时间戳与原文一一对应
+                    if (lyricDoc.RootElement.TryGetProperty("tlyric", out var tl) &&
+                        tl.TryGetProperty("lyric", out var tlStr))
+                        trans = tlStr.GetString() ?? "";
+                }
+
+                // 封面兜底：搜索响应的 album 里只有 picId（不是地址），要拿歌曲 id
+                // 再请求一次 song/detail 才有 album.picUrl。
+                string cover = allowCover ? await FetchNeteaseCoverAsync(songId) : "";
+
+                return new NeteaseOfficialResult(lrc, trans, cover);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"网易云引擎失败: {ex.Message}");
                 return default;
             }
         }
