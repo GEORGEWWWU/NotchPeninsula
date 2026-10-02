@@ -1,14 +1,50 @@
-# Visual Studio
-.vs/
-*.suo
-*.user
-*.vsidx
+# ==============================================================================
+# NotchPeninsula — 上传（git）排除清单
+#
+# 三条原则：
+#   ① 源码目录结构**完整保留**：Core / Media / Notify / Plugin / Properties /
+#      Render / UI / data 及其下所有子目录一个都不能少（本文件只按**具体名字**
+#      排除产物目录，不使用会误伤源码的通配）；
+#   ② 只排除「构建 / 打包过程中产生的东西」与「本地工具生成的临时数据」；
+#   ③ ⚠️ 根目录的 msvcp140.dll / vcruntime140.dll 是**随源码一起分发的一部分**
+#      （csproj 里以 Content 引入），必须保留 —— 所以本文件**绝不能**出现
+#      `*.dll` 这类通配，否则将来重新拉取时会漏掉它们。
+# ==============================================================================
+
+# ---------- 构建产物 / 发布产物（bin、obj、build.ps1 的 publish 输出）----------
 bin/
 obj/
 publish/
+*.pdb
+*.pssc
+
+# ---------- 本地工具数据（改代码时生成，不上传）----------
 .workbuddy
 .workbuddy/
-
-# WorkBuddy AI 的本地工作数据（项目记忆 / 日志等）：只保留在本地，不进仓库
 .workbuddy-ai
 .workbuddy-ai/
+.codebuddy/
+.claude/
+.cursor/
+
+# ---------- IDE / 编辑器（个人环境产物）----------
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.vsidx
+*.sln.docstates
+*.log
+
+# ---------- 临时 / 系统文件 ----------
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*~
+Thumbs.db
+desktop.ini
+.DS_Store
