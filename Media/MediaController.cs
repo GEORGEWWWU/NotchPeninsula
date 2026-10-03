@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 using Windows.Media.Control;
 using SkiaSharp;
@@ -31,9 +32,22 @@ namespace NotchPeninsula
         internal static bool IsAppLaunchEnabled = false;
 
         internal static bool IsLyricsEnabled = true;
-        internal static bool IsKaraokeEnabled = true;
+        /// <summary>
+        /// 歌词扫光总闸（**唯一开关**）：开着时歌词随演唱进度扫光，关掉则画纯实体文字。
+        ///
+        /// <para>扫光由同一条链驱动（见 <see cref="ComputeScanProgress"/>）：**逐字优先，
+        /// 逐字效果不可用时自动回退到整行均匀扫光**。「不可用」有三种情形 —— 本行没对上字级数据、
+        /// 整首歌拿不到逐字数据（只有落月的两个源会带 <c>yrc</c>，网易云侧还只有部分歌有）、
+        /// 或本开关没开。三者走同一条回退分支，所以「不扫光」只由本开关一个条件决定。</para>
+        ///
+        /// <para>关闭时连逐字数据都不解析（见 <c>FetchLyricsAsync</c> 的建表段），
+        /// 行为与只有整行时间轴时完全一致。</para>
+        /// </summary>
+        internal static bool IsLyricScanEnabled = true;
+
         // 翻译歌词：开启后把当前句的译文作为第二行画在原文下方（仅在有译文时生效）
         internal static bool IsTranslationEnabled = true;
+
         internal static float LyricDelayOffset = 0f;
         // 四个歌词引擎与网络封面下载共用同一个 UA
         private const string HttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
@@ -48,6 +62,17 @@ namespace NotchPeninsula
         private static readonly System.Threading.SemaphoreSlim _fetchLock = new(1, 1);
 
         private (TimeSpan Time, string Text, string Translation)[] _lyrics = Array.Empty<(TimeSpan, string, string)>();
+
+        /// <summary>
+        /// 逐字时间轴，与 <see cref="_lyrics"/> **逐行一一对应**（同一趟循环里一起建表，索引天然对齐）。
+        ///
+        /// <para>只有落月的两个源会带回逐字数据（歌词接口的 <c>data.yrc</c>），其余源头完全没有；
+        /// 源头有逐字、但某一行没匹配上时，那个元素也是 <c>null</c>。
+        /// 这两种情况那一行都会由 <see cref="ComputeScanProgress"/> 自动回退到卡拉 OK 的整行扫光。
+        /// 整个数组为 <c>null</c> 表示这首歌压根没有逐字数据。</para>
+        /// </summary>
+        private LyricWordTiming?[]? _lyricWordTimings;
+
         // 当前时间轴里是否存在译文行（随 _lyrics 一起更新，避免每帧遍历数组）
         private bool _lyricsHasTranslation;
         public string CurrentLyric { get; private set; } = "";
@@ -897,6 +922,7 @@ namespace NotchPeninsula
             if (string.IsNullOrEmpty(title))
             {
                 _lyrics = Array.Empty<(TimeSpan, string, string)>();
+                _lyricWordTimings = null;
                 _lyricsHasTranslation = false;
                 CurrentLyric = "";
                 CurrentLyricTranslation = "";
@@ -942,6 +968,7 @@ namespace NotchPeninsula
             _lyricSlot = newSlot;
             _forceResync = true;
             _lyrics = Array.Empty<(TimeSpan, string, string)>();
+            _lyricWordTimings = null;
             _lyricsHasTranslation = false;
             CurrentLyric = "";
             CurrentLyricTranslation = "";
@@ -975,6 +1002,12 @@ namespace NotchPeninsula
                 string lrcText = "";
                 // 译文 LRC：与原文同一套时间戳，解析后按时间对齐成「原文行 → 译文」的映射
                 string transText = "";
+                // 逐字歌词（落月两个源歌词接口的 data.yrc）。与 lrcText **同生共死** —— 原文没被采纳时
+                // 逐字也不采纳，免得出现「逐字时间轴属于另一首歌」。
+                string yrcText = "";
+                // 两个落月源的 yrc **片段语法正好相反**：网易云是「时间在前」`(21680,370,0)你`，
+                // QQ 是「文字在前」`游(66,168)`。由采纳它的那一档置位，供下面建表时选解析方向。
+                bool yrcTimingFirst = false;
                 // 网络封面地址（网易系优先段 / 落月搜索的 cover / 网易云 song/detail 的 picUrl）。
                 // 仅音乐模式会用；都没拿到就保持兜底封面（程序图标）。
                 string coverUrl = "";
@@ -991,7 +1024,12 @@ namespace NotchPeninsula
                 {
                     // ① 落月 API - 网易云：歌词 + 网易云 CDN 专辑图（同一次搜索顺带给出）
                     var neteaseFirst = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent);
-                    if (!string.IsNullOrEmpty(neteaseFirst.Lrc)) lrcText = neteaseFirst.Lrc;
+                    if (!string.IsNullOrEmpty(neteaseFirst.Lrc))
+                    {
+                        lrcText = neteaseFirst.Lrc;
+                        yrcText = neteaseFirst.Yrc ?? "";
+                        yrcTimingFirst = true; // 落月网易云的 yrc 是「时间在前」
+                    }
                     if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseFirst.Trans))
                         transText = neteaseFirst.Trans;
                     if (!string.IsNullOrEmpty(neteaseFirst.Cover)) coverUrl = neteaseFirst.Cover;
@@ -1026,7 +1064,12 @@ namespace NotchPeninsula
                 // 所以即使歌词已被前面的档先取到，下面这一次搜索照常进行（封面与 songmid 仍由它提供）。
                 if (!HasTimedLyric(lrcText))
                 {
-                    if (!string.IsNullOrEmpty(luoYue.Lrc)) lrcText = luoYue.Lrc;
+                    if (!string.IsNullOrEmpty(luoYue.Lrc))
+                    {
+                        lrcText = luoYue.Lrc;
+                        yrcText = luoYue.Yrc ?? "";
+                        yrcTimingFirst = false; // 落月 QQ 的 yrc 是「文字在前」
+                    }
                     if (!string.IsNullOrEmpty(luoYue.Trans)) transText = luoYue.Trans;
                 }
 
@@ -1068,7 +1111,12 @@ namespace NotchPeninsula
                 if (!preferNetease && !HasTimedLyric(lrcText))
                 {
                     var netease = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent);
-                    if (!string.IsNullOrEmpty(netease.Lrc)) lrcText = netease.Lrc;
+                    if (!string.IsNullOrEmpty(netease.Lrc))
+                    {
+                        lrcText = netease.Lrc;
+                        yrcText = netease.Yrc ?? "";
+                        yrcTimingFirst = true; // 落月网易云的 yrc 是「时间在前」
+                    }
                     // 译文只在前面一个都没给到时才采纳，免得把一份好译文覆盖成空（与引擎 2 同一套保护）
                     if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(netease.Trans))
                         transText = netease.Trans;
@@ -1125,7 +1173,15 @@ namespace NotchPeninsula
                     // 译文先按时间戳建表，随后在解析原文时按时间对齐贴上第二行
                     var transTable = BuildTransTable(transText);
                     int transCursor = 0;
+                    // 逐字表同样先建好，随后按**行首时间戳 / 文本**取用（与译文一个套路）。
+                    // 只在扫光总闸开着时才解析：关掉时这份表压根不建，与只有整行时间轴时逐字不差。
+                    var wordTable = IsLyricScanEnabled && yrcText.Length > 0
+                        ? BuildYrcTable(yrcText, yrcTimingFirst)
+                        : Array.Empty<(int StartMs, string Key, LyricWordTiming Timing)>();
+                    int wordCursor = 0;
                     var lines = new List<(TimeSpan, string, string)>();
+                    // 与 lines 同增同减，所以 wordTimings[i] 天然对应该行
+                    List<LyricWordTiming?>? wordTimings = wordTable.Length > 0 ? new List<LyricWordTiming?>() : null;
                     foreach (var line in lrcText.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                     {
                         if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
@@ -1137,6 +1193,7 @@ namespace NotchPeninsula
                                 {
                                     string trans = LookupTrans(transTable, ts.Ticks, ref transCursor);
                                     lines.Add((ts, text, trans));
+                                    wordTimings?.Add(LookupWordTiming(wordTable, ref wordCursor, (int)ts.TotalMilliseconds, text));
                                 }
                             }
                         }
@@ -1147,6 +1204,7 @@ namespace NotchPeninsula
                     if (IsLyricOwner(title, artist))
                     {
                         _lyrics = lines.ToArray();
+                        _lyricWordTimings = wordTimings?.ToArray();
                         _lyricsHasTranslation = lines.Exists(l => !string.IsNullOrEmpty(l.Item3));
                     }
                 }
@@ -1279,19 +1337,23 @@ namespace NotchPeninsula
         /// <summary>落月 API 一次的产出；没命中的项为 null。</summary>
         /// <param name="Lrc">原文 LRC（data.lrc）</param>
         /// <param name="Trans">译文 LRC（data.trans）</param>
+        /// <param name="Yrc">逐字歌词（data.yrc）。实测 QQ 侧基本都非空，格式是「文字在前」：`游(66,168)京(234,76)`</param>
         /// <param name="Cover">专辑封面地址（搜索项的 cover，已换成 300×300 变体）</param>
         /// <param name="Mid">QQ 的 songmid（搜索项的 mid），交给 <see cref="QQMusicLyricApi"/> 用</param>
-        private readonly record struct LuoYueResult(string? Lrc, string? Trans, string? Cover, string? Mid);
+        private readonly record struct LuoYueResult(string? Lrc, string? Trans, string? Yrc, string? Cover, string? Mid);
 
         /// <summary>落月「网易云」一次取词的产出；没命中的项为 null。</summary>
         /// <param name="Lrc">原文 LRC（实测字段是 <c>data.lrc</c>，兼容文档里的 <c>data.rc</c>）</param>
         /// <param name="Trans">译文 LRC（<c>data.trans</c>，实测常为空）</param>
+        /// <param name="Yrc">逐字歌词（<c>data.yrc</c>）。实测**只有部分歌**有（孤勇者 / 勾指起誓有，花がら / 起风了 / 晴天 / Lemon 都是空串），
+        /// 格式是「时间在前」：`(21680,370,0)你(22050,340,0)是`</param>
         /// <param name="Cover">网易云 CDN 专辑图地址（搜索项的 <c>cover</c>，已换成 300×300 变体）</param>
-        private readonly record struct LuoYueNeteaseResult(string? Lrc, string? Trans, string? Cover);
+        private readonly record struct LuoYueNeteaseResult(string? Lrc, string? Trans, string? Yrc, string? Cover);
 
         /// <summary>
         /// 落月 API：先 /v2/music/tencent/search/song?word= 搜到曲目，再用 /v2/music/tencent/lyric?id=
-        /// 取原文（data.lrc）与译文（data.trans）；搜索响应里顺带拿到专辑封面（cover）与 QQ songmid（mid）。
+        /// 取原文（data.lrc）、译文（data.trans）与逐字歌词（data.yrc）；
+        /// 搜索响应里顺带拿到专辑封面（cover）与 QQ songmid（mid）。
         /// </summary>
         private async Task<LuoYueResult> FetchFromLuoYueAsync(string title, string artist, string ua)
         {
@@ -1307,7 +1369,9 @@ namespace NotchPeninsula
                 if (!searchDoc.RootElement.TryGetProperty("data", out var list) || list.ValueKind != JsonValueKind.Array)
                     return default;
 
-                long songId = MatchSong(list, title, artist, out string? cover, out string? mid);
+                // 非中文曲目允许标题包含匹配：这类歌名在 QQ 曲库里常带中译别名，全字匹配会整条落空。
+                // 中文曲目一切照旧（按完整歌名基本都能搜到，不需要放宽）。
+                long songId = MatchSong(list, title, artist, !IsChineseTitle(title), out string? cover, out string? mid);
                 if (songId <= 0) return default;
 
                 // 2. 取歌词。失败也要把封面 / songmid 带回去 —— 三者互不依赖，能拿到一样算一样
@@ -1317,15 +1381,17 @@ namespace NotchPeninsula
                 var root = lyricDoc.RootElement;
 
                 if (root.TryGetProperty("code", out var codeEl) && codeEl.TryGetInt32(out int code) && code != 200)
-                    return new LuoYueResult(null, null, cover, mid);
+                    return new LuoYueResult(null, null, null, cover, mid);
                 if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
-                    return new LuoYueResult(null, null, cover, mid);
+                    return new LuoYueResult(null, null, null, cover, mid);
 
                 string lrc = data.TryGetProperty("lrc", out var lrcEl) ? lrcEl.GetString() ?? "" : "";
                 string trans = data.TryGetProperty("trans", out var transEl) ? transEl.GetString() ?? "" : "";
+                string yrc = ReadJsonString(data, "yrc");
                 return new LuoYueResult(
                     string.IsNullOrEmpty(lrc) ? null : lrc,
                     string.IsNullOrEmpty(trans) ? null : trans,
+                    string.IsNullOrEmpty(yrc) ? null : yrc,
                     cover,
                     mid);
             }
@@ -1347,9 +1413,8 @@ namespace NotchPeninsula
         /// 但网易云响应里**没有时长**（<c>time</c> 是发行日期字符串），因此这一档做不了时长校验，
         /// 只能靠「歌名 + 歌手」判定候选。</para>
         ///
-        /// <para><b>字段名以实测为准</b>：歌词接口返回 <c>data.lrc</c>（部分文档写作 <c>rc</c>）
-        /// 与 <c>data.trans</c>，原文两个名字都收、按 <c>lrc</c> 优先。
-        /// 响应里另有一份 <c>yrc</c> 逐字歌词，本项目**不使用**，直接忽略。</para>
+        /// <para><b>字段名以实测为准</b>：歌词接口返回 <c>data.lrc</c>（部分文档写作 <c>rc</c>）、
+        /// <c>data.trans</c> 与 <c>data.yrc</c>（逐字歌词）。原文两个名字都收、按 <c>lrc</c> 优先。</para>
         /// </summary>
         private async Task<LuoYueNeteaseResult> FetchFromLuoYueNeteaseAsync(string title, string artist, string ua)
         {
@@ -1367,7 +1432,7 @@ namespace NotchPeninsula
 
                 // 搜索结果里顺带给出网易云 CDN 专辑图：网易云会话下它是封面链的**第一档**（见「网易优先」段），
                 // 其他会话下这个值不参与封面（那时封面由引擎 1 / 引擎 4 提供）。
-                long songId = MatchSong(list, title, artist, out string? cover, out _);
+                long songId = MatchSong(list, title, artist, false, out string? cover, out _);
                 if (songId <= 0) return default;
 
                 // 2. 取歌词。任何一步失败都直接放弃这一档交给下一个引擎，绝不抛给调用方
@@ -1378,17 +1443,19 @@ namespace NotchPeninsula
 
                 // 取词失败也要把封面带回去 —— 三者互不依赖，能拿到一样算一样（网易云会话下封面是优先档）
                 if (root.TryGetProperty("code", out var codeEl) && codeEl.TryGetInt32(out int code) && code != 200)
-                    return new LuoYueNeteaseResult(null, null, cover);
+                    return new LuoYueNeteaseResult(null, null, null, cover);
                 if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
-                    return new LuoYueNeteaseResult(null, null, cover);
+                    return new LuoYueNeteaseResult(null, null, null, cover);
 
                 string lrc = ReadJsonString(data, "lrc");
                 if (lrc.Length == 0) lrc = ReadJsonString(data, "rc"); // 兼容文档里的另一种字段名
                 string trans = ReadJsonString(data, "trans");
+                string yrc = ReadJsonString(data, "yrc");
 
                 return new LuoYueNeteaseResult(
                     string.IsNullOrEmpty(lrc) ? null : lrc,
                     string.IsNullOrEmpty(trans) ? null : trans,
+                    string.IsNullOrEmpty(yrc) ? null : yrc,
                     cover);
             }
             catch (Exception ex)
@@ -1524,8 +1591,16 @@ namespace NotchPeninsula
         /// <para>规则：两侧先归一化（只留字母 / 数字 / 汉字假名，转小写，去掉空格括号连字符），
         /// 标题要求归一化后全等（分更高）或互相包含；歌手按分隔符拆成多个名字，任一对得上即算过。
         /// 取分数最高的那一条；歌手完全不沾边的不候用，免得挂到翻唱 / 同名曲上。</para>
+        ///
+        /// <para><paramref name="allowLooseTitle"/> = true 时，标题在前两档都落空后再试一次
+        /// **包含匹配**（<see cref="IsLooseTitleMatch"/>）。它只给非中文曲目开（见
+        /// <see cref="IsChineseTitle"/>）：这类歌名在 QQ 曲库里普遍写成「原名 + 中译别名」——
+        /// 实测《花がら(Withered Flower)》在库里的条目是《花がら (枯花)》，归一化后
+        /// <c>花がらwitheredflower</c> 与 <c>花がら枯花</c> 互不包含，全字匹配必然落空；
+        /// 换更短的搜索词也没用（实测三种搜索词返回的候选完全相同），卡点在打分。
+        /// **歌手校验在任何档位都不放宽。**</para>
         /// </summary>
-        private static long MatchSong(JsonElement list, string title, string artist, out string? cover, out string? mid)
+        private static long MatchSong(JsonElement list, string title, string artist, bool allowLooseTitle, out string? cover, out string? mid)
         {
             cover = null;
             mid = null;
@@ -1544,7 +1619,7 @@ namespace NotchPeninsula
                 string name = song.TryGetProperty("song", out var nameEl) ? nameEl.GetString() ?? "" : "";
                 string singer = song.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
 
-                int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer));
+                int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer), allowLooseTitle);
                 if (score <= bestScore) continue;
                 if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out long id)) continue;
 
@@ -1559,20 +1634,84 @@ namespace NotchPeninsula
             return bestId;
         }
 
-        /// <summary>候选打分：标题全等 2 分 / 互相包含 1 分（0 分直接淘汰）；歌手另计，最高 2 分。0 表示不候用。</summary>
-        private static int ScoreCandidate(string wantTitle, HashSet<string> wantArtists, string candTitle, HashSet<string> candArtists)
+        /// <summary>候选打分：标题全等 2 分 / 互相包含 1 分（0 分直接淘汰）；歌手另计，最高 2 分。0 表示不候用。
+        /// <paramref name="allowLooseTitle"/> 为 true 时，全等与互相包含都落空的话再试一次包含匹配
+        /// （<see cref="IsLooseTitleMatch"/>），通过同样记 1 分 —— 排序上仍低于「全等」的候选。</summary>
+        private static int ScoreCandidate(string wantTitle, HashSet<string> wantArtists, string candTitle, HashSet<string> candArtists, bool allowLooseTitle)
         {
             int titleScore;
             if (candTitle == wantTitle) titleScore = 2;
             else if (candTitle.Length > 0
                      && (candTitle.Contains(wantTitle, StringComparison.Ordinal)
                          || wantTitle.Contains(candTitle, StringComparison.Ordinal))) titleScore = 1;
+            else if (allowLooseTitle && IsLooseTitleMatch(candTitle, wantTitle)) titleScore = 1;
             else return 0;
 
             if (wantArtists.Count == 0 || candArtists.Count == 0) return titleScore * 10 + 1; // 一侧没给歌手：不因此淘汰
 
             if (wantArtists.Overlaps(candArtists)) return titleScore * 10 + 2;
             return HasPartialArtistOverlap(wantArtists, candArtists) ? titleScore * 10 + 1 : 0;
+        }
+
+        /// <summary>
+        /// 曲目算不算「中文歌」—— 决定标题匹配落空后能否放宽到包含匹配
+        /// （即 <see cref="MatchSong"/> 与 <see cref="PickBestMid"/> 的 <c>allowLooseTitle</c>）。
+        ///
+        /// <para>判据：歌名里出现汉字、且**不含**日文假名或韩文，就按中文歌处理。
+        /// 中文歌按完整歌名基本都能在 QQ 曲库里搜到，不需要放宽；真正需要的是非中文曲目 ——
+        /// 它们的歌名在库里常被写成「原名 + 中译别名」（实测《花がら(Withered Flower)》对应
+        /// 《花がら (枯花)》），两侧归一化后互不包含，全字匹配必然落空。</para>
+        /// </summary>
+        private static bool IsChineseTitle(string title)
+        {
+            bool hasHan = false;
+            foreach (char c in title)
+            {
+                if (c >= '\u3040' && c <= '\u30FF') return false;  // 平假名 / 片假名 ⇒ 日文
+                if (c >= '\uAC00' && c <= '\uD7AF') return false;  // 谚文 ⇒ 韩文
+                if (c >= '\u4E00' && c <= '\u9FFF') hasHan = true; // CJK 统一表意文字
+            }
+            return hasHan;
+        }
+
+        // 包含匹配要求的最短公共子串。取 3 是为了稳稳吃掉「原名 + 别名」这类差异
+        // （《花がら(Withered Flower)》与《花がら (枯花)》的公共子串正是开头的「花がら」），
+        // 又短到不至于把毫无关系的歌拉进来。
+        private const int LooseTitleMinCommon = 3;
+
+        // 公共子串还要覆盖较短那个标题的这一比例，避免「短歌名恰好是长歌名前缀」这种巧合。
+        private const double LooseTitleCoverage = 0.6;
+
+        /// <summary>
+        /// 标题的「包含匹配」：两侧归一化后若存在足够长的公共子串，就当作标题对得上。
+        ///
+        /// <para>门槛受两个条件同时约束 —— 公共子串既要不短于 <see cref="LooseTitleMinCommon"/>，
+        /// 又要覆盖较短标题的 <see cref="LooseTitleCoverage"/> 以上。是放宽标题写法差异，
+        /// 不是放宽「这是不是同一首歌」：<b>歌手校验照旧</b>，且它只在非中文曲目（见
+        /// <see cref="IsChineseTitle"/>）与前两档都落空时才启用。</para>
+        /// </summary>
+        private static bool IsLooseTitleMatch(string candTitle, string wantTitle)
+        {
+            if (candTitle.Length < LooseTitleMinCommon || wantTitle.Length < LooseTitleMinCommon) return false;
+
+            int shorter = Math.Min(candTitle.Length, wantTitle.Length);
+            int need = Math.Max(LooseTitleMinCommon, (int)Math.Ceiling(shorter * LooseTitleCoverage));
+
+            // 最长公共子串。歌名都很短，滚动数组的 O(n·m) 代价可忽略。
+            var prev = new int[wantTitle.Length + 1];
+            var cur = new int[wantTitle.Length + 1];
+            int best = 0;
+            for (int i = 1; i <= candTitle.Length; i++)
+            {
+                for (int j = 1; j <= wantTitle.Length; j++)
+                {
+                    cur[j] = candTitle[i - 1] == wantTitle[j - 1] ? prev[j - 1] + 1 : 0;
+                    if (cur[j] > best) best = cur[j];
+                }
+                (prev, cur) = (cur, prev);
+                Array.Clear(cur, 0, cur.Length);
+            }
+            return best >= need;
         }
 
         /// <summary>
@@ -1654,6 +1793,7 @@ namespace NotchPeninsula
             string wantTitle = NormalizeToken(title);
             if (wantTitle.Length == 0) return null;
             var wantArtists = SplitArtists(artist);
+            bool allowLooseTitle = !IsChineseTitle(title); // 与落月 QQ 档同一口径（详见 MatchSong）
 
             string? bestMid = null;
             int bestScore = 0;
@@ -1665,7 +1805,7 @@ namespace NotchPeninsula
                 string name = item.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
                 string singer = item.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
 
-                int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer));
+                int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer), allowLooseTitle);
                 if (score <= bestScore) continue;
                 if (!item.TryGetProperty("mid", out var midEl) || midEl.GetString() is not { Length: > 0 } mid) continue;
 
@@ -1815,6 +1955,259 @@ namespace NotchPeninsula
             return "";
         }
 
+        // ==================== 🎤 逐字歌词（yrc） ====================
+        // 落月的两个歌词接口各带一份 yrc（逐字时间轴），**两家的片段语法正好相反**：
+        //
+        //   落月 网易云（时间在前）  [21680,3610](21680,370,0)你(22050,340,0)是
+        //   落月 QQ    （文字在前）  [66,599]游(66,168)京(234,76)
+        //
+        // 共同点：行首都是 [起始ms,时长ms]；括号里的时间戳都是**绝对值**（与行首同一坐标系，
+        // 不是相对偏移）；括号里可能是 2 个或 3 个数字（第 3 位是保留位），解析只认前两位。
+        // 元数据行（[ti:] / [kana:] / [offset:]、以及整行没有可计时片段的版权行）会被自然跳过。
+        //
+        // ⚠️ **对齐用文本、不用时间戳**。实测两家表现完全不同：
+        //   · QQ 的 lrc 与 yrc 行首时间戳**完全相等**；
+        //   · 网易云两者是**系统性错位**（同一行差 170~650ms，且越到后面越大），
+        //     60ms 容差只能命中 6.8%，就是「有逐字数据却几乎用不上」。
+        // 而两者文本来自同一份歌词、归一化后**逐行相等**（忽略空白），所以拿它当主键：
+        // 文本是强约束，不会错配到别的句子；时间戳只留一个宽松兜底，应付个别标点不一致的行。
+
+        /// <summary>
+        /// 一行的逐字时间轴。时间片**相对本行起始**，单位毫秒。
+        /// <see cref="CumChars"/> 是「截至该片段结束时的累积有效字符数」——
+        /// 扫光据此把「已经唱到第几个字」折算成 0~1 的比例，渲染层因此**零改动**。
+        /// </summary>
+        private readonly struct LyricWordTiming
+        {
+            /// <summary>第 i 个片段结束的时刻（相对本行起始，毫秒），非递减。</summary>
+            public readonly int[] EndMs;
+            /// <summary>截至第 i 个片段结束时的累积有效字符数，与 <see cref="EndMs"/> 等长。</summary>
+            public readonly int[] CumChars;
+            /// <summary>有时间标注的字的总有效字符数（扫光比例的分子上限）。</summary>
+            public readonly int TotalChars;
+
+            public LyricWordTiming(int[] endMs, int[] cumChars, int totalChars)
+            {
+                EndMs = endMs;
+                CumChars = cumChars;
+                TotalChars = totalChars;
+            }
+        }
+
+        // 时间戳兜底允许的最大偏差。只用于「文本对不上」的行（个别标点差异），
+        // 所以给得宽松些 —— 正常行距都在 1.7 秒以上，500ms 不会串到隔壁句。
+        private const int YrcTimeFallbackMs = 500;
+
+        /// <summary>
+        /// 解析 yrc，产出「行首毫秒 + 归一化文本 → 该行逐字时间轴」的表（按行首升序）。
+        /// <paramref name="timingFirst"/> 选片段语法方向（见本节开头的两组样例）——
+        /// 由采纳它的那一档按源给出，比逐行猜更稳（歌词正文里出现括号也不会误判）。
+        /// 语法不认识 / 整行没有可计时字符：跳过该行，它自然回落整行扫描。
+        /// </summary>
+        private static (int StartMs, string Key, LyricWordTiming Timing)[] BuildYrcTable(string yrc, bool timingFirst)
+        {
+            if (string.IsNullOrEmpty(yrc)) return Array.Empty<(int, string, LyricWordTiming)>();
+
+            var table = new List<(int StartMs, string Key, LyricWordTiming Timing)>();
+
+            foreach (var raw in yrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string line = raw.Trim();
+                if (line.Length < 4 || line[0] != '[') continue;
+                int headEnd = line.IndexOf(']');
+                if (headEnd <= 1) continue;
+
+                // 行首 [起始ms,时长ms,…]：只认第一个数字
+                string head = line.Substring(1, headEnd - 1);
+                int comma = head.IndexOf(',');
+                if (comma > 0) head = head.Substring(0, comma);
+                if (!int.TryParse(head, out int lineStart)) continue;
+
+                var endMs = new List<int>();
+                var cumChars = new List<int>();
+                var text = new StringBuilder(); // 片段文字拼起来 = 整行文本，用来做文本对齐
+                int totalChars = 0;
+
+                string body = line.Substring(headEnd + 1);
+                int p = 0;
+                while (true)
+                {
+                    int open = body.IndexOf('(', p);
+                    if (open < 0) break;
+                    int close = body.IndexOf(')', open);
+                    if (close < 0) break;
+
+                    // 两种语法只是「文字」与「括号」的先后关系相反 —— 取文字的那一侧不同
+                    string seg;
+                    if (timingFirst)
+                    {
+                        // (时间)文字：文字从本 ')' 之后到下一个 '('（或行尾）
+                        int next = body.IndexOf('(', close + 1);
+                        seg = next < 0 ? body.Substring(close + 1) : body.Substring(close + 1, next - close - 1);
+                    }
+                    else
+                    {
+                        // 文字(时间)：文字从上一个 ')' 之后到本 '('
+                        seg = body.Substring(p, open - p);
+                    }
+                    string stamp = body.Substring(open + 1, close - open - 1);
+                    p = close + 1;
+                    text.Append(seg);
+
+                    var parts = stamp.Split(',');
+                    if (parts.Length < 2
+                        || !int.TryParse(parts[0], out int wordStart)
+                        || !int.TryParse(parts[1], out int wordDuration))
+                        continue;
+
+                    int chars = CountEffectiveChars(seg);
+                    if (chars <= 0) continue;
+
+                    // 换算成相对行首的结束时刻。0 时长的片段会让它与上一个相等，
+                    // 所以这里只保证「非递减」（二分查找不要求严格递增）。
+                    int end = wordStart + wordDuration - lineStart;
+                    if (endMs.Count > 0 && end < endMs[^1]) end = endMs[^1];
+
+                    totalChars += chars;
+                    endMs.Add(end);
+                    cumChars.Add(totalChars);
+                }
+
+                if (totalChars == 0 || endMs.Count != cumChars.Count) continue;
+                table.Add((lineStart, NormalizeLyricText(text.ToString()),
+                    new LyricWordTiming(endMs.ToArray(), cumChars.ToArray(), totalChars)));
+            }
+
+            table.Sort((a, b) => a.StartMs.CompareTo(b.StartMs));
+            return table.ToArray();
+        }
+
+        /// <summary>片段覆盖的「有效字符数」—— 空白不计，否则扫光比例会被空格 / 缩进拖偏。</summary>
+        private static int CountEffectiveChars(string s)
+        {
+            int n = 0;
+            foreach (char c in s)
+                if (!char.IsWhiteSpace(c)) n++;
+            return n;
+        }
+
+        /// <summary>
+        /// 歌词文本的归一化形式：只去掉空白，用于 lrc 行与 yrc 行的对齐。
+        /// 两边的文本来自同一份歌词，去掉空白后应当逐行相等（实测《花がら》《勾指起誓》均如此）。
+        /// </summary>
+        private static string NormalizeLyricText(string s)
+        {
+            var sb = new StringBuilder(s.Length);
+            foreach (char c in s)
+                if (!char.IsWhiteSpace(c)) sb.Append(c);
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 取某条原文行对应的逐字时间轴。
+        ///
+        /// <para><b>先用文本对</b>（忽略空白），<paramref name="cursor"/> 由调用方持有并单调后移 ——
+        /// 歌词的行序与 yrc 的行序一致，命中就把游标推过该条，于是副歌重复出现时
+        /// 第二次自然对上第二份逐字数据。文本相等是强约束，不会错配到别的句子。</para>
+        ///
+        /// <para>文本对不上时再退回按行首时间戳找（<see cref="YrcTimeFallbackMs"/>），
+        /// 应付个别标点不一致的行。两条都落空就返回 null，该行回落整行扫描。</para>
+        /// </summary>
+        private static LyricWordTiming? LookupWordTiming(
+            (int StartMs, string Key, LyricWordTiming Timing)[] table, ref int cursor, int lineMs, string lineText)
+        {
+            if (table.Length == 0) return null;
+
+            string key = NormalizeLyricText(lineText);
+            for (int j = cursor; j < table.Length; j++)
+            {
+                if (table[j].Key == key) { cursor = j + 1; return table[j].Timing; }
+            }
+
+            for (int j = cursor; j < table.Length && table[j].StartMs <= lineMs + YrcTimeFallbackMs; j++)
+            {
+                if (Math.Abs(table[j].StartMs - lineMs) <= YrcTimeFallbackMs)
+                {
+                    cursor = j + 1;
+                    return table[j].Timing;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 某一行扫光进度（0~1）的唯一出口 —— <b>逐字歌词与卡拉 OK 合并后的同一条链</b>。
+        ///
+        /// <list type="number">
+        /// <item><b>逐字优先</b>：本行有字级时间轴时按每个字自己的时值推进（长的音就慢慢走、
+        ///       快念段就快速掠过），与 <see cref="ComputeWordAlignedProgress"/> 的口径一致；</item>
+        /// <item><b>自动回退整行扫光</b>：逐字效果不可用时，按「本行起点 → 下一行起点」线性插值。
+        ///       所谓「逐字不可用」有两种情形 —— 本行没对上字级数据、整首歌拿不到逐字数据
+        ///       （只有落月的两个源会带 yrc，网易云侧还只有部分歌有）。</item>
+        /// </list>
+        ///
+        /// <para><b>为什么是一条链</b>：两条路径产出的是同一个 0~1 标量，
+        /// 渲染层的扫光依旧是「整行总宽 × 进度」，不需要知道自己拿到的是哪一种驱动。
+        /// 于是「这首歌没有逐字数据」不会退化成不扫光，而只是自动降级成整行均匀扫光。</para>
+        /// </summary>
+        private float ComputeScanProgress(int lineIndex, TimeSpan position)
+        {
+            TimeSpan lineStart = _lyrics[lineIndex].Time;
+
+            // ① 逐字优先
+            if (_lyricWordTimings is { Length: > 0 } timings
+                && lineIndex < timings.Length
+                && timings[lineIndex] is { TotalChars: > 0 } wordTiming)
+            {
+                return ComputeWordAlignedProgress(
+                    wordTiming, (position - lineStart).TotalMilliseconds);
+            }
+
+            // ② 逐字不可用 → 回退整行扫光
+            TimeSpan endTime = lineIndex < _lyrics.Length - 1
+                ? _lyrics[lineIndex + 1].Time
+                : lineStart + TimeSpan.FromSeconds(4); // 末行没有下一句可依，按 4 秒估
+            double duration = (endTime - lineStart).TotalSeconds;
+            if (duration <= 0) return 0f;
+
+            return Math.Clamp((float)((position - lineStart).TotalSeconds / duration), 0f, 1f);
+        }
+
+        /// <summary>
+        /// 按逐字时间轴把「本行已经唱到哪」折算成 0~1 的扫光比例。仅在逐字数据可用时被
+        /// <see cref="ComputeScanProgress"/> 调用；不可用时由那条链回退到整行扫光。
+        ///
+        /// <para><b>口径是「字符数」而不是像素宽度</b>：中文与日文基本等宽，折算误差肉眼不可见；
+        /// 好处是渲染层**零改动** —— 它拿到的仍然只是一个 0~1 的标量，扫光依旧是「整行总宽 × 比例」。
+        /// 含大量拉丁字母 / 空格的行会有几像素偏差，这是已知取舍。</para>
+        /// </summary>
+        private static float ComputeWordAlignedProgress(LyricWordTiming timing, double elapsedMs)
+        {
+            int[] ends = timing.EndMs;
+            int n = ends.Length;
+            if (n == 0 || timing.TotalChars <= 0) return 0f;
+            if (elapsedMs >= ends[n - 1]) return 1f;
+            if (elapsedMs <= 0) return 0f;
+
+            // 二分：最后一个 ends[i] <= elapsed 的下标 + 1 = 已完成的片段数
+            int lo = 0, hi = n - 1, done = 0;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (ends[mid] <= elapsedMs) { done = mid + 1; lo = mid + 1; }
+                else hi = mid - 1;
+            }
+            if (done >= n) return 1f;
+
+            int doneChars = done > 0 ? timing.CumChars[done - 1] : 0;
+            int spanStart = done > 0 ? ends[done - 1] : 0;
+            int spanEnd = ends[done];
+            float frac = spanEnd > spanStart ? (float)((elapsedMs - spanStart) / (spanEnd - spanStart)) : 0f;
+            int spanChars = timing.CumChars[done] - doneChars;
+
+            return Math.Clamp((doneChars + frac * spanChars) / timing.TotalChars, 0f, 1f);
+        }
+
         // 译文里的占位符与版权声明不该被当成歌词显示：
         // `//`、`/`、`…` 这类整行只有符号的占位，以及 QQ 音乐那句「享有本翻译作品的著作权」，
         // 统一按「这句没有译文」处理 —— 少了这层过滤，间奏行会变成一堆「//」。
@@ -1927,14 +2320,8 @@ namespace NotchPeninsula
                 {
                     found = _lyrics[i].Text;
                     foundTrans = _lyrics[i].Translation;
-                    // 算出当前这句歌词的停留时长，并转换成 0.0 ~ 1.0 的进度
-                    TimeSpan endTime = (i < _lyrics.Length - 1) ? _lyrics[i + 1].Time : _lyrics[i].Time + TimeSpan.FromSeconds(4);
-                    double duration = (endTime - _lyrics[i].Time).TotalSeconds;
-                    if (duration > 0)
-                    {
-                        progress = (float)((compensatedPosition - _lyrics[i].Time).TotalSeconds / duration);
-                        progress = Math.Clamp(progress, 0f, 1f); // 锁定在 0~1 之间
-                    }
+                    // 本句的扫光进度：逐字优先，逐字不可用则自动回退整行扫光（见 ComputeScanProgress）
+                    progress = ComputeScanProgress(i, compensatedPosition);
                     break;
                 }
             }

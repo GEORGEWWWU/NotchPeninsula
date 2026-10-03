@@ -308,7 +308,7 @@ namespace NotchPeninsula
                 float lyricY = LYRIC_CARD_Y;
                 bool newLyricToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
                 bool newTransToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 77 && y <= lyricY + 97);
-                bool newKaraokeToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 117 && y <= lyricY + 137);
+                bool newScanToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 117 && y <= lyricY + 137);
 
                 // 延迟补偿按钮整行排在最后（歌词卡片里第四行）
                 float btnY = lyricY + 147;
@@ -317,11 +317,11 @@ namespace NotchPeninsula
                 bool newLyricPlusHovered = !anyPopupOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
                 bool newLyricResetHovered = !anyPopupOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
 
-                if (newLyricToggleHovered != _lyricToggleHovered || newTransToggleHovered != _transToggleHovered || newKaraokeToggleHovered != _karaokeToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
+                if (newLyricToggleHovered != _lyricToggleHovered || newTransToggleHovered != _transToggleHovered || newScanToggleHovered != _scanToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
                 {
                     _lyricToggleHovered = newLyricToggleHovered;
                     _transToggleHovered = newTransToggleHovered;
-                    _karaokeToggleHovered = newKaraokeToggleHovered;
+                    _scanToggleHovered = newScanToggleHovered;
                     _lyricMinusHovered = newLyricMinusHovered;
                     _lyricPlusHovered = newLyricPlusHovered;
                     _lyricResetHovered = newLyricResetHovered;

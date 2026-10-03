@@ -649,6 +649,7 @@ namespace NotchPeninsula
             _chevronPaint.Color = Neutral(150);
 
             // 歌词设置卡片（合并卡片 208 底 + 14 间距；与 WM_MOUSEMOVE 的 lyricY 同源）
+            // 四行：开关行偏移 37 / 77 / 117（行距 40），末行是延迟补偿按钮（147..171）
             float lyricY = LYRIC_CARD_Y;
             var lyricRect = new SKRect(200, lyricY, WIDTH - 20, lyricY + 176);
             canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
@@ -694,21 +695,23 @@ namespace NotchPeninsula
                 _toggleCirclePaint.Color = SKColors.White;
             }
 
-            // 卡拉OK效果开关
-            canvas.DrawText("开启卡拉OK动效", 216, lyricY + 132, _subTextPaint);
+            // 逐字歌词开关（逐字与整行推进合并后的唯一开关）：歌词随演唱进度扫光 ——
+            // 有逐字数据就按每个字自己的时值推进；这首歌拿不到逐字数据时自动回退卡拉 OK 的整行扫光
+            //（见 MediaController.ComputeScanProgress）。标题里的括号就是对用户的回退说明。
+            canvas.DrawText("逐字歌词（不可用时自动回退卡拉OK）", 216, lyricY + 132, _subTextPaint);
             float kY = lyricY + 117;
             var kRect = new SKRect(tX, kY, tX + tW, kY + tH);
-            if (MediaController.IsKaraokeEnabled)
+            if (MediaController.IsLyricScanEnabled)
             {
-                _dynamicFillPaint.Color = _karaokeToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                _dynamicFillPaint.Color = _scanToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                 canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicFillPaint);
                 canvas.DrawCircle(tX + tW - tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
             }
             else
             {
-                _dynamicStrokePaint.Color = _karaokeToggleHovered ? Neutral(150) : Neutral(100);
+                _dynamicStrokePaint.Color = _scanToggleHovered ? Neutral(150) : Neutral(100);
                 canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = _karaokeToggleHovered ? Neutral(200) : Neutral(150);
+                _toggleCirclePaint.Color = _scanToggleHovered ? Neutral(200) : Neutral(150);
                 canvas.DrawCircle(tX + tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
                 _toggleCirclePaint.Color = SKColors.White;
             }
