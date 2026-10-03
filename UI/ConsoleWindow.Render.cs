@@ -740,25 +740,24 @@ namespace NotchPeninsula
         private void RenderTabInteraction(SKCanvas canvas)
         {
             // 四行：yOffset 12 / 74 / 136 / 198，行距 62（改这里要同步改上面 tab 3 的悬停热区）。
-            bool isPassthrough = Renderer.PassthroughModeEnabled;
-            // 总开关只被穿透模式压制；三个模式行还要等总开关放行（要启用总开关才能选择模式）。
-            bool isAutoHideDisabled = isPassthrough;
-            bool isModeDisabled = isPassthrough || !NotchWindow.IsAutoHideEnabled;
+            // 穿透模式不参与本卡片的置灰：开了穿透照样能开关这三个模式。
+            // 总开关关掉时下面三行一起置灰（要启用总开关才能选择模式）。
+            bool isAutoHideDisabled = false;
+            bool isModeDisabled = !NotchWindow.IsAutoHideEnabled;
             var autoHideCardRect = new SKRect(200, TITLE_BAR_HEIGHT + 12, WIDTH - 20, TITLE_BAR_HEIGHT + 260);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBorder);
 
             // 行 1：总开关，关掉时下面三行一起置灰、不可点。
-            DrawToggleRow(canvas, 12, "自动隐藏", isPassthrough ? "穿透模式下禁止自动隐藏" : "允许灵动岛自动隐藏",
+            DrawToggleRow(canvas, 12, "自动隐藏", "允许灵动岛自动隐藏",
                 NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered, isAutoHideDisabled);
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 70, WIDTH - 36, TITLE_BAR_HEIGHT + 70, _separatorPaint);
 
-            // 三个模式行：穿透模式或总开关未开启时置灰、不可点，并显示为关闭。
+            // 三个模式行：总开关未开启时置灰、不可点，并显示为关闭。
             // 行 2：「焦点离开时自动隐藏岛」。
             DrawToggleRow(canvas, 74, "当焦点离开时自动隐藏岛",
-                isPassthrough ? "穿透模式下禁止自动隐藏"
-                    : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "没有媒体会话时，焦点离开就收起"),
+                !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "没有媒体会话时，焦点离开就收起",
                 NotchWindow.IsFocusAutoHideEnabled,
                 !isModeDisabled && _focusHideToggleHovered,
                 isModeDisabled);
@@ -767,8 +766,7 @@ namespace NotchPeninsula
 
             // 行 3：🎵 「暂停播放后自动隐藏」：媒体暂停 / 停止时也把岛藏起来。
             DrawToggleRow(canvas, 136, "暂停播放后自动隐藏",
-                isPassthrough ? "穿透模式下禁止自动隐藏"
-                    : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "媒体暂停播放时，也把刘海藏起来"),
+                !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "媒体暂停播放时，也把刘海藏起来",
                 NotchWindow.IsPauseAutoHideEnabled,
                 !isModeDisabled && _pauseHideToggleHovered,
                 isModeDisabled);
@@ -777,8 +775,7 @@ namespace NotchPeninsula
 
             // 行 4：🖥 「全屏自动隐藏」：检测到全屏视频 / 全屏游戏（含独占 D3D）时无条件让位，播放中也不显示。
             DrawToggleRow(canvas, 198, "全屏自动隐藏",
-                isPassthrough ? "穿透模式下禁止自动隐藏"
-                    : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "检测到全屏视频 / 游戏时隐藏"),
+                !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "检测到全屏视频 / 游戏时隐藏",
                 NotchWindow.IsFullscreenAutoHideEnabled,
                 !isModeDisabled && _fsHideToggleHovered,
                 isModeDisabled);

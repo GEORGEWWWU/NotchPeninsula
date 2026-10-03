@@ -332,20 +332,19 @@ namespace NotchPeninsula
             {
                 // ⚠️ 本段的 y 值必须与下面 tab 3 的渲染保持同步
                 //    （自动隐藏卡片是四行高：行1 +32、行2 +94、行3 +156、行4 +218；其余两张卡 +290 / +362）
-                // 行 1：自动隐藏总开关（**已停用**，仍可拨动；穿透模式下禁止）
-                if (!Renderer.PassthroughModeEnabled && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                // 四行热区都不受穿透模式影响。三个模式行的可用性另由点击侧按总开关放行
+                //（与 Render 侧的置灰同源：行 1 恒可用，行 2~4 需总开关为真）。
+                // 行 1：自动隐藏总开关
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newAutoHideToggleHovered = true;
-                // 🎯 行 2：当焦点离开时自动隐藏岛。可用性**只**看穿透模式 —— 总开关不再是父开关。
-                if (!Renderer.PassthroughModeEnabled
-                    && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
+                // 🎯 行 2：当焦点离开时自动隐藏岛
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
                     newFocusHideToggleHovered = true;
-                // 🎵 行 3：暂停播放后自动隐藏（可用性同上）
-                if (!Renderer.PassthroughModeEnabled
-                    && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
+                // 🎵 行 3：暂停播放后自动隐藏
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
                     newPauseHideToggleHovered = true;
-                // 🖥 行 4：全屏自动隐藏（可用性同上）
-                if (!Renderer.PassthroughModeEnabled
-                    && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
+                // 🖥 行 4：全屏自动隐藏
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
                     newFsHideToggleHovered = true;
                 // 媒体交互模式（组合模式同样可用：组合模式现在也能展开媒体面板）—— 它是**展开功能总闸**
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 290 && y <= TITLE_BAR_HEIGHT + 310)
@@ -425,17 +424,11 @@ namespace NotchPeninsula
                     //    **完全同源** —— 与「父开关关掉 → 附属行整行禁用」的通用约定同一套（如「消息提示音 → 提示音设置」）。
                     newIsHoveringDisabledArea = true;
                 }
-                else if (_selectedTab == 3)
-                {
-                    // 与 Render() tab 3 的 disabled 判据同源（改那边记得改这边）：
-                    // 整张自动隐藏卡片**只**因穿透模式而禁用 —— 自 2026-09-26 起总开关不再栅栏三个模式，
-                    // 所以旧的 subToggleDisabled（需先开启「自动隐藏」）分支已删除。
-                    // 注：「媒体交互方式」卡片不再因为组合模式而禁用（2026-09-25 起组合模式也能展开媒体面板），
-                    //     所以这里也没有它对应的禁止指针区间。
-                    if (Renderer.PassthroughModeEnabled
-                        && y >= TITLE_BAR_HEIGHT + 12 && y <= TITLE_BAR_HEIGHT + 260)   // 自动隐藏卡片整卡（穿透模式下四行全禁用）
-                        newIsHoveringDisabledArea = true;
-                }
+                // 注：tab 3（交互设置）已无置灰区域 —— 穿透模式不再让「自动隐藏」卡片禁用。
+                //     该页签「行 2~4 在总开关关掉时置灰」沿用历史口径：那种置灰由点击侧的
+                //     总开关条件拦下（点不动），这里不给禁止指针。
+                //     注：「媒体交互方式」卡片自 2026-09-25 起也不再因组合模式禁用（组合模式同样能展开媒体面板），
+                //     所以这里同样没有它对应的禁止指针区间。
             }
 
             if (newIsHoveringDisabledArea != _isHoveringDisabledArea) _isHoveringDisabledArea = newIsHoveringDisabledArea;

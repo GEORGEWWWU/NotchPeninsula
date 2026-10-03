@@ -306,30 +306,30 @@ namespace NotchPeninsula
                 Program.SaveSetting("LyricDelayOffset", MediaController.LyricDelayOffset);
                 Render();
             }
-            else if (_autoHideToggleHovered && !Renderer.PassthroughModeEnabled)
+            else if (_autoHideToggleHovered)
             {
                 // 总开关：只翻转自己，不改写下面三个模式的偏好。
                 NotchWindow.IsAutoHideEnabled = !NotchWindow.IsAutoHideEnabled;
                 Program.SaveSetting("AutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0);
                 Render();
             }
-            else if (_focusHideToggleHovered && !Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled)
+            else if (_focusHideToggleHovered && NotchWindow.IsAutoHideEnabled)
             {
-                // 需非穿透模式且总开关已开启。
+                // 需总开关已开启（穿透模式不影响）。
                 NotchWindow.IsFocusAutoHideEnabled = !NotchWindow.IsFocusAutoHideEnabled;
                 Program.SaveSetting("FocusAutoHide", NotchWindow.IsFocusAutoHideEnabled ? 1 : 0);
                 Render();
             }
-            else if (_pauseHideToggleHovered && !Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled)
+            else if (_pauseHideToggleHovered && NotchWindow.IsAutoHideEnabled)
             {
-                // 需非穿透模式且总开关已开启。三个模式之间不互斥，可任意组合。
+                // 需总开关已开启（穿透模式不影响）。三个模式之间不互斥，可任意组合。
                 NotchWindow.IsPauseAutoHideEnabled = !NotchWindow.IsPauseAutoHideEnabled;
                 Program.SaveSetting("PauseAutoHide", NotchWindow.IsPauseAutoHideEnabled ? 1 : 0);
                 Render();
             }
-            else if (_fsHideToggleHovered && !Renderer.PassthroughModeEnabled && NotchWindow.IsAutoHideEnabled)
+            else if (_fsHideToggleHovered && NotchWindow.IsAutoHideEnabled)
             {
-                // 需非穿透模式且总开关已开启。
+                // 需总开关已开启（穿透模式不影响）。
                 NotchWindow.IsFullscreenAutoHideEnabled = !NotchWindow.IsFullscreenAutoHideEnabled;
                 Program.SaveSetting("FullscreenAutoHide", NotchWindow.IsFullscreenAutoHideEnabled ? 1 : 0);
                 Render();

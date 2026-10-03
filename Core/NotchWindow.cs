@@ -93,8 +93,8 @@ namespace NotchPeninsula
         /// <summary>「自动隐藏」总开关（面板小字：允许灵动岛自动隐藏）。关掉时下面三种模式一起失效。</summary>
         public static bool IsAutoHideEnabled = false;
 
-        /// <summary>总开关实际是否生效：总开关 且 非穿透模式。</summary>
-        public static bool IsAutoHideEffective => IsAutoHideEnabled && !Renderer.PassthroughModeEnabled;
+        /// <summary>总开关实际是否生效：只由总开关决定，穿透模式不参与。</summary>
+        public static bool IsAutoHideEffective => IsAutoHideEnabled;
 
         /// <summary>「焦点离开时自动隐藏岛」：没有媒体会话时，失去焦点就收起。</summary>
         public static bool IsFocusAutoHideEnabled = false;
@@ -174,8 +174,6 @@ namespace NotchPeninsula
         {
             get
             {
-                // 穿透模式压制：三个模式一起失效，与设置面板「整卡置灰且显示为关闭」的承诺一致。
-                if (Renderer.PassthroughModeEnabled) return false;
                 if (IsFullscreenHideActive) return true;  // 全屏优先：播放中也要让位
                 if (_media.IsActive) return IsPauseAutoHideEffective && !_media.IsPlaying;
                 return IsFocusAutoHideEffective;          // 无媒体会话 → 「焦点离开时自动隐藏」说了算
@@ -397,7 +395,7 @@ namespace NotchPeninsula
                 if (e.Button != System.Windows.Forms.MouseButtons.Right) return;
 
                 Win32.GetCursorPos(out var pt);
-                TrayMenuWindow.Show(pt.x, pt.y, ConsoleWindow.Toggle, ExitApplication);
+                TrayMenuWindow.Show(pt.x, pt.y, ConsoleWindow.Toggle, RequestWakeIsland, ExitApplication);
             };
 
             _notifyIcon.Visible = true;
@@ -960,8 +958,12 @@ namespace NotchPeninsula
                     //    这一条比上面两条更硬：淡到全透明 = 岛体像素从 OLE 命中测试里消失，
                     //    拖放目标当场丢失，用户手里的文件就再也放不进详情页了（拖放源那边也不会补发第二次 DragEnter）。
                     //    标志位由 IslandDropTarget 在 DragEnter / DragLeave / Drop 维护，拖放一结束穿透自动回来。
+                    // 🕳 第四个例外：**岛体已上移隐藏时**（`_currentY < -5f`，只剩屏幕顶部那条 4px 细边）。
+                    //    此时若还按悬停淡出，用户一靠近细边它就变透明 —— 细边是唯一的唤回入口，淡掉就再也点不回来。
+                    //    保持不透明同时也消掉了「手一靠近细边它就闪一下」的观感问题。用上一帧的 _currentY
+                    //    判定即可（16ms 延迟无感），与唤回分支用的同一个闸门。
                     float targetAlpha = 1.0f;
-                    if (!_isPassthroughAwake && isOverNotch && !isClipboardActive && !isToastActive
+                    if (!_isPassthroughAwake && isOverNotch && _currentY >= -5f && !isClipboardActive && !isToastActive
                         && !Renderer.FileDragInProgress) targetAlpha = 0.0f;
 
                     // 🛟 兜底自动复位：拖放源被杀 / 崩溃时 DragLeave、Drop 一个都不会来，
@@ -1044,11 +1046,11 @@ namespace NotchPeninsula
                 TickFullscreenProbe();
 
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏。
-                // 判据统一走 CanAutoHideNow —— 它内部已经含「穿透模式压制」，穿透下必须真的不隐藏，
-                // 与设置面板里「自动隐藏卡片整卡置灰且显示为关闭」保持一致。
+                // 判据统一走 CanAutoHideNow —— 它是三种模式的单一真源，穿透模式不参与：
+                // 开了穿透照常自动隐藏，隐藏态的唤回入口与平时一样是屏幕顶部那条 4px 细边。
                 // 🎵 「允许隐藏」这一项统一由 CanAutoHideNow 回答（三模式单一真源）：
                 //    焦点离开时 / 暂停播放后 / 全屏时，三者互相独立、可任意组合，都是「放宽允许隐藏的条件」。
-                //    它已经含非穿透模式判定，所以这里不再重复写。
+                //    三项都在它内部合成，所以这里不再重复写。
                 // ⚠️ Toast 的 `!isToastActive` 必须原样保留 —— Toast 是「系统主动弹出且需要用户交互」的，
                 //    任何自动隐藏开关都不能把它压掉。**全屏时也一样**：用户开这个功能的初衷就是
                 //    「既能不被打扰、又不漏通知」，所以全屏下收到消息岛体照样要弹出来。
@@ -1872,6 +1874,14 @@ namespace NotchPeninsula
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake && HitWakeButton(cx, cy))
                         {
                             _isPassthroughAwake = true;
+                            // 岛体此刻处于「上移隐藏」态时，只解除穿透睡眠是不够的：shouldHide 仍为真、
+                            // _currentY 不动，岛体会一直留在屏外回不来。一并锁上「手动展开」并屏蔽本次
+                            // 按键引发的岛外收起判定 —— 与下面那条「上移隐藏态唤回」分支完全同源。
+                            if (_currentY < -5f)
+                            {
+                                _isManuallyExpanded = true;
+                                _suppressOutsideCollapse = true;
+                            }
                             return (IntPtr)0;
                         }
 
@@ -2101,6 +2111,23 @@ namespace NotchPeninsula
         {
             _mediaPanelCollapse.Cancel();
             Renderer.IsMediaExpanded = false;
+        }
+
+        /// <summary>
+        /// 从托盘菜单「唤回灵动岛」把岛体叫回来：锁上「手动展开」，让自动隐藏的判定回到显示侧；
+        /// 同时屏蔽本次触发的岛外收起判定，避免刚滑回来又被收回。
+        ///
+        /// <para>穿透模式开启时还要一并唤醒穿透睡眠态 —— 否则岛体滑回后鼠标一悬停就又被淡出到全透明，
+        /// 看上去像「唤不回」。穿透关闭时该标记由渲染循环下一帧自动复位，无副作用。</para>
+        ///
+        /// <para>与「点屏幕顶部细边唤回」同源（见 WM_LBUTTONDOWN 的两条隐藏态分支），
+        /// 是细边被遮挡 / 折叠高度过大导致点不到时的兜底入口。</para>
+        /// </summary>
+        public void RequestWakeIsland()
+        {
+            _isManuallyExpanded = true;
+            _suppressOutsideCollapse = true;
+            _isPassthroughAwake = true;
         }
 
         /// <summary>
