@@ -67,6 +67,9 @@ namespace NotchPeninsula
         private bool _hasPrevSmtcPos;
         // 本地位置领先 SMTC：接下来按慢速推进把偏差吃掉。位置始终单调不减，绝不往回退。
         private bool _timelineAhead;
+        // 上一次采样算出的误差（smtcPos − 本地位置），供「领先量是否还在扩大」的安全阀比较用。
+        // 初值取负无穷 ⇒ 首次采样永不触发安全阀。
+        private double _prevDelta = double.NegativeInfinity;
 
         private DateTime _lastUpdateTime = DateTime.UtcNow;
         private string _lastFetchedTitle = "";
@@ -2008,6 +2011,9 @@ namespace NotchPeninsula
         private const double TimelineSeekBackSeconds = 0.5;    // SMTC 自己往回走超过它 → 判定为用户往回 seek
         private const double TimelineAheadDeadZoneSec = 0.08;  // 领先超过它 → 接下来走慢一点把偏差追平
         private const double TimelineSlowRate = 0.8;           // 领先时每帧只推进 80% 的时间
+        // 降速安全阀阈值：领先量已经超过它、且还在继续扩大 ⇒ 播放器上报的位置根本没在推进，
+        // 放弃降速、恢复实时推进（否则会无限累积落后，见 AdvanceTimeline 里的说明）。
+        private const double TimelineStallAheadSeconds = 1.2;
 
         /// <summary>
         /// 推进当前歌词歌的时间轴。SMTC 采样已由 <see cref="UpdateLyrics"/> 统一完成（每帧最多一次），
@@ -2023,6 +2029,11 @@ namespace NotchPeninsula
             // 快照槽位：异步线程可能在本方法执行期间换掉 _lyricSlot，逐次读取会写串槽位。
             int slot = _lyricSlot;
             if (slot < 0 || _isDragging) return; // 状态锁：拖动期间禁止上游写入与自动推进
+
+            // 播放器没给端到端时间轴（网易云 / 酷狗等 EndTime 恒为 0）⇒ 纠偏块整段不执行，
+            // `_timelineAhead` 就没有任何机会被复位。此时必须主动清掉：它是「上一首 / 上一个播放器」
+            // 留下的状态，背着它会让本首的时间轴全程按 0.8 倍速走（每秒落后 0.2s，见下面的安全阀说明）。
+            if (!hasTimeline) _timelineAhead = false;
 
             // 推进：正常按实时走；一旦发现本地领先 SMTC，就按慢速走。
             //
@@ -2068,8 +2079,19 @@ namespace NotchPeninsula
                 {
                     // 领先 → 只记标记，交给上面那趟「慢速推进」慢慢追平，绝不往回退
                     _timelineAhead = delta < -TimelineAheadDeadZoneSec;
+
+                    // 🔻 降速安全阀（2026-10-03 修「歌词越来越慢」）：降速只有在**播放器上报的位置
+                    //    确实在往上追**时才有意义 —— 领先量必须被一口口吃掉。
+                    //    若领先量不但没缩小、反而继续扩大，说明它根本没在推进（位置卡住 /
+                    //    只在特定事件才刷新），它永远追不上来，降速就成了无底洞：
+                    //    每秒只走 0.8×dt ⇒ 每分钟落后 12 秒，单调累积，且块内没有任何分支能把它复位
+                    //    （硬对齐要求 delta > +1.5，往回退又被刻意禁止）。
+                    //    这时放弃降速、恢复按实时推进；位置仍单调不减，不会出现卡拉 OK 回退。
+                    if (_timelineAhead && delta < _prevDelta && delta < -TimelineStallAheadSeconds)
+                        _timelineAhead = false;
                 }
 
+                _prevDelta = delta;
                 _forceResync = false;
             }
 
