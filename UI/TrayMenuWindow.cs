@@ -65,6 +65,7 @@ namespace NotchPeninsula
         private enum MenuAction
         {
             OpenSettings,
+            WakeIsland,
             ToggleAutoStart,
             Separator,
             Exit
@@ -118,6 +119,7 @@ namespace NotchPeninsula
 
         // 由外部注入的三个回调，避免这个类反向依赖 NotchWindow / ConsoleWindow 的单例
         private readonly Action _onOpenSettings;
+        private readonly Action _onWakeIsland;
         private readonly Action _onExit;
 
         // 字体按 DPI 缓存一次，别每帧 FromFamilyName（那玩意儿内部有锁，很贵）
@@ -135,16 +137,20 @@ namespace NotchPeninsula
         /// <summary>
         /// 构建菜单（不弹窗）。布局在这里一次性算完，之后 Render 只做绘制。
         /// </summary>
-        private TrayMenuWindow(int anchorX, int anchorY, Action onOpenSettings, Action onExit)
+        private TrayMenuWindow(int anchorX, int anchorY, Action onOpenSettings, Action onWakeIsland, Action onExit)
         {
             _anchorX = anchorX;
             _anchorY = anchorY;
             _onOpenSettings = onOpenSettings;
+            _onWakeIsland = onWakeIsland;
             _onExit = onExit;
 
             _dpiScale = Math.Max(1f, Win32.GetDpiForSystem() / 96f);
 
             _items.Add(new MenuItem { Action = MenuAction.OpenSettings, Text = "打开设置" });
+            // 自动隐藏把岛体收走后，屏幕顶部那条细边就是唯一入口；这一项是它被遮挡 /
+            // 折叠高度过大点不到时的兜底，任何时候点一下都能把岛体叫回来。
+            _items.Add(new MenuItem { Action = MenuAction.WakeIsland, Text = "唤回灵动岛" });
             _items.Add(new MenuItem
             {
                 Action = MenuAction.ToggleAutoStart,
@@ -196,13 +202,13 @@ namespace NotchPeninsula
         /// <summary>
         /// 在屏幕坐标 (x, y) 弹出菜单。锚点是托盘图标位置，菜单会自动调整方向避免出屏。
         /// </summary>
-        public static void Show(int x, int y, Action onOpenSettings, Action onExit)
+        public static void Show(int x, int y, Action onOpenSettings, Action onWakeIsland, Action onExit)
         {
             CloseActive();
 
             try
             {
-                var menu = new TrayMenuWindow(x, y, onOpenSettings, onExit);
+                var menu = new TrayMenuWindow(x, y, onOpenSettings, onWakeIsland, onExit);
                 menu.CreateAndShow();
                 _active = menu;
             }
@@ -602,6 +608,11 @@ namespace NotchPeninsula
                 case MenuAction.OpenSettings:
                     RequestDismiss();
                     _onOpenSettings?.Invoke();
+                    break;
+
+                case MenuAction.WakeIsland:
+                    RequestDismiss();
+                    _onWakeIsland?.Invoke();
                     break;
 
                 case MenuAction.ToggleAutoStart:

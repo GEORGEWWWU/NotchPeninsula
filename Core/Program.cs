@@ -24,9 +24,9 @@ namespace NotchPeninsula
                     FontConfig.Restore(key.GetValue("CustomFontPath", "") as string);
 
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
-                    // 🚫 「自动隐藏」总开关自 2026-09-26 起**已停用**：只保留读写以维持开关外观，
-                    //    不参与任何判定，也不再栅栏下面三个模式。
-                    // 🎯 「焦点离开时自动隐藏岛」接替了原总开关的那份逻辑。老用户的注册表里没有
+                    // 「自动隐藏」总开关是下面三个模式的父开关（见 NotchWindow 的
+                    // IsFocusAutoHideEffective 等一组 Effective 属性）；穿透模式不参与判定。
+                    // 🎯 「焦点离开时自动隐藏岛」在没有媒体会话时接管岛体的显示 / 隐藏。老用户的注册表里没有
                     //    FocusAutoHide（新键），这里以旧的 AutoHide 值兜底，免得升级后自动隐藏悄悄失效。
                     NotchWindow.IsFocusAutoHideEnabled =
                         (int)key.GetValue("FocusAutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0) != 0;
