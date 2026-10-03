@@ -308,7 +308,11 @@ namespace NotchPeninsula
             _tlBarX1 = x1; _tlBarX2 = x2; _tlBarY = barY;
         }
 
-        // 卡拉OK渲染引擎
+        // 扫光渲染 —— 卡拉 OK 与逐字歌词合并后的唯一渲染出口。
+        //
+        // 它只吃一个 0~1 的 progress：扫光位置 = 整行总宽 × 进度。至于这个进度是按整行均匀插值算的、
+        // 还是按逐字时间轴算的，全由上层 MediaController.ComputeScanProgress 决定 —— 逐字效果不可用时
+        // 那条链会自动回退成卡拉 OK 的整行扫光，所以这里无需区分驱动方式，也不必自己判断开关。
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
             SKTypeface baseTypeface = paint.Typeface;
@@ -337,8 +341,12 @@ namespace NotchPeninsula
                 _krSlot = !_krSlot;
             }
 
-            // 如果没开启卡拉OK，直接短路渲染普通的实体文字，瞬间返回，0 性能开销
-            if (!isLyric || progress <= 0f || !MediaController.IsKaraokeEnabled)
+            // 扫光总闸（MediaController.IsLyricScanEnabled）关掉时短路画实体文字，瞬间返回，0 性能开销。
+            //
+            // 扫光内部是一条链：逐字优先（每个字按自己的时值推进）→ 逐字不可用时自动回退整行均匀推进。
+            // 那一步已由 MediaController.ComputeScanProgress 完成，到这里仍然只是一个 0~1 的 progress，
+            // 所以这里既不需要区分驱动方式，也不需要关心这首歌有没有逐字数据。
+            if (!isLyric || progress <= 0f || !MediaController.IsLyricScanEnabled)
             {
                 foreach (var run in runs)
                 {

@@ -35,12 +35,20 @@ namespace NotchPeninsula
                     NotchWindow.IsPauseAutoHideEnabled = (int)key.GetValue("PauseAutoHide", 0) != 0;
                     NotchWindow.IsFullscreenAutoHideEnabled = (int)key.GetValue("FullscreenAutoHide", 0) != 0;
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
-                    MediaController.IsKaraokeEnabled = (int)key.GetValue("KaraokeEnabled", 1) != 0;
                     MediaController.TargetPlatform = (string)key.GetValue("TargetPlatform", "other") ?? "other";
                     MediaController.IsManualSessionMatch = (int)key.GetValue("ManualSessionMatch", 0) != 0;
                     MediaController.ManualSessionAppId = (string)key.GetValue("ManualSessionAppId", "") ?? "";
                     MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
                     MediaController.IsTranslationEnabled = (int)key.GetValue("TranslationEnabled", 1) != 0;
+                    // 🎤 歌词扫光：一个总闸控制「歌词要不要随演唱进度扫光」。
+                    //    内部是一条链 —— 逐字优先，逐字数据不可用时自动回退整行均匀推进
+                    //    （见 MediaController.ComputeScanProgress），所以不再有「卡拉 OK / 逐字」两个开关。
+                    //    老配置把它分在 KaraokeEnabled（整行扫光，默认 1）与 WordByWordEnabled（逐字，默认 0）
+                    //    两个互斥的键上，这里取「任一为真」兜底 —— 开过逐字的用户不会因为卡拉 OK 键被置 0
+                    //    而丢掉扫光。
+                    bool legacyScan = (int)key.GetValue("KaraokeEnabled", 1) != 0
+                                      || (int)key.GetValue("WordByWordEnabled", 0) != 0;
+                    MediaController.IsLyricScanEnabled = (int)key.GetValue("LyricScanEnabled", legacyScan ? 1 : 0) != 0;
                     // 🖱 双击媒体控制跳回对应应用：**默认关闭**（2026-10-03 用户要求）。
                     //    老版本升级上来的用户注册表里没有 MediaAppLaunchEnabled 这个键，取默认值即视为关闭 ——
                     //    跳转会抢前台焦点，不该不告而开；同时他们的折叠态展开入口因此保持在

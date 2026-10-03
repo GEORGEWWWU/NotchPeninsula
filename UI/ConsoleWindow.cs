@@ -556,7 +556,7 @@ namespace NotchPeninsula
 
         private bool _transToggleHovered = false;
 
-        private bool _karaokeToggleHovered = false;
+        private bool _scanToggleHovered = false;
 
         private bool _lyricMinusHovered = false;
 

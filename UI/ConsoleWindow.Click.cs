@@ -289,10 +289,12 @@ namespace NotchPeninsula
                 Program.SaveSetting("TranslationEnabled", MediaController.IsTranslationEnabled ? 1 : 0);
                 Render();
             }
-            else if (_selectedTab == 2 && _karaokeToggleHovered)
+            else if (_selectedTab == 2 && _scanToggleHovered)
             {
-                MediaController.IsKaraokeEnabled = !MediaController.IsKaraokeEnabled;
-                Program.SaveSetting("KaraokeEnabled", MediaController.IsKaraokeEnabled ? 1 : 0);
+                // 逐字歌词的唯一开关：逐字与整行推进是同一条链的两种驱动（逐字优先、逐字不可用时
+                // 自动回退卡拉 OK 的整行扫光，见 MediaController.ComputeScanProgress），所以只需要这一个开关。
+                MediaController.IsLyricScanEnabled = !MediaController.IsLyricScanEnabled;
+                Program.SaveSetting("LyricScanEnabled", MediaController.IsLyricScanEnabled ? 1 : 0);
                 Render();
             }
             else if (_selectedTab == 2 && (_lyricMinusHovered || _lyricPlusHovered || _lyricResetHovered))
