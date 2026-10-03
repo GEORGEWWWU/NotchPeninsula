@@ -1,24 +1,30 @@
 <div align="center">
 
-![NotchPeninsula](./NPS_NotchPeninsula-logo.ico)
+<img src="./NPS_NotchPeninsula-logo.ico" alt="NotchPeninsula" width="180" />
 
 <h1>NotchPeninsula</h1>
   
 <p>专为 Windows 而生的刘海屏/灵动岛组件，极致内存占用与性能</p>
 
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows\&logoColor=white)
+![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white)
+![C#](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp&logoColor=white)
+![NAudio](https://img.shields.io/badge/NAudio-2.2-5C2D91)
+![SkiaSharp](https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2)
+![Version](https://img.shields.io/badge/version-1.8.0-blue)
+![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
 
 <p>
   
-  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/wiki">进阶玩法</a> \&nbsp; | \&nbsp;
-  
-  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest">下载地址</a> \&nbsp; | \&nbsp;
-  
+  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/wiki">进阶玩法</a> &nbsp; | &nbsp;
+  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest">下载地址</a> &nbsp; | &nbsp;
   <a href="https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW\&jump_from=webapi\&authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87" target="\_blank">交流群 1080730621</a>
   
 </p>
 
-![NotchPeninsula 项目展示组件展示](https://github.com/user-attachments/assets/88150409-d532-486b-8b92-853aebab1165)
+<img width="1500" height="306" alt="NotchPeninsula 项目展示组件展示" src="https://github.com/user-attachments/assets/88150409-d532-486b-8b92-853aebab1165" />
+<img width="1000" height="174" alt="媒体控制器 自定义字体" src="https://github.com/user-attachments/assets/fc3c12bd-08dc-4191-9f52-b66465a0ffa1" />
+<img width="1920" height="200" alt="NotchPeninsula 封面 1 3 0 效果" src="https://github.com/user-attachments/assets/b80857fa-58a5-4379-8f1c-cf75db704ab1" />
 
 </div>
 
