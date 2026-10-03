@@ -11,7 +11,7 @@ namespace NotchPeninsula
     /// 把「图标描述」解析成可直接绘制的 <see cref="SKBitmap"/>，供 HTTP 消息 / 插件提醒自定义图标。
     ///
     /// 支持四种写法，按前缀自动识别：
-    ///   1. 内置别名      "qq" / "bilibili" / "chrome" ...（见 ResolveBuiltin）
+    ///   1. 内置别名      "qq" / "windows"（见 ResolveBuiltin）
     ///   2. 图片链接      "https://host/a.png" / "http://host/a.png"
     ///   3. 内联图        "data:image/png;base64,xxxx" 或纯 base64 串
     ///   4. 本地文件路径  "C:\icons\a.png" / "/path/a.png"（也接受 file:// 前缀）
@@ -40,12 +40,12 @@ namespace NotchPeninsula
         private static readonly Queue<string> _cacheOrder = new();
 
         // 别名里文件名不规则的那几个；其余按 data/image/<别名>-icon|logo.<ext> 约定自动找
+        // （"qq" 就是靠这条约定命中 qq-icon.png）
         private static readonly Dictionary<string, string> _aliasFiles = new(StringComparer.OrdinalIgnoreCase)
         {
             ["windows"] = "wintoast-icon.png",
             ["wintoast"] = "wintoast-icon.png",
             ["default"] = "wintoast-icon.png",
-            ["bili"] = "bilibili-logo.png",
         };
 
         /// <summary>解析图标描述；失败返回 null。可安全地在后台线程调用。</summary>

@@ -21,10 +21,6 @@
     <Content Include="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="NPS_NotchPeninsula-logo.ico" CopyToOutputDirectory="PreserveNewest" />
-		<Content Include="data\image\bilibili-logo.png" CopyToOutputDirectory="PreserveNewest" />
-		<Content Include="data\image\chrome-logo.png" CopyToOutputDirectory="PreserveNewest" />
-		<Content Include="data\image\edge-logo.png" CopyToOutputDirectory="PreserveNewest" />
-		<Content Include="data\image\potplayer-logo.jpg" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\qq-icon.png" CopyToOutputDirectory="PreserveNewest" />
 		<Content Include="data\image\wintoast-icon.png" CopyToOutputDirectory="PreserveNewest" />
 		<!-- 🔔 内置通知提示音：只引用 data\sound 下的文件，用户自选的音频不会复制进来。
