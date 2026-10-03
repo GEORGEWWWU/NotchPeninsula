@@ -953,6 +953,9 @@ namespace NotchPeninsula
         /// <summary>
         /// 取歌词：五个引擎依次兜底（落月 API(QQ音乐) → QQ 音乐官方歌词 → 落月 API(网易云) →
         /// 网易云官方 → LRCLIB），命中即解析时间轴并写入。译文与封面都随主歌词一起回来，不额外单开接口。
+        ///
+        /// <para>会话是网易云音乐时走「网易优先」：网易系两档（落月 API(网易云) → 网易云官方）
+        /// 整体提到最前，歌词与封面都优先网易云的源，其余档位依次顺延。</para>
         /// </summary>
         /// <returns>网络封面地址；没有则空串（交给 <see cref="FetchCoverAsync"/> 消费）。</returns>
         private async Task<string> FetchLyricsAsync(string title, string artist, long durationSec)
@@ -980,7 +983,7 @@ namespace NotchPeninsula
                 // ====== 网易优先：会话是网易云音乐时，把网易系两档提到最前 ======
                 // 正在放歌的就是网易云，用网易云曲库最贴：同一曲库来源，版本能对上、译文更全、专辑图也更对版。
                 // 歌词与封面**一起**前置，顺序钉死 —— **落月 API - 网易云 在前、网易云官方在后**。
-                // 其他播放器不受影响：那时这两档仍在原位置（引擎 3 / 引擎 4）当兜底，歌词与封面都照旧。
+                // 其他播放器不走这一段，网易系两档在引擎 3 / 引擎 4 的位置上充当兜底。
                 if (preferNetease)
                 {
                     // ① 落月 API - 网易云：歌词 + 网易云 CDN 专辑图（同一次搜索顺带给出）
@@ -1005,21 +1008,19 @@ namespace NotchPeninsula
                 }
 
                 // ====== 引擎 1：落月 API - QQ音乐（主源：原文 + 译文 + 封面 + songmid 一次到位）======
-                // ⚠️ 这里原本是 QQ 官方搜索接口 c.y.qq.com/soso/fcgi-bin/client_search_cp，
-                //    该接口现已**恒返回 HTTP 500**（空响应）—— 拿不到 songmid，它后面那次取词也永远走不到，
-                //    整条链等于全废还白花一次请求。所以换成落月：同样是 QQ 曲库，一次响应把四样东西给齐：
+                // ⚠️ QQ 官方的搜索接口（c.y.qq.com/soso/fcgi-bin/client_search_cp）**恒返回 HTTP 500 空响应**，
+                //    拿不到 songmid，它后面那次取词也就无从谈起。所以主源用落月：
+                //    同为 QQ 曲库，一次响应把四样东西给齐：
                 //      · data.lrc 与 data.trans 同源，时间戳严格对齐 ⇒ 译文不会缺句；
                 //      · 搜索响应里的 cover 就是 QQ 专辑图地址；
                 //      · 搜索响应里的 mid 就是 QQ 的 songmid（交给引擎 2）。
                 //    放在最前面还有个好处：命中就不必再问后面的引擎，总请求数反而更少。
                 var luoYue = await FetchFromLuoYueAsync(title, artist, HttpUserAgent);
-                // 封面：**只在还没有封面时**才采纳。
-                //   · 非网易云会话：coverUrl 必然为空（本档就是封面第一档），行为与改造前完全一致；
-                //   · 网易云会话：上面的「网易优先」段可能已经从网易云拿到图了，此时不覆盖它 —— 封面也优先网易云的源。
+                // 封面：填**封面链的第一档**，仅在还没有封面时采纳
+                //（网易云会话下「网易优先」段可能已给出网易云的图，此时不覆盖）。
                 if (coverUrl.Length == 0 && !string.IsNullOrEmpty(luoYue.Cover)) coverUrl = luoYue.Cover;
-                // 歌词与译文只在「还没拿到可用时间轴」时才采纳：网易云会话下上面的「网易优先」段
-                // 可能已经命中，此时本档退化为「只提供封面 + songmid」。
-                // 非网易云会话下本条件必然成立，行为与改造前逐字一致。
+                // 歌词与译文：只在还没有可用时间轴时采纳。本档同时是 songmid 的来源，
+                // 所以即使歌词已被前面的档先取到，下面这一次搜索照常进行（封面与 songmid 仍由它提供）。
                 if (!HasTimedLyric(lrcText))
                 {
                     if (!string.IsNullOrEmpty(luoYue.Lrc)) lrcText = luoYue.Lrc;
@@ -1054,7 +1055,7 @@ namespace NotchPeninsula
                 }
 
                 // ====== 引擎 3：落月 API - 网易云（网易云曲库：原文 + 译文）======
-                // 排在 QQ 系两档**之后**，而不是取代它们：
+                // 位置在 QQ 系两档**之后**：
                 //   · 从 QQ 音乐或别家播放器放歌时，前两档（同为 QQ 曲库）基本已经命中，压根走不到这里
                 //     —— 也就是「其他软件照旧走 QQ 音乐」；
                 //   · 真落到这一档的，多半是「只在网易云上架 / 版本与 QQ 曲库对不上」的歌，
@@ -1068,15 +1069,17 @@ namespace NotchPeninsula
                     // 译文只在前面一个都没给到时才采纳，免得把一份好译文覆盖成空（与引擎 2 同一套保护）
                     if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(netease.Trans))
                         transText = netease.Trans;
-                    // ⚠️ 封面**刻意不采纳**：封面链维持原有三档（落月 QQ 搜索 → 网易云官方 → QQ 直连兜底），
-                    //    本引擎只进歌词，不改变任何封面的来源与优先级。
+                    // 🖼 封面：本档搜索顺带给出的**就是网易云专辑图**（p3/p4.music.126.net），
+                    //    顶的是封面链的第二档「网易云」—— 引擎 4 只在「还没拿到歌词」时才跑，
+                    //    本档一旦命中歌词，那一档就不会执行，它的 album.picUrl 也就没人补。
+                    //    采纳条件与引擎 1 同一条：落月 QQ 搜索没给出封面时才用。
+                    if (coverUrl.Length == 0 && !string.IsNullOrEmpty(netease.Cover)) coverUrl = netease.Cover;
                 }
 
                 // ====== 引擎 4：网易云官方 API ======
                 // 判据是「有没有可用时间轴」而不是「字符串空不空」：前面的引擎可能返回非空但一行时间轴都没有的
                 // 结果（版权提示 / 空壳响应），只判空的话网易云与 LRCLIB 会被整段跳过，最终就是「没歌词」。
-                // ⚠️ 网易云会话下本档已在「网易优先」段跑过一次，这里跳过（封面也已在那边顺带取到）。
-                //    非网易云会话下条件退化为原来的 `!HasTimedLyric(lrcText)`，行为与改造前一致。
+                // ⚠️ 网易云会话下本档已在方法开头的「网易优先」段跑过，这里跳过，不重复请求。
                 if (!preferNetease && !HasTimedLyric(lrcText))
                 {
                     var neteaseOfficial = await FetchFromNeteaseOfficialAsync(title, artist, durationSec, allowCover: true);
@@ -1151,6 +1154,10 @@ namespace NotchPeninsula
                 // 视频模式不取网络封面（FetchCoverAsync 会直接返回），所以这里也不白花请求。
                 if (coverUrl.Length == 0 && !IsVideoMode)
                     coverUrl = await FetchQqCoverAsync(title, artist);
+
+                // 统一归一成小尺寸变体（QQ 替换尺寸段 + 网易云补 ?param=）：无论封面最终来自哪一档，
+                // 下载量与解码内存都降到约 1/5，把 4 秒超时预算留给真正慢的网络。
+                if (coverUrl.Length > 0) coverUrl = NormalizeCoverUrl(coverUrl);
 
                 return coverUrl;
             }
@@ -1401,12 +1408,12 @@ namespace NotchPeninsula
         /// <summary>
         /// 网易云官方接口：搜索 → 取词（原文 + 译文）→ 可选取封面。
         ///
-        /// <para><b>为什么要单独抽成一个方法</b>：它在链上有**两个调用位置** ——
-        /// 网易云音乐会话下被提到最前（「网易优先」），其他会话下仍是原位置的兜底档；
-        /// 抽出来才能保证两条路走的是同一份实现，不会两边各改一半。</para>
+        /// <para><b>为什么单独抽成一个方法</b>：它在链上有**两个调用位置** ——
+        /// 网易云音乐会话下被提到最前（「网易优先」段），其他会话下在引擎 4 的位置充当兜底档；
+        /// 抽出来是为了让这两条路共用同一份实现。</para>
         ///
         /// <para><paramref name="allowCover"/> = false 时**只取词不取封面**：用在「网易优先」段，
-        /// 好让封面链的第一档始终留给落月的 QQ 搜索（封面来源与优先级不因会话类型而变）。</para>
+        /// 让封面链的第一档始终留给落月的 QQ 搜索（封面来源与优先级不因会话类型而变）。</para>
         /// </summary>
         private async Task<NeteaseOfficialResult> FetchFromNeteaseOfficialAsync(string title, string artist, long durationSec, bool allowCover)
         {
@@ -1421,7 +1428,11 @@ namespace NotchPeninsula
                 {
                     new KeyValuePair<string, string>("s", $"{title} {artist}"),
                     new KeyValuePair<string, string>("type", "1"),
-                    new KeyValuePair<string, string>("limit", "5"),
+                    // limit 取 60：网易云搜索对「歌名 + 歌手」组合词的排序并不敏感，冷门 / 翻唱版本
+                    // 常被排到 30 位之后（实测《游京》抖音合唱版落在第 30 位之后），取 5~30 都会漏掉它，
+                    // 表现就是歌词与封面**一起**出不来。候选多是安全的：命中还要过
+                    // 「歌名 + 歌手 + 时长（±4 秒）」三重校验，非目标版本会被歌手或时长挡掉。
+                    new KeyValuePair<string, string>("limit", "60"),
                     new KeyValuePair<string, string>("offset", "0")
                 });
 
@@ -1689,16 +1700,41 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 落月给的封面是 800×800（约 180KB），而岛上最大只画 50px —— 换成同一 CDN 的 300×300 变体
-        /// （约 33KB），下载量与解码后的原生内存都降到 1/5。地址不符合该格式时原样返回。
+        /// 把封面地址归一成**小尺寸变体**：岛上最大只画 50px，下原图纯属浪费带宽与解码内存
+        /// （还直接吃掉 4 秒的 HttpClient 超时预算）。两类 CDN 的写法不同：
+        ///
+        /// <list type="bullet">
+        /// <item><b>QQ</b>（y.qq.com / y.gtimg.cn）：尺寸段写在文件名里 —— <c>R800x800M000</c> → <c>R300x300M000</c>
+        ///       （180KB → 33KB）；</item>
+        /// <item><b>网易云</b>（p*.music.126.net）：URL 不带尺寸段，要用 <c>?param=NyN</c> 查询参数指定 ——
+        ///       同一张图原图 502KB、<c>?param=300y300</c> 为 94KB。</item>
+        /// </list>
+        ///
+        /// <para><b>幂等</b>：归一过的地址再调用一次不会重复追加（QQ 那档已无 R800 段，
+        /// 网易云那档已带 <c>param=</c>）。不符合任何一类的地址原样返回。</para>
         /// </summary>
         private static string NormalizeCoverUrl(string url)
-            => url.Replace("R800x800M000", "R300x300M000", StringComparison.Ordinal);
+        {
+            string normalized = url.Replace("R800x800M000", "R300x300M000", StringComparison.Ordinal);
 
-        // LRC 时间标签的几种写法（百分秒 / 毫秒 / 十分之一秒 / 整秒）。
-        // 解析时间轴与「这段 LRC 有没有可用时间轴」两处共用同一份，避免规则漂移。
+            if (normalized.Contains("music.126.net", StringComparison.OrdinalIgnoreCase)
+                && !normalized.Contains("param=", StringComparison.Ordinal))
+                normalized += normalized.Contains('?') ? "&param=300y300" : "?param=300y300";
+
+            return normalized;
+        }
+
+        // LRC 时间标签的几种写法（百分秒 / 毫秒 / 十分之一秒 / **帧格式** / 整秒）。
+        // 原文时间轴、译文时间轴、以及「这段 LRC 有没有可用时间轴」三处共用同一份，避免格式集合漂移。
+        //
+        // `mm:ss:ff` 是**帧格式**（秒与百分秒之间也用冒号）。标准 LRC 不该出现这种写法，
+        // 但部分网易云歌词整份正文都是它（《花がら》正文 52 行全为 `[00:24:88]`，只有开头
+        // 「作词 / 作曲 / 制作人」那几行是标准的 `[00:24.88]`）。没有这一项时：
+        //   ① 正文整段解析不出时间轴，全部被丢弃；
+        //   ② `HasTimedLyric` 仍会被同文件里少数标准格式行判为 true ⇒ 后面的兜底引擎不再执行，
+        //      岛上只剩「制作人: xxx」一行一直挂到结束。
         private static readonly string[] LyricTimeFormats =
-            [@"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss"];
+            [@"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss\:ff", @"mm\:ss"];
 
         /// <summary>
         /// 这段 LRC 里**至少有一行能被解析出时间戳**吗。
@@ -1733,6 +1769,9 @@ namespace NotchPeninsula
 
         // 把译文 LRC 解析成按时间戳升序的数组，供原文行做「精确命中 → 邻近命中」两级查找。
         // 同一时间戳出现多行时后者覆盖前者，与「多时间标签展开」的语义保持一致。
+        //
+        // 时间格式与原文解析共用 `LyricTimeFormats`（单一数据源）：各写一份会让格式集合逐渐漂移，
+        // 表现为原文解析得出来、译文整段进不了表，也就是「歌词有、翻译全没了」。
         private static (long Ticks, string Text)[] BuildTransTable(string lrc)
         {
             if (string.IsNullOrEmpty(lrc)) return Array.Empty<(long, string)>();
@@ -1742,7 +1781,7 @@ namespace NotchPeninsula
             {
                 if (line.StartsWith('[') && line.IndexOf(']') is int idx && idx > 5)
                 {
-                    if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), new[] { @"mm\:ss\.ff", @"mm\:ss\.fff", @"mm\:ss\.f", @"mm\:ss" }, null, out var ts))
+                    if (TimeSpan.TryParseExact(line.Substring(1, idx - 1), LyricTimeFormats, null, out var ts))
                     {
                         string text = line.Substring(idx + 1).Trim();
                         if (IsUsableTranslation(text)) list.Add((ts.Ticks, text));

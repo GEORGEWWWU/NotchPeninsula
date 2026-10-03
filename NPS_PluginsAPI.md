@@ -421,7 +421,7 @@ private void OnFontChanged() => _host?.InvalidateWidgetLayout();   // 回调可�
 
 **提醒（PostReminder）**：`host.PostReminder(new ReminderData { Title = ..., Body = ..., Duration = ... })` 弹出一条几秒钟的灵动岛顶部提示。`ReminderData` 里 `IconPath` 可以配图标（可选），`OnClick` 可以配点击后的回调（可选）。适合做“数据更新了”“事件已提醒”这类反馈。
 
-> `IconPath` 虽然叫 Path，实际接受四种写法，程序会按前缀自动识别：本地文件路径（`C:/icons/a.png`）、图片链接（`https://...`，下载后缓存）、内联图（`data:image/png;base64,...`）、内置别名（`"qq"` / `"bilibili"` / `"chrome"` / `"edge"` / `"potplayer"` / `"windows"`）。
+> `IconPath` 虽然叫 Path，实际接受四种写法，程序会按前缀自动识别：本地文件路径（`C:/icons/a.png`）、图片链接（`https://...`，下载后缓存）、内联图（`data:image/png;base64,...`）、内置别名（`"qq"` / `"windows"`）。
 > 想让某个 App 名也能当别名用，把 `wechat-icon.png` 这样的文件丢进程序目录的 `data/image/` 即可（`<别名>-icon.*` 或 `<别名>-logo.*`）。
 > 图标是异步解析的：提醒会先用默认图标弹出来，解析完成后自动换图。任何一步失败都静默回退到默认图标。
 
