@@ -673,6 +673,10 @@ namespace NotchPeninsula
             // 这里只是赋值 + 入队提示音，不需要返回值 —— 别让它们被 UI 线程的忙闲拖着走。
             if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnToastDetected(toast)); return; }
 
+            // 转发给插件只读数据桥：插件版的「系统通知」通道（同一个插件只收到一次，
+            // 因为上面已把非 UI 线程的重入切回 UI 线程，本行只会执行一次）。
+            try { Plugins.PluginDataBridge.PublishNotification(toast); } catch { }
+
             _currentToast = toast;
             _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
             PlayToastSound();
