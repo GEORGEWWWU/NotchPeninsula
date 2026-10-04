@@ -87,7 +87,9 @@ namespace NotchPeninsula
         public static void Warn(string msg) => Write("WARN", msg, null);
 
         public static void Error(string msg, Exception? ex = null)
-            => Write("ERROR", ex == null ? msg : $"{msg} | {ex.GetType().Name}: {ex.Message}", null);
+            // ex.ToString() 自带完整调用栈与 InnerException 链 —— 只记 Type+Message 的话，
+            // 未观察的 Task 异常（外层恒为 AggregateException）会把真正的异常信息全部吞掉，事后无从定位。
+            => Write("ERROR", ex == null ? msg : $"{msg} | {ex}", null);
 
         /// <param name="msg">最终写进日志的文本。</param>
         /// <param name="throttleKey">
