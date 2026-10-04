@@ -100,13 +100,23 @@ namespace NotchPeninsula
         private string _lastFetchedTitle = "";
         private string _lastFetchedArtist = "";
 
-        // 「本曲目的网络封面已经就位」的记账（会话 + 标题）。命中时属性刷新一律不再碰封面。
+        // 「本曲目的封面已经由外部来源就位」的记账（会话 + 标题）。命中时属性刷新一律不再碰封面。
+        //
+        // 外部来源有两种：网络搜索到的专辑图（FetchCoverAsync）与**会话自带封面**（FetchSmtcCoverAsync，
+        // 只有 SmtcCoverPreferredIds 里的平台会走）。两者共用这一对字段 —— 它们回答的是同一个问题
+        // 「这条曲目的封面换上了没有」，任一到位后另一条就不再发起，省掉一次请求也避免来回换图。
         //
         // ⚠️ 刻意**不用拼串做键**：该判定每次属性刷新都会走到，拼串就是纯 GC 压力；
         //    而且键里**不含歌手** —— 歌手在 seek / 换轨瞬间会短暂缺失，带进来会让键对不上，
-        //    于是封面被程序图标顶掉，而记账又还「看起来匹配」，再也换不回网络封面。
-        private string _networkCoverAppId = "";
-        private string _networkCoverTitle = "";
+        //    于是封面被程序图标顶掉，而记账又还「看起来匹配」，再也换不回外部封面。
+        private string _externalCoverAppId = "";
+        private string _externalCoverTitle = "";
+
+        // 会话自带封面（SMTC 缩略图）两次尝试之间的最小间隔。
+        // 兜底重试挂在渲染循环上（60FPS 调用），而每次尝试都是一次 COM 调用 —— 必须节流。
+        // 2 秒足够让「刚接管会话、图还没就绪」的那一小段过去，又不会让封面迟迟不出现。
+        private static readonly TimeSpan SessionCoverRetryInterval = TimeSpan.FromSeconds(2);
+        private DateTime _lastSessionCoverAttempt = DateTime.MinValue;
 
         // 当前 Thumbnail 里放的到底是「哪个程序的应用图标」；为其他来源的封面时置空。
         // 少了它，视频模式下每次属性刷新都会新建一张 SKBitmap 再把旧的那张 Dispose 掉 ——
@@ -276,6 +286,10 @@ namespace NotchPeninsula
         private int _musicModeMisses;
         private const int MusicModeMissGrace = 3;
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
+        // 浏览器会话下，**原始**标题里带「哔哩哔哩 / bilibili」。
+        // ⚠️ 必须在 CleanBrowserTitle **之前**判定：清理会抹掉 "_哔哩哔哩_bilibili" 这类后缀，
+        //    清完标题里就再也找不到平台名了。用途是把封面切到会话自带的那张（视频封面）。
+        private bool _isBilibiliBrowserSession;
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
 
@@ -490,8 +504,8 @@ namespace NotchPeninsula
                 Title = "No Media";
                 Artist = "";
                 IsPlaying = false;
-                _networkCoverAppId = "";
-                _networkCoverTitle = "";
+                _externalCoverAppId = "";
+                _externalCoverTitle = "";
                 SetThumbnail(null);
             }
         }
@@ -602,6 +616,37 @@ namespace NotchPeninsula
             _ => id.Contains(TargetPlatform, StringComparison.OrdinalIgnoreCase),
         };
 
+        // 「会话自带的封面优先」的播放器（AUMID 关键字，包含匹配，中英文都收 ——
+        // 部分国产客户端用中文 AUMID）。
+        //
+        // 这些播放器都会通过 SMTC 一并给出**当前正在播放的那张封面**，它比「按歌名 + 歌手去曲库搜出来的图」
+        // 更准：冷门歌、带别名的外文歌、翻唱版本在曲库里容易匹配失败或匹配到别的版本。
+        // 其余软件保持既有封面链（网络搜索封面 → 应用图标），一个字节不动。
+        private static readonly string[] SmtcCoverPreferredIds =
+        [
+            "cloudmusic", "netease",   // 网易云音乐
+            "kugou", "酷狗",            // 酷狗音乐
+            "qqmusic", "tencent",      // QQ 音乐
+            "applemusic",              // Apple Music（UWP 的 AUMID 形如 AppleInc.AppleMusicWin_…）
+            "spotify",                 // Spotify
+            "qishui", "汽水",           // 汽水音乐
+            "migu", "咪咕",             // 咪咕音乐
+        ];
+
+        /// <summary>
+        /// 这个会话是不是「优先用自带封面」的播放器（见 <see cref="SmtcCoverPreferredIds"/>）。
+        /// 只在选定封面时用到，判定失败（未知客户端）走原有封面链即可，不影响播放与取词。
+        /// </summary>
+        private static bool IsSmtcCoverPreferredAppId(string? id)
+        {
+            if (string.IsNullOrEmpty(id)) return false;
+
+            foreach (var key in SmtcCoverPreferredIds)
+                if (id.Contains(key, StringComparison.OrdinalIgnoreCase)) return true;
+
+            return false;
+        }
+
         // 依据当前接管的会话，维护 Just Solo LyricServer 的连接：
         //   只有「当前显示的就是 justsolo」才连；切到别的会话、justsolo 会话消失、关掉媒体控制或换平台都断开。
         private void UpdateJustSoloConnection()
@@ -663,11 +708,21 @@ namespace NotchPeninsula
                     // 唯一的预处理是浏览器：网页标题里的「正在播放: 歌名 - 歌手」要拆成歌名 + 歌手。
                     string smtcTitle = props.Title ?? "";
                     string smtcArtist = props.Artist ?? "";
-                    if (_isBrowserSession) smtcTitle = CleanBrowserTitle(smtcTitle, out smtcArtist);
-                    else if (_isBilibiliSession) smtcArtist = ""; // 网页不提供歌手，别让标题尾部被当成歌手
+                    if (_isBrowserSession)
+                    {
+                        // 平台名要在清理**之前**判：CleanBrowserTitle 会把 "_哔哩哔哩_bilibili" 这类后缀抹掉
+                        _isBilibiliBrowserSession = IsBilibiliTitle(smtcTitle);
+                        smtcTitle = CleanBrowserTitle(smtcTitle, out smtcArtist);
+                    }
+                    else
+                    {
+                        _isBilibiliBrowserSession = false;
+                        if (_isBilibiliSession) smtcArtist = ""; // 网页不提供歌手，别让标题尾部被当成歌手
+                    }
 
                     UpdateMediaMode(smtcTitle, smtcArtist);
-                    UpdateCover();
+                    // hasSessionCover：本会话到底带没带封面。只有自带封面优先的平台会据此改走 SMTC 缩略图。
+                    UpdateCover(props.Thumbnail != null);
                 }
             }
             catch (Exception ex)
@@ -767,22 +822,40 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 选封面。**视频模式** → 该程序自己的应用图标；**音乐模式** → 网络封面 → 应用图标兜底。
+        /// 选封面。**视频模式** → 该程序自己的应用图标；**音乐模式** → 外部封面 → 应用图标兜底。
         ///
-        /// <para>网络封面由 <see cref="FetchCoverAsync"/> 拿到搜索结果后异步补上，在它到达之前先用应用图标顶着。
-        /// 本曲目的网络封面一旦就位就**无条件保持** —— 判据里刻意不带「当前是不是视频模式」：
-        /// 模式判定抖动或属性读取失败都不该把一张已经下好的专辑封面换成程序图标（换掉就再也回不来了）。</para>
+        /// <para>外部封面有两条来源，都是异步补上，在它到达之前先用应用图标顶着：</para>
+        /// <list type="bullet">
+        /// <item><b>会话自带封面</b>（<see cref="FetchSmtcCoverAsync"/>）：只给
+        ///       <see cref="SmtcCoverPreferredIds"/> 里的平台用。由 <paramref name="allowSessionCover"/>
+        ///       放行 —— 属性刷新时传「本会话确实带了图」，兜底重试时传 true（未知，试一次，
+        ///       频率由 <see cref="SessionCoverRetryInterval"/> 节流）。它取到的就是正在播放的那张图，
+        ///       比曲库搜索更准；</item>
+        /// <item><b>网络搜索封面</b>（<see cref="FetchCoverAsync"/>）：其余情况、以及上面那条取不到时的既有通路。</item>
+        /// </list>
+        ///
+        /// <para>本曲目的外部封面一旦就位就**无条件保持** —— 判据里刻意不带「当前是不是视频模式」：
+        /// 模式判定抖动或属性读取失败都不该把一张已经到手的专辑封面换成程序图标（换掉就再也回不来了）。</para>
         ///
         /// <para><b>不再引用 data\image 下的平台站标</b>（资源保留，只是不再被任何代码路径读到）。</para>
         /// </summary>
-        private void UpdateCover()
+        private void UpdateCover(bool allowSessionCover)
         {
-            if (string.Equals(_networkCoverTitle, _trackTitle, StringComparison.Ordinal)
-                && string.Equals(_networkCoverAppId, _trackAppId, StringComparison.Ordinal))
+            if (string.Equals(_externalCoverTitle, _trackTitle, StringComparison.Ordinal)
+                && string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal))
                 return;
 
             // 视频模式的唯一来源 / 音乐模式的兜底：该程序自己的应用图标
             SetAppIcon();
+
+            // 会话自带封面的两类来源（其余情况保持既有链路：网络搜索封面 → 应用图标）：
+            //   ① 音乐模式 + SmtcCoverPreferredIds 里的播放器 —— 图就是当前这首歌的专辑封面；
+            //   ② 浏览器 + 哔哩哔哩 —— **视频模式也走**：SMTC 给的是视频封面，比浏览器图标有信息量。
+            bool preferSessionCover = _isMusicMode
+                ? IsSmtcCoverPreferredAppId(_currentAppId)
+                : (_isBrowserSession && _isBilibiliBrowserSession);
+            if (allowSessionCover && preferSessionCover)
+                _ = FetchSmtcCoverAsync(_trackTitle, _trackAppId);
         }
 
         private static readonly string[] BrowserVideoSuffixes =
@@ -1244,6 +1317,11 @@ namespace NotchPeninsula
             // 取词时这首歌是不是已经归属本会话（封面也要挂在同一首歌上）
             if (!IsLyricOwner(title, artist)) return;
 
+            // 会话自带封面已经就位（见 FetchSmtcCoverAsync）⇒ 不再请求网络封面：
+            // 那张图就是播放器为**本曲目**给的原图，比按歌名歌手搜出来的更准，没必要再花一次请求去覆盖它。
+            if (string.Equals(_externalCoverTitle, title, StringComparison.Ordinal)
+                && string.Equals(_externalCoverAppId, _currentAppId, StringComparison.Ordinal)) return;
+
             // ⚠️ 刻意**不占 _fetchLock**：那把锁保护的是四个歌词引擎共用的 DefaultRequestHeaders
             //    （进程级静态字段，改了全局可见）。封面下载是纯 GET，用 HttpRequestMessage 带自己的头，
             //    既不碰共享头、也不需要排队 —— 否则一张 4 秒超时的封面会把下一首歌的取词整整卡住 4 秒。
@@ -1282,9 +1360,70 @@ namespace NotchPeninsula
 
             // 记账必须与「这张图属于哪首曲目」一致：用发起下载时就记下的会话 + 标题，
             // 不能读当时的 _trackAppId/_trackTitle（下载期间可能已经换歌）。
-            _networkCoverAppId = coverAppId ?? "";
-            _networkCoverTitle = title;
+            _externalCoverAppId = coverAppId ?? "";
+            _externalCoverTitle = title;
             SetThumbnail(cover);
+        }
+
+        /// <summary>
+        /// 取**会话自带封面**（SMTC 缩略图）并换上。只给 <see cref="SmtcCoverPreferredIds"/> 里的播放器用：
+        /// 这些客户端会把自己正在播放的那张封面通过 SMTC 一并给出，比按歌名 + 歌手去曲库搜更准。
+        ///
+        /// <para>拿不到（会话没给缩略图 / 流读不出来 / 解码失败）就**什么都不做** ——
+        /// 由随后的 <see cref="FetchCoverAsync"/> 按原链路接管，所以失败不会让封面比改动前更差。</para>
+        ///
+        /// <para>成功时同样记入 <see cref="_externalCoverTitle"/> / <see cref="_externalCoverAppId"/>，
+        /// 于是这首歌不会再发网络封面请求。</para>
+        ///
+        /// <para><b>节流</b>：兜底重试（渲染循环，60FPS）也会走到这里，而每次尝试都是一次 COM 调用，
+        /// 所以两次尝试之间至少间隔 <see cref="SessionCoverRetryInterval"/>。</para>
+        /// </summary>
+        private async Task FetchSmtcCoverAsync(string title, string appId)
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastSessionCoverAttempt < SessionCoverRetryInterval) return;
+            _lastSessionCoverAttempt = now;
+
+            var cover = await ReadSessionCoverAsync();
+            if (cover == null) return;
+
+            // 读取期间可能已经换歌：当场丢掉，别把上一首的封面贴到新歌上。
+            // 判据与封面记账同源（_trackTitle / _trackAppId）—— 视频模式（浏览器放视频）没有歌词槽位，
+            // 用 IsLyricOwner 会把封面整批丢掉。
+            if (!string.Equals(_trackTitle, title, StringComparison.Ordinal)
+                || !string.Equals(_trackAppId, appId, StringComparison.Ordinal))
+            {
+                cover.Dispose();
+                return;
+            }
+
+            _externalCoverTitle = title;
+            _externalCoverAppId = appId;
+            SetThumbnail(cover);
+        }
+
+        /// <summary>
+        /// 读当前会话的 SMTC 缩略图并解码。**没有缩略图 / 解码失败一律返回 null**，绝不抛给调用方 ——
+        /// 不规范的媒体源会在会话消失的瞬间让这些 COM 调用失败。
+        /// </summary>
+        private async Task<SKBitmap?> ReadSessionCoverAsync()
+        {
+            try
+            {
+                var props = await _currentSession!.TryGetMediaPropertiesAsync();
+                if (props?.Thumbnail is not { } thumbRef) return null;
+
+                using var stream = await thumbRef.OpenReadAsync();
+                using var buffer = new MemoryStream();
+                await stream.AsStreamForRead().CopyToAsync(buffer);
+                buffer.Position = 0;
+                return SKBitmap.Decode(buffer);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"会话自带封面读取失败: {ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>
@@ -1843,6 +1982,15 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 浏览器**原始**标题里是否带哔哩哔哩的平台名（用于把封面切到会话自带的那张）。
+        /// 必须在 <see cref="CleanBrowserTitle"/> 之前调用 —— 清理会把 <c>_哔哩哔哩_bilibili</c>
+        /// 这类后缀去掉，清完之后标题里就再也找不到平台名了。
+        /// </summary>
+        private static bool IsBilibiliTitle(string title)
+            => title.Contains("哔哩哔哩", StringComparison.Ordinal)
+               || title.Contains("bilibili", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
         /// 把封面地址归一成**小尺寸变体**：岛上最大只画 50px，下原图纯属浪费带宽与解码内存
         /// （还直接吃掉 4 秒的 HttpClient 超时预算）。两类 CDN 的写法不同：
         ///
@@ -2235,8 +2383,8 @@ namespace NotchPeninsula
             // 播放期间通常一次都不会再来。结果就是：播放时一直没有图标，一按暂停（播放状态变化
             // 触发一次属性刷新）反而冒出来了 —— 用户实测到的正是这个现象。
             // 所以借渲染循环这个稳定时钟补一次重试；真正的解析由 AppIconProvider 自带退避节流，
-            // 未命中时这里只是一次字段比较，几乎不花钱。
-            if (Thumbnail == null) UpdateCover();
+            // 会话自带封面的读取由 SessionCoverRetryInterval 节流，未命中时这里只是一次字段比较。
+            if (Thumbnail == null) UpdateCover(true);
 
             // 被切走的那首歌若还在后台播放，继续替它推算进度（内部按 1 秒节流，无挂起时立即返回）
             AdvanceSuspendedTimeline(now);
