@@ -38,8 +38,8 @@ namespace NotchPeninsula
 
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
 
-        // ==================== 🎯 播放控件命中几何（唯一真源） ====================
-        // 展开态三颗按钮的**悬停高亮**与**点击**以前各写一套坐标，两套还不一样：
+        // ---- 播放控件命中几何（唯一真源） ----
+        // 展开态三颗按钮的悬停高亮与点击以前各写一套坐标，两套还不一样：
         // 悬停区比点击区宽、垂直基准差 2px，两两之间还留着「亮着却点不动」的空隙 ——
         // 用户感受就是「按钮不跟手」。现在统一从这里取，改一处两边同时生效。
         //
@@ -92,7 +92,7 @@ namespace NotchPeninsula
             return -1;
         }
 
-        // ==================== 🎵 展开态歌曲时间轴 ====================
+        // ---- 展开态歌曲时间轴 ----
         // 几何登记表：Draw 里「真的画了」才登记，帧首统一作废 —— 画与点因此共用同一套坐标，
         // 且 HitTimeline 返回 false 天然等价于「本帧没画」，收起 / 切状态时不会在空处误触发。
         private static float _tlBarX1, _tlBarX2, _tlBarY;
@@ -106,7 +106,7 @@ namespace NotchPeninsula
         private const float TL_MIN_HEIGHT = 140f; // 高度涨到这条线之前不画，避免与底部按钮叠字
 
         // 显示门控：仅「纯媒体控制器（可点击展开）+ 灵动岛已展开 + SMTC 提供进度」时出现。
-        // ⚠️ 刻意**不再**排除组合模式（2026-09-25）：组合模式现在也能展开媒体面板，
+        // 刻意不再排除组合模式（2026-09-25）：组合模式现在也能展开媒体面板，
         //    展开后面板与固定目标宽度(320) / 面板高度(158) 完全一致，时间轴照常出现。
 
         public static bool TimelineVisible(MediaController media)
@@ -121,10 +121,10 @@ namespace NotchPeninsula
         public static bool HitTimeline(float x, float y)
             => _tlBarX2 > _tlBarX1 && x >= _tlBarX1 - 8f && x <= _tlBarX2 + 8f && Math.Abs(y - _tlBarY) <= 13f;
 
-        // ==================== 🎵 歌词翻译（上下两行） ====================
+        // ---- 歌词翻译（上下两行） ----
         // 译文画在原文正下方，视觉上「上下分开」：译文沿用原文那支画笔，只把颜色调成次级灰、
         // 再用画布缩放做小一号 —— 共用同一套字体 run 缓存，不额外占缓存槽，也不动 TextSize。
-        // 注意：两行**不改变岛体高度**，是在原高度里把两条线各自上下让开半格挤出来的
+        // 注意：两行不改变岛体高度，是在原高度里把两条线各自上下让开半格挤出来的
         // （见 DrawLyricLine）：岛体尺寸恒定，歌词有没有译文都不会弹高弹低。
         // 间距按默认媒体高度 40px 调过：两行基线相距 15px 时，整块占用约 y=4.4→36，
         // 中文大字的上下都不打架，也不贴边；高度调小时它还是居中的，只是余量变小。
@@ -149,15 +149,15 @@ namespace NotchPeninsula
         public static float MeasureLyricTranslationWidth(string text)
             => string.IsNullOrEmpty(text) ? 0f : MeasureCurrentLyricWidth(text) * LYRIC_TRANS_SCALE;
 
-        // ==================== 🎵 折叠态媒体标题区：**故意没有右键热区** ====================
+        // ---- 折叠态媒体标题区：故意没有右键热区 ----
         // 这里曾经有一套「本帧真的画了标题文本才登记命中区、帧首统一作废」的机制（`_mediaTitleHit` +
         // `HitMediaTitle`），给「右键媒体标题展开媒体面板」用。但那个热区高度 = 整个岛体高、宽度 = 文字宽度，
         // 媒体控制器铺满岛体时几乎吃掉整片右键：用户想打开设置窗口得精确点到岛体最右侧那条窄边。
         // 用户 2026-09-19 要求「整个媒体控制器的右键都只打开设置窗口」，故整套机制已删除 ——
-        // 原生媒体区域（标题 / 歌词 / 频谱 / 播放按钮 / 空白）的右键一律**不消费**（照旧打开设置窗口）。
+        // 原生媒体区域（标题 / 歌词 / 频谱 / 播放按钮 / 空白）的右键一律不消费（照旧打开设置窗口）。
         // 2026-09-23 追加：这里的右键只按区域决定「直达设置窗口的哪个页签」，
         // 命中区是渲染时登记的、贴着模块真实边界的 x 区间（见 Renderer.Layout.cs 的 NativeRightClickTab），
-        // 依然不消费右键、也不覆盖整岛高度。以后要再加媒体区域右键行为，**不要**退回「覆盖整岛高度的大热区」。
+        // 依然不消费右键、也不覆盖整岛高度。以后要再加媒体区域右键行为，不要退回「覆盖整岛高度的大热区」。
 
         // 鼠标 x → 0~1 落点比例（与 HitTimeline 共用同一套坐标）
 
@@ -277,7 +277,7 @@ namespace NotchPeninsula
 
         private static bool _krSlot;
 
-        // 🎵 展开态歌曲时间轴：左「当前时间」+ 中间进度条 + 右「总时长」。
+        // 展开态歌曲时间轴：左「当前时间」+ 中间进度条 + 右「总时长」。
         // 纵向从岛体底边反推（currentHeight - TL_BOTTOM_GAP），随展开动画一起生长，天然落在封面与按钮之间。
         // 全程只用静态画笔与 SKRect 值类型，零分配；画完登记几何，供命中判定与落点换算共用。
         private static void DrawTimeline(SKCanvas canvas, MediaController media, float left, float right, float currentHeight, byte alpha)

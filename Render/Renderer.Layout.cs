@@ -8,14 +8,14 @@ namespace NotchPeninsula
     public static partial class Renderer
     {
 
-        // ================= 岛体内容布局：两条互斥分支 =================
+        // ---- 岛体内容布局：两条互斥分支 ----
         // 组合模式：原生模块与插件组件按「内容顺序表」混排（各模块是下面的局部函数）。
         // 非组合模式：原生内容居中，插件行按顺序表贴在它的左右两侧。
         //
         // 参数都是 Draw() 里算好的几何量，直接透传，不要在这里重算 ——
         // 左右边界 / 按钮位置 / 插件预留都只有 Draw() 一个真源。
         //
-        // 🎵 媒体控制不在这里实现：它整块搬到了 Renderer.MediaWidget.cs，由统一入口
+        // 媒体控制不在这里实现：它整块搬到了 Renderer.MediaWidget.cs，由统一入口
         //    DrawMediaControl 自行分流「折叠内联行 / 展开面板」—— 本文件只负责把几何量喂给它，
         //    组合与非组合因此不再各写一套媒体绘制。
 
@@ -120,7 +120,7 @@ namespace NotchPeninsula
                 currentX = mediaRight + moduleGap;
             }
 
-            // ---- 🧩 按「内容顺序表」混排：原生模块与插件组件共用同一套左右顺序 ----
+            // ---- 按「内容顺序表」混排：原生模块与插件组件共用同一套左右顺序 ----
             // 顺序表由「显示设置 → 显示内容」调整并持久化，默认 = [时钟, 硬件, 媒体, 插件...]，
             // 与引入顺序表之前的表现完全一致；插件之间的先后也在同一张表里独立调整。
             var contentOrder = Plugins.PluginManager.Instance.Host.ContentOrder;
@@ -164,7 +164,7 @@ namespace NotchPeninsula
             // 拆分绘制逻辑
             if (media.IsActive)
             {
-                // 🎵 非组合模式下媒体控制器独占「原生内容区」：内容区左右边界就是它的几何量。
+                // 非组合模式下媒体控制器独占「原生内容区」：内容区左右边界就是它的几何量。
                 //    内容起点比左边界多 16px（岛体内边距），锚点就是右边界 —— 与组合模式喂进去的
                 //    只是几何量不同，绘制走的是同一个模块，所以「组合 / 非组合」不会再有两套媒体逻辑。
                 //    展开面板由模块自己判定接管（IsMediaPanelShowing），此处无需分支。
@@ -179,7 +179,7 @@ namespace NotchPeninsula
                 float baselineY = currentHeight / 2f + 5f + textOffsetY;
                 canvas.DrawText(_cachedTimeStr, left + 16f, baselineY, _timePaint);
                 canvas.DrawText(_cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint);
-                // 🖱️ 待机时整条原生内容区（时间 + 日期）都算时钟区域
+                // 待机时整条原生内容区（时间 + 日期）都算时钟区域
                 _clockZoneL = left + 16f;
                 _clockZoneR = right - 16f;
                 // 注：插件组件行不参与本段原生布局，统一在下面「插件组件行」处渲染在岛体最右侧
@@ -231,11 +231,11 @@ namespace NotchPeninsula
                 float startX = centerX - totalContentW / 2f;
                 float cpuBarW = cpuGroupW;
                 float ramBarW = ramGroupW;
-                // 🖱️ 硬件占用模块的右键命中区 = CPU 标签到 RAM 进度条右端
+                // 硬件占用模块的右键命中区 = CPU 标签到 RAM 进度条右端
                 _hardwareZoneL = startX;
                 _hardwareZoneR = startX + totalContentW;
 
-                // ================= [ CPU ] =================
+                // ---- [ CPU ] ----
                 float cpuX = startX;
                 var cpuTagRect = new SKRect(
                     cpuX,
@@ -255,7 +255,7 @@ namespace NotchPeninsula
                         new SKRect(cpuX, barTop, cpuX + cpuFillW, barTop + barH),
                         barH / 2f, barH / 2f, _barPaint);
 
-                // ================= [ RAM ] =================
+                // ---- [ RAM ] ----
                 float ramX = startX + cpuGroupW + gapBetweenCpuAndRam;
                 var ramTagRect = new SKRect(
                     ramX,
@@ -307,16 +307,16 @@ namespace NotchPeninsula
             }
         }
 
-        // ================= 🖱️ 岛内右键「按区域直达设置页签」命中区 =================
+        // ---- 岛内右键「按区域直达设置页签」命中区 ----
         // 规则（用户 2026-09-19 定下、2026-09-23 细分）：原生媒体控制器区域的右键一律不消费、
-        // 依然只打开设置窗口，只是**按右键落在哪块原生内容上直达对应页签**：
+        // 依然只打开设置窗口，只是按右键落在哪块原生内容上直达对应页签：
         //   · 媒体控制器（标题 / 歌词 / 频谱 / 播放按钮 / 空白）→ 媒体设置
         //   · 时间 / 日期、CPU / RAM                            → 显示设置
         //   · 其他（空白待机、插件行、插件详情页等）            → 设置窗口的当前页签，保持原行为
         //
-        // 命中区与插件命中区同一套思路：**本帧绘制时登记，帧首作废**（见 InvalidateNativeHitZones）。
+        // 命中区与插件命中区同一套思路：本帧绘制时登记，帧首作废（见 InvalidateNativeHitZones）。
         // 于是通知 / 剪贴板面板 / 插件详情页接管岛体时，这几块区域自动不存在，右键不会误命中。
-        // ⚠️ 只登记「本模块真正画出来的 x 区间」，不登记覆盖整岛的隐形大热区 ——
+        // 只登记「本模块真正画出来的 x 区间」，不登记覆盖整岛的隐形大热区 ——
         //    2026-09-19 的回归就是这么来的（大热区把设置窗口的入口整片吃掉）。
 
         private static float _clockZoneL = -1f, _clockZoneR = -1f;
@@ -334,8 +334,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 📺 本帧画出来的封面矩形（岛内逻辑坐标，与 WndProc 的命中坐标同一坐标系）。
-        /// 折叠内联行登记的是那张 22px 缩略图、展开面板登记的是 50px 封面 —— 都取**真正画出来的那一块**。
+        /// 本帧画出来的封面矩形（岛内逻辑坐标，与 WndProc 的命中坐标同一坐标系）。
+        /// 折叠内联行登记的是那张 22px 缩略图、展开面板登记的是 50px 封面 —— 都取真正画出来的那一块。
         /// </summary>
         private static SKRect _mediaCoverRect;
 
@@ -348,7 +348,7 @@ namespace NotchPeninsula
         private static void RegisterMediaCover(SKRect rect)
         {
             _mediaCoverRect = rect;
-            // 🖱 封面就是媒体模块最左端那一块，右键「直达媒体设置」的区间必须一并跟着走 ——
+            // 封面就是媒体模块最左端那一块，右键「直达媒体设置」的区间必须一并跟着走 ——
             //    否则封面落在媒体区间之外时，右键点封面会被判成「非媒体区域」而打开设置窗口的当前页签。
             if (_mediaZoneL < 0f || rect.Left < _mediaZoneL) _mediaZoneL = rect.Left;
         }
@@ -385,24 +385,22 @@ namespace NotchPeninsula
         public static bool HitMediaZone(float x) => InZone(x, _mediaZoneL, _mediaZoneR);
 
         /// <summary>
-        /// 📺 双击跳转的命中区 —— **折叠态与展开态都只认封面那一块**。
+        /// 双击跳转的命中区 —— 折叠态与展开态都只认封面那一块。
         ///
-        /// <list type="bullet">
-        /// <item><b>折叠态：左端的 22px 缩略图</b>。右半边（频谱 / 播放按钮那一带）留给原有交互，
-        ///       双击不参与，也就不会跟「悬停直接控制」抢同一片区域。</item>
-        /// <item><b>展开态：封面那一块</b>（绘制在 y = 20 ~ 70）。双击标题 / 歌词 / 频谱都不算，
-        ///       播放按钮与时间轴更在它下方。</item>
-        /// </list>
+    /// <b>折叠态：左端的 22px 缩略图</b>。右半边（频谱 / 播放按钮那一带）留给原有交互，
+        ///       双击不参与，也就不会跟「悬停直接控制」抢同一片区域。
+    /// <b>展开态：封面那一块</b>（绘制在 y = 20 ~ 70）。双击标题 / 歌词 / 频谱都不算，
+        ///       播放按钮与时间轴更在它下方。
         ///
-        /// <para><b>为什么展开态只认封面那一块</b>（2026-09-27 实测两次收窄后定稿）：
+        /// <b>为什么展开态只认封面那一块</b>（2026-09-27 实测两次收窄后定稿）：
         /// 早先版本把整个上半区（歌名 / 歌手 / 歌词 / 频谱）都算成双击区，用户只是随手点一下面板
         /// 就会飞到媒体应用去；同时那块热区还会跟底部按钮的命中判定贴在一起，按起来发涩。
-        /// 现在范围压到封面，且与按钮热区之间隔着一整条歌词带，两条路径彻底互不干扰。</para>
+        /// 现在范围压到封面，且与按钮热区之间隔着一整条歌词带，两条路径彻底互不干扰。
         ///
-        /// <para><b>两种形态共用一条判据</b>（2026-09-30 统一）：命中区不再各写一套坐标，
+        /// <b>两种形态共用一条判据</b>（2026-09-30 统一）：命中区不再各写一套坐标，
         /// 而是直接取本帧绘制时登记的封面矩形（<see cref="_mediaCoverRect"/>）——
         /// 折叠态那块缩略图、展开态那块封面画在哪儿，双击区就在哪儿，改绘制不会让命中区漂走。
-        /// 本帧没画封面（未激活 / 被通知 / 剪贴板 / 详情页接管）时矩形为空，天然返回 false。</para>
+        /// 本帧没画封面（未激活 / 被通知 / 剪贴板 / 详情页接管）时矩形为空，天然返回 false。
         /// </summary>
         /// <param name="x">岛内逻辑坐标 x。</param>
         /// <param name="y">岛内逻辑坐标 y（已含岛体下沉偏移，与 WndProc 的命中判定同一坐标系）。</param>
@@ -419,7 +417,7 @@ namespace NotchPeninsula
             }
 
             // ---------- 折叠态：整个媒体模块的左半边 ----------
-            // ⚠️ 折叠态**故意放宽到左半边**，不跟着那张 22px 缩略图收窄（2026-10-01 实测修正）：
+            // 折叠态故意放宽到左半边，不跟着那张 22px 缩略图收窄（2026-10-01 实测修正）：
             //    缩略图只有 22×22，竖直方向还只占岛体高度的一半，用户按上去十次有两三次落在边上 ——
             //    日志里就是「双击 (783,37) 命中封面=False，隔两秒再双击 (785,29) 命中封面=True」，
             //    感受就是「要点两下」。左半边本身就是原先一直好用的那块热区，恢复它。

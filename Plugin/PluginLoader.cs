@@ -6,13 +6,13 @@ namespace NotchPeninsula.Plugins;
 /// <summary>一个待加载的插件来源（磁盘上的 DLL）。</summary>
 public sealed class PluginSource
 {
-    /// <summary>相对 plugins 根目录的稳定标识，用于持久化“启用/禁用”状态。例如 "HelloPlugin.dll" 或 "MyPlugin/MyPlugin.dll"。</summary>
+    /// <summary>相对 plugins 根目录的稳定标识，用于持久化「启用/禁用」状态。如 "HelloPlugin.dll" 或 "MyPlugin/MyPlugin.dll"。</summary>
     public string Key { get; init; } = "";
 
     /// <summary>入口 DLL 的绝对路径。</summary>
     public string DllPath { get; init; } = "";
 
-    /// <summary>true=目录型插件（会复制整个目录，支持带依赖）；false=根目录下的单文件插件。</summary>
+    /// <summary>true=目录型插件（整目录复制，支持带依赖）；false=根目录下的单文件插件。</summary>
     public bool IsFolderLayout { get; init; }
 
     /// <summary>插件所在目录：目录型为插件文件夹，单文件型为 plugins 根目录。</summary>
@@ -20,14 +20,11 @@ public sealed class PluginSource
 }
 
 /// <summary>
-/// 插件发现器：扫描 plugins 目录，产出所有可加载的 DLL 来源。
-///
-/// 支持的两种目录布局：
-///   plugins/HelloPlugin.dll            单文件型（适合无外部依赖的简单插件）
-///   plugins/MyPlugin/MyPlugin.dll      目录型（可携带依赖 DLL，可用 plugin.json 指定入口）
-///   plugins/MyPlugin/plugin.json       { "dll": "MyPlugin.dll" }
-///
-/// 以 "_" 或 "." 开头的目录会被跳过（例如 _recycle 回收站）。
+/// 插件发现器：扫描 plugins 目录，产出所有可加载的 DLL 来源。两种布局：
+///   plugins/HelloPlugin.dll        单文件型（无外部依赖的简单插件）
+///   plugins/MyPlugin/MyPlugin.dll  目录型（可携带依赖 DLL，可用 plugin.json 指定入口）
+///   plugins/MyPlugin/plugin.json   { "dll": "MyPlugin.dll" }
+/// 以 "_" 或 "." 开头的目录会被跳过（如 _recycle 回收站）。
 /// </summary>
 public static class PluginLoader
 {

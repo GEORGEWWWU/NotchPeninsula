@@ -9,7 +9,7 @@ namespace NotchPeninsula
     /// <summary>
     /// Just Solo LyricServer（ws://127.0.0.1:47290）客户端。
     /// 接收 init / progress / playback / spectrum 推送，供本地歌词高亮与频谱显示使用；
-    /// 协议 v1.3.0 起 volume 为**双向**消息：可下发指令调播放器音量，服务端也会回推音量
+    /// 协议 v1.3.0 起 volume 为双向消息：可下发指令调播放器音量，服务端也会回推音量
     /// （协议 4.5 节）。
     /// 协议文档：Just-Solo-LyricServer.md
     /// </summary>
@@ -52,7 +52,7 @@ namespace NotchPeninsula
         public bool IsConnected => _connected;
 
         /// <summary>
-        /// Just Solo 播放器当前音量（0.0 ~ 1.0）—— **WS 侧的独立变量**，与系统音量互不覆盖。
+        /// Just Solo 播放器当前音量（0.0 ~ 1.0）—— WS 侧的独立变量，与系统音量互不覆盖。
         /// 本机下发的值、服务端回推的值、连接时补推的当前值都会镜像进来。
         /// 返回 false 表示还没从 WS 拿到过音量（未连接 / 服务端还没推）。
         /// </summary>
@@ -317,7 +317,7 @@ namespace NotchPeninsula
         {
             var buffer = new byte[4096];
 
-            // ⚠️ 必须「先攒原始字节、整条消息到齐了再解码」，不能按帧各自 UTF8.GetString：
+            // 必须「先攒原始字节、整条消息到齐了再解码」，不能按帧各自 UTF8.GetString：
             //    服务端把整首歌的歌词一次性发出来（实测 init 单条消息 5565 字节），超过这个 4KB 缓冲后
             //    会被切成多帧；逐帧解码时，落在帧边界上的中文（3 字节 UTF-8）会被解成 U+FFFD「�」——
             //    用户 2026-09-24 反馈的「译文里显示一个乱码」就是这么来的（实测 4096 边界处恰好切在

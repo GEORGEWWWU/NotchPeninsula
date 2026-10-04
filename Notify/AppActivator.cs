@@ -50,7 +50,7 @@ namespace NotchPeninsula
             try
             {
                 // PackageManager / Package 都是 WinRT 包装对象（底层 COM RCW + 原生资源）。
-                // 这里要枚举当前用户的**全部**已安装包，单次就能产出数百个包装对象 ——
+                // 这里要枚举当前用户的全部已安装包，单次就能产出数百个包装对象 ——
                 // 不释放的话只能等 GC 终结器，高频点击通知会让 RCW 在两次 GC 之间持续累积。
                 var packageManager = new Windows.Management.Deployment.PackageManager();
                 try

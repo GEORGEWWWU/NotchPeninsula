@@ -7,7 +7,7 @@ namespace NotchPeninsula
 {
     public static partial class Renderer
     {
-        // ================= 🧩 插件组件渲染接线 =================
+        // ---- 插件组件渲染接线 ----
         // 设计目标：稳态 60FPS 零 GC 分配。
         //   · 组件数组只在注册表版本变化时拷贝一次（_pluginWidgets）；
         //   · 每帧的宽度写入复用数组（_pluginWidths）；
@@ -30,7 +30,7 @@ namespace NotchPeninsula
 
         private static readonly List<Plugins.WidgetLayout.Slot> _pluginSlots = new(8);
 
-        // 🧩 插件行的宽度预算：本帧插件行最多能用多少宽度（含与原生内容之间的 16px 间距）。
+        // 插件行的宽度预算：本帧插件行最多能用多少宽度（含与原生内容之间的 16px 间距）。
         //    由 NotchWindow 每帧按「岛体总长上限 − 原生内容本帧占用宽度」算出后写入；
         //    组合模式由 GetCompositeWidth 内部按同一规则设置（那里才知道原生模块总宽）。
         //    预算内放不下的组件本帧整体不显示 —— 不压缩、不截断，杜绝文字被省略号砍掉半截。
@@ -49,13 +49,13 @@ namespace NotchPeninsula
         private const float PLUGIN_GAP = 16f;
 
         /// <summary>
-        /// 原生内容区在任何情况下都要保住的最小宽度（**常量**，故意不跟原生内容实际所需宽度挂钩）。
+        /// 原生内容区在任何情况下都要保住的最小宽度（常量，故意不跟原生内容实际所需宽度挂钩）。
         ///
         /// 只在「岛体宽度动画途中装不下两侧插件组」时用来给插件组按比例让位 ——
         /// 不设这个下限的话会算出负的原生内容区宽度，把文字遮罩与播放按钮翻到文字左边。
         ///
-        /// ⚠️ 为什么必须是常量、不能换成「本帧原生内容真实所需宽度」：
-        ///    原生内容所需宽度（换歌词 / 换标题时）与目标宽度是**同一刻跳变**的，而 currentWidth
+        /// 为什么必须是常量、不能换成「本帧原生内容真实所需宽度」：
+        ///    原生内容所需宽度（换歌词 / 换标题时）与目标宽度是同一刻跳变的，而 currentWidth
         ///    还停在旧目标上。拿它当下限 → 换歌词那一帧立刻判定「装不下」→ 原生内容区从 320
         ///    一步拉到 512、插件整行被裁掉 —— 这就是又一次跳变（实测首帧 18px、全程 24px）。
         ///    常量下限则只在「岛体比插件行还窄」的极端瞬态才介入，换歌词时完全不介入，
@@ -70,13 +70,11 @@ namespace NotchPeninsula
         /// 判定权在 NotchWindow：只有它知道原生内容（媒体控制器 / 长歌词自适应 / 硬件占用）
         /// 本帧要占多宽，用岛体总长上限减掉之后，剩下的才是插件行能用的空间。
         ///
-        /// <para>
         /// 组件宽度是各自声明的（<see cref="Plugins.IWidget.MeasureWidth"/> 的语义 =
         /// <b>完整显示内容所需的宽度</b>）。本方法按注册顺序贪心分配：
         /// 所需宽度能完整落进剩余预算的组件才显示，装不下的组件本帧整体不显示 ——
         /// 宿主绝不替它压缩或截断（那才是「内容显示不全」）。
         /// 于是每个组件要么完整显示、要么完全不显示，不存在半截内容。
-        /// </para>
         ///
         /// 传 0 即整行隐藏（通知 / 剪贴板 / 详情页接管岛体时）。
         /// 只影响「插件行贴在原生内容右侧」的非组合模式；组合模式由 <c>GetCompositeWidth</c>
@@ -170,7 +168,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 本帧插件行的可用宽度（含与原生内容之间的 16px 间距）——即「岛体总长上限 − 原生内容本帧占用宽度」。
         ///
-        /// 这是**整行**的总预算。某个插件实际能用多少还要看它排在第几位，
+        /// 这是整行的总预算。某个插件实际能用多少还要看它排在第几位，
         /// 见 <see cref="GetPluginRowRemaining"/>。
         ///
         /// 返回 <c>0</c> 表示本帧插件行被完全接管（通知 / 剪贴板 / 详情页）；
@@ -180,7 +178,7 @@ namespace NotchPeninsula
         public static float GetPluginRowBudget() => _pluginRowBudget;
 
         /// <summary>
-        /// 某个插件处的**剩余**可用宽度：按组件从左到右的放行优先级，
+        /// 某个插件处的剩余可用宽度：按组件从左到右的放行优先级，
         /// 累加排在它前面的插件已经占掉的宽度（含间距），从整行预算里减掉，剩下的就是它的。
         ///
         /// 语义就是「不显示这个插件时，它所在位置还剩多少长度」——插件拿它来判断
@@ -190,7 +188,7 @@ namespace NotchPeninsula
         /// 说明：
         /// · <paramref name="pluginId"/> 为 null（宿主自身无插件上下文）时退回整行预算。
         /// · 本插件自己的组件不参与扣减——「不显示它时」的剩余，自然不该被它自己占掉。
-        /// · 只统计**本帧被放行**的组件；没放行的组件本来就不占宽度，不该算在别人头上。
+        /// · 只统计本帧被放行的组件；没放行的组件本来就不占宽度，不该算在别人头上。
         /// · 不改动任何状态、不触发重测（快照由 NotchWindow 每帧刷新），渲染线程与后台线程都可安全调用。
         /// </summary>
 
@@ -287,16 +285,12 @@ namespace NotchPeninsula
         /// <summary>
         /// 找出「把文件拖到它身上就该自动展开详情页」的那个<b>收起态</b>组件；没有则返回 null。
         ///
-        /// <para>
         /// 命中来源是本帧绘制时登记的 <see cref="_pluginSlots"/> —— 也就是<b>只有这一帧真的画出来了的组件</b>
         /// 才算数。通知 / 剪贴板面板 / 已有详情页接管岛体期间，插件行本来就没绘制，自然不会命中。
-        /// </para>
         ///
-        /// <para>
         /// 三条判定：落点在该组件矩形内、组件声明了 <c>IWidget.AcceptsFileDropWhenCollapsed</c>、
         /// 且它确实提供详情页（没有详情页就谈不上「展开」）。
         /// 调用方（<c>IslandDropTarget</c>）负责在展开前再确认一次「当前没有别的详情页开着」。
-        /// </para>
         /// </summary>
         public static string? FindCollapsedFileDropWidget(float x, float y)
         {
@@ -328,22 +322,18 @@ namespace NotchPeninsula
         /// <summary>
         /// 每帧绘制前清空插件命中区；只有本帧实际绘制了插件行才会重新填充。
         ///
-        /// <para>
-        /// ⚠️ <b>这里刻意不再清空详情页命中区</b>（<c>_detailHitPage</c> / <c>_detailHitRect</c>）：
+        /// <b>这里刻意不再清空详情页命中区</b>（<c>_detailHitPage</c> / <c>_detailHitRect</c>）：
         /// 本方法跑在<b>渲染线程</b>（<c>NotchWindow</c> 的渲染定时器是一条
         /// <c>System.Timers.Timer</c>，回调在线程池线程上），而 OLE 的拖放回调来自<b>岛体消息线程</b>。
         /// 每帧清空等于在两帧之间留下一段「面板明明开着、命中页却是 null」的空窗，
         /// 拖放回调只要落在空窗里就会把「拖入已被接受」误判成「已经拖出」——
         /// 于是 <c>_accepted</c> 被置回 false，离场时的复位回调也不再发出，
         /// 插件的高亮永远留在界面上（表现就是「一直卡在拖入页面」）。
-        /// </para>
         ///
-        /// <para>
         /// 详情页命中区本来就不是逐帧变化的量（面板开着的时候它一直是那一块矩形），
         /// 所以改成「面板状态真的变了才作废」：由 <see cref="RefreshDetailPageState"/>（收起 / 换页）、
         /// <see cref="InvalidatePluginSnapshot"/>（插件卸载）以及几处「别的面板接管整块岛体」的分支
         /// （Toast / 剪贴板，见 <c>Renderer.Draw</c>）显式调用 <see cref="InvalidateDetailHitArea"/>。
-        /// </para>
         /// </summary>
 
         private static void InvalidatePluginHitAreas()
@@ -372,11 +362,9 @@ namespace NotchPeninsula
         /// <summary>
         /// 当前展开的详情页实例（面板收起前一直有效，不参与落点判定）。
         ///
-        /// <para>
         /// 供拖放会话记账用：OLE 的拖放回调可能在任何一帧的空档里到达，
         /// 「进入过哪个详情页」必须记在一个不受帧内时序影响的实例上，
         /// 离场时才有稳定的对象可以复位（见 <see cref="DispatchDetailPageDragLeave(Plugins.IDetailPage?)"/>）。
-        /// </para>
         /// </summary>
         public static Plugins.IDetailPage? ActiveDetailPageOrNull
         {
@@ -384,7 +372,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 立即失效渲染侧持有的**全部插件快照**（组件数组 / 宽度 / 命中区 / 详情页）。
+        /// 立即失效渲染侧持有的全部插件快照（组件数组 / 宽度 / 命中区 / 详情页）。
         ///
         /// 专供插件卸载路径调用：这些静态字段平时要到「下一帧发现版本号变了」才重建，
         /// 而卸载方法紧接着就会做几轮同步 GC 来确认可回收 ALC 是否释放 —— 那时这些字段
@@ -435,7 +423,7 @@ namespace NotchPeninsula
             return (windowWidth + currentWidth) / 2f - (toastActive ? 0f : GetPluginRowReserve());
         }
 
-        // ================= 🧩 非组合模式下的插件左右分组 =================
+        // ---- 非组合模式下的插件左右分组 ----
         // 背景：组合模式靠「内容顺序表」把原生模块与插件混排；非组合模式同一时刻只显示一个原生模块
         //       （媒体激活 → 媒体；否则按待机显示模式 → 时间日期 / 硬件占用 / 空），所以插件相对它
         //       只有「排左边」和「排右边」两种位置，同样是查同一张顺序表得出。
@@ -478,7 +466,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 按「内容显示顺序表」把本帧可见的插件组件分成左右两组，返回两组的**内容宽度**
+        /// 按「内容显示顺序表」把本帧可见的插件组件分成左右两组，返回两组的内容宽度
         /// （各组件宽度之和 + 组内 16px 间距，不含与原生内容之间的间距）。
         /// 只统计被预算放行的组件 —— 与绘制、宽度累加的口径严格一致，宽度才不会与绘制脱节。
         /// </summary>
@@ -683,7 +671,7 @@ namespace NotchPeninsula
             Logger.Error($"[Renderer] 插件组件 {(_pluginWidgets != null && index < _pluginWidgets.Length ? _pluginWidgets[index].Id : "?")} 渲染异常，已停用其绘制", ex);
         }
 
-        // ================= 🧩 插件详情页（右键展开） =================
+        // ---- 插件详情页（右键展开） ----
         // 详情页把整个岛体内容整块换掉：尺寸完全由插件通过 MeasureWidth / MeasureHeight 决定，
         // 宿主只做上下限裁剪（防止插件把岛体撑到屏幕外），并负责把岛内左键交给详情页处理。
         // 与组件一致：Measure/Draw 抛异常一律熔断，只记一次日志，绝不拖死渲染循环。
@@ -736,20 +724,16 @@ namespace NotchPeninsula
         /// <summary>
         /// 当前详情页是否声明了「鼠标离开也不收起」（<c>AutoCollapseDelay</c> 返回负值）。
         ///
-        /// <para>
         /// 岛外点击要不要顺手把它收掉，就看这个 —— 正在从资源管理器往面板里拖文件的用户，
         /// 鼠标必然要经过岛外，那种「点了别处」不能算「想关面板」。
-        /// </para>
         /// </summary>
         public static bool ActiveDetailKeepsOpen => ActiveDetailCollapseDelayMs == CollapseNever;
 
         /// <summary>
         /// 当前详情页要求的「鼠标离开后自动收起」时长（毫秒）。三种返回：
-        /// <list type="bullet">
-        ///   <item><c>null</c> —— 未展开、详情页没指定、或取值抛异常 → 调用方沿用宿主内置时长。</item>
-        ///   <item><see cref="CollapseNever"/> —— 详情页明确要求鼠标离开也别收 → 调用方连计时都不用挂。</item>
-        ///   <item>正数 —— 自定义时长，已夹在 0.5 秒 ~ 60 秒之间。</item>
-        /// </list>
+    /// <c>null</c> —— 未展开、详情页没指定、或取值抛异常 → 调用方沿用宿主内置时长。
+    /// <see cref="CollapseNever"/> —— 详情页明确要求鼠标离开也别收 → 调用方连计时都不用挂。
+    /// 正数 —— 自定义时长，已夹在 0.5 秒 ~ 60 秒之间。
         /// </summary>
         public static int? ActiveDetailCollapseDelayMs
         {
@@ -946,14 +930,12 @@ namespace NotchPeninsula
         /// <summary>
         /// 鼠标移动。
         ///
-        /// <para>
-        /// ⚠️ <b>刻意不做落点判定</b>（和上面几个方法不一样）：按住拖动时鼠标<b>一定会</b>离开详情页矩形 ——
+        /// <b>刻意不做落点判定</b>（和上面几个方法不一样）：按住拖动时鼠标<b>一定会</b>离开详情页矩形 ——
         /// 详情页只有一两百像素高，而拖动是个大幅度动作，两下就划出去了。
         /// 一旦在这里因为它出界就返回 false，插件就再也收不到移动，
         /// 「按下后位移超过阈值再发起拖出」这套逻辑永远触发不了，表现就是<b>完全拖不动</b>。
-        /// </para>
         ///
-        /// <para>坐标照实往下传（可能为负 / 超出尺寸），要不要理会由详情页自己决定。</para>
+        /// 坐标照实往下传（可能为负 / 超出尺寸），要不要理会由详情页自己决定。
         /// </summary>
         public static bool DispatchDetailPageMouseMove(float x, float y)
         {
@@ -1054,18 +1036,14 @@ namespace NotchPeninsula
         /// <summary>
         /// 把「拖放离场」派发给指定详情页实例（<paramref name="page"/> 为 null 时退回当前命中页）。
         ///
-        /// <para>
         /// <b>为什么需要能指定实例</b>：拖放是跨线程的 OLE 回调，两次回调之间可能夹着
         /// 「面板换页 / 被通知接管 / 已经收起」等状态变化 —— 这时按当前命中区去取会取到 null，
         /// 复位回调就发不出去，插件的高亮会永远留在界面上。
         /// 调用方在「拖入被接受」的那一刻记下实例，离场时直接还给它即可
         /// （见 <c>IslandDropTarget</c> 的 <c>_hoverPage</c>）。
-        /// </para>
         ///
-        /// <para>
         /// 面板已经收起的实例同样应该收到这条回调：插件据此复位自己的状态，
         /// 与面板是否还在屏幕上无关。
-        /// </para>
         /// </summary>
         public static void DispatchDetailPageDragLeave(Plugins.IDetailPage? page)
         {

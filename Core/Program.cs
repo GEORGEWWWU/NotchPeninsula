@@ -24,14 +24,14 @@ namespace NotchPeninsula
                     FontConfig.Restore(key.GetValue("CustomFontPath", "") as string);
 
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;
-                    // 「自动隐藏」总开关是下面三个模式的父开关（见 NotchWindow 的
-                    // IsFocusAutoHideEffective 等一组 Effective 属性）；穿透模式不参与判定。
-                    // 🎯 「焦点离开时自动隐藏岛」在没有媒体会话时接管岛体的显示 / 隐藏。老用户的注册表里没有
-                    //    FocusAutoHide（新键），这里以旧的 AutoHide 值兜底，免得升级后自动隐藏悄悄失效。
+                    // 「自动隐藏」总开关是下面三个模式的父开关（见 NotchWindow 的一组 Effective 属性）；
+                    // 穿透模式不参与判定。
+                    // 「焦点离开时自动隐藏岛」在没有媒体会话时接管岛体的显示 / 隐藏。老用户注册表里没有
+                    // FocusAutoHide（新键），这里以旧的 AutoHide 值兜底，免得升级后自动隐藏悄悄失效。
                     NotchWindow.IsFocusAutoHideEnabled =
                         (int)key.GetValue("FocusAutoHide", NotchWindow.IsAutoHideEnabled ? 1 : 0) != 0;
-                    // 🎵🖥 三个模式**互相独立、可任意组合**，所以启动时不做任何级联 / 互斥自愈，
-                    //    三个值原样恢复，与设置面板显示的状态一一对应。
+                    // 三个模式互相独立、可任意组合，启动时不做任何级联 / 互斥自愈，三个值原样恢复，
+                    // 与设置面板显示的状态一一对应。
                     NotchWindow.IsPauseAutoHideEnabled = (int)key.GetValue("PauseAutoHide", 0) != 0;
                     NotchWindow.IsFullscreenAutoHideEnabled = (int)key.GetValue("FullscreenAutoHide", 0) != 0;
                     MediaController.IsMediaControlEnabled = (int)key.GetValue("MediaControl", 1) != 0;
@@ -40,20 +40,19 @@ namespace NotchPeninsula
                     MediaController.ManualSessionAppId = (string)key.GetValue("ManualSessionAppId", "") ?? "";
                     MediaController.IsLyricsEnabled = (int)key.GetValue("LyricsEnabled", 1) != 0;
                     MediaController.IsTranslationEnabled = (int)key.GetValue("TranslationEnabled", 1) != 0;
-                    // 🎤 歌词扫光：一个总闸控制「歌词要不要随演唱进度扫光」。
-                    //    内部是一条链 —— 逐字优先，逐字数据不可用时自动回退整行均匀推进
-                    //    （见 MediaController.ComputeScanProgress），所以不再有「卡拉 OK / 逐字」两个开关。
-                    //    老配置把它分在 KaraokeEnabled（整行扫光，默认 1）与 WordByWordEnabled（逐字，默认 0）
-                    //    两个互斥的键上，这里取「任一为真」兜底 —— 开过逐字的用户不会因为卡拉 OK 键被置 0
-                    //    而丢掉扫光。
+                    // 歌词扫光：一个总闸控制「歌词要不要随演唱进度扫光」。内部是一条链——逐字优先，
+                    // 逐字数据不可用时自动回退整行均匀推进（见 MediaController.ComputeScanProgress），
+                    // 所以不再有「卡拉 OK / 逐字」两个开关。老配置把它分在 KaraokeEnabled（整行扫光，
+                    // 默认 1）与 WordByWordEnabled（逐字，默认 0）两个互斥的键上，这里取「任一为真」兜底，
+                    // 开过逐字的用户不会因为卡拉 OK 键被置 0 而丢掉扫光。
                     bool legacyScan = (int)key.GetValue("KaraokeEnabled", 1) != 0
                                       || (int)key.GetValue("WordByWordEnabled", 0) != 0;
                     MediaController.IsLyricScanEnabled = (int)key.GetValue("LyricScanEnabled", legacyScan ? 1 : 0) != 0;
-                    // 🖱 双击媒体控制跳回对应应用：**默认关闭**（2026-10-03 用户要求）。
-                    //    老版本升级上来的用户注册表里没有 MediaAppLaunchEnabled 这个键，取默认值即视为关闭 ——
-                    //    跳转会抢前台焦点，不该不告而开；同时他们的折叠态展开入口因此保持在
-                    //    「左键单击展开」（跳转关掉时的口径，见 Renderer.MediaExpandByLeftClick）。
-                    //    用户手动开过（键 = 1）或关过（键 = 0）的，一律以注册表里的值为准，不受默认值影响。
+                    // 双击媒体控制跳回对应应用：默认关闭。老版本升级上来的用户注册表里没有
+                    // MediaAppLaunchEnabled 这个键，取默认值即视为关闭——跳转会抢前台焦点，不该
+                    // 不告而开；同时他们的折叠态展开入口因此保持在「左键单击展开」（跳转关掉时的
+                    // 口径，见 Renderer.MediaExpandByLeftClick）。用户手动开过（1）或关过（0）的，
+                    // 一律以注册表里的值为准。
                     MediaController.IsAppLaunchEnabled = (int)key.GetValue("MediaAppLaunchEnabled", 0) != 0;
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
@@ -63,12 +62,11 @@ namespace NotchPeninsula
                     Renderer.IsToastFullMode = toastContentMode == 2;
                     Renderer.IsToastCompactMode = toastContentMode == 1;
 
-                    // 🎵 通知提示音
-                    //    ① 先扫目录 —— 下拉列表是**动态加载**的，列表内容取决于 data\sound 里实际有哪些 wav。
-                    //       必须在 Restore 之前扫，否则恢复索引时 OptionCount 还是 0，会把有效索引误判成越界。
-                    //    ② 再 Restore：与字体同一套「恢复 + 失效自动回落」语义。
-                    //       提示音开关默认**关闭**、默认选「无」(index 0)，也就是默认完全安静；
-                    //       自定义音频丢失时会自动退回「无」并把失效路径从注册表清掉，不会带着坏配置启动。
+                    // 通知提示音：先扫目录——下拉列表是动态加载的，内容取决于 data\sound 里实际有哪些 wav。
+                    // 必须在 Restore 之前扫，否则恢复索引时 OptionCount 还是 0，会把有效索引误判成越界。
+                    // 再 Restore：与字体同一套「恢复 + 失效自动回落」语义。提示音开关默认关闭、默认选
+                    // 「无」(index 0)，即完全安静；自定义音频丢失时自动退回「无」并清掉注册表里的失效路径，
+                    // 不会带着坏配置启动。
                     ToastSoundConfig.RefreshBuiltins();
                     ToastSoundConfig.Restore(
                         (int)key.GetValue("ToastSoundIndex", 0),
@@ -81,13 +79,13 @@ namespace NotchPeninsula
                     // 读取个性化参数
                     Renderer.STANDBY_WIDTH = Convert.ToSingle(key.GetValue("Custom_StandbyW", 125f));
                     Renderer.MEDIA_WIDTH = Convert.ToSingle(key.GetValue("Custom_MediaW", 250f));
-                    // 🎯 全局折叠态高度：原「待机高度」与「媒体激活时高度」已合并，唯一真源 = MEDIA_HEIGHT，
-                    //    存储沿用原媒体控制的 Custom_MediaH（老用户的媒体高度照常生效）。
-                    //    向下兼容：老版本两个高度是分开存的，用户可能**只调过待机高度**（Custom_BaseH）
-                    //    而没碰过媒体高度 —— 那样 Custom_MediaH 这个键压根不存在，直接取默认值会把他
-                    //    调过的高度抹掉。所以 Custom_MediaH 缺席时回落到 Custom_BaseH，两者都没有才用默认 35。
-                    //    迁移是只读的：Custom_BaseH 留在注册表里不动（回退老版本仍能读到），
-                    //    用户下次调高度时会把新值写进 Custom_MediaH，此后一律以它为准。
+                    // 全局折叠态高度：原「待机高度」与「媒体激活时高度」已合并，唯一真源 = MEDIA_HEIGHT，
+                    // 存储沿用原媒体控制的 Custom_MediaH（老用户的媒体高度照常生效）。
+                    // 向下兼容：老版本两个高度分开存，用户可能只调过待机高度（Custom_BaseH）而没碰过
+                    // 媒体高度——那样 Custom_MediaH 键压根不存在，直接取默认值会把他调过的高度抹掉。
+                    // 所以 Custom_MediaH 缺席时回落到 Custom_BaseH，都没有才用默认 35。
+                    // 迁移是只读的：Custom_BaseH 留在注册表里不动（回退老版本仍能读到），用户下次调高度
+                    // 时把新值写进 Custom_MediaH，此后一律以它为准。
                     Renderer.MEDIA_HEIGHT = Convert.ToSingle(
                         key.GetValue("Custom_MediaH", key.GetValue("Custom_BaseH", 35f)));
                     Renderer.TOAST_WIDTH = Convert.ToSingle(key.GetValue("Custom_ToastW", 260f));
@@ -101,11 +99,11 @@ namespace NotchPeninsula
                     Renderer.TargetMonitorIndex = (int)key.GetValue("TargetMonitorIndex", 0);
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
 
-                    // 🧩 组合模式已常开（总开关在 2026-09-25 被移除），这里只负责把老配置迁移成复选框初值。
-                    //    老版本没开过组合模式的用户，其「待机显示内容」三选一正是「复选框只勾一个」，
-                    //    直接按它换算；组合模式本来就开着的，沿用注册表里的勾选状态。
-                    //    ⚠️ 媒体控制器一律勾上：旧的非组合模式下「媒体一激活就显示」，与待机显示内容无关，
-                    //       不勾的话升级后媒体会整个消失。
+                    // 组合模式已常开（总开关已移除），这里只负责把老配置迁移成复选框初值。老版本没开过
+                    // 组合模式的用户，其「待机显示内容」三选一正是「复选框只勾一个」，直接按它换算；
+                    // 本来就开着的，沿用注册表里的勾选状态。
+                    // 媒体控制器一律勾上：旧的非组合模式下「媒体一激活就显示」，与待机显示内容无关，
+                    // 不勾的话升级后媒体会整个消失。
                     if ((int)key.GetValue("CompositeMode_Enabled", 0) != 0)
                     {
                         Renderer.CompShowDateTime = (int)key.GetValue("Composite_ShowDateTime", 1) != 0;
@@ -118,9 +116,9 @@ namespace NotchPeninsula
                         Renderer.CompShowHardware = Renderer.StandbyDisplayMode == 2;
                         Renderer.CompShowMedia = true;
 
-                        // 🔑 迁移只做一次：把 CompositeMode_Enabled 置 1 并落盘，
-                        //    否则下次启动又会走这条分支、拿 StandbyDisplayMode 重新推导，
-                        //    把用户在新版本里新勾的选项**覆盖掉**（StandbyDisplayMode 已经不再被任何 UI 修改）。
+                        // 迁移只做一次：把 CompositeMode_Enabled 置 1 并落盘，否则下次启动又会走这条
+                        // 分支、拿 StandbyDisplayMode 重新推导，把用户在新版本里新勾的选项覆盖掉
+                        //（StandbyDisplayMode 已不再被任何 UI 修改）。
                         Program.SaveSetting("CompositeMode_Enabled", 1);
                     }
 
@@ -130,10 +128,10 @@ namespace NotchPeninsula
                 }
 
                 // 监听 Windows 系统偏好设置（如深浅色主题）变更事件。
-                // ⚠️ 必须是**具名静态方法 + 幂等订阅**：SystemEvents 的委托挂在进程级静态表上，
-                //    每次 Subscribe 都会累加一条，用 lambda 则连"退订"都无从下手。
-                //    现在 LoadSettings 只在启动时调一次所以不会漏，但它是 public static ——
-                //    将来加一个「重新载入配置」入口就会静默累积（每次系统主题变化触发 N 次重绘）。
+                // 必须是具名静态方法 + 幂等订阅：SystemEvents 的委托挂在进程级静态表上，每次
+                // Subscribe 都会累加一条，用 lambda 则连退订都无从下手。现在 LoadSettings 只在启动时
+                // 调一次所以不会漏，但它是 public static——将来加一个「重新载入配置」入口就会静默累积
+                //（每次系统主题变化触发 N 次重绘）。
                 SubscribeSystemPreferenceChanged();
             }
             catch (Exception ex)
@@ -155,7 +153,7 @@ namespace NotchPeninsula
 
         private static void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
         {
-            // 如果当前设置了“跟随系统(2)”，当系统主题改变时立即重新渲染颜色
+            // 当前设为「跟随系统(2)」时，系统主题改变即重新渲染颜色
             if (Renderer.ThemeMode == 2)
             {
                 Renderer.ApplyThemeColors();
@@ -179,12 +177,10 @@ namespace NotchPeninsula
         /// <summary>
         /// 装一个全局崩溃钩子，把「进程为什么没了」写进 app.log。
         ///
-        /// <para>没有它的时候，一次 0xC0000005 会让进程当场消失、日志里**一行都不留** ——
-        /// 事后只能靠猜（本轮排查就是这么开始的）。这里只记不拦：崩溃照旧让进程退出，
-        /// 但至少留下异常类型、消息与调用栈，下次能直接定位。</para>
-        ///
-        /// <para>局限要清楚：原生访问违例属于「损坏状态异常」，运行时可能根本不派发这个事件，
-        /// 所以**它不能保证每次都记到**；它主要覆盖托管未处理异常与渲染 / UI 线程里的托管异常。</para>
+        /// 没有它的时候，一次 0xC0000005 会让进程当场消失、日志里一行都不留，事后只能靠猜。
+        /// 这里只记不拦：崩溃照旧让进程退出，但至少留下异常类型、消息与调用栈。
+        /// 局限：原生访问违例属于「损坏状态异常」，运行时可能根本不派发这个事件，所以它不能保证
+        /// 每次都记到；主要覆盖托管未处理异常与渲染 / UI 线程里的托管异常。
         /// </summary>
         private static void InstallCrashLogger()
         {

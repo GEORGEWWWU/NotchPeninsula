@@ -9,13 +9,14 @@ public enum BrightnessCapability
     Hardware
 }
 /// <summary>
-/// 内置音量后端（系统主音量）。程序和插件只认它，落到哪儿由 <see cref="VolumeSink"/> 决定：
+/// 内置音量后端（系统主音量）。程序和插件只认它，落到哪儿由 VolumeSink 决定：
+///   连上 Just Solo LyricServer 的 WS → 操作 Just Solo 播放器音量（协议 v1.3.0 的 volume
+///   指令），系统音量一点不动；
+///   没有 WS（没在接管 Just Solo）→ 操作系统主音量，Just Solo 那边一点不动。
 ///
-///   连上了 Just Solo LyricServer 的 WS → 操作 **Just Solo 播放器音量**（协议 v1.3.0 的 volume 指令），系统音量一点不动；
-///   没有 WS（没在接管 Just Solo）      → 操作 **系统主音量**，Just Solo 那边一点不动。
-///
-/// 两条通路**互不干扰**：<see cref="RefreshFromSystem"/> 发现的外部系统音量改动只更新系统侧状态，不会去动 Just Solo；
-/// Just Solo 侧改的音量也只镜像在 WS 侧（MediaController.TryGetJustSoloVolume），不会反向改系统音量、也不会回发。
+/// 两条通路互不干扰：RefreshFromSystem 发现的外部系统音量改动只更新系统侧状态，不会去动
+/// Just Solo；Just Solo 侧改的音量也只镜像在 WS 侧（MediaController.TryGetJustSoloVolume），
+/// 不会反向改系统音量、也不会回发。
 /// </summary>
 public sealed class SystemSettingsManager : IDisposable
 {
@@ -49,7 +50,7 @@ public sealed class SystemSettingsManager : IDisposable
         }
     }
 
-    // ====== 音量 ======
+    // ---- 音量 ----
 
     /// <summary>
     /// 读一次系统音量，被外部改动过（音量键 / 系统 OSD / 其它软件）就更新系统侧状态。
@@ -118,7 +119,7 @@ public sealed class SystemSettingsManager : IDisposable
             Logger.Error($"设置系统音量失败，level={level}", ex);
         }
     }
-// ====== 亮度 ======
+// ---- 亮度 ----
     public BrightnessCapability BrightnessCapability
     {
         get

@@ -138,14 +138,11 @@ public sealed class PluginWindow : IPluginWindow
     /// <summary>
     /// 切断所有指向插件的回调委托（宿主卸载插件时调用）。
     ///
-    /// <para><b>为什么必须有这一步</b>：这些委托是插件实例方法，直接引用插件类型 → Assembly → 可回收 ALC。
-    /// 而窗口本身被 <see cref="PluginWindow"/> 的静态路由表强引用着 —— 只要窗口还没销毁，
-    /// 光靠 <c>ctx.Unload()</c> + GC 是回收不掉那份程序集的。
-    /// 拖放进行中恰逢插件被禁用/重载时，<see cref="TryDestroyNow"/> 会拒绝销毁、<c>Close()</c> 也会被推迟，
-    /// 窗口因此可能多活一会儿；这一步保证「多活一会儿」不再等于「多钉一份旧程序集」。</para>
-    ///
-    /// <para>顺带把窗口标成 <c>_closing</c>：之后任何输入/绘制都不再进插件代码，
-    /// 也就不可能再回调一个已经 Dispose 过的插件实例。</para>
+    /// 这些委托是插件实例方法，直接引用插件类型 → Assembly → 可回收 ALC；而窗口本身被
+    /// PluginWindow 的静态路由表强引用，只要窗口还没销毁，光靠 ctx.Unload() + GC 收不掉那份程序集。
+    /// 拖放进行中恰逢插件被禁用 / 重载时 TryDestroyNow 会拒绝销毁、Close() 也会被推迟，
+    /// 窗口因此可能多活一会儿；这一步保证「多活一会儿」不再等于「多钉一份旧程序集」。
+    /// 顺带把窗口标成 _closing：之后任何输入 / 绘制都不再进插件代码，也就不会再回调已 Dispose 的插件实例。
     /// </summary>
     internal void DetachPluginCallbacks()
     {
@@ -163,9 +160,9 @@ public sealed class PluginWindow : IPluginWindow
     /// <summary>
     /// 把窗口登记成 OLE 拖入目标（只需要登记一次）。
     ///
-    /// 两条路径二选一，<b>不能并存</b>：挂了 IDropTarget 之后，OLE 拖放会走 IDropTarget，
-    /// WM_DROPFILES 就不会再投递了（一个窗口同时挂两个只会让「拖入回调」来源变得不可预期）。
-    /// 所以这里的策略是：优先 IDropTarget（有悬停反馈），注册失败才退回 DragAcceptFiles（至少还能拖入）。
+    /// 两条路径二选一、不能并存：挂了 IDropTarget 之后 OLE 拖放会走 IDropTarget，WM_DROPFILES
+    /// 就不再投递（同时挂两个只会让拖入回调来源不可预期）。策略是优先 IDropTarget（有悬停反馈），
+    /// 注册失败才退回 DragAcceptFiles（至少还能拖入）。
     /// </summary>
     private void EnsureDropTarget()
     {
@@ -364,8 +361,8 @@ public sealed class PluginWindow : IPluginWindow
     }
 
     /// <summary>
-    /// 处理 WM_DROPFILES —— 只在 IDropTarget 注册失败时的**回退路径**上才会收到。
-    /// ⚠️ 无论有没有订阅回调、中途是否抛异常，都必须 DragFinish，否则系统分配的那块内存不会归还。
+    /// 处理 WM_DROPFILES —— 只在 IDropTarget 注册失败时的回退路径上才会收到。
+    /// 无论有没有订阅回调、中途是否抛异常，都必须 DragFinish，否则系统分配的那块内存不会归还。
     /// </summary>
     private void HandleFilesDrop(IntPtr hDrop)
     {

@@ -12,7 +12,7 @@ internal static class BrightnessManager
     // 缓存最后一次设置的亮度值
     private static int _lastSimulatedPercent = 70;
 
-    // ====== 硬件 WMI ======
+    // ---- 硬件 WMI ----
     public static int Get()
     {
         try
@@ -41,7 +41,7 @@ internal static class BrightnessManager
         return false;
     }
 
-    // ====== 模拟 Gamma ======
+    // ---- 模拟 Gamma ----
     public static int GetSimulated()
     {
         //优先返回缓存值

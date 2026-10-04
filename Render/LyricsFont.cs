@@ -25,7 +25,7 @@ namespace NotchPeninsula
     ///   • <b>解析失败时为负缓存</b>（记 <c>null</c>），保证同一个码点绝不会被反复询问系统字体服务。
     ///   • <b>字体面一律以弱引用持有、绝不手动 Dispose</b>：<c>MatchCharacter</c> / <c>FromFamilyName</c>
     ///     返回的对象所有权归调用方 —— SkiaSharp 2.88.8 的 SKObject 维护一张「native 指针 → 托管对象」
-    ///     全局注册表 + 引用计数，只有终结器或 Dispose 才会把计数放掉。本类若用 static 字段**强引用**
+    ///     全局注册表 + 引用计数，只有终结器或 Dispose 才会把计数放掉。本类若用 static 字段强引用
     ///     它们，对象就永远可达、终结器永不运行 → 引用计数永不归零 = <b>永久泄漏</b>。
     ///     所以缓存值只是 <see cref="WeakReference{T}"/>：不可达即被 GC 终结器回收，既无泄漏，
     ///     也彻底避开「手动 Dispose 掉别人（FontConfig / 静态画笔）还在用的共享字体面」这种
@@ -46,7 +46,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// <see cref="_perCp"/> 的 FIFO 顺序，只用于容量兜底。
-        /// 与 <see cref="_perCp"/> 的**键集始终一一对应**（只在新增键时入队），因此不会无界增长。
+        /// 与 <see cref="_perCp"/> 的键集始终一一对应（只在新增键时入队），因此不会无界增长。
         /// </summary>
         private static readonly Queue<int> _cpOrder = new(96);
 
@@ -121,15 +121,11 @@ namespace NotchPeninsula
         /// <summary>
         /// 写入码点缓存（<paramref name="face"/> 为 null 即负缓存）。两条纪律：
         ///
-        /// <para>
         /// ① <b>只存弱引用，绝不 Dispose</b> —— 见类注释：SkiaSharp 2.x 的实例注册表可能让
         /// <c>MatchCharacter</c> / <c>FromFamilyName</c> 返回<b>同一个托管对象</b>，手动 Dispose
         /// 会让别处手里的对象变成已释放状态。弱引用把回收交给 GC 的终结器，天然安全。
-        /// </para>
-        /// <para>
         /// ② <b>键已存在时不重复入队</b> —— 弱引用失效不会移除键，若每次重解析都入队，
         /// <see cref="_cpOrder"/> 就会成为新的无界增长点；只在真正新增键时入队可保证两者一一对应。
-        /// </para>
         /// </summary>
         private static void Store(int cp, SKTypeface? face)
         {

@@ -15,7 +15,7 @@ namespace NotchPeninsula
         // 轮询诊断的"上一次状态"。
         // 这条链路原本是完全静默的：权限失效 / 快照为空 / 调用异常 / 正文提取失败，
         // 四种情况都只体现在返回值里，而调用方把返回值丢掉了 —— 于是「收不到通知」时
-        // 日志里一条线索都没有。这里只在状态**发生变化**时落一行，稳态下零输出，不会刷屏。
+        // 日志里一条线索都没有。这里只在状态发生变化时落一行，稳态下零输出，不会刷屏。
         private string _lastPollDiag = "";
 
         // 心跳诊断状态：用来区分两种"静默"——
@@ -30,8 +30,8 @@ namespace NotchPeninsula
         private uint _lastSnapshotMaxId;
 
         // 供渲染循环里的"轮询看门狗"读取（跨线程，单写多读，用 Volatile）：
-        //   LastSnapshotUtcTicks     —— 最近一次**成功取到快照**的时刻；
-        //   LastPollAttemptUtcTicks  —— 最近一次**发起轮询**的时刻（判"定时器还活着吗"用它：
+        //   LastSnapshotUtcTicks     —— 最近一次成功取到快照的时刻；
+        //   LastPollAttemptUtcTicks  —— 最近一次发起轮询的时刻（判"定时器还活着吗"用它：
         //                               "取不到数据"由轮询自己的诊断负责，看门狗只管"有没有在跑"）。
         private long _lastSnapshotUtcTicks;
         private long _lastPollAttemptUtcTicks;
@@ -39,7 +39,7 @@ namespace NotchPeninsula
         public long LastPollAttemptUtcTicks => System.Threading.Volatile.Read(ref _lastPollAttemptUtcTicks);
 
         // 计数器回退护栏：通知平台的 ID 计数器一旦被重置（平台重启、数据库重建等），新通知的 ID 会落在
-        // 水位线**以下**，而"水位线只升不降"的规则会让它们被永久忽略 —— 也就是永久静默。
+        // 水位线以下，而"水位线只升不降"的规则会让它们被永久忽略 —— 也就是永久静默。
         // 所以这里记住见过的 ID：若快照里出现"低于水位线、且从未见过"的 ID，就判定计数器回退，
         // 把水位线重置为当前最大 ID 并打点。容量有界（FIFO 淘汰），稳态开销可忽略。
         // 只在轮询内部访问（已由 _pollInFlight 串行化）。
@@ -52,7 +52,7 @@ namespace NotchPeninsula
         // 处理：单次调用加超时 → 判定通道失效 → 暂停常规轮询、按节奏尝试重连；
         //       重连成功后把水位线重置为当前快照的最大 ID —— 与"重启后重新初始化"同语义，
         //       不会把失效期间堆下来的旧通知一次性全弹出来。
-        // 注意：权限被撤销/API 静默失败的表现是**返回空列表**（会走另一条分支，不会到这里），
+        // 注意：权限被撤销/API 静默失败的表现是返回空列表（会走另一条分支，不会到这里），
         //       所以"超时"这一个判据只对应"调用挂死"，两者在日志里能区分开。
         private const int PollTimeoutMs = 8000;        // 单次取快照超时
         private const int RecoverRetryMs = 60_000;     // 判定失效后，每 60s 重连一次
@@ -271,7 +271,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 带超时地取一次通知快照。TimedOut=true 表示调用压根没返回 —— 这就是"通道挂死"的判据
-        /// （权限被撤销 / API 静默失败的表现是**返回空列表**，走的是另一条分支）。
+        /// （权限被撤销 / API 静默失败的表现是返回空列表，走的是另一条分支）。
         /// </summary>
         private async Task<(bool TimedOut, IReadOnlyList<UserNotification>? Result, Exception? Error)> GetSnapshotAsync(int timeoutMs)
         {
@@ -285,7 +285,7 @@ namespace NotchPeninsula
                 if (finished != opTask)
                 {
                     // 超时：这个调用会被永久搁置，不再等它。
-                    // 但**必须补一个只观察、不等待的续体**：被放弃的 opTask 若以异常收场，
+                    // 但必须补一个只观察、不等待的续体：被放弃的 opTask 若以异常收场，
                     // 它的异常会变成"未观察的任务异常"，而每次重连都会新建一个这样的任务 ——
                     // 挂死的通知通道下（每 60 秒重试一次）会持续累积这类残留任务图。
                     // 挂上续体把它标记为已观察，操作最终完成（或失败）后整条引用链即可被回收。
@@ -628,7 +628,7 @@ namespace NotchPeninsula
     
     public class ToastData
     {
-        // 三个文本字段都是**单行显示**（灵动岛每个字段只画一行），所以在赋值入口就归一化：
+        // 三个文本字段都是单行显示（灵动岛每个字段只画一行），所以在赋值入口就归一化：
         // 换行（\r\n）、制表符等控制字符与连续空白折叠成一个空格，并去掉首尾空白。
         // 系统通知的正文常自带换行（一个 textElement 内部就含 \r\n），原样交给 Skia 会把换行
         // 当缺字画成一个方块 —— 就是「显示乱码」；它还会把文本宽度测量撑成错误的值。

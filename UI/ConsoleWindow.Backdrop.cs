@@ -38,7 +38,7 @@ namespace NotchPeninsula
             if (region == IntPtr.Zero)
                 return;
 
-            // SetWindowRgn 只在**成功**时由窗口接管 region 的所有权；
+            // SetWindowRgn 只在成功时由窗口接管 region 的所有权；
             // 失败（返回 0）时所有权仍在调用方，必须自己 DeleteObject ——
             // 否则每开一次设置窗口就永久泄漏一块 GDI region（region 是受限的系统资源）。
             if (Win32.SetWindowRgn(hwnd, region, true) == 0)
@@ -88,11 +88,11 @@ namespace NotchPeninsula
             Win32.ShowWindow(_hwnd, Win32.SW_MINIMIZE);
         }
 
-        // 明暗外观的唯一入口：读系统「应用模式」，把**前景 / 叠加层**的基准色刷到共享画笔上。
+        // 明暗外观的唯一入口：读系统「应用模式」，把前景 / 叠加层的基准色刷到共享画笔上。
         // 底色与材质相关的部分（_bgPaint / _menuBg / 边框…）随材质模式变化，收口在 ApplyBackdropPalette()，
         // 所以窗口创建 / 重建 / 系统主题变化时都是「先 ApplyAppearance()，再 ApplyBackdropPalette()」。
         //
-        // ⚠️ 必须在 TryEnableBackdropMaterial() **之前**调用：那里要按明暗决定
+        // 必须在 TryEnableBackdropMaterial() 之前调用：那里要按明暗决定
         //    DWMWA_USE_IMMERSIVE_DARK_MODE 与亚克力 tint。
         private void ApplyAppearance()
         {
@@ -117,7 +117,7 @@ namespace NotchPeninsula
         {
             bool light = _isLightAppearance;
 
-            // 🔻 下拉浮层永远是**不透明纯色面板**，与窗口是玻璃还是实色无关。
+            // 下拉浮层永远是不透明纯色面板，与窗口是玻璃还是实色无关。
             //    以前这里跟着材质模式走半透明（alpha 172 / 210），展开列表时底下的卡片和文字
             //    会透上来，「看得见底下」很影响观感 —— 浮层本来就是盖住内容的实心层。
             //    色值固定、不随材质变化：深色比卡片（≈ Overlay(22) 叠玻璃）略亮，做出「浮起」感。
@@ -257,7 +257,7 @@ namespace NotchPeninsula
             }
         }
 
-        // ⚠️ 唤醒 / 重新激活时「重新贴一次材质」，这是本窗口最容易被忽略的一步。
+        // 唤醒 / 重新激活时「重新贴一次材质」，这是本窗口最容易被忽略的一步。
         //
         // 症状：右键岛体打开设置窗口时亚克力正常；点别的窗口让设置窗口失焦，再把设置窗口
         //       唤到前台，背景直接变成全透明（前景还在，但背后能看穿到桌面），亚克力没了。
@@ -300,7 +300,7 @@ namespace NotchPeninsula
         // Windows 10 专用：激活 / 从任务栏还原之后「整窗重建材质窗」。
         //
         // 背景：Win11（build 22000+）上 ReapplyBackdropMaterial() 重贴一次 accent 就能恢复；
-        //       但 Win10 的 DWM 把 accent 策略缓存在 HWND 上 —— 对**同一个** HWND 重贴**相同**的
+        //       但 Win10 的 DWM 把 accent 策略缓存在 HWND 上 —— 对同一个 HWND 重贴相同的
         //       accent 不会触发任何重新合成，窗口就一直是一块透明的洞（前景 UI 还在，背后直接
         //       看到桌面）。用户实测「只有重新打开设置窗口才恢复」，而重新打开 = 全新的 HWND，
         //       所以这里直接照搬那条已被验证的路径：销毁旧材质窗 → 用与构造函数完全相同的顺序重建。
