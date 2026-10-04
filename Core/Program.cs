@@ -96,6 +96,12 @@ namespace NotchPeninsula
                     Renderer.NotchStyle = (int)key.GetValue("NotchStyle", 0);
                     Renderer.MediaInteractionMode = (int)key.GetValue("MediaInteractionMode", 1);
                     Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 2);
+
+                    // 待机模式：显示内容（1=只显示时间 / 2=空白 / 3=折叠媒体控制）与「双击空白切换」开关。
+                    // 用新键，与上面那个已被复选框取代的历史键互不干扰；待机的进入 / 退出是运行时状态，不持久化。
+                    Renderer.StandbyScene = (int)key.GetValue("StandbyScene", 1);
+                    Renderer.StandbyToggleByDoubleClick =
+                        (int)key.GetValue("StandbyToggleByDoubleClick", 0) != 0;
                     Renderer.TargetMonitorIndex = (int)key.GetValue("TargetMonitorIndex", 0);
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
 

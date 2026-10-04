@@ -61,6 +61,22 @@ namespace NotchPeninsula
 
         public static int StandbyDisplayMode { get; set; } = 0; // 旧「待机显示内容」（0=时间日期, 1=空白, 2=硬件占用）：已被显示设置的复选框取代，只用于老配置迁移
 
+        /// <summary>
+        /// 待机模式在岛上显示什么：1 = 只显示时间，2 = 空白，3 = 折叠媒体控制。
+        /// 由「显示设置 → 待机模式」选择并持久化；进入 / 退出待机由 <see cref="StandbyActive"/> 单独表示。
+        /// 与旧的 <see cref="StandbyDisplayMode"/> 是两个独立概念（那个是已被复选框取代的历史键）。
+        /// </summary>
+        public static int StandbyScene { get; set; } = 1;
+
+        /// <summary>
+        /// 当前是否处于待机模式。进入 / 退出由「双击空白」（<see cref="StandbyToggleByDoubleClick"/> 打开时）
+        /// 或设置页手动切换驱动；这是运行时状态，不持久化 —— 重启后回到默认显示。
+        /// </summary>
+        public static bool StandbyActive { get; set; } = false;
+
+        /// <summary>开关：双击岛上的「空白」处进入 / 退出待机模式（默认关闭）。</summary>
+        public static bool StandbyToggleByDoubleClick { get; set; } = false;
+
         public static int TargetMonitorIndex { get; set; } = 0; // 目标显示器索引
 
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%

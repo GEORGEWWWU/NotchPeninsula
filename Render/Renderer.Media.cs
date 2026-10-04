@@ -492,8 +492,30 @@ namespace NotchPeninsula
         /// 专门用来量「原生模块总宽」，好给插件行定预算。
         /// </summary>
 
+        /// <summary>
+        /// 待机模式选「空白」时岛体的固定宽度：这一档没有内容可量，给一个空胶囊的尺寸
+        /// （比组合宽度 60px 的下限稍宽，单独看才不像一个点）。
+        /// </summary>
+        private const float STANDBY_BLANK_WIDTH = 96f;
+
         private static float MeasureCompositeWidth(MediaController media, bool includePlugins)
         {
+            // 待机模式：岛上只保留所选的那一样，宽度也只按它量（插件行一并退出）——
+            // 岛体因此向中间收拢到内容自身的宽度，而不是留着默认那几块拼出来的空壳。
+            if (StandbyActive)
+            {
+                // 空白（以及选了折叠媒体但当前没有媒体时的退化态）：固定宽度的空胶囊
+                if (StandbyScene == 2) return STANDBY_BLANK_WIDTH;
+
+                float own = StandbyScene switch
+                {
+                    1 => _cachedTimeWidth + 12f + _cachedDateWidth,                              // 只显示时间
+                    3 => media != null && media.IsActive ? MeasureMediaBlockWidth(media) : 0f,   // 折叠媒体控制
+                    _ => 0f,
+                };
+                return own > 0f ? 16f + own + 16f : STANDBY_BLANK_WIDTH;
+            }
+
             float width = 16f; // 初始只有左边距 16px
             bool hasPrev = false;
 

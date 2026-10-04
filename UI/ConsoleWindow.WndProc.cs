@@ -89,6 +89,10 @@ namespace NotchPeninsula
             }
 
             int newHoveredStyleIndex = -1;
+            int newHoveredStandbySceneIndex = -1; // 待机模式：三个场景选项（1 / 2 / 3）
+            bool newStandbyToggleHovered = false; // 待机模式：「双击空白切换」开关
+            bool newPageScrollbarHovered = false; // 显示设置：整页滚动条
+            bool newListScrollbarHovered = false; // 显示设置：「显示内容」列表滚动条
             int newHoveredDisplayRow = -1;        // 「显示内容」列表：悬停在行本体上
             int newHoveredDisplayMoveUp = -1;     // 该行 ∧ 的悬停
             int newHoveredDisplayMoveDown = -1;   // 该行 ∨ 的悬停
@@ -225,19 +229,38 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1) // 显示设置
             {
+                // 整页滚动的命中偏移：渲染侧是把整页「上移」了这么多（每个 Y 都 −scroll），
+                // 所以这里必须同为负号 —— 两处符号相反会让偏移量翻倍、控件整体点不中。
+                float page = -_displayPageScroll;
+
                 // 刘海形态选择器的点击热区
-                float styleY = TITLE_BAR_HEIGHT + 50;
+                float styleY = TITLE_BAR_HEIGHT + 50 + page;
                 if (x >= 220 && x <= 370 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 0;
                 if (x >= 390 && x <= 540 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 1;
 
+                // 待机模式：三个场景选项 + 「双击空白切换」开关
+                float standbyOptY = TITLE_BAR_HEIGHT + STANDBY_OPT_Y + page;
+                for (int i = 0; i < 3; i++)
+                {
+                    float optX = STANDBY_OPT_X + i * (STANDBY_OPT_W + STANDBY_OPT_GAP);
+                    if (x >= optX && x <= optX + STANDBY_OPT_W
+                        && y >= standbyOptY && y <= standbyOptY + STANDBY_OPT_H)
+                        newHoveredStandbySceneIndex = i + 1;
+                }
+
+                float standbyToggleCy = TITLE_BAR_HEIGHT + STANDBY_TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
+                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= standbyToggleCy - TOGGLE_TRACK_H / 2f && y <= standbyToggleCy + TOGGLE_TRACK_H / 2f)
+                    newStandbyToggleHovered = true;
+
                 // 目标显示器卡片
-                float mdY = TITLE_BAR_HEIGHT + 186;
+                float mdY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + 14 + page;
                 if (!_monitorDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= mdY && y <= mdY + 32)
                     newMonitorDropdownHovered = true;
 
                 if (_monitorDropdownOpen)
                 {
-                    float listY = TITLE_BAR_HEIGHT + 220;
+                    float listY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + 48 + page;
                     if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= listY && y < listY + _monitorOptions.Length * 26)
                         newHoveredMonitorDropdownIndex = (y - (int)listY) / 26;
                 }
@@ -249,8 +272,8 @@ namespace NotchPeninsula
                 //    命中出的行号是绝对条目下标（= 滚动首行 + 槽位），点击侧直接拿它索引 displayItems。
                 GetDisplayListLayout(out int displayVisibleRows, out int displayMaxFirstRow);
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
-                float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y;
-                float displayRowBottom = HEIGHT - 20;
+                float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
+                float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
                 if (x >= 216 && x <= WIDTH - 36 && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
@@ -262,6 +285,16 @@ namespace NotchPeninsula
                         else newHoveredDisplayRow = rowIdx;
                     }
                 }
+
+                // 两条滚动条：点它们决定滚轮优先滚哪一层（命中区比 3px 的视觉宽度放宽，否则细得点不中）
+                GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
+                if (x >= WIDTH - 22 && x <= WIDTH - 8 && y >= pageBarTop && y <= pageBarTop + pageBarH)
+                    newPageScrollbarHovered = true;
+
+                GetListScrollbarLayout(out float listBarTop, out float listBarH);
+                if (listBarH > 0f && x >= WIDTH - 40 && x <= WIDTH - 26
+                    && y >= listBarTop && y <= listBarTop + listBarH)
+                    newListScrollbarHovered = true;
             }
             else if (_selectedTab == 2) // 媒体设置
             {
@@ -447,6 +480,10 @@ namespace NotchPeninsula
                 newHoveredAppIndex != _hoveredAppIndex ||
                 newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
                 newHoveredStyleIndex != _hoveredStyleIndex ||
+                newHoveredStandbySceneIndex != _hoveredStandbySceneIndex ||
+                newStandbyToggleHovered != _standbyToggleHovered ||
+                newPageScrollbarHovered != _pageScrollbarHovered ||
+                newListScrollbarHovered != _listScrollbarHovered ||
                 newHoveredDisplayRow != _hoveredDisplayRow ||
                 newHoveredDisplayMoveUp != _hoveredDisplayMoveUp ||
                 newHoveredDisplayMoveDown != _hoveredDisplayMoveDown ||
@@ -492,6 +529,10 @@ namespace NotchPeninsula
                 _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
                 _hoveredStyleIndex = newHoveredStyleIndex;
+                _hoveredStandbySceneIndex = newHoveredStandbySceneIndex;
+                _standbyToggleHovered = newStandbyToggleHovered;
+                _pageScrollbarHovered = newPageScrollbarHovered;
+                _listScrollbarHovered = newListScrollbarHovered;
                 _hoveredMinusIndex = newHoverMinus;
                 _hoveredPlusIndex = newHoverPlus;
                 _hoveredResetIndex = newHoverReset;
