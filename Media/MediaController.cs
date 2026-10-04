@@ -1040,6 +1040,11 @@ namespace NotchPeninsula
             }
 
             // ---- 换歌：强制重载歌词与时间轴。----
+            // 时间轴基准（0 点）就是此刻 —— SMTC 会话把「这首歌开始播放」告诉我们的第一时间。
+            // 它必须落在下面那次取词 await 之前：异步方法在第一个未完成的 await 之前是同步执行的，
+            // 所以「位置归零 / 绑定槽位 / 清空旧歌词」三步必然先完成，取词花多久都不会被算进歌词进度
+            // （取词链是秒级的：单档约 0.3~0.6 秒，多档兜底约 3 秒）。
+            // 取到歌词只是往这条已经走起来的时间轴上贴文本（见 FetchLyricsAsync 末尾），不重置位置。
             string appId = _currentAppId;
             int newSlot = SlotFor(title, artist);
 
@@ -1080,11 +1085,34 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 取歌词：五个引擎依次兜底（落月 API(QQ音乐) → QQ 音乐官方歌词 → 落月 API(网易云) →
-        /// 网易云官方 → LRCLIB），命中即解析时间轴并写入。译文与封面都随主歌词一起回来，不额外单开接口。
+        /// 取歌词。译文与封面都随主歌词一起回来，不额外单开接口。按逐字歌词开关分两条路：
         ///
-        /// 会话是网易云音乐时走「网易优先」：网易系两档（落月 API(网易云) → 网易云官方）
-        /// 整体提到最前，歌词与封面都优先网易云的源，其余档位依次顺延。
+        /// <list type="bullet">
+        /// <item><b>开关打开</b>（<see cref="IsLyricScanEnabled"/>，默认开）：**逐字优先** —— 先走两个能给出
+        ///       逐字时间轴的落月源；其余三档（QQ 音乐官方歌词 / 网易云官方 / LRCLIB）不带逐字数据，不参与
+        ///       「优先」，但**两个落月源都没给出可用歌词**时，由网易云官方 → LRCLIB 依次兜底 ——
+        ///       宁可给一份没有逐字的歌词（扫光自动回退整行），也不能整首歌没歌词。
+        ///       <list type="bullet">
+        ///       <item><b>网易云音乐播放时</b>：歌词固定取落月 API(网易云) —— 同一曲库、版本天然一致，
+        ///             并且它是**先**请求的那一档；落月 API(QQ音乐) 退居补料渠道（网易云没给出可用歌词时
+        ///             由它顶上 / 借逐字 / 封面兜底），三样都由网易云带齐时不再请求它。逐字先看网易云自己有没有，
+        ///             没有才向落月 QQ 借（借之前校验两边歌词是同一版本）。</item>
+        ///       <item><b>其他播放器</b>：落月 API(QQ音乐) → 落月 API(网易云) 依次兜底，两档都拿不到就没有歌词。</item>
+        ///       </list></item>
+        /// <item><b>开关关闭</b>：五个引擎依次兜底（落月 API(QQ音乐) → QQ 音乐官方歌词 →
+        ///       落月 API(网易云) → 网易云官方 → LRCLIB）。会话是网易云音乐时另走「网易优先」：
+        ///       网易系两档（落月 API(网易云) → 网易云官方）整体提到最前。</item>
+        /// </list>
+        ///
+        /// <para><b>逐字缺失不等于没有歌词</b>：落到落月网易云时若它没带逐字数据，歌词照常采纳、
+        /// 扫光自动回退整行 —— 不会因此变成「没歌词」。</para>
+        ///
+        /// <para><b>版本正确性</b>：落月 QQ 的候选要过「歌名 + 歌手 + 时长」三道门槛（见 MatchSong）；
+        /// 借逐字时另要两份歌词通过一致性校验（见 LyricsAreSameSong）。两道关卡都是为了不让
+        /// 同名不同版本的条目（如《海屿你2.0》）把歌词或逐字带错。</para>
+        ///
+        /// <para>封面不受这条分流影响：两个落月源各自带回封面，QQ 档内部还有 smartbox 直连兜底，
+        /// 方法末尾另有一层不依赖任何取词档的 QQ 直连封面兜底。</para>
         /// </summary>
         /// <returns>网络封面地址；没有则空串（交给 FetchCoverAsync 消费）。</returns>
         private async Task<string> FetchLyricsAsync(string title, string artist, long durationSec)
@@ -1111,14 +1139,26 @@ namespace NotchPeninsula
                 // 仅音乐模式会用；都没拿到就保持兜底封面（程序图标）。
                 string coverUrl = "";
 
+                // 逐字歌词开关打开时只走两个带逐字数据的落月源（见方法说明），其余档位包括
+                // 「网易优先」与 LRCLIB 一律不参与 —— 顺序固定为落月 QQ 在前、落月网易云兜底。
+                bool luoYueOnly = IsLyricScanEnabled;
+
                 // 正在放歌的是不是网易云音乐。是的话，网易系两档会被提到整条链的最前面（见下面「网易优先」段），
                 // 歌词与封面都优先网易云的源；其余播放器一切照旧。
-                bool preferNetease = IsNeteaseAppId(_currentAppId);
+                // 「只走落月两档」时不存在这个前置。
+                bool isNetease = IsNeteaseAppId(_currentAppId);
+                bool preferNetease = !luoYueOnly && isNetease;
+
+                // 逐字开关打开 + 网易云会话：歌词固定取「落月 API - 网易云」—— 它与播放器同一曲库，
+                // 版本天然一致（QQ 曲库会被同名的其它版本顶掉，如《海屿你2.0》）；逐字先看网易云自己有没有，
+                // 没有才向「落月 API - QQ音乐」借，且借之前要确认两边歌词确实是同一版本。
+                bool neteaseWordSource = luoYueOnly && isNetease;
 
                 // ---- 网易优先：会话是网易云音乐时，把网易系两档提到最前 ----
                 // 正在放歌的就是网易云，用网易云曲库最贴：同一曲库来源，版本能对上、译文更全、专辑图也更对版。
                 // 歌词与封面一起前置，顺序钉死 —— 落月 API - 网易云 在前、网易云官方在后。
                 // 其他播放器不走这一段，网易系两档在引擎 3 / 引擎 4 的位置上充当兜底。
+                // 逐字开关打开时整段跳过：那时顺序固定为落月 QQ 在前（见方法说明）。
                 if (preferNetease)
                 {
                     // ① 落月 API - 网易云：歌词 + 网易云 CDN 专辑图（同一次搜索顺带给出）
@@ -1155,21 +1195,80 @@ namespace NotchPeninsula
                 //      · 搜索响应里的 cover 就是 QQ 专辑图地址；
                 //      · 搜索响应里的 mid 就是 QQ 的 songmid（交给引擎 2）。
                 //    放在最前面还有个好处：命中就不必再问后面的引擎，总请求数反而更少。
-                var luoYue = await FetchFromLuoYueAsync(title, artist, HttpUserAgent);
-                // 封面：填封面链的第一档，仅在还没有封面时采纳
-                //（网易云会话下「网易优先」段可能已给出网易云的图，此时不覆盖）。
-                if (coverUrl.Length == 0 && !string.IsNullOrEmpty(luoYue.Cover)) coverUrl = luoYue.Cover;
-                // 歌词与译文：只在还没有可用时间轴时采纳。本档同时是 songmid 的来源，
-                // 所以即使歌词已被前面的档先取到，下面这一次搜索照常进行（封面与 songmid 仍由它提供）。
-                if (!HasTimedLyric(lrcText))
+                //
+                // 唯一的例外是「网易云会话 + 逐字开关打开」（见 neteaseWordSource）：那一支的歌词主来源
+                // 是落月网易云 —— 与播放器同一曲库、版本天然一致，落月 QQ 退居补料渠道，
+                // 于是网易云先请、QQ 只在还缺料时才请（见下）。
+                LuoYueResult luoYue = default;
+                bool needQq = true;
+
+                if (neteaseWordSource)
                 {
-                    if (!string.IsNullOrEmpty(luoYue.Lrc))
+                    // 歌词：落月网易云（同一曲库、版本最贴），逐字先用它自己的。
+                    var neWord = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent);
+                    if (!string.IsNullOrEmpty(neWord.Lrc))
                     {
-                        lrcText = luoYue.Lrc;
-                        yrcText = luoYue.Yrc ?? "";
-                        yrcTimingFirst = false; // 落月 QQ 的 yrc 是「文字在前」
+                        lrcText = neWord.Lrc;
+                        yrcText = neWord.Yrc ?? "";
+                        yrcTimingFirst = true;              // 落月网易云的 yrc 是「时间在前」
                     }
-                    if (!string.IsNullOrEmpty(luoYue.Trans)) transText = luoYue.Trans;
+                    if (!string.IsNullOrEmpty(neWord.Trans)) transText = neWord.Trans;
+                    if (!string.IsNullOrEmpty(neWord.Cover)) coverUrl = neWord.Cover;
+
+                    // 落月 QQ 只在还缺东西时才请。它一次给三样（歌词兜底 / 逐字 / 封面），
+                    // 三样都由网易云带齐时这两次请求（搜索 + 取词，实测约 0.9 秒）就没有产出 ——
+                    // 逐字开关打开时引擎 2 不参与，它顺带的 songmid 也无人消费。
+                    // 顺带也让歌词更早到位：网易云那一趟排在前面，命中即显示，不必先等 QQ 跑完。
+                    needQq = !HasTimedLyric(lrcText)
+                             || yrcText.Length == 0
+                             || coverUrl.Length == 0;
+                }
+
+                if (needQq)
+                {
+                    luoYue = await FetchFromLuoYueAsync(title, artist, durationSec, HttpUserAgent);
+
+                    if (neteaseWordSource)
+                    {
+                        // 网易云没给出可用歌词（没搜到 / 空壳响应）⇒ 由落月 QQ 顶上。
+                        // 它在这一支里是备选档，与「其他播放器」下网易云替 QQ 兜底是同一个道理，
+                        // 只是方向相反。歌词与逐字出自同一份响应，一起采纳，不必做一致性校验。
+                        if (!HasTimedLyric(lrcText) && !string.IsNullOrEmpty(luoYue.Lrc))
+                        {
+                            lrcText = luoYue.Lrc;
+                            yrcText = luoYue.Yrc ?? "";
+                            yrcTimingFirst = false;             // 落月 QQ 的 yrc 是「文字在前」
+                            if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(luoYue.Trans))
+                                transText = luoYue.Trans;
+                        }
+                        // 网易云给了歌词、只是没给逐字 ⇒ 向落月 QQ 借逐字。前提是两份歌词确实是同一版本 ——
+                        // 逐字时间轴按行、按文本贴在歌词上，版本不同就会整段错位。
+                        else if (yrcText.Length == 0
+                            && luoYue.Yrc is { Length: > 0 } borrowed
+                            && !string.IsNullOrEmpty(luoYue.Lrc)
+                            && !string.IsNullOrEmpty(lrcText)
+                            && LyricsAreSameSong(luoYue.Lrc, lrcText))
+                        {
+                            yrcText = borrowed;
+                            yrcTimingFirst = false;             // 落月 QQ 的 yrc 是「文字在前」
+                        }
+                    }
+                    // 其余会话：歌词与译文只在还没有可用时间轴时采纳。本档同时是 songmid 的来源，
+                    // 所以即使歌词已被前面的档先取到，下面这一次搜索照常进行（封面与 songmid 仍由它提供）。
+                    else if (!HasTimedLyric(lrcText))
+                    {
+                        if (!string.IsNullOrEmpty(luoYue.Lrc))
+                        {
+                            lrcText = luoYue.Lrc;
+                            yrcText = luoYue.Yrc ?? "";
+                            yrcTimingFirst = false; // 落月 QQ 的 yrc 是「文字在前」
+                        }
+                        if (!string.IsNullOrEmpty(luoYue.Trans)) transText = luoYue.Trans;
+                    }
+
+                    // 封面：填封面链的第一档，仅在还没有封面时采纳
+                    //（网易云会话下上面的分支可能已给出网易云的图，此时不覆盖）。
+                    if (coverUrl.Length == 0 && !string.IsNullOrEmpty(luoYue.Cover)) coverUrl = luoYue.Cover;
                 }
 
                 // ---- 引擎 2：QQ 音乐官方歌词接口 ----
@@ -1178,7 +1277,7 @@ namespace NotchPeninsula
                 // 落月的歌词接口偶发失败 / 限流时由它顶上。
                 // QQ 官方接口的 trans 经常是空的（实测同一首歌落月有 1986 字译文、QQ 是 0 字），
                 //    所以译文只在落月完全没给时才采纳它，免得把一份好译文覆盖成空。
-                if (!HasTimedLyric(lrcText) && !string.IsNullOrEmpty(luoYue.Mid))
+                if (!luoYueOnly && !HasTimedLyric(lrcText) && !string.IsNullOrEmpty(luoYue.Mid))
                 {
                     try
                     {
@@ -1199,7 +1298,7 @@ namespace NotchPeninsula
                     catch (Exception ex) { Logger.Warn($"QQ音乐引擎失败: {ex.Message}"); }
                 }
 
-                // ---- 引擎 3：落月 API - 网易云（网易云曲库：原文 + 译文） ----
+                // ---- 引擎 3：落月 API - 网易云（网易云曲库：原文 + 译文，可能带逐字） ----
                 // 位置在 QQ 系两档之后：
                 //   · 从 QQ 音乐或别家播放器放歌时，前两档（同为 QQ 曲库）基本已经命中，压根走不到这里
                 //     —— 也就是「其他软件照旧走 QQ 音乐」；
@@ -1207,10 +1306,22 @@ namespace NotchPeninsula
                 //     正好由网易云曲库补上。
                 // 它与引擎 4 的网易云官方接口是同一个曲库、两套实现，互为兜底。
                 // 网易云会话下这一档已经在方法开头的「网易优先」段跑过了，这里直接跳过，不重复请求。
-                if (!preferNetease && !HasTimedLyric(lrcText))
+                //
+                // 逐字开关打开时它是两个落月源里的最后一档：落月 QQ 没匹配上（只在网易云有版权的歌）、
+                // 或匹配上却没带逐字数据，都由它顶上；它自己也取不到时，再由引擎 4 / 5 兜底（见下）。
+                // neteaseWordSource 时本档已在引擎 1 段跑过（那里它是「先请」的一档、歌词的主来源），不重复请求。
+                bool needNetease = !neteaseWordSource && (luoYueOnly
+                    ? !(HasTimedLyric(lrcText) && yrcText.Length > 0)   // 还没有「带逐字的可用歌词」
+                    : !HasTimedLyric(lrcText));
+                if (!preferNetease && needNetease)
                 {
                     var netease = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent);
-                    if (!string.IsNullOrEmpty(netease.Lrc))
+                    // 采纳条件：本档带来了逐字而现有歌词没有（这正是继续往下走的原因），
+                    // 或者现有压根没有可用歌词。两档都没带逐字时保留先命中的落月 QQ ——
+                    // 那时扫光回退整行，歌词本身照常显示。
+                    if (!string.IsNullOrEmpty(netease.Lrc)
+                        && ((luoYueOnly && !string.IsNullOrEmpty(netease.Yrc) && yrcText.Length == 0)
+                            || !HasTimedLyric(lrcText)))
                     {
                         lrcText = netease.Lrc;
                         yrcText = netease.Yrc ?? "";
@@ -1230,6 +1341,13 @@ namespace NotchPeninsula
                 // 判据是「有没有可用时间轴」而不是「字符串空不空」：前面的引擎可能返回非空但一行时间轴都没有的
                 // 结果（版权提示 / 空壳响应），只判空的话网易云与 LRCLIB 会被整段跳过，最终就是「没歌词」。
                 // 网易云会话下本档已在方法开头的「网易优先」段跑过，这里跳过，不重复请求。
+                //
+                // 逐字开关打开时它仍参与 —— 但只在两个落月源都没给出可用歌词之后（`!HasTimedLyric` 守卫）。
+                // 落月网易云的搜索接口固定只返回 10 条，排位靠后的冷门 / 翻唱版本拿不到
+                // （实测《游京》/林知微 用「游京 林知微」搜要到前 60 条的靠后位置才出现，
+                // 用「游京」搜更要翻到第 180 位之后），而本档的搜索 limit=60 正好能召回它。
+                // 此时宁可给一份没有逐字的歌词（扫光自动回退整行），也不能整首歌没歌词 ——
+                // 这正是「逐字缺失 ≠ 没有歌词」的落实。
                 if (!preferNetease && !HasTimedLyric(lrcText))
                 {
                     var neteaseOfficial = await FetchFromNeteaseOfficialAsync(title, artist, durationSec, allowCover: true);
@@ -1245,6 +1363,7 @@ namespace NotchPeninsula
                 //    artist_name 为空 → 400、track_name 为空 → 400），而不是「这首歌它没有」的 404。
                 //    歌名为空在上游已提前返回，所以这里只需挡住歌手为空 —— 否则就是白花一次往返，
                 //    还往日志里刷一条看不懂的 400 WARN，而它其实是最后一个兜底引擎。
+                // 与引擎 4 同理：逐字开关打开时它也是「两个落月源都没给出歌词」之后的最后一道兜底。
                 if (!HasTimedLyric(lrcText) && artist.Length > 0)
                 {
                     try
@@ -1533,7 +1652,7 @@ namespace NotchPeninsula
         /// 取原文（data.lrc）、译文（data.trans）与逐字歌词（data.yrc）；
         /// 搜索响应里顺带拿到专辑封面（cover）与 QQ songmid（mid）。
         /// </summary>
-        private async Task<LuoYueResult> FetchFromLuoYueAsync(string title, string artist, string ua)
+        private async Task<LuoYueResult> FetchFromLuoYueAsync(string title, string artist, long durationSec, string ua)
         {
             try
             {
@@ -1549,8 +1668,13 @@ namespace NotchPeninsula
 
                 // 非中文曲目允许标题包含匹配：这类歌名在 QQ 曲库里常带中译别名，全字匹配会整条落空。
                 // 中文曲目一切照旧（按完整歌名基本都能搜到，不需要放宽）。
-                long songId = MatchSong(list, title, artist, !IsChineseTitle(title), out string? cover, out string? mid);
-                if (songId <= 0) return default;
+                long songId = MatchSong(list, title, artist, durationSec, !IsChineseTitle(title), out string? cover, out string? mid);
+                if (songId <= 0)
+                {
+                    // 「没歌词」排查时唯一能依赖的就是这些日志：候选全被「歌名 + 歌手 + 时长」挡下时留一笔
+                    Logger.Debug($"落月QQ 搜索没有匹配到候选（{title} / {artist}）");
+                    return default;
+                }
 
                 // 2. 取歌词。失败也要把封面 / songmid 带回去 —— 三者互不依赖，能拿到一样算一样
                 //    （mid 拿得到就还有引擎 2 那条 QQ 官方接口的路可走）。
@@ -1610,8 +1734,15 @@ namespace NotchPeninsula
 
                 // 搜索结果里顺带给出网易云 CDN 专辑图：网易云会话下它是封面链的第一档（见「网易优先」段），
                 // 其他会话下这个值不参与封面（那时封面由引擎 1 / 引擎 4 提供）。
-                long songId = MatchSong(list, title, artist, false, out string? cover, out _);
-                if (songId <= 0) return default;
+                // 落月「网易云」的搜索响应里没有时长字段 ⇒ 传 0，时长门槛对这一档不生效
+                long songId = MatchSong(list, title, artist, 0, false, out string? cover, out _);
+                if (songId <= 0)
+                {
+                    // 落月网易云固定只返回 10 条候选，排位靠后的版本（如《游京》）不在这 10 条里，
+                    // 打分全为 0 ⇒ 走到这里。留一笔日志，后续由引擎 4 / 5 兜底。
+                    Logger.Debug($"落月网易云 搜索没有匹配到候选（{title} / {artist}）");
+                    return default;
+                }
 
                 // 2. 取歌词。任何一步失败都直接放弃这一档交给下一个引擎，绝不抛给调用方
                 //    （失败也要静默 —— 它是兜底链中的一环，报错只会刷日志）
@@ -1690,8 +1821,11 @@ namespace NotchPeninsula
                 using var searchDoc = await JsonDocument.ParseAsync(searchStream);
 
                 long songId = 0;
-                if (searchDoc.RootElement.TryGetProperty("result", out var result)
-                    && result.ValueKind == JsonValueKind.Object
+                // result 不是对象 ⇒ 返回的是一长串加密文本：网易云的反爬把无 cookie 的高频请求拦下了。
+                // 单独标记出来，与「正常响应但没有匹配候选」区分开 —— 两者的对策完全不同。
+                bool resultIsObject = searchDoc.RootElement.TryGetProperty("result", out var result)
+                    && result.ValueKind == JsonValueKind.Object;
+                if (resultIsObject
                     && result.TryGetProperty("songs", out var songs)
                     && songs.ValueKind == JsonValueKind.Array)
                 {
@@ -1726,7 +1860,14 @@ namespace NotchPeninsula
                     }
                 }
 
-                if (songId <= 0) return default;
+                if (songId <= 0)
+                {
+                    // 静默放弃这一档没问题，但必须留下一笔 —— 「没歌词」排查时唯一能依赖的就是这些日志
+                    Logger.Debug(resultIsObject
+                        ? "网易云官方搜索没有匹配到候选，本档放弃"
+                        : "网易云官方搜索被反爬拦截（result 返回的是加密串），本档放弃");
+                    return default;
+                }
 
                 string lrc = "", trans = "";
                 using (var lyricStream = await _http.GetStreamAsync($"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1"))
@@ -1776,7 +1917,7 @@ namespace NotchPeninsula
         /// 换更短的搜索词也没用（实测三种搜索词返回的候选完全相同），卡点在打分。
         /// 歌手校验在任何档位都不放宽。
         /// </summary>
-        private static long MatchSong(JsonElement list, string title, string artist, bool allowLooseTitle, out string? cover, out string? mid)
+        private static long MatchSong(JsonElement list, string title, string artist, long durationSec, bool allowLooseTitle, out string? cover, out string? mid)
         {
             cover = null;
             mid = null;
@@ -1791,6 +1932,12 @@ namespace NotchPeninsula
             foreach (var song in list.EnumerateArray())
             {
                 if (song.ValueKind != JsonValueKind.Object) continue; // 数组里混进非对象元素：跳过而不是抛
+
+                // 时长门槛：候选的 interval（"4分49秒"）与播放器上报的时长比对（±4 秒）。
+                // 歌名有包含关系不等于同一版本 —— 《海屿你》会被《海屿你2.0》顶掉（后者歌名与歌手都包含前者），
+                // 而两者时长相差 118 秒；这一关把它挡在外面，宁可不命中也不要取错版本的歌词。
+                // 拿不到播放器时长、或候选没给 interval 时不校验：宁可宽松，也不因缺字段误杀。
+                if (!DurationMatches(song, durationSec)) continue;
 
                 string name = song.TryGetProperty("song", out var nameEl) ? nameEl.GetString() ?? "" : "";
                 string singer = song.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
@@ -1808,6 +1955,112 @@ namespace NotchPeninsula
 
             if (bestId <= 0) { cover = null; mid = null; }
             return bestId;
+        }
+
+        // 时长门槛的容差（秒）—— 与网易云官方档那处时长校验同一口径。
+        private const int DurationToleranceSec = 4;
+
+        /// <summary>
+        /// 候选曲目的时长与播放器上报的是否一致。播放器没给时长、或候选没带 interval 时一律放行 ——
+        /// 缺字段不该导致误杀，宁可不校验。
+        /// </summary>
+        private static bool DurationMatches(JsonElement song, long durationSec)
+        {
+            if (durationSec <= 0) return true;
+            if (!song.TryGetProperty("interval", out var el) || el.ValueKind != JsonValueKind.String) return true;
+
+            long seconds = ParseIntervalSeconds(el.GetString());
+            if (seconds <= 0) return true;
+
+            return Math.Abs(seconds - durationSec) <= DurationToleranceSec;
+        }
+
+        /// <summary>
+        /// 解析 QQ 曲库的 interval（「4分49秒」→ 289）。注意同一响应里的 time 是**发行日期**，不是时长。
+        /// 解析不出来返回 0，调用方据此跳过校验。
+        /// </summary>
+        private static long ParseIntervalSeconds(string? interval)
+        {
+            if (string.IsNullOrEmpty(interval)) return 0;
+
+            int fen = interval.IndexOf('分');
+            int miao = interval.IndexOf('秒');
+            if (fen <= 0 || miao <= fen) return 0;
+
+            if (!int.TryParse(interval.AsSpan(0, fen), out int minutes)) return 0;
+            if (!int.TryParse(interval.AsSpan(fen + 1, miao - fen - 1), out int seconds)) return 0;
+
+            return minutes * 60L + seconds;
+        }
+
+        // 两份歌词判为「同一首歌同一版本」的相似度下限（百分比）。
+        private const int LyricsSameSongPercent = 80;
+
+        /// <summary>
+        /// 两份歌词是不是同一首歌（同一版本）—— 用于「把另一个曲库的逐字数据借过来」之前的一致性校验。
+        /// 逐字时间轴是按行、按文本贴在歌词上的，两份歌词若不是同一版本，借来的逐字会整段错位。
+        ///
+        /// <para><b>口径是「有序 + 容忍插入」</b>：两边先解析成正文行（丢掉时间戳、空白与制作人员 / 版权
+        /// 声明那类元数据行），再算**最长公共子序列**占较长一份的比例。之所以不用「逐行一一比对」：
+        /// 两个曲库的元数据行数量与位置都不同（实测 QQ 会多出一行版权声明），硬比会整体错位、
+        /// 一致率直接掉到 0；子序列同样要求顺序一致，但能容忍插入 / 删除行。</para>
+        /// </summary>
+        private static bool LyricsAreSameSong(string a, string b)
+        {
+            var la = LyricBodyLines(a);
+            var lb = LyricBodyLines(b);
+            if (la.Length == 0 || lb.Length == 0) return false;
+
+            int max = Math.Max(la.Length, lb.Length);
+            // 行数差一倍以上不可能是同一首歌，先挡掉（也省下一趟大数组计算）
+            if (Math.Min(la.Length, lb.Length) * 2 < max) return false;
+
+            var prev = new int[lb.Length + 1];
+            var cur = new int[lb.Length + 1];
+            for (int i = 1; i <= la.Length; i++)
+            {
+                for (int j = 1; j <= lb.Length; j++)
+                    cur[j] = la[i - 1] == lb[j - 1] ? prev[j - 1] + 1 : Math.Max(prev[j], cur[j - 1]);
+                (prev, cur) = (cur, prev);
+                Array.Clear(cur);
+            }
+
+            return prev[lb.Length] * 100 >= LyricsSameSongPercent * max;
+        }
+
+        /// <summary>把一份 LRC 拆成「正文行」（去时间戳、去空白、去元数据行），供歌词一致性比对使用。</summary>
+        private static string[] LyricBodyLines(string lrc)
+        {
+            if (string.IsNullOrEmpty(lrc)) return Array.Empty<string>();
+
+            var list = new List<string>();
+            foreach (var raw in lrc.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (raw.Length < 6 || raw[0] != '[') continue;
+                int idx = raw.IndexOf(']');
+                if (idx <= 5) continue;
+                if (!TimeSpan.TryParseExact(raw.Substring(1, idx - 1), LyricTimeFormats, null, out _)) continue;
+
+                string text = NormalizeLyricText(raw.Substring(idx + 1));
+                if (text.Length == 0 || IsLyricCreditLine(text)) continue;
+                list.Add(text);
+            }
+            return list.ToArray();
+        }
+
+        /// <summary>
+        /// 「作词: 米果」「小提琴：须磨和声」「（未经著作人许可…）」「歌名 - 歌手」这类行不是歌词正文。
+        /// 判定刻意宽松：它只服务于「两份歌词是不是同一首歌」这个**对称**比对 ——
+        /// 两边都被剔掉不影响结论，漏剔一两行也由子序列比对吸收。
+        /// </summary>
+        private static bool IsLyricCreditLine(string text)
+        {
+            int colon = text.IndexOfAny([':', '：']);
+            if (colon >= 0 && colon <= 8 && text.Length <= 40) return true;   // 制作人员行
+
+            if (text.Contains("未经") || text.Contains("著作权") || text.Contains("不得翻唱")) return true;
+
+            return text.Length <= 32 && text.Contains(" - ");                 // 「歌名 - 歌手」标题行
         }
 
         /// <summary>候选打分：标题全等 2 分 / 互相包含 1 分（0 分直接淘汰）；歌手另计，最高 2 分。0 表示不候用。
