@@ -7,20 +7,20 @@ using NAudio.Wave;
 namespace NotchPeninsula;
 
 /// <summary>
-/// 🎵 通知提示音的**配置与校验**层（纯逻辑，不碰播放）。
+/// 通知提示音的配置与校验层（纯逻辑，不碰播放）。
 ///
 /// 关键约定：
-/// 1. **提示音列表是「动态扫描目录」得来的，不是硬编码数组**。
-///    扫描 exe 同级 <c>data\sound\*.wav</c>，按文件名派生显示名；丢一个新 wav 进去
-///    就自动出现在设置里的下拉菜单中，**不需要改一行代码**。
-///    ⚠️ 磁盘目录不存在时（单文件 exe 被单独拷走）自动回落到 **exe 内嵌的那份内置音**，
-///       所以「单文件 exe」本身就是自足的 —— 见 <see cref="DataResources"/>。
-///    可选地放一个 <c>data\sound\sound.json</c> 覆盖显示名（见 <see cref="LoadDisplayNames"/>）。
-/// 2. **音频一律只记路径、不复制文件**。内置音也是引用 <c>data\sound\</c> 下的原文件。
-/// 3. **文件丢失 / 超限 / 格式不支持 → 一律回落到「无」**，并顺手清掉注册表里的失效记忆。
+/// 1. 提示音列表是「动态扫描目录」得来的，不是硬编码数组。
+///    扫描 exe 同级 data\sound\*.wav，按文件名派生显示名；丢一个新 wav 进去
+///    就自动出现在设置里的下拉菜单中，不需要改一行代码。
+///    磁盘目录不存在时（单文件 exe 被单独拷走）自动回落到 exe 内嵌的那份内置音，
+///       所以「单文件 exe」本身就是自足的 —— 见 DataResources。
+///    可选地放一个 data\sound\sound.json 覆盖显示名（见 LoadDisplayNames）。
+/// 2. 音频一律只记路径、不复制文件。内置音也是引用 data\sound\ 下的原文件。
+/// 3. 文件丢失 / 超限 / 格式不支持 → 一律回落到「无」，并顺手清掉注册表里的失效记忆。
 ///    绝不因为一个音频文件缺失就让岛体启动失败或弹异常。
-/// 4. **入队前先做完整校验**，宁可静默不响，也不把几十小时的音频塞进播放队列。
-/// 5. 时长上限 <see cref="MaxDurationSec"/> + 文件体积上限 <see cref="MaxFileSizeBytes"/>
+/// 4. 入队前先做完整校验，宁可静默不响，也不把几十小时的音频塞进播放队列。
+/// 5. 时长上限 MaxDurationSec + 文件体积上限 MaxFileSizeBytes
 ///    是防止「选到演唱会全场录音」把内存 / 设备占死的双保险。
 /// </summary>
 internal static class ToastSoundConfig
@@ -48,9 +48,9 @@ internal static class ToastSoundConfig
         [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
     /// <summary>
-    /// 提示音出厂默认音量（百分比）。**唯一真源** —— 字段初值、注册表读不到时的兜底、
-    /// 「重置」按钮、<see cref="VolumeIndex"/> 的异常兜底全部由它派生。
-    /// ⚠️ 曾经这里散成三个字面量：字段写 70、注册表兜底写 70、「重置」写 `VolumeOptions[1]`（其实是 10），
+    /// 提示音出厂默认音量（百分比）。唯一真源 —— 字段初值、注册表读不到时的兜底、
+    /// 「重置」按钮、VolumeIndex 的异常兜底全部由它派生。
+    /// 曾经这里散成三个字面量：字段写 70、注册表兜底写 70、「重置」写 `VolumeOptions[1]`（其实是 10），
     ///    导致重置后音量与出厂默认不一致。改默认值只改这一处。
     /// </summary>
     internal const int DefaultVolumePercent = 10;
@@ -66,16 +66,16 @@ internal static class ToastSoundConfig
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// 内置音的一条：**磁盘路径**或**exe 内嵌资源名**（二者必有一个非空）+ 界面显示名。
+    /// 内置音的一条：磁盘路径或exe 内嵌资源名（二者必有一个非空）+ 界面显示名。
     ///
-    /// 为什么要有 <see cref="ResourceName"/>：单文件发布时 <c>data\sound</c> 可能根本不在磁盘上
-    /// （exe 被单独拷走），内置音就得从 exe 内部的嵌入资源里拿。见 <see cref="DataResources"/>。
+    /// 为什么要有 ResourceName：单文件发布时 data\sound 可能根本不在磁盘上
+    /// （exe 被单独拷走），内置音就得从 exe 内部的嵌入资源里拿。见 DataResources。
     /// </summary>
     internal readonly record struct BuiltinEntry(string Path, string Label, string ResourceName = "")
     {
         /// <summary>
-        /// 含扩展名的文件名，作为这条内置音的**稳定身份**（见 <see cref="SelectedKey"/>）。
-        /// ⚠️ 不要拿它在列表里的位置当身份 —— 目录是动态扫描的，增删一个 wav 会让后面所有项平移。
+        /// 含扩展名的文件名，作为这条内置音的稳定身份（见 SelectedKey）。
+        /// 不要拿它在列表里的位置当身份 —— 目录是动态扫描的，增删一个 wav 会让后面所有项平移。
         /// </summary>
         public string FileName => System.IO.Path.GetFileName(
             ResourceName.Length > 0 ? ResourceName : Path);
@@ -111,18 +111,18 @@ internal static class ToastSoundConfig
     internal static int SelectedIndex = 0;
 
     /// <summary>
-    /// 当前选中的**内置音文件名**（含扩展名），是内置项的**稳定身份**。
+    /// 当前选中的内置音文件名（含扩展名），是内置项的稳定身份。
     ///
-    /// ⚠️ 不能只用 <see cref="SelectedIndex"/>：下拉列表是每次展开都重扫目录得来的，
+    /// 不能只用 SelectedIndex：下拉列表是每次展开都重扫目录得来的，
     ///    用户删掉 / 新增一个 wav 会让后面所有项整体平移，
-    ///    于是「位置索引」会把用户的选择悄悄换成**另一个音**（删掉 Airdrop.wav
+    ///    于是「位置索引」会把用户的选择悄悄换成另一个音（删掉 Airdrop.wav
     ///    会让原本的「QQ（桌面端）」变成「QQ（经典咳咳）」）。
-    ///    所以启动恢复与列表刷新后都用本字段回查真实位置（见 <see cref="NormalizeSelection"/>）。
+    ///    所以启动恢复与列表刷新后都用本字段回查真实位置（见 NormalizeSelection）。
     ///    选中自定义文件 / 「无」时为空串。
     /// </summary>
     internal static string SelectedKey = "";
 
-    /// <summary>用户自定义音频文件路径（仅 <see cref="SelectedIndex"/> == <see cref="CustomIndex"/> 时有意义）。</summary>
+    /// <summary>用户自定义音频文件路径（仅 SelectedIndex == CustomIndex 时有意义）。</summary>
     internal static string CustomPath = "";
 
     /// <summary>提示音总开关（默认关闭 —— 需求明确要求「默认关闭」，想听的人自己去开）。</summary>
@@ -131,31 +131,31 @@ internal static class ToastSoundConfig
     /// <summary>
     /// 「提示音设置」行（通知卡第 4 行）是否可用：父开关「消息提示音」必须打开。
     /// 与设置面板里「父开关关掉 → 附属行整行置灰」的通用约定同源（如「消息提示音 → 提示音设置」），
-    /// **置灰 / 禁止指针 / 禁止点击三处判据都必须读它**。
+    /// 置灰 / 禁止指针 / 禁止点击三处判据都必须读它。
     /// </summary>
     internal static bool IsRowEnabled => IsEnabled;
 
     /// <summary>
-    /// 「音量 / 试听 / 重置」三个控件是否可用：父开关打开 **且** 已选中一个具体音源。
-    /// ⚠️ 必须同时判 <see cref="SelectedIndex"/> 是否**在合法范围内** —— 曾经只写 `SelectedIndex > 0`，
+    /// 「音量 / 试听 / 重置」三个控件是否可用：父开关打开 且 已选中一个具体音源。
+    /// 必须同时判 SelectedIndex 是否在合法范围内 —— 曾经只写 `SelectedIndex > 0`，
     ///    目录里的 wav 被删掉几个后索引越界，界面上框里显示「无」、这几个按钮却还亮着。
     /// </summary>
     internal static bool IsSourceReady => IsEnabled && SelectedIndex > 0 && SelectedIndex < OptionCount;
 
-    /// <summary>播放音量百分比（默认 <see cref="DefaultVolumePercent"/> = 10%）。</summary>
+    /// <summary>播放音量百分比（默认 DefaultVolumePercent = 10%）。</summary>
     internal static int VolumePercent = DefaultVolumePercent;
 
     /// <summary>
-    /// 重建内置音列表：**磁盘目录 + exe 内嵌资源**两份合并（同名时磁盘版胜出）。
+    /// 重建内置音列表：磁盘目录 + exe 内嵌资源两份合并（同名时磁盘版胜出）。
     ///
     /// 磁盘目录按优先级找（第一个存在的目录胜出）：
-    /// 1. exe 同级 <c>data\sound</c>（发布后的正常位置，也是「丢个 wav 进去就能用」的那个目录）
-    /// 2. 仓库根 <c>data\sound</c>（开发期直接从仓库运行的兜底）
+    /// 1. exe 同级 data\sound（发布后的正常位置，也是「丢个 wav 进去就能用」的那个目录）
+    /// 2. 仓库根 data\sound（开发期直接从仓库运行的兜底）
     ///
-    /// 磁盘目录**整个不存在**时（单文件 exe 被单独拷走）列表也不会空 ——
-    /// 内置音是随 exe 一起发出去的嵌入资源，由 <see cref="DataResources"/> 兜底读取。
+    /// 磁盘目录整个不存在时（单文件 exe 被单独拷走）列表也不会空 ——
+    /// 内置音是随 exe 一起发出去的嵌入资源，由 DataResources 兜底读取。
     ///
-    /// **必须在 <see cref="Restore"/> 之前调用一次**，否则下拉框里只有「无」和「浏览」。
+    /// 必须在 Restore 之前调用一次，否则下拉框里只有「无」和「浏览」。
     /// 之后想看到新丢进去的文件，再调一次即可（幂等，纯 IO 扫描，不缓存解码数据）。
     /// </summary>
     internal static void RefreshBuiltins()
@@ -212,7 +212,7 @@ internal static class ToastSoundConfig
         ApplyDisplayNames(list);
         _builtins = list.ToArray();
 
-        // 🔻 列表一变就必须把当前选择「按文件名身份」重新对齐一次：
+        // 列表一变就必须把当前选择「按文件名身份」重新对齐一次：
         //    否则删掉 / 新增一个 wav 之后，位置索引会把用户的选择悄悄换成另一个音，
         //    或者越界到「框里显示无、音量/试听按钮却还亮着」。
         //    放在这里而不是各调用点，是为了让所有「重建列表」的路径都自动自愈。
@@ -228,7 +228,7 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 可选的显示名覆盖：<c>data\sound\sound.json</c>，形如 <c>{ "Tri-Tone": "三全音", "QQ": "QQ 消息" }</c>。
+    /// 可选的显示名覆盖：data\sound\sound.json，形如 { "Tri-Tone": "三全音", "QQ": "QQ 消息" }。
     /// 键是不带扩展名的文件名，值是界面上显示的文本。解析失败一律静默忽略（用文件名当显示名）。
     /// 磁盘上找不到时回落到 exe 内嵌的那一份（单文件 exe 单独拷走也能拿到中文显示名）。
     /// </summary>
@@ -264,9 +264,9 @@ internal static class ToastSoundConfig
     /// 构建下拉框的显示文本数组（「无」+ 内置名 + 「浏览音频…」）。
     ///
     /// 结果按「内置列表版本」缓存：设置面板每次渲染展开的下拉都会调它，
-    /// 每帧新建一个 <c>string[OptionCount]</c> 是纯浪费。缓存由 <see cref="RefreshBuiltins"/>
-    /// 在**开头**清空 —— 列表一变，下次调用自然重建。
-    /// 返回的数组是共享的，调用方**只读**，不得写入。
+    /// 每帧新建一个 string[OptionCount] 是纯浪费。缓存由 RefreshBuiltins
+    /// 在开头清空 —— 列表一变，下次调用自然重建。
+    /// 返回的数组是共享的，调用方只读，不得写入。
     /// </summary>
     internal static string[] BuildOptionLabels()
     {
@@ -283,7 +283,7 @@ internal static class ToastSoundConfig
         return labels;
     }
 
-    /// <summary><see cref="BuildOptionLabels"/> 的缓存，由 <see cref="RefreshBuiltins"/> 失效。</summary>
+    /// <summary>BuildOptionLabels 的缓存，由 RefreshBuiltins 失效。</summary>
     private static string[]? _optionLabelsCache;
 
     /// <summary>下拉框上显示的当前选中文本。自定义项若文件已失效则显示「自定义（不可用）」。</summary>
@@ -296,7 +296,7 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 一次播放请求的「音源」：磁盘文件路径 **或** exe 内嵌资源名（二者必有一个非空）。
+    /// 一次播放请求的「音源」：磁盘文件路径 或 exe 内嵌资源名（二者必有一个非空）。
     /// </summary>
     internal readonly record struct SoundSource(string Path, string ResourceName)
     {
@@ -304,7 +304,7 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 解析出「现在该播哪个音源」。返回的 <see cref="SoundSource.IsValid"/> 为 false 表示不该播
+    /// 解析出「现在该播哪个音源」。返回的 SoundSource.IsValid 为 false 表示不该播
     /// （选了「无」/ 文件失效）。
     ///
     /// 内置音有两种形态：磁盘上还在 → 给路径（用户可以丢同名文件覆盖它）；
@@ -327,8 +327,8 @@ internal static class ToastSoundConfig
     ///
     /// 三层检查，任何一层不过就返回 false 并给出可展示的原因：
     /// 1. 存在性 —— 路径为空 / 文件不存在。
-    /// 2. 体积 —— 超过 <see cref="MaxFileSizeBytes"/>（防止选到整张专辑）。
-    /// 3. 时长 —— 用 NAudio 只读文件头拿 <c>TotalTime</c>，超过 <see cref="MaxDurationSec"/> 拒绝。
+    /// 2. 体积 —— 超过 MaxFileSizeBytes（防止选到整张专辑）。
+    /// 3. 时长 —— 用 NAudio 只读文件头拿 TotalTime，超过 MaxDurationSec 拒绝。
     ///    读取器构造本身就会对不支持的格式抛异常，顺带完成了格式校验。
     /// </summary>
     internal static bool IsUsableFile(string? path, out string reason)
@@ -385,8 +385,8 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 从**流**打开读取器（exe 内嵌资源走这条）。
-    /// ⚠️ <c>MediaFoundationReader</c> 只认路径 / URL，所以嵌入资源只支持 wav / aiff ——
+    /// 从流打开读取器（exe 内嵌资源走这条）。
+    /// MediaFoundationReader 只认路径 / URL，所以嵌入资源只支持 wav / aiff ——
     ///    内置音本来就强制 wav，够用；其余格式抛异常由调用方吞掉。
     /// </summary>
     internal static WaveStream OpenReader(Stream stream, string extension)
@@ -400,7 +400,7 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 校验 exe 内嵌资源里的内置音是否可用（体积 + 时长，判据与 <see cref="IsUsableFile"/> 完全一致）。
+    /// 校验 exe 内嵌资源里的内置音是否可用（体积 + 时长，判据与 IsUsableFile 完全一致）。
     /// 内置音是随 exe 一起发出去的，正常情况下必然可用；这里只是不让「资源被玩坏」变成静默失败。
     /// </summary>
     internal static bool IsUsableResource(string resourceName, out string reason)
@@ -474,16 +474,16 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 把内存里的选择**按文件名身份**重新对齐一次，顺手自愈越界 / 失效。
+    /// 把内存里的选择按文件名身份重新对齐一次，顺手自愈越界 / 失效。
     ///
-    /// 必须在**每次重建内置列表之后**调用（<see cref="RefreshBuiltins"/> 之后、
+    /// 必须在每次重建内置列表之后调用（RefreshBuiltins 之后、
     /// 展开下拉之前，以及启动恢复时）。返回 true 表示内存态被改过，调用方应写回注册表。
     ///
-    /// 判定顺序（**顺序本身就是正确性的一部分**）：
-    /// 1. **有身份就先按身份找回** —— 必须排在「按索引解释」之前。列表缩短后，一个内置项的
-    ///    位置索引可能正好撞上 <see cref="CustomIndex"/>（实测：删到只剩 2 个内置音时
+    /// 判定顺序（顺序本身就是正确性的一部分）：
+    /// 1. 有身份就先按身份找回 —— 必须排在「按索引解释」之前。列表缩短后，一个内置项的
+    ///    位置索引可能正好撞上 CustomIndex（实测：删到只剩 2 个内置音时
     ///    `CustomIndex` 也等于 3），先按索引解释会把它误判成自定义项、直接回落「无」。
-    /// 2. 记了身份却找不到 → 该音源真被删了，回落「无」，**不许拿索引去顶替**。
+    /// 2. 记了身份却找不到 → 该音源真被删了，回落「无」，不许拿索引去顶替。
     /// 3. 选「无」→ 清掉残留的身份与自定义路径。
     /// 4. 自定义项 → 文件还在就保持，失效则回落「无」。
     /// 5. 只有索引、没有身份（老版本注册表）→ 用索引做一次性迁移。
@@ -541,7 +541,7 @@ internal static class ToastSoundConfig
 
     /// <summary>
     /// 当前选中项「为什么播不了」的可展示原因（选中「无」或一切正常时返回空串）。
-    /// ⚠️ 不要拿 <see cref="CustomPath"/> 去套内置项 —— 内置项的路径不在那个字段里，
+    /// 不要拿 CustomPath 去套内置项 —— 内置项的路径不在那个字段里，
     ///    否则内置音文件缺失时会把「尚未选择音频文件」这种错文案糊到用户脸上。
     /// </summary>
     internal static string DescribeUnavailable()
@@ -560,11 +560,11 @@ internal static class ToastSoundConfig
     }
 
     /// <summary>
-    /// 启动时恢复 + 自愈。与 <c>FontConfig.Restore</c> 同一套语义：
+    /// 启动时恢复 + 自愈。与 FontConfig.Restore 同一套语义：
     /// 记忆的文件已失效就回落，并把内存态与注册表一起修正，保证三者永远一致。
-    /// 由 <see cref="Program.LoadSettings"/> 在创建窗口前调用（**先 RefreshBuiltins 再调本方法**）。
+    /// 由 Program.LoadSettings 在创建窗口前调用（先 RefreshBuiltins 再调本方法）。
     ///
-    /// <paramref name="selectedKey"/> 是内置音的文件名身份，优先于 <paramref name="selectedIndex"/>；
+    ///  是内置音的文件名身份，优先于 ；
     /// 老版本注册表没有这个值，传空串即可（会按位置索引做一次性迁移）。
     /// </summary>
     internal static void Restore(int selectedIndex, string selectedKey, string customPath,
@@ -575,7 +575,7 @@ internal static class ToastSoundConfig
         SelectedKey = selectedKey ?? "";
         VolumePercent = NormalizeVolume(volumePercent);
 
-        // 注册表里的索引**不在这里夹**，原样交给 NormalizeSelection：
+        // 注册表里的索引不在这里夹，原样交给 NormalizeSelection：
         // 它先按文件名身份找回真实位置，找不回才回落「无」——
         // 若先夹到 0，就会把「索引越界但文件名还在」这种可救的情况一起丢掉。
         SelectedIndex = selectedIndex;
@@ -596,8 +596,8 @@ internal static class ToastSoundConfig
         return best;
     }
 
-    /// <summary>音量档位在 <see cref="VolumeOptions"/> 里的索引（用于下拉菜单选中态）。
-    /// 找不到时回落到 <see cref="DefaultVolumePercent"/>，而不是数组第 1 项（0% 会静音，不能当兜底）。</summary>
+    /// <summary>音量档位在 VolumeOptions 里的索引（用于下拉菜单选中态）。
+    /// 找不到时回落到 DefaultVolumePercent，而不是数组第 1 项（0% 会静音，不能当兜底）。</summary>
     internal static int VolumeIndex
     {
         get

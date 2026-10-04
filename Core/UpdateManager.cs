@@ -34,8 +34,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 记下「不再提醒」的版本号。**只对这一个版本生效** —— 之后出现更新的版本（版本号不同）
-        /// 会照常弹窗，所以老版本用户不会被永久静音。
+        /// 记下「不再提醒」的版本号。只对这一个版本生效：之后出现更新的版本（版本号不同）会照常
+        /// 弹窗，所以老版本用户不会被永久静音。
         /// </summary>
         public static void MarkVersionSkipped(string version)
         {
@@ -366,7 +366,7 @@ namespace NotchPeninsula
             UpdateWindow(surface.PeekPixels());
         }
 
-        /// <summary>画一个底部按钮。几何来自 <see cref="GetButtonRect"/>，与命中判定同源。</summary>
+        /// <summary>画一个底部按钮。几何来自 GetButtonRect，与命中判定同源。</summary>
         private void DrawButton(SKCanvas canvas, int index, string text, bool primary)
         {
             var rect = GetButtonRect(index);

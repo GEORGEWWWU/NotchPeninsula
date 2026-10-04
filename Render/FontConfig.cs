@@ -9,8 +9,8 @@ namespace NotchPeninsula
     /// 灵动岛字体统一配置中心（全岛唯一的字体来源）。
     ///
     /// 设计目标：让「灵动岛内所有文本用哪套字体」只在这一个文件里定义，
-    /// 各处画笔统一从这里取 <see cref="Normal"/> / <see cref="Bold"/> / <see cref="SemiBold"/> 三个公共变量，
-    /// 用户切换自定义字体时只需调用 <see cref="ApplyCustomFont"/>，再由 <see cref="Changed"/> 事件
+    /// 各处画笔统一从这里取 Normal / Bold / SemiBold 三个公共变量，
+    /// 用户切换自定义字体时只需调用 ApplyCustomFont，再由 Changed 事件
     /// 通知 Renderer 把新字体重绑到全部文本画笔上 —— 因此不需要改动任何一处绘制代码。
     ///
     /// 默认状态（用户从未选择过自定义字体）与改动前完全一致：系统字体 Microsoft YaHei UI。
@@ -56,7 +56,7 @@ namespace NotchPeninsula
         public static event Action? Changed;
 
         /// <summary>
-        /// 当前正在使用的自定义字体面（来自 <see cref="SKTypeface.FromFile"/>）。
+        /// 当前正在使用的自定义字体面（来自 SKTypeface.FromFile）。
         /// 所有权归本类：切换字体 / 重置为系统字体时必须释放，否则每次换字体都会永久多出一份
         /// 字体文件数据（CJK 字体单份 15~30MB，ttc 集合更大），而 Renderer 的静态画笔会把它钉到进程结束。
         /// 系统字体三档 _systemNormal/_systemBold/_systemSemiBold 是进程级共享资源，永不进入这里，因此永不被释放。
@@ -68,7 +68,7 @@ namespace NotchPeninsula
         /// 只在用户点选字体时调用一次，无持续开销。
         ///
         /// 资源纪律：本次调用创建的每一个 SKTypeface 都有明确归宿 ——
-        /// 被选中的三档字重由 <see cref="_customFaces"/> 接管，其余（ttc 里多余的字重）当场释放，
+        /// 被选中的三档字重由 _customFaces 接管，其余（ttc 里多余的字重）当场释放，
         /// 加载中途失败则全部释放。任何一条路径都不会留下无主的字体面。
         /// </summary>
         public static bool ApplyCustomFont(string path, out string error)
@@ -130,7 +130,7 @@ namespace NotchPeninsula
         /// 接管新字体并把上一套自定义字体释放掉。
         ///
         /// 释放时机是这里的关键：旧字体在被换下来的那一刻仍然被 Renderer 的 8 支静态画笔引用着，
-        /// 必须等 <see cref="Changed"/> 事件把画笔全部重绑到新字体之后才能 Dispose，
+        /// 必须等 Changed 事件把画笔全部重绑到新字体之后才能 Dispose，
         /// 否则画笔会短暂指向已释放的字体，下一帧绘制就是 use-after-dispose。
         /// </summary>
         private static void SwitchFont(SKTypeface normal, SKTypeface bold, SKTypeface semiBold, string path)
@@ -205,7 +205,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 读取字体文件内的全部字体面（ttc / otf 集合可能包含多个字重）。
-        /// 注意：返回的每一个 SKTypeface 都是新分配的非托管对象，<b>所有权全部交给调用方</b>，
+        /// 注意：返回的每一个 SKTypeface 都是新分配的非托管对象，所有权全部交给调用方，
         /// 调用方必须保证每个实例最终被 Dispose（选中的交给 _customFaces，未选中的立即释放）。
         /// </summary>
         private static List<SKTypeface> LoadFaces(string path)

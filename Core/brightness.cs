@@ -12,7 +12,7 @@ internal static class BrightnessManager
     // 缓存最后一次设置的亮度值
     private static int _lastSimulatedPercent = 70;
 
-    // ====== 硬件 WMI ======
+    // ---- 硬件 WMI ----
     public static int Get()
     {
         try
@@ -41,7 +41,7 @@ internal static class BrightnessManager
         return false;
     }
 
-    // ====== 模拟 Gamma ======
+    // ---- 模拟 Gamma ----
     public static int GetSimulated()
     {
         //优先返回缓存值
@@ -52,50 +52,50 @@ internal static class BrightnessManager
     /// 设置 GPU Gamma 模拟亮度（percent: 5~100）
     /// </summary>
     public static void SetSimulated(int percent)
-{
-    percent = Math.Clamp(percent, 5, 100);
-    _lastSimulatedPercent = percent;
-
-    float level = percent / 100f;
-    var ramp = CreateRamp();
-
-    for (int i = 0; i < 256; i++)
     {
-        ushort v = (ushort)(i * level * 257);
-        ramp.Red[i] = v;
-        ramp.Green[i] = v;
-        ramp.Blue[i] = v;
-    }
+        percent = Math.Clamp(percent, 5, 100);
+        _lastSimulatedPercent = percent;
 
-    IntPtr dc = IntPtr.Zero;
-    try
-    {
-        dc = GetDC(IntPtr.Zero);
-        if (dc == IntPtr.Zero)
+        float level = percent / 100f;
+        var ramp = CreateRamp();
+
+        for (int i = 0; i < 256; i++)
         {
-            Logger.Error("GetDC(IntPtr.Zero) 返回 NULL，无法设置 Gamma");
-            return;
+            ushort v = (ushort)(i * level * 257);
+            ramp.Red[i] = v;
+            ramp.Green[i] = v;
+            ramp.Blue[i] = v;
         }
 
-        bool ok = SetDeviceGammaRamp(dc, ref ramp);
-        if (!ok)
+        IntPtr dc = IntPtr.Zero;
+        try
         {
-            int err = Marshal.GetLastWin32Error();
+            dc = GetDC(IntPtr.Zero);
+            if (dc == IntPtr.Zero)
+            {
+                Logger.Error("GetDC(IntPtr.Zero) 返回 NULL，无法设置 Gamma");
+                return;
+            }
+
+            bool ok = SetDeviceGammaRamp(dc, ref ramp);
+            if (!ok)
+            {
+                int err = Marshal.GetLastWin32Error();
+                Logger.Error(
+                    $"SetDeviceGammaRamp 失败，亮度={percent}%，Win32ErrorCode={err}");
+            }
+        }
+        catch (Exception ex)
+        {
             Logger.Error(
-                $"SetDeviceGammaRamp 失败，亮度={percent}%，Win32ErrorCode={err}");
+                $"SetSimulated 发生异常，亮度={percent}%", ex);
+        }
+        finally
+        {
+            if (dc != IntPtr.Zero)
+                ReleaseDC(IntPtr.Zero, dc);
         }
     }
-    catch (Exception ex)
-    {
-        Logger.Error(
-            $"SetSimulated 发生异常，亮度={percent}%", ex);
-    }
-    finally
-    {
-        if (dc != IntPtr.Zero)
-            ReleaseDC(IntPtr.Zero, dc);
-    }
-}
 
     private static BrightnessCapability Probe()
     {

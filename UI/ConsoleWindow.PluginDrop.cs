@@ -7,11 +7,11 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // ================= 🧩 插件中心：把 DLL 拖进来即导入 =================
+        // ---- 插件中心：把 DLL 拖进来即导入 ----
         //
         // 交互：从资源管理器把 *.dll 拖到「插件中心」右侧的内容区，松手即走 PluginManager.Import()。
         // 拖动经过时内容区立刻亮起一层蓝色反馈 + 提示「松开鼠标以导入插件 DLL」，让用户明确知道「这里能放」。
-        // 反馈是**直接亮 / 直接灭**的静态高亮，不带任何淡入淡出或呼吸动画（也没有定时器）。
+        // 反馈是直接亮 / 直接灭的静态高亮，不带任何淡入淡出或呼吸动画（也没有定时器）。
         //
         // 为什么要 IDropTarget 而不是 WM_DROPFILES：后者只在松手那一刻投递一次消息，
         // 拖动过程中窗口收不到任何通知，做不了「拖过来就高亮」这类悬停反馈。两者的取舍与
@@ -126,7 +126,7 @@ namespace NotchPeninsula
         /// <summary>用户在窗口内松手。落点在右侧内容区且拖的是 DLL 才真正导入。</summary>
         internal bool HandlePluginDrop(Win32.POINT screenPt)
         {
-            // ⚠️ 补一次命中：OLE 只在鼠标移动或修饰键变化时才调 DragOver，
+            // 补一次命中：OLE 只在鼠标移动或修饰键变化时才调 DragOver，
             //    挪到位就立刻松手的话可能一次 DragOver 都没有 —— 那样即便落点明明在内容区里，
             //    也会因为「这一轮从没被接受过」而白扔。
             bool accepted = _pluginDropDlls.Count > 0 && UpdatePluginDropHover(screenPt);
@@ -190,14 +190,12 @@ namespace NotchPeninsula
                     Logger.Info($"[PluginCenter] 拖入导入 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
-                // 提示文案（2026-10-02 用户指定）：
-                //   · 有成功 → 「（☑️）已成功导入 X 个插件」。那个 ☑️（U+2611 + U+FE0F）是**彩色 Emoji**，
-                //     在 Windows 上就是用户要的那颗绿色勾选框（已核对 seguiemj.ttf 的 cmap 表两个码点都在；
-                //     设置窗口的 YaHei 画笔没有它，所以绘制走 DrawTextWithEmoji 做逐段回退）。
+                // 提示文案：
+                // · 全成功 → 「（☑️）已成功导入 X 个插件」。前面那颗勾选框是彩色 Emoji，得走 DrawTextWithEmoji 逐段回退才画得出来。
                 //     以前只贴最后一条 Import() 的返回串（「已导入并加载：中文名」），拖三个也只看得到一个名字。
-                //   · 有失败 → 在结论后面补「N 个失败：<原因>」。颜色随结果走（见 _pluginHintIsError），
-                //     所以半个成功也会是绿的 —— 这是"至少成了一些"的语义，失败明细照样在提示里和日志里。
-                //   · 全失败 → 保留 Bot 返回的具体原因，那才是排查要的信息，统一成"导入失败"反而抹掉线索。
+                // · 有失败 → 在结论后面补「N 个失败：<原因>」。颜色随结果走（见 _pluginHintIsError），
+                //     所以半个成功也会是绿的 —— 这是「至少成了一些」的语义，失败明细照样在提示里和日志里。
+                // · 全失败 → 保留 Bot 返回的具体原因，那才是排查要的信息，统一成「导入失败」反而抹掉线索。
                 if (okCount > 0 && okCount == dlls.Count)
                     _pluginHint = $"（☑️）已成功导入 {okCount} 个插件";
                 else if (okCount > 0)
@@ -219,7 +217,7 @@ namespace NotchPeninsula
     }
 
 /// <summary>
-/// 设置窗口的 OLE 拖入目标（IDropTarget）：把系统发来的四个拖放回调转给 <see cref="ConsoleWindow"/> 处理。
+/// 设置窗口的 OLE 拖入目标（IDropTarget）：把系统发来的四个拖放回调转给 ConsoleWindow 处理。
 ///
 /// 为什么单独拆一个类而不让 ConsoleWindow 直接实现：接口方法必须是 public，
 /// 塞进 ConsoleWindow 会让它表面上看多出一堆拖放公开 API；这个类是 internal，

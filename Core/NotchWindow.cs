@@ -25,7 +25,7 @@ namespace NotchPeninsula
         public event EventHandler<WindowClickEventArgs>? WindowClicked;
 
         public static bool IsToastEnabled = true;
-        public static bool IsClipboardEnabled = true; // 📋 剪贴板链接检测开关（交互设置，默认开启）
+        public static bool IsClipboardEnabled = true; // 剪贴板链接检测开关（交互设置，默认开启）
         public static bool IsTopmostEnabled = true; // 默认开启置顶
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         private readonly IntPtr _hwnd;
@@ -63,7 +63,7 @@ namespace NotchPeninsula
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
         private ToastNotificationListener? _listener;
-        // 通知轮询定时器：**刻意用线程池定时器（System.Timers.Timer），不要换回 DispatcherTimer**。
+        // 通知轮询定时器：刻意用线程池定时器（System.Timers.Timer），不要换回 DispatcherTimer。
         // DispatcherTimer 依赖 WPF Dispatcher 的队列被"泵"，而本程序的主循环是纯 Win32 的 Run()
         // （GetMessage/DispatchMessage，没有 Dispatcher.Run/PushFrame）。实测它在启动后只跳几次就静默停摆：
         // 2026-09-25 部署了带心跳的版本，2 分半内 0 条心跳（心跳在每次调用开头就打），而同一时刻 dispatcher
@@ -114,19 +114,19 @@ namespace NotchPeninsula
         /// <summary>「全屏自动隐藏」实际是否生效：总开关放行 且 自身开启。</summary>
         public static bool IsFullscreenAutoHideEffective => IsAutoHideEffective && IsFullscreenAutoHideEnabled;
 
-        // ==================== 全屏检测（「全屏自动隐藏」专用） ====================
+        // ---- 全屏检测（「全屏自动隐藏」专用） ----
         // 轻量化的三个关键：
-        //   1. 只调**一次** Win32（SHQueryUserNotificationState），不自己枚举窗口比对显示器矩形；
-        //   2. **节流**：最多每 0.8s 探一次 —— 全屏切换是秒级事件，不需要 16ms 级延迟；
-        //   3. **功能没开就一次系统调用都不发**，直接把缓存压回 false。
+        // 1. 只调一次 Win32（SHQueryUserNotificationState），不自己枚举窗口比对显示器矩形；
+        // 2. 节流：最多每 0.8s 探一次 —— 全屏切换是秒级事件，不需要 16ms 级延迟；
+        // 3. 功能没开就一次系统调用都不发，直接把缓存压回 false。
         // 探测与消费都在渲染循环线程上，所以缓存不需要加锁。
         private static bool _isFullscreenCached;
         private static DateTime _fullscreenProbeAt = DateTime.MinValue;
         private const double FullscreenProbeIntervalSeconds = 0.8;
 
         /// <summary>
-        /// 节流刷新全屏检测缓存。由渲染循环在算 <c>shouldHide</c> 之前调用一次。
-        /// 唤醒点击分支只**读**缓存（<see cref="IsFullscreenHideActive"/>），不重复探测。
+        /// 节流刷新全屏检测缓存。由渲染循环在算 shouldHide 之前调用一次。
+        /// 唤醒点击分支只读缓存（IsFullscreenHideActive），不重复探测。
         /// </summary>
         private static void TickFullscreenProbe()
         {
@@ -142,7 +142,7 @@ namespace NotchPeninsula
             try
             {
                 // 返回 HRESULT：非 0 表示查询失败，out 值不可信 → 保持 false。
-                // 这里刻意**静默** catch（不写日志）：本方法每 0.8s 跑一次，一旦失败会持续失败，
+                // 这里刻意静默 catch（不写日志）：本方法每 0.8s 跑一次，一旦失败会持续失败，
                 // 打日志等于把日志刷爆；而且失败时「当成没有全屏」是安全的一侧（岛体保持原样，不会乱躲）。
                 if (Win32.SHQueryUserNotificationState(out int state) != 0) return;
 
@@ -157,14 +157,14 @@ namespace NotchPeninsula
         private static bool IsFullscreenHideActive => IsFullscreenAutoHideEffective && _isFullscreenCached;
 
         /// <summary>
-        /// 「现在允许自动隐藏吗」——**自动隐藏判定的单一真源**。
-        /// <c>shouldHide</c>（藏不藏）与 <c>WM_LBUTTONDOWN</c> 的唤醒分支（点了能不能唤回）**必须共用它**，
+        /// 「现在允许自动隐藏吗」——自动隐藏判定的单一真源。
+        /// shouldHide（藏不藏）与 WM_LBUTTONDOWN 的唤醒分支（点了能不能唤回）必须共用它，
         /// 否则就会出现「藏得下去、点不回来」。
         ///
         /// 三种模式互相独立、可任意组合，且都被总开关拦住（总开关关掉时三个 Effective 全为 false）：
-        ///   · 焦点离开时自动隐藏：没有媒体会话 → 允许
-        ///   · 暂停播放后自动隐藏：媒体暂停 / 停止时 → 允许
-        ///   · 全屏自动隐藏：检测到全屏应用 → 无条件允许
+        /// · 焦点离开时自动隐藏：没有媒体会话 → 允许
+        /// · 暂停播放后自动隐藏：媒体暂停 / 停止时 → 允许
+        /// · 全屏自动隐藏：检测到全屏应用 → 无条件允许
         ///
         /// 历史坑：唤醒分支曾自己写死 `!_media.IsActive`。加了「暂停后隐藏」之后，岛体会在
         /// `_media.IsActive == true`（暂停中）的状态下藏起来，写死的判据就变成「藏得下去、点不回来」。
@@ -181,48 +181,38 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 当前是否存在**任一展开态** —— 交互语义的单一真源。
+        /// 当前是否存在任一展开态 —— 交互语义的单一真源。三个来源任一为真即视为展开中：
+        /// 手动展开的岛体（_isManuallyExpanded）、媒体面板（Renderer.IsMediaExpanded）、
+        /// 插件详情页（Renderer.HasActiveDetailPage）。
         ///
-        /// <para>
-        /// 三个来源，任一为真即视为「展开中」：
-        ///   · <c>_isManuallyExpanded</c>：点顶部细边 / 唤醒按钮手动展开的岛体；
-        ///   · <c>Renderer.IsMediaExpanded</c>：媒体控制面板；
-        ///   · <c>Renderer.HasActiveDetailPage</c>：插件组件详情页。
-        /// </para>
-        ///
-        /// <para>
-        /// 语义（用户 2026-10-04 明确）：<b>展开态一律不自动收起，只有外部点击或显式操作才折叠</b>。
-        /// 这条同时约束两处，且必须共用本属性，否则又会出现「一处记得排除、另一处忘了」：
-        ///   · 自动隐藏（上移出屏 / 完全隐藏）—— 展开中不藏；
-        ///   · 穿透模式的悬停淡出 —— 展开中不淡到 0%（淡掉等于面板看不见也点不到）。
-        /// </para>
+        /// 语义（用户明确）：展开态一律不自动收起，只有外部点击或显式操作才折叠。这条同时约束
+        /// 自动隐藏与穿透悬停淡出两处 —— 必须共用本属性，否则又会出现「一处记得排除、另一处忘了」。
         /// </summary>
         private bool HasAnyExpanded
             => _isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage;
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
-        // 📋 剪贴板链接监听（事件驱动，仅在复制时读一次剪贴板，稳态零占用）
+        // 剪贴板链接监听（事件驱动，仅在复制时读一次剪贴板，稳态零占用）
         private readonly ClipboardMonitor _clipboardMonitor = new ClipboardMonitor();
         private string? _clipboardUrl;         // 当前正在展示的链接
         private string? _pendingClipboardUrl;  // 被更高级别通知挤下后退回队列等待的链接（单槽位复用，零额外内存）
         private DateTime _clipboardEndTime;    // 链接展示截止时间
         public bool isClipboardActive;         // 本帧剪贴板面板是否激活
-        // ==================== 「Q 弹」弹簧动画引擎（三处共用） ====================
-        // 岛体尺寸变化（宽/高）、形态切换（刘海 ⇄ 灵动岛）、自动隐藏位移（Y 轴）**共用同一条曲线**，
-        // 所以三处的手感完全一致 —— 这正是把它们抽出来的目的：以前是同一个公式抄三份、常量各写一遍，
-        // 改一处忘一处就会出现「这个动画弹、那个不弹」。新增位移动画时请直接调 SpringEase()。
+        // ---- 弹簧动画引擎（三处共用） ----
+        // 岛体尺寸（宽/高）、形态切换（刘海 ⇄ 灵动岛）、自动隐藏位移（Y 轴）共用同一条曲线，
+        // 所以三处手感一致。以前同一公式抄三份、常量各写一遍，改一处忘一处就会出现
+        // 「这个动画弹、那个不弹」。新增位移动画直接调 SpringEase()。
         //
         // 曲线：1 - cos(freq·t·2π)·e^(-decay·t)
-        //   freq 越大爆发越干脆（振荡更快），decay 越小阻尼越低、余震越多（果味更浓）。
-        //   当前取值下最大过冲约 15.9%（峰值出现在 t≈0.154s），也就是「Q 弹」的来源。
+        // freq 越大爆发越干脆，decay 越小阻尼越低、余震越多。当前取值最大过冲约 15.9%
+        //（峰值在 t≈0.154s），即「Q 弹」的来源。
         private const double SpringFrequency = 2.65;
         private const double SpringDecay = 10.8;
-        // 动画时长：取到曲线基本归位（≈99.7%）的时刻，再长只是空转。
-        // 注意是**时间**而不是进度 —— 弹簧是时间驱动，不能按 t/duration 归一化后再套。
+        // 取到曲线基本归位（≈99.7%）的时刻，再长只是空转。注意是时间而非进度：
+        // 弹簧由时间驱动，不能按 t/duration 归一化后再套。
         private const double SpringDurationSeconds = 0.450;
 
         /// <summary>
-        /// 弹簧缓动：传入**已过去的秒数**，返回 0→1 的插值系数（中途会过冲，大于 1 是正常的）。
-        /// 与 <see cref="SpringDurationSeconds"/> 配套使用。
+        /// 弹簧缓动：传入已过去的秒数，返回 0→1 的插值系数（中途会过冲，大于 1 是正常的）。
         /// </summary>
         private static double SpringEase(double elapsedSeconds)
             => 1.0 - Math.Cos(SpringFrequency * elapsedSeconds * 2.0 * Math.PI) * Math.Exp(-SpringDecay * elapsedSeconds);
@@ -234,37 +224,31 @@ namespace NotchPeninsula
         private bool _isYAnimating = false;
         private DateTime _yAnimStartTime;
         private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
-        // 🎯 「刚引发状态变化的那一次左键按下还没松开」标记：本次 press 期间，一律不把「岛外点击」当收起手势。
-        //    两个来源，本质是同一件事 —— **按下那一刻的岛体几何，与随后的几何不一样**，
-        //    于是这次点击的坐标在变化之后落到了岛体之外，被兜底轮询误判：
-        //    ① 点击屏幕顶边唤醒岛体：用户点的是 y≈0 的位置，而岛体下沉后**可见矩形从
-        //       y = 12 才开始**（12f * _currentStyleProgress），这次点击的坐标**天然落在岛体之外**。
-        //       不屏蔽的话，唤醒自己的这一次点击会被判成「岛外点击」，岛刚滑出来就被收回去
-        //       —— 用户看到的就是「抽一下又回去了」。
-        //    ② 点折叠态媒体区展开媒体面板（2026-10-02 起展开入口从左键挪到右键，2026-10-03 起又变成
-        //       「跳转开着走右键、跳转关掉走左键单击」，见 Renderer.MediaExpandByRightClick）：
-        //       折叠态岛体可能比展开面板（锁死 320）**更宽**（长歌词自适应 / 组合模式），展开瞬间岛体变窄，
-        //       按下时还在岛内的坐标随即落到岛外。不屏蔽的话，这次点击同样被判成「岛外点击」，
-        //       面板刚展开就被 CollapseAllExpanded 收回 —— 用户看到的就是「点一下展开、又立刻收回去」。
-        //       注：右键不产生 WM_LBUTTONUP，解除只靠下面那条「每帧读一次左键是否按下」——
-        //       右键场景下左键本来就是抬起的，所以下一帧即自动复位；左键场景则由 down→up 全程覆盖。
-        //    · 抑制范围 = **这一次按键的 down→up 全程**，不多不少。
-        //      解除不靠 WM_LBUTTONUP，而是靠轮询里每帧读一次 `GetAsyncKeyState(0x01)`：
-        //      岛体滑回后，光标所在的那条屏幕顶边在窗口里是**透明像素**，分层窗口的透明区域不参与
-        //      命中测试，up 消息很可能根本派发不到本窗口。直接观察物理按键状态是精确且不丢信号的。
-        //    · 刻意**不加时间上限**：上限会让「长按超过 N 秒」重新踩回这个 bug（实测 1.5s 上限时
-        //      按住 1.6s 仍会抽一下又回去）。而按键松开是每帧实测的，不会漏，所以不需要兜底。
+        // 「刚引发状态变化的那一次左键按下还没松开」标记：本次按下期间不把「岛外点击」当收起手势。
+        // 两个来源本质相同 —— 按下那一刻的岛体几何与随后不同，于是这次点击的坐标在变化之后
+        // 落到岛体之外，被兜底轮询误判：
+        //   ① 点击屏幕顶边唤醒岛体：点的是 y≈0，而岛体下沉后可见矩形从 y = 12 才开始，这次点击
+        //      天然落在岛体之外。不屏蔽的话，唤醒自己的点击会被判成「岛外点击」，岛刚滑出就被收回
+        //     —— 用户看到的是「抽一下又回去了」。
+        //   ② 点折叠态媒体区展开面板：折叠态岛体可能比展开面板（锁死 320）更宽（长歌词自适应 /
+        //      组合模式），展开瞬间岛体变窄，按下时还在岛内的坐标随即落到岛外。不屏蔽的话，面板
+        //      刚展开就被 CollapseAllExpanded 收回 —— 用户看到的是「点一下展开、又立刻收回去」。
+        //
+        // 解除不靠 WM_LBUTTONUP，而是每帧读一次 GetAsyncKeyState(0x01)：岛体滑回后，光标所在
+        // 那条屏幕顶边在窗口里是透明像素，分层窗口的透明区域不参与命中测试，up 消息很可能派发不到
+        // 本窗口；直接观察物理按键状态精确且不丢信号。刻意不加时间上限：上限会让「长按超过 N 秒」
+        // 重新踩回这个 bug（实测 1.5s 上限时按住 1.6s 仍会抽一下又回去），而按键松开是每帧实测的。
         private bool _suppressOutsideCollapse = false;
 
-        // ================= 🧩 展开面板统一管理 =================
+        // ---- 展开面板统一管理 ----
         // 媒体控制面板（builtin.media）与插件组件详情页共用同一套开合逻辑与时序，不再各写一份：
-        //   ExpandPanel(id)        展开某个组件的面板（同一时刻只留一块，另一块让位）
-        //   RequestPanelCollapse() 鼠标离开岛体 → 挂延迟折叠（两块延迟不同，见下面两个常量）
-        //   CancelPanelCollapse()  鼠标回到岛上 → 取消挂起
-        //   ClosePanelsNow()       岛外点击这种明确动作 → 立即折叠
-        //   TickPanelCollapse()    每帧结算到期的折叠
+        // ExpandPanel(id)        展开某个组件的面板（同一时刻只留一块，另一块让位）
+        // RequestPanelCollapse() 鼠标离开岛体 → 挂延迟折叠（两块延迟不同，见下面两个常量）
+        // CancelPanelCollapse()  鼠标回到岛上 → 取消挂起
+        // ClosePanelsNow()       岛外点击这种明确动作 → 立即折叠
+        // TickPanelCollapse()    每帧结算到期的折叠
         // 面板内容仍各归各自的宿主持有（媒体 = Renderer.IsMediaExpanded，详情页 = PluginHost），
-        // 这里统一的是**开合入口与时序**。做成静态：全局只有一块岛体，渲染循环与设置窗口都要能调。
+        // 这里统一的是开合入口与时序。做成静态：全局只有一块岛体，渲染循环与设置窗口都要能调。
 
         private static readonly PanelCollapseTimer _mediaPanelCollapse = new(MediaCollapseDelayMs);
         private static readonly PanelCollapseTimer _detailPanelCollapse = new(DetailCollapseDelayMs);
@@ -287,8 +271,8 @@ namespace NotchPeninsula
 
             /// <summary>
             /// 挂起延迟折叠（重复挂起按最后一次重新计时）。
-            /// <paramref name="delayMs"/> 传 null 就用构造时的默认值 ——
-            /// 插件详情页允许自定义这段时长（<c>IDetailPage.AutoCollapseDelay</c>），所以这里得能被覆盖。
+            ///  传 null 就用构造时的默认值 ——
+            /// 插件详情页允许自定义这段时长（IDetailPage.AutoCollapseDelay），所以这里得能被覆盖。
             /// </summary>
             public void Schedule(int? delayMs = null)
                 => _deadline = DateTime.Now.AddMilliseconds(delayMs ?? _delayMs);
@@ -348,9 +332,9 @@ namespace NotchPeninsula
 
             var wc = new Win32.WNDCLASS
             {
-                // 🖱 CS_DBLCLKS：声明「本类窗口要收双击消息」，系统才会把同一位置的第二次按下
-                //    升格成 WM_LBUTTONDBLCLK（媒体控制的双击跳转就靠它）。
-                //    不给这个样式的话，第二次按下依然只是普通 WM_LBUTTONDOWN，双击无从判定。
+                // CS_DBLCLKS：声明「本类窗口要收双击消息」，系统才会把同一位置的第二次按下
+                // 升格成 WM_LBUTTONDBLCLK（媒体控制的双击跳转就靠它）。
+                // 不给这个样式的话，第二次按下依然只是普通 WM_LBUTTONDOWN，双击无从判定。
                 style = Win32.CS_DBLCLKS,
                 lpfnWndProc = _wndProcDelegate,
                 hInstance = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero,
@@ -391,7 +375,7 @@ namespace NotchPeninsula
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
             else Info($"窗口创建成功，句柄: {_hwnd}");
             InstanceHandle = _hwnd;
-            // 🖱 让岛体也能接文件拖放：右键展开的插件详情页靠它实现「拖入 / 拖出」
+            // 让岛体也能接文件拖放：右键展开的插件详情页靠它实现「拖入 / 拖出」
             SetupIslandDropTarget();
             // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
             _renderTimer = new Timer(16);
@@ -399,7 +383,7 @@ namespace NotchPeninsula
             _renderTimer.Elapsed += OnRenderTick;
             _renderTimer.Start();
 
-            // 🛠️ 托盘图标与右键菜单（自绘纯色菜单，见 TrayMenuWindow）
+            // 托盘图标与右键菜单（自绘纯色菜单，见 TrayMenuWindow）
             // 1. 先实例化托盘对象，防止闭包捕获到未初始化的变量
             _notifyIcon = new System.Windows.Forms.NotifyIcon();
 
@@ -420,18 +404,18 @@ namespace NotchPeninsula
 
             _notifyIcon.Visible = true;
             Debug($"初始音量读取完成，当前音量：{audio.Volume:F2}");
-            // 🔉 内置音量（系统主音量）只有一个下游：接了 Just Solo 的 WS 就下发播放器，没接才改系统主音量。
-            //    Just Solo 自己的音量是另一个变量（MediaController.TryGetJustSoloVolume），两边互不覆盖。
+            // 内置音量（系统主音量）只有一个下游：接了 Just Solo 的 WS 就下发播放器，没接才改系统主音量。
+            // Just Solo 自己的音量是另一个变量（MediaController.TryGetJustSoloVolume），两边互不覆盖。
             audio.VolumeSink = _media.TrySyncVolumeToJustSolo;
-            // 🧩 插件系统：先把插件提醒接入 Toast 流，再初始化运行时自动加载已启用插件
+            // 插件系统：先把插件提醒接入 Toast 流，再初始化运行时自动加载已启用插件
             PluginManager.Instance.Host.ReminderPosted += OnPluginReminder;
             PluginManager.Instance.Initialize();
             _ = InitializeListenerAsync();
 
-            // 📋 订阅剪贴板监听：窗口句柄就绪后注册 WM_CLIPBOARDUPDATE
+            // 订阅剪贴板监听：窗口句柄就绪后注册 WM_CLIPBOARDUPDATE
             _clipboardMonitor.OnUrlDetected += OnClipboardUrlDetected;
             _clipboardMonitor.Attach(_hwnd);
-            // 🔉 每 500ms 读一次系统音量，发现不经过 SystemSettingsManager 的改动（音量键 / 系统 OSD / 其它软件）
+            // 每 500ms 读一次系统音量，发现不经过 SystemSettingsManager 的改动（音量键 / 系统 OSD / 其它软件）
             _audioWatchTimer = new Timer(500);
             _audioWatchTimer.Elapsed += OnAudioWatchTick;
             _audioWatchTimer.Start();
@@ -556,8 +540,8 @@ namespace NotchPeninsula
             try { _media.Shutdown(); } catch { }
 
             // 9) 插件：让每个插件走一遍 Dispose + 宿主注销 + ALC 卸载。
-            //    刻意不做 GC 验证（进程随后就退出），目的只是别让插件的清理逻辑被进程终止整块吞掉。
-            //    此刻渲染时钟已停（第 1 步），所以插件卸载不会与渲染帧并发。
+            // 刻意不做 GC 验证（进程随后就退出），目的只是别让插件的清理逻辑被进程终止整块吞掉。
+            // 此刻渲染时钟已停（第 1 步），所以插件卸载不会与渲染帧并发。
             try { Plugins.PluginManager.Instance.ShutdownAll(); }
             catch (Exception ex) { Logger.Error("释放插件失败", ex); }
         }
@@ -569,8 +553,8 @@ namespace NotchPeninsula
         private static NotchWindow? _instanceForExit;
 
         /// <summary>
-        /// 当前活跃的岛体实例 —— 给 <see cref="StartFileDragOnIsland"/> 这类静态入口
-        /// 回过头调用实例方法用（拖出结束后要补一次悬停判定，见 <see cref="NotifyDragExit"/>）。
+        /// 当前活跃的岛体实例 —— 给 StartFileDragOnIsland 这类静态入口
+        /// 回过头调用实例方法用（拖出结束后要补一次悬停判定，见 NotifyDragExit）。
         /// </summary>
         private static NotchWindow? _liveInstance;
         #region 监听
@@ -602,14 +586,14 @@ namespace NotchPeninsula
         /// <summary>通知轮询（2s）。具名方法：退出时能 -= 退订。</summary>
         private void OnPollingTick(object? sender, System.Timers.ElapsedEventArgs e) => _ = _listener?.FetchLatestNotificationAsync();
 
-        // ================= 🔔 通知轮询看门狗 =================
+        // ---- 通知轮询看门狗 ----
         private long _watchdogLastCheckTicks;
         private long _watchdogLastWarnTicks;
 
         /// <summary>
         /// 轮询看门狗（挂在渲染循环上，每 ~10s 抽检一次）。
         ///
-        /// 只看一件事：**轮询还有没有在发起调用**。判据用"发起时刻"而不是"取到数据的时刻"——
+        /// 只看一件事：轮询还有没有在发起调用。判据用"发起时刻"而不是"取到数据的时刻"——
         /// 取不到数据（超时、权限失效、快照冻结）由轮询自己的诊断负责，这里专治"轮询压根没在跑"
         /// 这一类静默故障：2026-09-25 就是 DispatcherTimer 在本程序的主循环下跳几次就不动了，
         /// 而它自己的诊断日志也随之消失，从外部完全无痕。发现停摆就重启定时器并留下日志。
@@ -648,7 +632,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 🎵 在消息真正上岛时投递提示音。
+        /// 在消息真正上岛时投递提示音。
         ///
         /// 三个入口（系统通知 / HTTP 推送 / 插件提醒）共用这一个方法，保证行为一致：
         /// - 总开关「系统消息通知」关着 → 不响（HTTP 分支本身不受总开关拦截，这里补齐判定）；
@@ -744,8 +728,8 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 穿透唤醒按钮的命中判定（逻辑坐标）。
-        /// 位置算式的唯一真源在渲染侧（<see cref="Renderer.WakeButtonX"/> / <see cref="Renderer.WAKE_BTN_SIZE"/>），
-        /// 这里只补上岛体的垂直偏移。**鼠标移动（手型指针）与左键按下（唤醒）必须共用它** ——
+        /// 位置算式的唯一真源在渲染侧（Renderer.WakeButtonX / Renderer.WAKE_BTN_SIZE），
+        /// 这里只补上岛体的垂直偏移。鼠标移动（手型指针）与左键按下（唤醒）必须共用它 ——
         /// 之前两处各写一份算式，改位置时漏了一处，结果按钮移到了中心、hover 却没有小手。
         /// </summary>
         private bool HitWakeButton(int mx, int my)
@@ -801,7 +785,7 @@ namespace NotchPeninsula
             return value.Trim();
         }
 
-        // 🛠️ 开机自启注册表逻辑
+        // 开机自启注册表逻辑
         public static void ToggleAutoStart(bool enable, bool sourceIsTray = false)
         {
             // 防重入锁
@@ -835,7 +819,7 @@ namespace NotchPeninsula
             // 极速双向同步逻辑
             if (!sourceIsTray)
             {
-                // 设置面板改的 → 把自绘托盘菜单的 ✅ 对齐，
+                // 设置面板改的 → 把自绘托盘菜单的 对齐，
                 // 这样下次右键弹出（或菜单正开着）看到的就是真实状态
                 TrayMenuWindow.SyncAutoStart(enable);
             }
@@ -886,14 +870,14 @@ namespace NotchPeninsula
 
             try
             {
-                // 🔔 轮询看门狗：借用渲染循环这个最可靠的时钟（16ms 线程池定时器）去盯"通知轮询还在不在跑"。
-                //    2026-09-25 的教训就是：自检不能放在被检对象自己身上 —— DispatcherTimer 停摆后，
-                //    它自己的诊断日志也一起哑了，从外部完全看不出原因。
+                // 轮询看门狗：借用渲染循环这个最可靠的时钟（16ms 线程池定时器）去盯"通知轮询还在不在跑"。
+                // 2026-09-25 的教训就是：自检不能放在被检对象自己身上 —— DispatcherTimer 停摆后，
+                // 它自己的诊断日志也一起哑了，从外部完全看不出原因。
                 TickPollingWatchdog();
 
-                // 🧩 插件详情页状态必须最先同步：WINDOW_WIDTH / MAX_WINDOW_HEIGHT 会随详情页尺寸变化，
-                //    而下面重建底层显存缓冲的判断恰好依赖这两个值。
-                //    详情页 Measure 抛异常被熔断时，这里顺手把宿主状态收起，岛体恢复原状。
+                // 插件详情页状态必须最先同步：WINDOW_WIDTH / MAX_WINDOW_HEIGHT 会随详情页尺寸变化，
+                // 而下面重建底层显存缓冲的判断恰好依赖这两个值。
+                // 详情页 Measure 抛异常被熔断时，这里顺手把宿主状态收起，岛体恢复原状。
                 Renderer.RefreshDetailPageState();
                 if (Renderer.ConsumeDetailCloseRequest()) PluginManager.Instance.Host.CloseDetailPage();
 
@@ -924,11 +908,11 @@ namespace NotchPeninsula
                 // 判断当前 Toast 是否处于激活期
                 isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
 
-                // 📋 级别调度（消息队列，零额外分配）：系统通知 > 剪贴板链接 > 媒体控制器
+                // 级别调度（消息队列，零额外分配）：系统通知 > 剪贴板链接 > 媒体控制器
                 // 开关关闭时立即收起正在展示的链接并清空排队槽位
-                // ⚠️ 本块必须排在下面的穿透判定**之前**：穿透逻辑要读本帧的 isClipboardActive
-                //    （Toast 的 isToastActive 在更上面就已算好）来决定是否临时退出穿透（见下），
-                //    排在后面会慢一帧、且与渲染状态不同步。
+                // 本块必须排在下面的穿透判定之前：穿透逻辑要读本帧的 isClipboardActive
+                // （Toast 的 isToastActive 在更上面就已算好）来决定是否临时退出穿透（见下），
+                // 排在后面会慢一帧、且与渲染状态不同步。
                 if (!IsClipboardEnabled)
                 {
                     _clipboardUrl = null;
@@ -969,32 +953,32 @@ namespace NotchPeninsula
                         _isPassthroughAwake = false;
 
                     // 当处于睡眠状态且鼠标悬停时，目标透明度为 0f（0%），系统会自动让其完全物理穿透！
-                    // 例外：**系统主动弹出的内容展示期间临时禁用穿透** —— 剪贴板链接面板与 Toast 通知。
+                    // 例外：系统主动弹出的内容展示期间临时禁用穿透 —— 剪贴板链接面板与 Toast 通知。
                     // 二者的共同点是「弹出时机不由用户决定、且本身需要被看见和点击」：一旦悬停就变透明，
                     // 用户既看不到也点不到，靠唤醒按钮也救不回来 —— 面板只停 3s，
                     // 等你去点唤醒按钮时它已经消失了。内容一结束（点开 / 超时 / 被通知挤下）穿透自动恢复 ——
                     // 不需要任何额外状态：两个 is*Active 标志位都由本帧的调度逻辑维护。
-                    // 🖱 第三个例外：**文件正被拖着经过岛体时**（Renderer.FileDragInProgress）同样不许淡出。
-                    //    这一条比上面两条更硬：淡到全透明 = 岛体像素从 OLE 命中测试里消失，
-                    //    拖放目标当场丢失，用户手里的文件就再也放不进详情页了（拖放源那边也不会补发第二次 DragEnter）。
-                    //    标志位由 IslandDropTarget 在 DragEnter / DragLeave / Drop 维护，拖放一结束穿透自动回来。
-                    // 🕳 第四个例外：**岛体已上移隐藏时**（`_currentY < -5f`，只剩屏幕顶部那条 4px 细边）。
-                    //    此时若还按悬停淡出，用户一靠近细边它就变透明 —— 细边是唯一的唤回入口，淡掉就再也点不回来。
-                    //    保持不透明同时也消掉了「手一靠近细边它就闪一下」的观感问题。用上一帧的 _currentY
-                    //    判定即可（16ms 延迟无感），与唤回分支用的同一个闸门。
-                    // 🧩 第五个例外（用户 2026-10-04 明确）：**任一展开态存在时一律不淡出**。
-                    //    媒体面板 / 插件详情页 / 手动展开，三者都是「用户主动打开、需要持续看见并操作」的内容，
-                    //    鼠标一悬停就让它们淡到 0%，等于面板当场消失 —— 既看不见也点不到，还会因为全透明
-                    //    像素脱离 OLE 命中测试而连带影响拖放。展开态本来就不该自动收起（要收只走外部点击
-                    //    或显式操作），穿透淡出属于「自动隐藏」的一种，同一条规范覆盖。
-                    //    判据统一走 HasAnyExpanded（与 shouldHide 同源），别再各写一份三连判断。
+                    // 第三个例外：文件正被拖着经过岛体时（Renderer.FileDragInProgress）同样不许淡出。
+                    // 这一条比上面两条更硬：淡到全透明 = 岛体像素从 OLE 命中测试里消失，
+                    // 拖放目标当场丢失，用户手里的文件就再也放不进详情页了（拖放源那边也不会补发第二次 DragEnter）。
+                    // 标志位由 IslandDropTarget 在 DragEnter / DragLeave / Drop 维护，拖放一结束穿透自动回来。
+                    // 第四个例外：岛体已上移隐藏时（`_currentY < -5f`，只剩屏幕顶部那条 4px 细边）。
+                    // 此时若还按悬停淡出，用户一靠近细边它就变透明 —— 细边是唯一的唤回入口，淡掉就再也点不回来。
+                    // 保持不透明同时也消掉了「手一靠近细边它就闪一下」的观感问题。用上一帧的 _currentY
+                    // 判定即可（16ms 延迟无感），与唤回分支用的同一个闸门。
+                    // 第五个例外（用户 2026-10-04 明确）：任一展开态存在时一律不淡出。
+                    // 媒体面板 / 插件详情页 / 手动展开，三者都是「用户主动打开、需要持续看见并操作」的内容，
+                    // 鼠标一悬停就让它们淡到 0%，等于面板当场消失 —— 既看不见也点不到，还会因为全透明
+                    // 像素脱离 OLE 命中测试而连带影响拖放。展开态本来就不该自动收起（要收只走外部点击
+                    // 或显式操作），穿透淡出属于「自动隐藏」的一种，同一条规范覆盖。
+                    // 判据统一走 HasAnyExpanded（与 shouldHide 同源），别再各写一份三连判断。
                     float targetAlpha = 1.0f;
                     if (!_isPassthroughAwake && isOverNotch && _currentY >= -5f && !isClipboardActive && !isToastActive
                         && !Renderer.FileDragInProgress && !HasAnyExpanded) targetAlpha = 0.0f;
 
-                    // 🛟 兜底自动复位：拖放源被杀 / 崩溃时 DragLeave、Drop 一个都不会来，
-                    //    标志位若一直挂着，穿透淡出就永久失效（而且看不出是谁干的）。
-                    //    文件拖放全程必须按住左键，松开就说明这一轮早就结束了 —— 一个系统调用就能把它收干净。
+                    // 兜底自动复位：拖放源被杀 / 崩溃时 DragLeave、Drop 一个都不会来，
+                    // 标志位若一直挂着，穿透淡出就永久失效（而且看不出是谁干的）。
+                    // 文件拖放全程必须按住左键，松开就说明这一轮早就结束了 —— 一个系统调用就能把它收干净。
                     if (Renderer.FileDragInProgress && (Win32.GetAsyncKeyState(0x01) & 0x8000) == 0)
                         Renderer.FileDragInProgress = false;
 
@@ -1011,32 +995,32 @@ namespace NotchPeninsula
                 }
                 if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
 
-                // 🧩 展开态的收起策略：**只要鼠标离开灵动岛，展开的面板就自动折叠**。
-                //    · 触发在 WM_MOUSELEAVE（见下）：两块面板都只挂一个延迟截止时间（见 RequestPanelCollapse），
-                //      自动隐藏的「手动展开」刻意不跟，理由也写在 ClosePanelsNow / CollapseAllExpanded 上。
-                //    · 到点由下面这行统一结算（每帧一次 DateTime 比较，可忽略）。
+                // 展开态的收起策略：只要鼠标离开灵动岛，展开的面板就自动折叠。
+                // · 触发在 WM_MOUSELEAVE（见下）：两块面板都只挂一个延迟截止时间（见 RequestPanelCollapse），
+                // 自动隐藏的「手动展开」刻意不跟，理由也写在 ClosePanelsNow / CollapseAllExpanded 上。
+                // · 到点由下面这行统一结算（每帧一次 DateTime 比较，可忽略）。
                 TickPanelCollapse();
 
-                // 🧩 卸载插件时没关掉的窗口在这里逐帧重试（拖放进行中被禁用/重载的那类窗口）。
-                //    没有待办时只是一次 Count 判断，稳态零开销。
+                // 卸载插件时没关掉的窗口在这里逐帧重试（拖放进行中被禁用/重载的那类窗口）。
+                // 没有待办时只是一次 Count 判断，稳态零开销。
                 PluginManager.Instance.Host.DrainPendingWindowClose();
 
-                //    · 这里是一层兜底轮询：窗口只在鼠标进入它范围内时才收得到鼠标消息，岛外点击根本不会派发
-                //      WM_LBUTTONDOWN，且 SetCapture（拖时间轴）期间 WM_MOUSELEAVE 会被吞掉，
-                //      所以额外判断一次「左键按下 且 光标不在岛体矩形内」，命中就收起
-                //      （坐标换算与上面穿透模式那段完全同一套：减去显示器原点、减窗口 Y 偏移、再除 DPI）。
-                //    · 拖动中一律不收起 —— 拖时间轴时鼠标合法地待在岛外，此时收起会把面板从手里抽走；
-                //      松手若仍在岛外，由 WM_LBUTTONUP 补一次判定。
-                //    只在「确实有东西展开着」时才轮询（HasAnyExpanded），全无展开时这段直接跳过，稳态零开销。
-                //    · `_suppressOutsideCollapse` 也纳入轮询条件：它的解除靠下面每帧观察按键是否松开
-                //      （不能只靠 WM_LBUTTONUP —— 岛体滑回后，光标所在的那条屏幕顶边在窗口里是**透明像素**，
-                //       分层窗口的透明区域不参与命中测试，up 消息很可能根本派发不到本窗口）。
+                // · 这里是一层兜底轮询：窗口只在鼠标进入它范围内时才收得到鼠标消息，岛外点击根本不会派发
+                // WM_LBUTTONDOWN，且 SetCapture（拖时间轴）期间 WM_MOUSELEAVE 会被吞掉，
+                // 所以额外判断一次「左键按下 且 光标不在岛体矩形内」，命中就收起
+                // （坐标换算与上面穿透模式那段完全同一套：减去显示器原点、减窗口 Y 偏移、再除 DPI）。
+                // · 拖动中一律不收起 —— 拖时间轴时鼠标合法地待在岛外，此时收起会把面板从手里抽走；
+                // 松手若仍在岛外，由 WM_LBUTTONUP 补一次判定。
+                // 只在「确实有东西展开着」时才轮询（HasAnyExpanded），全无展开时这段直接跳过，稳态零开销。
+                // · `_suppressOutsideCollapse` 也纳入轮询条件：它的解除靠下面每帧观察按键是否松开
+                // （不能只靠 WM_LBUTTONUP —— 岛体滑回后，光标所在的那条屏幕顶边在窗口里是透明像素，
+                // 分层窗口的透明区域不参与命中测试，up 消息很可能根本派发不到本窗口）。
                 if (!_media.IsDragging
                     && (HasAnyExpanded || _suppressOutsideCollapse))
                 {
                     bool leftDown = (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0;
 
-                    // 🎯 这一次点击的按键已经松开 → 立刻解除抑制，用户再点岛外照常收起。
+                    // 这一次点击的按键已经松开 → 立刻解除抑制，用户再点岛外照常收起。
                     if (_suppressOutsideCollapse && !leftDown) _suppressOutsideCollapse = false;
 
                     float expLeft = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
@@ -1048,17 +1032,17 @@ namespace NotchPeninsula
                     bool isOverIsland = expX >= expLeft && expX <= expLeft + _currentWidth
                                         && expY >= expTopY && expY <= expTopY + _currentHeight;
 
-                    // 🎯 刚引发状态变化的那一次按键（还没松开）不算「岛外点击」—— 见 _suppressOutsideCollapse
-                    //    上的说明：唤醒时点的屏幕顶边坐标天然在岛体可见矩形之外；左键展开媒体面板时岛体
-                    //    会变窄，按下时还在岛内的坐标随即落到岛外。两种都必须排除，否则「点一下就被收回」。
+                    // 刚引发状态变化的那一次按键（还没松开）不算「岛外点击」—— 见 _suppressOutsideCollapse
+                    // 上的说明：唤醒时点的屏幕顶边坐标天然在岛体可见矩形之外；左键展开媒体面板时岛体
+                    // 会变窄，按下时还在岛内的坐标随即落到岛外。两种都必须排除，否则「点一下就被收回」。
                     //
-                    // 🧲 插件详情页展开期间，岛外的左键一律不管（末尾那个 !HasActiveDetailPage）：
-                    //    ① 用左键点组件展开时，用户的手还按在按键上，紧接着这几帧都会落进这个判定；
-                    //       而展开那一瞬间 WINDOW_WIDTH / _scaledWidth 正在变，换算出的 expLeft / expX 会偏，
-                    //       一旦判成「岛外点击」就把刚展开的面板收掉了 —— 肉眼就是「点一下闪一下、展不开」。
-                    //       （右键展开没这个问题：那时 leftDown 是 false，压根不进这个分支。）
-                    //    ② 正在从资源管理器往面板里拖文件的用户，鼠标本来就该待在岛外。
-                    //    收起详情页仍有两条明确路径：岛内右键、插件自己调 CloseDetailPage()。
+                    // 插件详情页展开期间，岛外的左键一律不管（末尾那个 !HasActiveDetailPage）：
+                    // ① 用左键点组件展开时，用户的手还按在按键上，紧接着这几帧都会落进这个判定；
+                    // 而展开那一瞬间 WINDOW_WIDTH / _scaledWidth 正在变，换算出的 expLeft / expX 会偏，
+                    // 一旦判成「岛外点击」就把刚展开的面板收掉了 —— 肉眼就是「点一下闪一下、展不开」。
+                    // （右键展开没这个问题：那时 leftDown 是 false，压根不进这个分支。）
+                    // ② 正在从资源管理器往面板里拖文件的用户，鼠标本来就该待在岛外。
+                    // 收起详情页仍有两条明确路径：岛内右键、插件自己调 CloseDetailPage()。
                     if (!isOverIsland && !_suppressOutsideCollapse && leftDown && !Renderer.HasActiveDetailPage)
                     {
                         CollapseAllExpanded();
@@ -1066,28 +1050,28 @@ namespace NotchPeninsula
                 }
 
 
-                // 🖥 全屏检测：节流刷新缓存（功能没开时这个方法直接返回，零系统调用）。
-                //    必须在下面读 CanAutoHideNow 之前调用，否则会用到上一帧的旧值。
+                // 全屏检测：节流刷新缓存（功能没开时这个方法直接返回，零系统调用）。
+                // 必须在下面读 CanAutoHideNow 之前调用，否则会用到上一帧的旧值。
                 TickFullscreenProbe();
 
                 // 自动隐藏 (Y轴) 逻辑更新：Toast 弹出时绝对不允许隐藏；插件详情页展开时同样不允许隐藏。
                 // 判据统一走 CanAutoHideNow —— 它是三种模式的单一真源，穿透模式不参与：
                 // 开了穿透照常自动隐藏，隐藏态的唤回入口与平时一样是屏幕顶部那条 4px 细边。
-                // 🎵 「允许隐藏」这一项统一由 CanAutoHideNow 回答（三模式单一真源）：
-                //    焦点离开时 / 暂停播放后 / 全屏时，三者互相独立、可任意组合，都是「放宽允许隐藏的条件」。
-                //    三项都在它内部合成，所以这里不再重复写。
-                // ⚠️ Toast 的 `!isToastActive` 必须原样保留 —— Toast 是「系统主动弹出且需要用户交互」的，
-                //    任何自动隐藏开关都不能把它压掉。**全屏时也一样**：用户开这个功能的初衷就是
-                //    「既能不被打扰、又不漏通知」，所以全屏下收到消息岛体照样要弹出来。
-                //    剪贴板与插件详情页同理。
-                // 🖐 `!_media.IsDragging` 是给「暂停后隐藏」配的保护：部分播放器在 seek 期间会短暂上报
-                //    Paused，若不挡住就会在用户拖进度条拖到一半时把面板抽走。
-                //    只在媒体激活时才可能为 true，所以对原有「无媒体」路径零影响。
+                // 「允许隐藏」这一项统一由 CanAutoHideNow 回答（三模式单一真源）：
+                // 焦点离开时 / 暂停播放后 / 全屏时，三者互相独立、可任意组合，都是「放宽允许隐藏的条件」。
+                // 三项都在它内部合成，所以这里不再重复写。
+                // Toast 的 `!isToastActive` 必须原样保留 —— Toast 是「系统主动弹出且需要用户交互」的，
+                // 任何自动隐藏开关都不能把它压掉。全屏时也一样：用户开这个功能的初衷就是
+                // 「既能不被打扰、又不漏通知」，所以全屏下收到消息岛体照样要弹出来。
+                // 剪贴板与插件详情页同理。
+                // `!_media.IsDragging` 是给「暂停后隐藏」配的保护：部分播放器在 seek 期间会短暂上报
+                // Paused，若不挡住就会在用户拖进度条拖到一半时把面板抽走。
+                // 只在媒体激活时才可能为 true，所以对原有「无媒体」路径零影响。
                 // 注：`_isManuallyExpanded` 依旧优先 —— 用户主动点顶部细边唤醒出来的岛体，不会被自动收走
-                //    （要收就点岛外，走 CollapseAllExpanded）。这是「手动展开优先」的既有语义，刻意保留。
-                //    全屏场景同理：真在全屏里点了顶边唤回，就说明他想看，别立刻又藏回去。
+                // （要收就点岛外，走 CollapseAllExpanded）。这是「手动展开优先」的既有语义，刻意保留。
+                // 全屏场景同理：真在全屏里点了顶边唤回，就说明他想看，别立刻又藏回去。
                 // 同理 `!Renderer.IsMediaExpanded`：用户主动点开的媒体展开面板，不该被暂停 / 全屏抽走。
-                //    鼠标离开岛体时 RequestPanelCollapse() 会把它收掉，那时才轮到自动隐藏接手。
+                // 鼠标离开岛体时 RequestPanelCollapse() 会把它收掉，那时才轮到自动隐藏接手。
                 // 上面这三项（手动展开 / 媒体面板 / 详情页）现在统一由 HasAnyExpanded 表达 —— 单一真源，
                 // 与穿透淡出共用；将来再新增展开态（例如新的独立面板）只需改它一处。
                 bool shouldHide = CanAutoHideNow && !_media.IsDragging && !HasAnyExpanded && !isToastActive
@@ -1097,20 +1081,20 @@ namespace NotchPeninsula
                 // 媒体展开面板（130 / 158）会明显撑高岛体，若仍按折叠态高度算，
                 // 就会多露出「面板高 − 折叠高」的尾巴，全屏看视频时正好挡视野。（用户 2026-09-20 反馈）
                 // 取 `Math.Min(_currentHeight, _targetHeight)` =「尺寸动画结束后岛体的高度」：
-                //   · 岛体正在**长高**（媒体刚接管）时取当前值 → 露出尾巴恒为 4px；
-                //   · 岛体正在**收缩**（收起 320×130 的媒体展开面板 / 关闭插件详情页）时取目标值，
-                //     否则会按旧的大高度算出一个很深的位移，把岛体先弹飞再落回。
+                // · 岛体正在长高（媒体刚接管）时取当前值 → 露出尾巴恒为 4px；
+                // · 岛体正在收缩（收起 320×130 的媒体展开面板 / 关闭插件详情页）时取目标值，
+                // 否则会按旧的大高度算出一个很深的位移，把岛体先弹飞再落回。
                 // 隐藏位移量还必须加上灵动岛专属的下沉高度，否则藏不进屏幕。
                 float currentTopY = 12f * _currentStyleProgress;
                 float settledHeight = Math.Min(_currentHeight, _targetHeight);
 
-                // 🌑 隐藏方式由「岛体垂直基准」（Renderer.IslandBaseY，位置自定义的唯一真源）决定：
-                //    · 基准贴顶（默认）→ 上移法：整窗顶出目标显示器上边缘、留 4px 细边，点细边唤醒（现状）
-                //    · 基准离开顶部      → 上移法会在屏幕中间留下一条 4px 岛体残影（而且岛体会从屏幕中间
-                //                          "飞"到顶部再消失），所以改用「完全隐藏」：原地整块淡出到 0% 透明
-                //                          （全透明像素会被 Windows 判定为物理穿透），唤醒入口复用岛体正中的
-                //                          唤醒按钮（与穿透睡眠态同一颗）。
-                //    两者互斥，贴顶时 FullHideAlpha 恒为 1 → 线上行为与本改动前完全一致。
+                // 隐藏方式由「岛体垂直基准」（Renderer.IslandBaseY，位置自定义的唯一真源）决定：
+                // · 基准贴顶（默认）→ 上移法：整窗顶出目标显示器上边缘、留 4px 细边，点细边唤醒（现状）
+                // · 基准离开顶部      → 上移法会在屏幕中间留下一条 4px 岛体残影（而且岛体会从屏幕中间
+                // "飞"到顶部再消失），所以改用「完全隐藏」：原地整块淡出到 0% 透明
+                // （全透明像素会被 Windows 判定为物理穿透），唤醒入口复用岛体正中的
+                // 唤醒按钮（与穿透睡眠态同一颗）。
+                // 两者互斥，贴顶时 FullHideAlpha 恒为 1 → 线上行为与本改动前完全一致。
                 bool slideOutHide = Renderer.IslandBaseY <= 0.5f;
                 float expectedTargetY = shouldHide && slideOutHide ? -((settledHeight + currentTopY - 4) * _dpiScale) : 0f;
 
@@ -1140,16 +1124,16 @@ namespace NotchPeninsula
                 }
             }
 
-                // 🌑 「完全隐藏」不透明度：只在「基准离开顶部 + 该隐藏」时淡到 0，其余情况恒为 1。
-                //    平滑节奏与穿透那套保持一致（0.18 + 归零钳制），避免小浮点让 Windows 判定不出全透明。
+                // 「完全隐藏」不透明度：只在「基准离开顶部 + 该隐藏」时淡到 0，其余情况恒为 1。
+                // 平滑节奏与穿透那套保持一致（0.18 + 归零钳制），避免小浮点让 Windows 判定不出全透明。
                 float targetFullHide = shouldHide && !slideOutHide ? 0f : 1f;
                 Renderer.FullHideAlpha += (targetFullHide - Renderer.FullHideAlpha) * 0.18f;
                 if (Renderer.FullHideAlpha < 0.01f) Renderer.FullHideAlpha = 0f;
                 if (Renderer.FullHideAlpha > 0.99f) Renderer.FullHideAlpha = 1f;
 
-                // ========================================================
+                // ----  ----
                 // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
-                // ========================================================
+                // ----  ----
                 bool currentActive = _media.IsActive;
 
                 // 状态叠化透明度计算 (0.3s 平滑过渡，将媒体展开与折叠拆分为独立状态触发叠化)
@@ -1162,17 +1146,17 @@ namespace NotchPeninsula
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
                 // 决策尺寸 (如果处于媒体模式且展开，直接锁定 320x130)
-                // 🧩 插件行独立占据岛体最右侧：非组合模式下恒定追加其预留宽度，
-                //    因此不论待机显示什么内容、媒体是否开启，插件都会稳定显示在原生内容之后。
-                // 🧩 组合模式下插件已并入「内容顺序表」与原生模块混排，宽度由 GetCompositeWidth 一并算出，
-                //    因此不再额外追加插件预留宽度；其余模式仍按整行贴在右侧预留。
-                // 🧩 插件详情页展开时：岛体尺寸完全由详情页决定（插件通过 MeasureWidth/MeasureHeight 指定），
-                //    此时忽略原生内容与插件行的预留宽度，岛体只显示详情页内容。
-                //    Toast 优先于详情页（通知到来时先显示通知，通知结束后详情页自动回来）。
+                // 插件行独立占据岛体最右侧：非组合模式下恒定追加其预留宽度，
+                // 因此不论待机显示什么内容、媒体是否开启，插件都会稳定显示在原生内容之后。
+                // 组合模式下插件已并入「内容顺序表」与原生模块混排，宽度由 GetCompositeWidth 一并算出，
+                // 因此不再额外追加插件预留宽度；其余模式仍按整行贴在右侧预留。
+                // 插件详情页展开时：岛体尺寸完全由详情页决定（插件通过 MeasureWidth/MeasureHeight 指定），
+                // 此时忽略原生内容与插件行的预留宽度，岛体只显示详情页内容。
+                // Toast 优先于详情页（通知到来时先显示通知，通知结束后详情页自动回来）。
                 float detailW = 0f, detailH = 0f;
                 bool detailOpen = !isToastActive && !isClipboardActive && Renderer.TryGetDetailPageSize(out detailW, out detailH);
 
-                // 🧩 原生内容（不含插件行）本帧需要多宽：媒体激活时，长歌词会自适应把岛体撑宽
+                // 原生内容（不含插件行）本帧需要多宽：媒体激活时，长歌词会自适应把岛体撑宽
                 float nativeWidth = currentActive
                     ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH)
                     : Renderer.STANDBY_WIDTH;
@@ -1184,31 +1168,31 @@ namespace NotchPeninsula
                             ? Renderer.MeasureCurrentLyricWidth(_media.Title)
                             : Renderer.MeasureCurrentLyricWidth(_media.Artist) + Renderer.MeasureCurrentLyricWidth(_media.Title) + 15f); // 15f 为 " - " 符号的预估宽度补偿
 
-                    // 🎵 译文第二行：文字区宽度要容得下更宽的那一行，否则长译文会被遮罩截掉半句
+                    // 译文第二行：文字区宽度要容得下更宽的那一行，否则长译文会被遮罩截掉半句
                     if (Renderer.IsTranslationLineVisible(_media))
                         textWidth = Math.Max(textWidth, Renderer.MeasureLyricTranslationWidth(_media.CurrentLyricTranslation));
 
-                    // 🎵 文本区长度**不再单独封顶**（2026-09-20 用户要求「媒体控制器的长度放开，多长都无所谓」）。
-                    //    原先这里夹了一个 MEDIA_TEXT_MAX_WIDTH（480 ≈ 27 个汉字），长歌词先撞到它 →
-                    //    超出部分被文字渐隐遮罩截断，而且原生内容宽度被钉在 595，
-                    //    插件行预算 = 800 − 595 = 205 被吃光 → 装不下的插件**整帧不显示**
-                    //    （用户反馈：「多的插件在灵动岛上就直接不显示了」「这个长度只显示这个插件，
-                    //      另一个长度只显示另一个插件」）。
-                    //    现在只受下面的 MAX_ISLAND_WIDTH（已放宽到 1920）约束，真实歌词行远达不到。
+                    // 文本区长度不再单独封顶（2026-09-20 用户要求「媒体控制器的长度放开，多长都无所谓」）。
+                    // 原先这里夹了一个 MEDIA_TEXT_MAX_WIDTH（480 ≈ 27 个汉字），长歌词先撞到它 →
+                    // 超出部分被文字渐隐遮罩截断，而且原生内容宽度被钉在 595，
+                    // 插件行预算 = 800 − 595 = 205 被吃光 → 装不下的插件整帧不显示
+                    // （用户反馈：「多的插件在灵动岛上就直接不显示了」「这个长度只显示这个插件，
+                    // 另一个长度只显示另一个插件」）。
+                    // 现在只受下面的 MAX_ISLAND_WIDTH（已放宽到 1920）约束，真实歌词行远达不到。
                     nativeWidth = Math.Max(nativeWidth, textWidth + 115f);
                 }
                 nativeWidth = Math.Min(nativeWidth, Renderer.MAX_ISLAND_WIDTH); // 岛体总长上限（1920），窄屏也不会被撑破
 
-                // 🧩 插件行取舍：按「组件声明的所需宽度能否完整落进剩余空间」判定。
-                //    每个组件通过 IWidget.MeasureWidth 声明「完整显示我的内容需要多宽」，
-                //    宿主用「岛体总长上限 − 原生内容本帧占用宽度」得出插件行预算，逐个贪心放行：
-                //    装得下的组件完整显示，装不下的组件本帧整体不显示 —— 宿主绝不替它压缩或截断，
-                //    所以不会出现「文字被省略号砍掉半截」这种显示不全的情况。
-                //    原生内容（尤其是开着媒体控制 + 长歌词自适应）一样照常显示，岛体也不会被撑过上限。
-                //    例外：媒体控制面板展开（IsMediaExpanded）时插件行整体不显示 —— 那是块独立面板，
-                //    插件贴上去只会把面板和岛体一起撑宽，见下面的分支。
-                // 🎵 该例外对**组合模式同样生效**（2026-09-25）：组合模式现在也能展开媒体面板，
-                //    展开期间岛体只剩面板，插件行与其它原生模块本帧都不参与。
+                // 插件行取舍：按「组件声明的所需宽度能否完整落进剩余空间」判定。
+                // 每个组件通过 IWidget.MeasureWidth 声明「完整显示我的内容需要多宽」，
+                // 宿主用「岛体总长上限 − 原生内容本帧占用宽度」得出插件行预算，逐个贪心放行：
+                // 装得下的组件完整显示，装不下的组件本帧整体不显示 —— 宿主绝不替它压缩或截断，
+                // 所以不会出现「文字被省略号砍掉半截」这种显示不全的情况。
+                // 原生内容（尤其是开着媒体控制 + 长歌词自适应）一样照常显示，岛体也不会被撑过上限。
+                // 例外：媒体控制面板展开（IsMediaExpanded）时插件行整体不显示 —— 那是块独立面板，
+                // 插件贴上去只会把面板和岛体一起撑宽，见下面的分支。
+                // 该例外对组合模式同样生效（2026-09-25）：组合模式现在也能展开媒体面板，
+                // 展开期间岛体只剩面板，插件行与其它原生模块本帧都不参与。
                 bool mediaPanel = currentActive && Renderer.IsMediaExpanded;
 
                 float pluginReserve = 0f;
@@ -1247,14 +1231,14 @@ namespace NotchPeninsula
                 }
                 else if (isClipboardActive)
                 {
-                    // 📋 剪贴板链接面板：沿用媒体控制器同款尺寸（高度一致，宽度按链接长度自适应并封顶）
+                    // 剪贴板链接面板：沿用媒体控制器同款尺寸（高度一致，宽度按链接长度自适应并封顶）
                     expectedTargetWidth = Renderer.GetClipboardAutoWidth(_clipboardUrl!);
                     expectedTargetHeight = Renderer.MEDIA_HEIGHT;
                 }
                 else
                 {
-                    // 🎵 媒体展开面板：宽度锁定面板尺寸（nativeWidth 此时恒为 320、pluginReserve 为 0），
-                    //    组合模式与非组合模式同一条算式 —— 不再因为「组合模式」而去累加模块宽度。
+                    // 媒体展开面板：宽度锁定面板尺寸（nativeWidth 此时恒为 320、pluginReserve 为 0），
+                    // 组合模式与非组合模式同一条算式 —— 不再因为「组合模式」而去累加模块宽度。
                     // 组合模式走渲染器里的像素级精确动态宽度计算，拒绝任何多余空白与错位；
                     // 其余模式 = 原生内容宽度 + 插件行预留（插件行放不下时预留已归零）
                     expectedTargetWidth = Renderer.CompositeModeEnabled && !mediaPanel
@@ -1268,12 +1252,12 @@ namespace NotchPeninsula
                         : Renderer.MEDIA_HEIGHT;
                 }
 
-                // 🧩 注意：**不要**再把目标宽度喂给渲染侧去「按动画进度缩放插件行预留」。
-                //    那个做法（曾用 Renderer.IslandTargetWidth + GetScaledPluginReserve）会在
-                //    媒体控制器长度变化时把预留瞬间缩小：换歌词 / 换标题 → 目标宽度变大 →
-                //    缩放系数从 1 掉下来 → 插件行与原生内容边界整体挪一下再挪回去，
-                //    表现就是「插件闪现回原位又闪回来」。用户 2026-09-20 反馈，已整套删除。
-                //    现在预留一律用未缩放值，边界只跟着岛体边缘平滑移动。
+                // 注意：不要再把目标宽度喂给渲染侧去「按动画进度缩放插件行预留」。
+                // 那个做法（曾用 Renderer.IslandTargetWidth + GetScaledPluginReserve）会在
+                // 媒体控制器长度变化时把预留瞬间缩小：换歌词 / 换标题 → 目标宽度变大 →
+                // 缩放系数从 1 掉下来 → 插件行与原生内容边界整体挪一下再挪回去，
+                // 表现就是「插件闪现回原位又闪回来」。用户 2026-09-20 反馈，已整套删除。
+                // 现在预留一律用未缩放值，边界只跟着岛体边缘平滑移动。
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
                 float expectedStyleTarget = Renderer.NotchStyle;
@@ -1333,7 +1317,7 @@ namespace NotchPeninsula
                 }
             }
 
-            // ================= 3. 其它效果 (淡入/音频柱) =================
+            // ---- 3. 其它效果 (淡入/音频柱) ----
             double uptime = (DateTime.Now - _appStartTime).TotalSeconds;
             float startupProgress = 1f;
             if (uptime < 0.6)
@@ -1364,21 +1348,21 @@ namespace NotchPeninsula
                 }
             }
 
-            // ================= 4. 渲染调用更新 =================
+            // ---- 4. 渲染调用更新 ----
             var canvas = _renderSurface!.Canvas;
             canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
 
             // 存档矩阵状态，避免缩放无限叠加
             //
-            // ⚠️ Save / Restore 必须自己兜住异常（2026-10-02 修）：`Renderer.Draw` 内部还有三级
-            //    Save（含一次 `SaveLayer` 整窗离屏层 ≈2MB，高 DPI 下更大），全靠它自己的出口配平。
-            //    一旦某个媒体属性抛异常（`Thumbnail` 被并发 Dispose 后访问、COM 对象已断开……）穿过
-            //    Draw 冒到这里，**本帧的 save 就永久留在画布栈上**：离屏层被栈钉住不释放，
-            //    渲染循环是每 16ms 一次 —— 每帧漏一层就是每秒几十 MB，几分钟内就能把内存吃光。
+            // Save / Restore 必须自己兜住异常（2026-10-02 修）：`Renderer.Draw` 内部还有三级
+            // Save（含一次 `SaveLayer` 整窗离屏层 ≈2MB，高 DPI 下更大），全靠它自己的出口配平。
+            // 一旦某个媒体属性抛异常（`Thumbnail` 被并发 Dispose 后访问、COM 对象已断开……）穿过
+            // Draw 冒到这里，本帧的 save 就永久留在画布栈上：离屏层被栈钉住不释放，
+            // 渲染循环是每 16ms 一次 —— 每帧漏一层就是每秒几十 MB，几分钟内就能把内存吃光。
             //
-            //    关键是"回滚到基线"而不是"Restore 一次"：异常可能发生在 Draw 内部的第 N 级 save 之后，
-            //    弹一层只能退掉最外那层，里面几层照样留着。所以记下进入 Draw 之前的 SaveCount
-            //    （刚做完上面那次 Save，即基线），catch 里用 RestoreToCount 一次性退回基线。
+            // 关键是"回滚到基线"而不是"Restore 一次"：异常可能发生在 Draw 内部的第 N 级 save 之后，
+            // 弹一层只能退掉最外那层，里面几层照样留着。所以记下进入 Draw 之前的 SaveCount
+            // （刚做完上面那次 Save，即基线），catch 里用 RestoreToCount 一次性退回基线。
             canvas.Save();
             int saveBaseline = canvas.SaveCount;
             try
@@ -1430,10 +1414,10 @@ namespace NotchPeninsula
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
             if (screenDc == IntPtr.Zero) return;
 
-            // ⚠️ 从取到 DC 到归还之间**不许有裸异常路径**（2026-10-02 修）：
-            //    中间那句 UpdateMonitorBounds() 会走 Screen.AllScreens（多屏热插拔时可能抛），
-            //    一旦它抛出，这一帧的 screen DC 就再也回不去 —— 每帧一次，句柄很快见底。
-            //    包成 try/finally 后，无论中间发生什么，DC 一定归还。
+            // 从取到 DC 到归还之间不许有裸异常路径（2026-10-02 修）：
+            // 中间那句 UpdateMonitorBounds() 会走 Screen.AllScreens（多屏热插拔时可能抛），
+            // 一旦它抛出，这一帧的 screen DC 就再也回不去 —— 每帧一次，句柄很快见底。
+            // 包成 try/finally 后，无论中间发生什么，DC 一定归还。
             try
             {
                 var ptSrc = new Win32.POINT(0, 0);
@@ -1474,14 +1458,12 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 拖放离开岛体（或拖放被取消）时由 <see cref="IslandDropTarget"/> 调用。
+        /// 拖放离开岛体（或拖放被取消）时由 IslandDropTarget 调用。
         ///
-        /// <para>
-        /// 为什么需要它：拖放期间鼠标被 OLE 的拖放循环接管，窗口<b>收不到 WM_MOUSELEAVE</b>，
+        /// 为什么需要它：拖放期间鼠标被 OLE 的拖放循环接管，窗口收不到 WM_MOUSELEAVE，
         /// 于是「鼠标离开岛体 → 挂延迟折叠」这条常规路径整个被跳过了。
         /// 不在这里补一刀，详情页就会一直停在「正在拖入」的样子 —— 高亮不灭、也不走折叠计时，
         /// 看起来就是「卡在拖入」。
-        /// </para>
         /// </summary>
         internal void NotifyDragExit()
         {
@@ -1494,21 +1476,21 @@ namespace NotchPeninsula
 
             RequestPanelCollapse();
 
-            // ⚠️ 到这里**刻意不去动 _isHovered**，原因很关键：
-            //    _isHovered 只由 WM_MOUSEMOVE 的「首次进入」分支（if (!_isTrackingMouse)）置 true、
-            //    由 WM_MOUSELEAVE 置 false。拖放期间这两个消息都被 OLE 吞掉了，所以它现在可能不准。
-            //    而拖放结束时 _isTrackingMouse 已经是 true —— 一旦在这里把它置成 false，
-            //    鼠标哪怕还停在岛上，也再没有任何消息会把它恢复（首次进入分支不会再走）。
-            //    后果是 WM_LBUTTONDOWN 里 `if (_isHovered && HasActiveDetailPage)` 这道门永远过不去，
-            //    详情页彻底收不到左键 —— 表现就是「拖不动、也点不动」。
-            //    悬停标志交给系统消息自己维护，这里只负责面板折叠时序。
+            // 到这里刻意不去动 _isHovered，原因很关键：
+            // _isHovered 只由 WM_MOUSEMOVE 的「首次进入」分支（if (!_isTrackingMouse)）置 true、
+            // 由 WM_MOUSELEAVE 置 false。拖放期间这两个消息都被 OLE 吞掉了，所以它现在可能不准。
+            // 而拖放结束时 _isTrackingMouse 已经是 true —— 一旦在这里把它置成 false，
+            // 鼠标哪怕还停在岛上，也再没有任何消息会把它恢复（首次进入分支不会再走）。
+            // 后果是 WM_LBUTTONDOWN 里 `if (_isHovered && HasActiveDetailPage)` 这道门永远过不去，
+            // 详情页彻底收不到左键 —— 表现就是「拖不动、也点不动」。
+            // 悬停标志交给系统消息自己维护，这里只负责面板折叠时序。
 
-            // ✅ 但要做这件事：把 TrackMouseEvent 的订阅强行作废。
-            //    系统对 WM_MOUSELEAVE 是「只发一次、发完即失效」的，而拖放期间那次它发给了被 OLE
-            //    接管的消息循环、我们根本没收到。订阅已经消耗掉、_isTrackingMouse 却还停在 true，
-            //    于是「鼠标离开」永远不会再被检测到，_isHovered 也会一直挂着。
-            //    置 false 之后，下一次 WM_MOUSEMOVE 会重新走「首次进入」分支，把状态拉回正轨。
-            //    （WM_MOUSEMOVE 按岛体可见形状派发，分层窗口的透明像素不吃消息，所以这一支是可信的。）
+            // 但要做这件事：把 TrackMouseEvent 的订阅强行作废。
+            // 系统对 WM_MOUSELEAVE 是「只发一次、发完即失效」的，而拖放期间那次它发给了被 OLE
+            // 接管的消息循环、我们根本没收到。订阅已经消耗掉、_isTrackingMouse 却还停在 true，
+            // 于是「鼠标离开」永远不会再被检测到，_isHovered 也会一直挂着。
+            // 置 false 之后，下一次 WM_MOUSEMOVE 会重新走「首次进入」分支，把状态拉回正轨。
+            // （WM_MOUSEMOVE 按岛体可见形状派发，分层窗口的透明像素不吃消息，所以这一支是可信的。）
             _isTrackingMouse = false;
         }
 
@@ -1528,7 +1510,7 @@ namespace NotchPeninsula
             return x >= left && x <= left + _currentWidth && y >= topY && y <= topY + _currentHeight;
         }
 
-        // ================= 🖱 岛体拖放（右键展开的详情页拖入 / 拖出） =================
+        // ---- 岛体拖放（右键展开的详情页拖入 / 拖出） ----
         // 岛体是个纯自绘的分层窗口，原本只处理鼠标与键盘消息，所以详情页收不到任何拖入事件。
         // 这里给它挂一个 OLE 的 IDropTarget，把文件拖放转发到「当前展开的详情页」。
         // 全套逻辑都在岛体之外（IslandDropTarget 判定落点、Renderer 分发），本类只负责登记与坐标换算。
@@ -1662,15 +1644,15 @@ namespace NotchPeninsula
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {            switch (msg)
             {
-                // 📋 剪贴板内容变化（事件驱动，仅在复制/剪切导致剪贴板内容变化时触发一次读取；开关关闭直接忽略）
+                // 剪贴板内容变化（事件驱动，仅在复制/剪切导致剪贴板内容变化时触发一次读取；开关关闭直接忽略）
                 case Win32.WM_CLIPBOARDUPDATE:
                     if (IsClipboardEnabled) _clipboardMonitor.HandleClipboardUpdate();
                     return (IntPtr)0;
 
                 case Win32.WM_DESTROY:
-                    // 📋 窗口销毁前反注册剪贴板监听，避免系统继续向已销毁窗口投递消息
+                    // 窗口销毁前反注册剪贴板监听，避免系统继续向已销毁窗口投递消息
                     _clipboardMonitor.Detach();
-                    // 🖱 同理：OLE 那边还捏着一个指向本窗口的拖入目标，销毁前必须摘掉
+                    // 同理：OLE 那边还捏着一个指向本窗口的拖入目标，销毁前必须摘掉
                     RevokeIslandDropTarget();
                     break;
 
@@ -1690,23 +1672,23 @@ namespace NotchPeninsula
                             Win32.TrackMouseEvent(ref tme);
                             _isTrackingMouse = true;
                             _isHovered = true;
-                            // 🧩 鼠标回到岛上 → 取消两块展开面板挂起的延迟折叠（还没到期就当没发生过）
+                            // 鼠标回到岛上 → 取消两块展开面板挂起的延迟折叠（还没到期就当没发生过）
                             CancelPanelCollapse();
                         }
 
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
                         int mx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int my = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                        // 🧩 记录鼠标逻辑坐标，供插件组件的悬停判定使用
+                        // 记录鼠标逻辑坐标，供插件组件的悬停判定使用
                         Renderer.UpdatePluginMouse(mx, my);
                         float hitTopY = 12f * _currentStyleProgress;
 
-                        // 🖱 详情页展开时把鼠标移动也转给它 —— 插件靠「按下之后位移超过阈值」来发起拖出，
-                        //    没有这条就只能在按下那一瞬间进拖放循环，普通单击会被当成拖拽。
+                        // 详情页展开时把鼠标移动也转给它 —— 插件靠「按下之后位移超过阈值」来发起拖出，
+                        // 没有这条就只能在按下那一瞬间进拖放循环，普通单击会被当成拖拽。
                         if (Renderer.HasActiveDetailPage) Renderer.DispatchDetailPageMouseMove(mx, my - hitTopY);
 
                         // 1. 最高优先级拦截：唤醒按钮热区（位置真源在 Renderer.WakeButtonX，与渲染共用）
-                        //    两种「整块不可见」的形态都要短路：穿透睡眠态、完全隐藏态（岛体基准离开顶部）
+                        // 两种「整块不可见」的形态都要短路：穿透睡眠态、完全隐藏态（岛体基准离开顶部）
                         if ((Renderer.PassthroughModeEnabled && !_isPassthroughAwake) || Renderer.FullHideAlpha < 0.99f)
                         {
                             if (HitWakeButton(mx, my))
@@ -1721,15 +1703,15 @@ namespace NotchPeninsula
                             }
                         }
 
-                        // 🧩 插件详情页展开时跳过原生悬停判定：详情页内容与交互完全由插件自己负责
+                        // 插件详情页展开时跳过原生悬停判定：详情页内容与交互完全由插件自己负责
                         if (Renderer.HasActiveDetailPage)
                         {
                             _isCursorOverIcon = false;
                             break;
                         }
 
-                        // 🎵 时间轴拖动进行中：最优先接管（此时已 SetCapture，鼠标可能早已移出岛体）。
-                        //    只改本地缓存，不打任何 COM / IO —— 这是频繁拖动不卡顿的关键。
+                        // 时间轴拖动进行中：最优先接管（此时已 SetCapture，鼠标可能早已移出岛体）。
+                        // 只改本地缓存，不打任何 COM / IO —— 这是频繁拖动不卡顿的关键。
                         if (_media.IsDragging)
                         {
                             _media.DragTo(Renderer.TimelineRatio(mx));
@@ -1739,7 +1721,7 @@ namespace NotchPeninsula
 
                         if (_isHovered && isClipboardActive)
                         {
-                            // 📋 剪贴板面板：仅「打开」按钮范围显示手型
+                            // 剪贴板面板：仅「打开」按钮范围显示手型
                             _isCursorOverIcon = Renderer.HitClipboardOpen(mx, my - hitTopY);
                         }
                         else if (_isHovered && _currentToast != null)
@@ -1750,30 +1732,30 @@ namespace NotchPeninsula
                         {
                             if (Renderer.IsMediaExpanded)
                             {
-                                // 🎯 悬停与点击共用 Renderer.HitExpandedButton 一套几何：
-                                //    高亮圈、手型指针、可点范围三者完全重合，不再出现「亮着却点不动」。
+                                // 悬停与点击共用 Renderer.HitExpandedButton 一套几何：
+                                // 高亮圈、手型指针、可点范围三者完全重合，不再出现「亮着却点不动」。
                                 int hoveredBtn = Renderer.HitExpandedButton(mx, my - hitTopY, _currentHeight);
                                 Renderer.HoveredExpandedButton = hoveredBtn;
-                                // 🎵 悬停到时间轴上也要切小手（y 需扣掉岛体下沉偏移，与 Draw 共用同一套坐标）
+                                // 悬停到时间轴上也要切小手（y 需扣掉岛体下沉偏移，与 Draw 共用同一套坐标）
                                 _isCursorOverIcon = hoveredBtn != -1 || Renderer.HitTimeline(mx, my - hitTopY);
                             }
                             else
                             {
                                 if (Renderer.MediaExpandByLeftClick)
                                 {
-                                    // 🖱 展开入口是左键单击（「双击封面跳转应用」关掉，左键空闲）：
-                                    //    媒体模块整块就是「点下去会展开」的热区 → 给小手。
-                                    //    判据与 WM_LBUTTONDOWN 的展开分支同源（HitMediaZone + 高度范围），
-                                    //    组合模式下用渲染时登记的真实区间，点时钟 / 硬件不会误判。
+                                    // 展开入口是左键单击（「双击封面跳转应用」关掉，左键空闲）：
+                                    // 媒体模块整块就是「点下去会展开」的热区 → 给小手。
+                                    // 判据与 WM_LBUTTONDOWN 的展开分支同源（HitMediaZone + 高度范围），
+                                    // 组合模式下用渲染时登记的真实区间，点时钟 / 硬件不会误判。
                                     _isCursorOverIcon = Renderer.HitMediaZone(mx)
                                         && my >= hitTopY && my <= hitTopY + _currentHeight;
                                 }
                                 else if (Renderer.MediaExpandByRightClick)
                                 {
-                                    // 🖱 展开入口是右键（「双击封面跳转应用」开着，左键留给双击跳转）：
-                                    //    折叠态左键什么也不做，所以不给小手 —— 手型是「点下去有反应」的承诺。
-                                    //    悬停高亮的播放控件本来也只在直接交互模式下画（见 Renderer.MediaWidget），
-                                    //    两种口径在这里保持一致。
+                                    // 展开入口是右键（「双击封面跳转应用」开着，左键留给双击跳转）：
+                                    // 折叠态左键什么也不做，所以不给小手 —— 手型是「点下去有反应」的承诺。
+                                    // 悬停高亮的播放控件本来也只在直接交互模式下画（见 Renderer.MediaWidget），
+                                    // 两种口径在这里保持一致。
                                     _isCursorOverIcon = false;
                                 }
                                 else
@@ -1793,24 +1775,24 @@ namespace NotchPeninsula
                     }
 
                 case Win32.WM_LBUTTONUP:
-                    // 🎯 唤醒那次点击到此结束：解除岛外收起的抑制，之后用户再点岛外照常收起。
-                    //    必须放在最前面 —— 上面拖动分支会 return，别让标记挂在拖动路径上漏掉。
+                    // 唤醒那次点击到此结束：解除岛外收起的抑制，之后用户再点岛外照常收起。
+                    // 必须放在最前面 —— 上面拖动分支会 return，别让标记挂在拖动路径上漏掉。
                     _suppressOutsideCollapse = false;
-                    // 🖱 详情页展开时把「抬起」也转给它（按住拖出的收尾全靠这条）。同样放在最前面，
-                    //    免得被下面媒体拖动分支的 return 漏掉。
+                    // 详情页展开时把「抬起」也转给它（按住拖出的收尾全靠这条）。同样放在最前面，
+                    // 免得被下面媒体拖动分支的 return 漏掉。
                     if (Renderer.HasActiveDetailPage)
                     {
                         int ux = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int uy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         Renderer.DispatchDetailPageMouseUp(ux, uy - 12f * _currentStyleProgress);
                     }
-                    // 🎵 松手：解除状态锁并把落点提交给播放器（拖动期间攒下的所有改动只在这一刻提交一次）
+                    // 松手：解除状态锁并把落点提交给播放器（拖动期间攒下的所有改动只在这一刻提交一次）
                     if (_media.IsDragging)
                     {
                         _media.EndDrag();
                         Win32.ReleaseCapture();
-                        // 🧩 拖到岛外松手：拖动期间的 WM_MOUSELEAVE 被上面「拖动中不收起」的分支吃掉了，
-                        //    松手后系统不会再来第二次，这里补一次判定，免得面板挂在岛外一直不收。
+                        // 拖到岛外松手：拖动期间的 WM_MOUSELEAVE 被上面「拖动中不收起」的分支吃掉了，
+                        // 松手后系统不会再来第二次，这里补一次判定，免得面板挂在岛外一直不收。
                         if (!_isHovered) RequestPanelCollapse();
                         return (IntPtr)0;
                     }
@@ -1822,48 +1804,48 @@ namespace NotchPeninsula
                         _isHovered = false;
                         _isCursorOverIcon = false;
                         Renderer.HoveredExpandedButton = -1;
-                        // 🧩 鼠标离开灵动岛，清空插件组件悬停状态
+                        // 鼠标离开灵动岛，清空插件组件悬停状态
                         Renderer.UpdatePluginMouse(-1f, -1f);
-                        // 🎵 拖动中（已 SetCapture）：不收起岛体、也不解除状态锁，松手统一交给 WM_LBUTTONUP。
-                        //    若消息丢失导致左键其实早已抬起，这里兜底解锁，避免进度条永久卡在拖动态。
+                        // 拖动中（已 SetCapture）：不收起岛体、也不解除状态锁，松手统一交给 WM_LBUTTONUP。
+                        // 若消息丢失导致左键其实早已抬起，这里兜底解锁，避免进度条永久卡在拖动态。
                         if (_media.IsDragging)
                         {
                             if ((Win32.GetAsyncKeyState(0x01) & 0x8000) != 0) break;
                             _media.EndDrag();
                             Win32.ReleaseCapture();
                         }
-                        // 🖱 详情页展开时也通知一次「鼠标离开」：按下之后把鼠标拖出岛体再松手，
-                        //    WM_LBUTTONUP 不会来，详情页只能靠这条复位「按住」状态。
+                        // 详情页展开时也通知一次「鼠标离开」：按下之后把鼠标拖出岛体再松手，
+                        // WM_LBUTTONUP 不会来，详情页只能靠这条复位「按住」状态。
                         if (Renderer.HasActiveDetailPage) Renderer.DispatchDetailPageMouseLeave();
 
-                        // 🧩 鼠标离开灵动岛 → **展开的面板一律自动折叠**（媒体面板与插件详情页同一条管线，见 RequestPanelCollapse）。
-                        //    WM_MOUSELEAVE 由系统按「岛体可见形状」派发（分层窗口的透明像素不吃鼠标消息），
-                        //    所以这里判定等价于「鼠标真的离开了灵动岛」，不用轮询。
-                        //    注意：时间轴拖动中已在上面的分支里 break 掉，不会误伤正在拖动的面板。
+                        // 鼠标离开灵动岛 → 展开的面板一律自动折叠（媒体面板与插件详情页同一条管线，见 RequestPanelCollapse）。
+                        // WM_MOUSELEAVE 由系统按「岛体可见形状」派发（分层窗口的透明像素不吃鼠标消息），
+                        // 所以这里判定等价于「鼠标真的离开了灵动岛」，不用轮询。
+                        // 注意：时间轴拖动中已在上面的分支里 break 掉，不会误伤正在拖动的面板。
                         RequestPanelCollapse();
                         break;
                     }
 
                 case Win32.WM_LBUTTONDBLCLK:
                     {
-                        // 🖱 双击封面（折叠态是媒体模块左半边那一格、展开态是那块封面，两种形态同一条判据）
-                        //    → 跳回正在放媒体的那个应用。
+                        // 双击封面（折叠态是媒体模块左半边那一格、展开态是那块封面，两种形态同一条判据）
+                        // → 跳回正在放媒体的那个应用。
                         //
-                        // 与折叠态单击的关系：跳转**开着**时折叠态左键单击什么都不做（那时展开入口是右键，
+                        // 与折叠态单击的关系：跳转开着时折叠态左键单击什么都不做（那时展开入口是右键，
                         // 左键只负责双击跳转），所以不存在「第二下被展开吃掉」的问题，也不需要分辨单双击 ——
                         // 一次干净的双击直接跳转。
-                        // 跳转**关掉**时这个分支整体不消费（launchEnabled = false）：那时折叠态左键单击
+                        // 跳转关掉时这个分支整体不消费（launchEnabled = false）：那时折叠态左键单击
                         // 是展开入口（见 WM_LBUTTONDOWN），双击退化成两次普通单击 —— 第一次已经展开面板，
                         // 第二下落在展开面板上同样什么都不做，不会有意外的副作用。
                         // 落在不合法的地方（标题 / 歌词 / 频谱 / 时间轴 / 播放按钮 / 通知 / 剪贴板接管期间）
-                        // 就**完全不消费**，消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
+                        // 就完全不消费，消息继续往下走，双击退化成两次普通单击，不引入任何新行为。
                         //
-                        // ⚠️ 折叠态左右两半的归属（与 HitMediaLaunchZone 同口径）：
-                        //    · **左半边**（媒体模块左半，**整条高度都算**，不是只有缩略图那一小块）：双击 → 跳转；
-                        //    · **右半边**（频谱那一带）：双击热区压根不覆盖，永远只走原有交互
-                        //      （直接交互模式下是悬停显示播放控件；展开交互模式下看跳转开关：
-                        //        开着 → 右键展开、左键不做事；关掉 → 左键单击展开）；
-                        //    · 展开态：封面那一格双击 → 跳转。
+                        // 折叠态左右两半的归属（与 HitMediaLaunchZone 同口径）：
+                        // · 左半边（媒体模块左半，整条高度都算，不是只有缩略图那一小块）：双击 → 跳转；
+                        // · 右半边（频谱那一带）：双击热区压根不覆盖，永远只走原有交互
+                        // （直接交互模式下是悬停显示播放控件；展开交互模式下看跳转开关：
+                        // 开着 → 右键展开、左键不做事；关掉 → 左键单击展开）；
+                        // · 展开态：封面那一格双击 → 跳转。
                         int dx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int dy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
 
@@ -1911,9 +1893,9 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
-                        // 🌑 完全隐藏态（岛体基准离开顶部）：点岛体正中的唤醒按钮唤回，与穿透睡眠态同一条路径。
-                        //     复用「手动展开」标记锁住显示 —— shouldHide 本来就排除 _isManuallyExpanded，
-                        //     所以岛体立刻淡回可见；之后点岛外由既有的兜底轮询收回（无需新状态位）。
+                        // 完全隐藏态（岛体基准离开顶部）：点岛体正中的唤醒按钮唤回，与穿透睡眠态同一条路径。
+                        // 复用「手动展开」标记锁住显示 —— shouldHide 本来就排除 _isManuallyExpanded，
+                        // 所以岛体立刻淡回可见；之后点岛外由既有的兜底轮询收回（无需新状态位）。
                         if (Renderer.FullHideAlpha < 0.99f && HitWakeButton(cx, cy))
                         {
                             _isManuallyExpanded = true;
@@ -1923,33 +1905,33 @@ namespace NotchPeninsula
                         RaiseWindowClicked(cx, cy, "main-window");
 
                         // 「点击已隐藏的岛体把它唤回来」。
-                        // ⚠️ 判据必须与 shouldHide 同源，一律读 CanAutoHideNow：
-                        //    它已经含非穿透模式判定（刚开启穿透时岛体可能还在回滑动画里、_currentY 仍 < -5，
-                        //    此时点击不该被当成「唤醒」而莫名锁上手动展开），
-                        //    也含「暂停后隐藏」与「全屏时隐藏」两种放宽模式 —— 写死 `!_media.IsActive`
-                        //    会导致那两种模式下「藏得下去、点不回来」。
-                        //    `_currentY < -5f` 是「确实已经藏起来了」的兜底闸门。
+                        // 判据必须与 shouldHide 同源，一律读 CanAutoHideNow：
+                        // 它已经含非穿透模式判定（刚开启穿透时岛体可能还在回滑动画里、_currentY 仍 < -5，
+                        // 此时点击不该被当成「唤醒」而莫名锁上手动展开），
+                        // 也含「暂停后隐藏」与「全屏时隐藏」两种放宽模式 —— 写死 `!_media.IsActive`
+                        // 会导致那两种模式下「藏得下去、点不回来」。
+                        // `_currentY < -5f` 是「确实已经藏起来了」的兜底闸门。
                         if (CanAutoHideNow && _currentY < -5f)
                         {
                             _isManuallyExpanded = true;
-                            // 🎯 屏蔽掉「本次按键」引发的岛外点击收起判定。用户点的是屏幕顶边（y≈0），
-                            //    而岛体下沉后可见区从 y=12 起，所以这次点击坐标天然在岛体之外；
-                            //    不屏蔽的话岛刚滑回来就会被上面那段兜底轮询收走 —— 「抽一下又回去」。
+                            // 屏蔽掉「本次按键」引发的岛外点击收起判定。用户点的是屏幕顶边（y≈0），
+                            // 而岛体下沉后可见区从 y=12 起，所以这次点击坐标天然在岛体之外；
+                            // 不屏蔽的话岛刚滑回来就会被上面那段兜底轮询收走 —— 「抽一下又回去」。
                             _suppressOutsideCollapse = true;
                             return (IntPtr)0;
                         }
 
-                        // 📋 剪贴板链接面板：命中右侧「打开」按钮 → 默认浏览器打开链接
+                        // 剪贴板链接面板：命中右侧「打开」按钮 → 默认浏览器打开链接
                         if (isClipboardActive && Renderer.HitClipboardOpen(cx, cy - hitTopY))
                         {
                             OpenClipboardUrl();
                             return (IntPtr)0;
                         }
 
-                        // 🧩 插件详情页展开时：岛内左键优先交给详情页。
-                        //    先走新的「鼠标事件」通道（插件靠按下 + 移动的位移来发起拖出），
-                        //    再走老的 HitTest / OnAction（详情页的 HitTest 返回 None 时会自然跳过）。
-                        //    即使两边都没命中也消费掉这次点击，避免误触到底层原生媒体按钮。
+                        // 插件详情页展开时：岛内左键优先交给详情页。
+                        // 先走新的「鼠标事件」通道（插件靠按下 + 移动的位移来发起拖出），
+                        // 再走老的 HitTest / OnAction（详情页的 HitTest 返回 None 时会自然跳过）。
+                        // 即使两边都没命中也消费掉这次点击，避免误触到底层原生媒体按钮。
                         if (_isHovered && Renderer.HasActiveDetailPage)
                         {
                             Renderer.DispatchDetailPageMouseDown(cx, cy - hitTopY);
@@ -1957,7 +1939,7 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
-                        // 🧩 插件组件左键交互：命中插件绘制区则交给插件决定做什么，不再走媒体控制逻辑
+                        // 插件组件左键交互：命中插件绘制区则交给插件决定做什么，不再走媒体控制逻辑
                         if (_isHovered && _currentToast == null && !isClipboardActive && Renderer.DispatchPluginLeftClick(cx, cy - hitTopY))
                         {
                             return (IntPtr)0;
@@ -1965,8 +1947,8 @@ namespace NotchPeninsula
 
                         if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive)
                         {
-                            // 🎵 命中时间轴：进入拖动并锁住鼠标，同时消费这次点击
-                            //    （不能落到下面「点媒体区就展开」的那条分支）
+                            // 命中时间轴：进入拖动并锁住鼠标，同时消费这次点击
+                            // （不能落到下面「点媒体区就展开」的那条分支）
                             if (Renderer.IsMediaExpanded && Renderer.HitTimeline(cx, cy - hitTopY)
                                 && _media.BeginDrag(Renderer.TimelineRatio(cx)))
                             {
@@ -1974,14 +1956,14 @@ namespace NotchPeninsula
                                 return (IntPtr)0;
                             }
 
-                            // 🎵 播放控件：展开态走面板底部那三颗，折叠态只在**直接交互**模式下有
-                            //    （见 Renderer.MediaWidget.cs 的 DrawMediaInline）。三条分支互斥，都是
-                            //    else-if —— 直接交互模式（总闸关闭）永远走不到下面的展开分支，与
-                            //    「不提供展开入口」的口径一致。
+                            // 播放控件：展开态走面板底部那三颗，折叠态只在直接交互模式下有
+                            // （见 Renderer.MediaWidget.cs 的 DrawMediaInline）。三条分支互斥，都是
+                            // else-if —— 直接交互模式（总闸关闭）永远走不到下面的展开分支，与
+                            // 「不提供展开入口」的口径一致。
                             if (Renderer.IsMediaExpanded)
                             {
-                                // 🎯 与悬停高亮共用同一套命中几何（见 Renderer.HitExpandedButton）：
-                                //    高亮在哪儿，点下去就一定生效，不再有「亮着却点不动」的空隙。
+                                // 与悬停高亮共用同一套命中几何（见 Renderer.HitExpandedButton）：
+                                // 高亮在哪儿，点下去就一定生效，不再有「亮着却点不动」的空隙。
                                 switch (Renderer.HitExpandedButton(cx, cy - hitTopY, _currentHeight))
                                 {
                                     case 0: _media.Previous(); break;
@@ -1991,7 +1973,7 @@ namespace NotchPeninsula
                             }
                             else if (Renderer.MediaInteractionMode == 0)
                             {
-                                // 折叠态播放按钮只在**直接交互**模式下绘制（见 Renderer.MediaWidget.cs 的
+                                // 折叠态播放按钮只在直接交互模式下绘制（见 Renderer.MediaWidget.cs 的
                                 // DrawMediaInline），因此也只有该模式吃这里的点击；展开交互模式不画这两颗按钮，
                                 // 点这一带不会命中任何控件（那时的展开入口在下面那条分支 / 右键），
                                 // 与「悬停不显示控件」保持一致。
@@ -2006,30 +1988,30 @@ namespace NotchPeninsula
                             }
                             else if (Renderer.MediaExpandByLeftClick && Renderer.HitMediaZone(cx))
                             {
-                                // 🖱 折叠态**左键单击展开**（2026-10-03 用户定的口径）：入口跟着
-                                //    「双击封面跳转应用」走 —— 跳转关掉时左键空闲（双击不再跳转），
-                                //    所以恢复成「点媒体区就展开」这个最顺手的入口；跳转开着时走上面那条
-                                //    右键分支（左键整块留给双击跳转）。
-                                //    这里**不需要**2026-10-02 之前那套「等系统双击判定窗口再展开」的排队逻辑：
-                                //    排队是为了把同一坐标上的「单击展开」与「双击跳转」分开，而现在跳转是关的，
-                                //    第二下不会触发任何事，直接展开即可（也就没有那 500ms 的迟滞）。
+                                // 折叠态左键单击展开（2026-10-03 用户定的口径）：入口跟着
+                                // 「双击封面跳转应用」走 —— 跳转关掉时左键空闲（双击不再跳转），
+                                // 所以恢复成「点媒体区就展开」这个最顺手的入口；跳转开着时走上面那条
+                                // 右键分支（左键整块留给双击跳转）。
+                                // 这里不需要2026-10-02 之前那套「等系统双击判定窗口再展开」的排队逻辑：
+                                // 排队是为了把同一坐标上的「单击展开」与「双击跳转」分开，而现在跳转是关的，
+                                // 第二下不会触发任何事，直接展开即可（也就没有那 500ms 的迟滞）。
                                 ExpandPanel(Plugins.BuiltinWidgets.Media);
-                                // 🎯 与右键展开同一条理由：折叠态岛体可能比 320 的面板更宽（长歌词自适应 /
-                                //    组合模式），展开瞬间变窄，按下时还在岛内的坐标可能随即落到岛外，
-                                //    被兜底轮询判成「岛外点击」把面板当场收走。
+                                // 与右键展开同一条理由：折叠态岛体可能比 320 的面板更宽（长歌词自适应 /
+                                // 组合模式），展开瞬间变窄，按下时还在岛内的坐标可能随即落到岛外，
+                                // 被兜底轮询判成「岛外点击」把面板当场收走。
                                 _suppressOutsideCollapse = true;
                                 Logger.Info($"媒体展开：折叠态左键单击 ({cx},{cy}) 命中媒体区 → 已展开媒体面板"
                                     + "（跳转关闭，右键仍打开设置）");
                                 return (IntPtr)0;
                             }
 
-                            // 🖱 折叠态的展开入口**不再是固定的右键**（2026-10-02 定的是右键，2026-10-03
-                            //    用户细化为「跳转开着才走右键，否则左键单击展开」）：跳转开着时左键只剩
-                            //    「双击封面跳转应用」一件事（在 WM_LBUTTONDBLCLK 里），单击天然什么都不做；
-                            //    跳转关掉时由上面那条分支展开。
+                            // 折叠态的展开入口不再是固定的右键（2026-10-02 定的是右键，2026-10-03
+                            // 用户细化为「跳转开着才走右键，否则左键单击展开」）：跳转开着时左键只剩
+                            // 「双击封面跳转应用」一件事（在 WM_LBUTTONDBLCLK 里），单击天然什么都不做；
+                            // 跳转关掉时由上面那条分支展开。
                             //
-                            // ⚠️ 跳转开着时**不要**在这里恢复「点一下即展开」：那正是折叠态左半边单双击
-                            //    互相吃掉的根源（缩略图与展开态封面同在岛内左端，第二下会落进封面的双击热区）。
+                            // 跳转开着时不要在这里恢复「点一下即展开」：那正是折叠态左半边单双击
+                            // 互相吃掉的根源（缩略图与展开态封面同在岛内左端，第二下会落进封面的双击热区）。
                         }
                         break;
                     }
@@ -2037,7 +2019,7 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
-                        // 🧩 岛内右键的优先级：详情页收起 → 插件组件广播 → 媒体面板展开 → 设置窗口。
+                        // 岛内右键的优先级：详情页收起 → 插件组件广播 → 媒体面板展开 → 设置窗口。
                         int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         float rtY = 12f * _currentStyleProgress;
@@ -2063,38 +2045,38 @@ namespace NotchPeninsula
                             }
                         }
 
-                        // 🖱 折叠态媒体区右键 = **展开媒体面板**（2026-10-02 定下展开入口在右键，
-                        //    2026-10-03 用户细化为「入口跟着跳转开关走」）：
-                        //    「开启『双击封面跳转应用』就右键展开，否则正常左键点击展开」。
-                        //    三条判据缺一不可：① 消息提示音接管岛体时不抢（_currentToast == null，与上面同一道闸）；
-                        //    ② Renderer.MediaExpandByRightClick —— 展开功能总闸（媒体交互方式）开着**且**跳转开着；
-                        //       总闸关掉或跳转关掉时都没有右键展开这一说，右键照旧直达设置页签
-                        //       （跳转关掉时展开入口在左键单击，见 WM_LBUTTONDOWN）；
-                        //    ③ 面板此刻确实还没展开（展开态右键归设置窗口，且面板已展开时再展开一次没有意义）。
-                        //    媒体没激活时绘制侧压根不登记媒体区间（HitMediaZone 恒 false），这里不必另判。
+                        // 折叠态媒体区右键 = 展开媒体面板（2026-10-02 定下展开入口在右键，
+                        // 2026-10-03 用户细化为「入口跟着跳转开关走」）：
+                        // 「开启『双击封面跳转应用』就右键展开，否则正常左键点击展开」。
+                        // 三条判据缺一不可：① 消息提示音接管岛体时不抢（_currentToast == null，与上面同一道闸）；
+                        // ② Renderer.MediaExpandByRightClick —— 展开功能总闸（媒体交互方式）开着且跳转开着；
+                        // 总闸关掉或跳转关掉时都没有右键展开这一说，右键照旧直达设置页签
+                        // （跳转关掉时展开入口在左键单击，见 WM_LBUTTONDOWN）；
+                        // ③ 面板此刻确实还没展开（展开态右键归设置窗口，且面板已展开时再展开一次没有意义）。
+                        // 媒体没激活时绘制侧压根不登记媒体区间（HitMediaZone 恒 false），这里不必另判。
                         if (_currentToast == null
                             && Renderer.MediaExpandByRightClick
                             && !Renderer.IsMediaExpanded
                             && Renderer.HitMediaZone(rx))
                         {
                             ExpandPanel(Plugins.BuiltinWidgets.Media);
-                            // 🎯 与原先「左键展开」同一条理由：折叠态岛体可能比 320 的面板更宽，展开瞬间变窄，
-                            //    按下时还在岛内的坐标可能随即落到岛外，被兜底轮询判成「岛外点击」把面板当场收走。
-                            //    右键不产生 WM_LBUTTONUP，所以靠按下时置位、由每帧观察左键状态的那段逻辑清掉 ——
-                            //    右键场景下左键本来就是抬起的，下一帧即自动复位，只覆盖展开那一瞬间。
+                            // 与原先「左键展开」同一条理由：折叠态岛体可能比 320 的面板更宽，展开瞬间变窄，
+                            // 按下时还在岛内的坐标可能随即落到岛外，被兜底轮询判成「岛外点击」把面板当场收走。
+                            // 右键不产生 WM_LBUTTONUP，所以靠按下时置位、由每帧观察左键状态的那段逻辑清掉 ——
+                            // 右键场景下左键本来就是抬起的，下一帧即自动复位，只覆盖展开那一瞬间。
                             _suppressOutsideCollapse = true;
                             Logger.Info($"媒体展开：折叠态右键 ({rx},{ry}) 命中媒体区 → 已展开媒体面板"
                                 + "（跳转开启时的入口；展开态右键仍打开设置）");
                             return (IntPtr)0;
                         }
 
-                        // 🖱️ 按「右键落在哪块原生内容上」直达对应设置页签（用户 2026-09-23 建议）：
-                        //    媒体控制器 → 媒体设置；时间/日期、CPU/RAM → 显示设置；
-                        //    其他（空白待机 / 插件行 / 剪贴板面板…）→ 保持原行为，打开设置窗口的当前页签。
-                        //    命中区由渲染器本帧登记（Renderer.Layout.cs），所以通知 / 详情页接管岛体期间不会误命中。
-                        //    ⚠️ 这里**不消费**媒体区的右键：整个媒体控制器的右键都照旧只打开设置窗口
-                        //       （用户 2026-09-19 定的），上面那条分支只是「折叠态 + 跳转开启」这一种情况下的例外；
-                        //       跳转关掉时展开入口在左键单击（见 WM_LBUTTONDOWN），右键同样照旧直达媒体设置。
+                        // 按「右键落在哪块原生内容上」直达对应设置页签（用户 2026-09-23 建议）：
+                        // 媒体控制器 → 媒体设置；时间/日期、CPU/RAM → 显示设置；
+                        // 其他（空白待机 / 插件行 / 剪贴板面板…）→ 保持原行为，打开设置窗口的当前页签。
+                        // 命中区由渲染器本帧登记（Renderer.Layout.cs），所以通知 / 详情页接管岛体期间不会误命中。
+                        // 这里不消费媒体区的右键：整个媒体控制器的右键都照旧只打开设置窗口
+                        // （用户 2026-09-19 定的），上面那条分支只是「折叠态 + 跳转开启」这一种情况下的例外；
+                        // 跳转关掉时展开入口在左键单击（见 WM_LBUTTONDOWN），右键同样照旧直达媒体设置。
                         int targetTab = Renderer.NativeRightClickTab(rx);
                         if (targetTab >= 0) ConsoleWindow.ShowTab(targetTab);
                         else ConsoleWindow.Toggle();
@@ -2109,11 +2091,9 @@ namespace NotchPeninsula
         /// 展开指定组件（builtin.media 或插件组件 Id）的面板。
         /// 同一时刻只留一块：开这块之前先把另一块收掉。
         ///
-        /// <para>
-        /// 两个调用方：岛内左键/右键命中组件，以及<a>把文件拖到收起态组件上</a>时的自动展开
-        /// （见 <see cref="IslandDropTarget"/>，组件需声明 <c>IWidget.AcceptsFileDropWhenCollapsed</c>）。
+        /// 两个调用方：岛内左键/右键命中组件，以及把文件拖到收起态组件上时的自动展开
+        /// （见 IslandDropTarget，组件需声明 IWidget.AcceptsFileDropWhenCollapsed）。
         /// 后者同样要先把两个折叠计时取消掉，否则刚展开的面板可能立刻被挂上收起计时。
-        /// </para>
         /// </summary>
         internal static void ExpandPanel(string componentId)
         {
@@ -2143,11 +2123,11 @@ namespace NotchPeninsula
         /// 从托盘菜单「唤回灵动岛」把岛体叫回来：锁上「手动展开」，让自动隐藏的判定回到显示侧；
         /// 同时屏蔽本次触发的岛外收起判定，避免刚滑回来又被收回。
         ///
-        /// <para>穿透模式开启时还要一并唤醒穿透睡眠态 —— 否则岛体滑回后鼠标一悬停就又被淡出到全透明，
-        /// 看上去像「唤不回」。穿透关闭时该标记由渲染循环下一帧自动复位，无副作用。</para>
+        /// 穿透模式开启时还要一并唤醒穿透睡眠态 —— 否则岛体滑回后鼠标一悬停就又被淡出到全透明，
+        /// 看上去像「唤不回」。穿透关闭时该标记由渲染循环下一帧自动复位，无副作用。
         ///
-        /// <para>与「点屏幕顶部细边唤回」同源（见 WM_LBUTTONDOWN 的两条隐藏态分支），
-        /// 是细边被遮挡 / 折叠高度过大导致点不到时的兜底入口。</para>
+        /// 与「点屏幕顶部细边唤回」同源（见 WM_LBUTTONDOWN 的两条隐藏态分支），
+        /// 是细边被遮挡 / 折叠高度过大导致点不到时的兜底入口。
         /// </summary>
         public void RequestWakeIsland()
         {
@@ -2157,8 +2137,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 鼠标离开岛体：给两块面板各挂一个延迟折叠（媒体 <see cref="MediaCollapseDelayMs"/>、
-        /// 详情页 <see cref="DetailCollapseDelayMs"/>），由 <see cref="TickPanelCollapse"/> 到期才真的折叠；
+        /// 鼠标离开岛体：给两块面板各挂一个延迟折叠（媒体 MediaCollapseDelayMs、
+        /// 详情页 DetailCollapseDelayMs），由 TickPanelCollapse 到期才真的折叠；
         /// 期间鼠标回到岛上会取消。延迟的理由：面板展开后（详情页尺寸由插件决定，可能比原岛体更窄 / 更矮）
         /// 光标可能正好落在新矩形之外，立即收会变成「刚展开就自己没了」。
         /// </summary>
@@ -2194,7 +2174,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 结算挂起的延迟折叠：到点了才真的折叠，没到点什么都不做。
-        /// 每帧调一次（RenderLoop），代价只有两次 <see cref="DateTime"/> 比较。
+        /// 每帧调一次（RenderLoop），代价只有两次 DateTime 比较。
         /// </summary>
         private static void TickPanelCollapse()
         {
@@ -2207,10 +2187,10 @@ namespace NotchPeninsula
 
             // 只收当初挂时间戳的那一张：期间插件若已经换了别的详情页，说明用户在看新东西，不动它
             //
-            // 🧲 这里必须再确认一次「插件此刻是否要求永不收起」：
-            //    计时是几秒前挂上的，这中间插件的 AutoCollapseDelay 完全可能已经变成负值
-            //    （同一个详情页改了策略）—— 挂计时那一刻检查过，不代表结算这一刻还成立。
-            //    少了这一判，声明「永不收起」的面板会被一个几秒前埋下的计时器收掉。
+            // 这里必须再确认一次「插件此刻是否要求永不收起」：
+            // 计时是几秒前挂上的，这中间插件的 AutoCollapseDelay 完全可能已经变成负值
+            // （同一个详情页改了策略）—— 挂计时那一刻检查过，不代表结算这一刻还成立。
+            // 少了这一判，声明「永不收起」的面板会被一个几秒前埋下的计时器收掉。
             if (scheduled != null
                 && Renderer.HasActiveDetailPage
                 && !Renderer.ActiveDetailKeepsOpen
@@ -2224,7 +2204,7 @@ namespace NotchPeninsula
         /// <param name="forceCloseDetail">
         /// true = 连声明了「鼠标离开也不收起」的详情页也一并收掉。
         /// 这个值专供「岛内右键」——那是用户明确冲着面板来的关闭手势，
-        /// 若也尊重插件的不收起，插件选了这个档之后就<b>再也没有任何办法关掉它</b>了。
+        /// 若也尊重插件的不收起，插件选了这个档之后就再也没有任何办法关掉它了。
         ///
         /// 岛外点击传 false（默认）。不过注意：岛外左键现在在渲染循环那段轮询里就已经被拦掉了
         /// （详情页展开期间根本不会调到这里），这里保留这个判断是为了兜住将来可能新增的
@@ -2243,9 +2223,9 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 收起全部展开态：两块面板（**立即**）+ 自动隐藏唤醒出来的「手动展开」。
+        /// 收起全部展开态：两块面板（立即）+ 自动隐藏唤醒出来的「手动展开」。
         ///
-        /// 只在**岛外点击**时用（用户主动表达「我看完了」，再等延迟反而像卡住）。
+        /// 只在岛外点击时用（用户主动表达「我看完了」，再等延迟反而像卡住）。
         /// 刻意不挂到鼠标离开上：自动隐藏的唤醒是「点一下顶部那条边 → 岛体滑下来」，
         /// 滑下来之后光标本来就落在岛体上方，若跟着鼠标离开一起收，会立刻弹回隐藏态 —— 变成点一下闪一下。
         /// </summary>

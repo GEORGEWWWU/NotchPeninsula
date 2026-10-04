@@ -9,11 +9,11 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // ============================================================
+        // ----  ----
         //  设置窗口 —— 绘制部分（由 Render() 拆出）
         //  局部函数已提升为实例方法，统一把 canvas 作为第一个参数。
         //  每个页签一个 RenderTabXxx，只依赖 canvas 与实例字段。
-        // ============================================================
+        // ----  ----
 
         // 侧边栏单个页签（选中态 / 悬停态 / 文本）
         private void DrawTab(SKCanvas canvas, int index, string label, float yOffset)
@@ -33,7 +33,7 @@ namespace NotchPeninsula
 
         // 画整张卡片底 + 一行开关内容。
         //
-        // ⚠️ 版式统一：一张卡片就是「标题 + 一行副标题 + 右侧开关」，不允许再往下叠第三行小字。
+        // 版式统一：一张卡片就是「标题 + 一行副标题 + 右侧开关」，不允许再往下叠第三行小字。
         //    需要补充说明时把话压进副标题，或者写进 README —— 卡片里多出一层子标题会跟其他开关不一致。
         private void DrawToggleCard(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
         {
@@ -43,10 +43,10 @@ namespace NotchPeninsula
             DrawToggleRow(canvas, yOffset, title, sub, state, hovered, disabled);
         }
 
-        // 只画「一行开关」的内容（标题 / 副标题 / 右侧开关），**不画卡片底**。
+        // 只画「一行开关」的内容（标题 / 副标题 / 右侧开关），不画卡片底。
         // 拆出来是为了让「自动隐藏」那张卡片能在同一个卡片底里放多行（总开关 + 三个模式开关）。
         //
-        // ⚠️ 纵向偏移必须走全页统一的常量，**按本行有几行文字分别取基线**：
+        // 纵向偏移必须走全页统一的常量，按本行有几行文字分别取基线：
         //    有副标题（两行）→ 标题基线 = yOffset + ROW_TEXT_BASELINE（= 行首 + 25.5），
         //                      副标题 = 标题 + ROW_SUB_OFFSET（= 行首 + 45.5）；
         //                      两行墨迹的整体中心 = 行首 + 30 = 行内锚点。
@@ -132,9 +132,9 @@ namespace NotchPeninsula
 
             if (isChecked)
             {
-                // 对勾压在**蓝色勾选框**上，深浅两套外观都必须保持白色。
-                // ⚠️ 用完立刻恢复基准色：_iconPaint 是整帧复用的，而标题栏的最小化 / 关闭图标
-                //    在**下一帧**的 Render 开头才画 —— 不恢复的话浅色外观下那两个图标会变白看不见。
+                // 对勾压在蓝色勾选框上，深浅两套外观都必须保持白色。
+                // 用完立刻恢复基准色：_iconPaint 是整帧复用的，而标题栏的最小化 / 关闭图标
+                //    在下一帧的 Render 开头才画 —— 不恢复的话浅色外观下那两个图标会变白看不见。
                 _iconPaint.Color = SKColors.White;
                 canvas.DrawLine(boxX + 3, boxY + 8, boxX + 6, boxY + 11, _iconPaint);
                 canvas.DrawLine(boxX + 6, boxY + 11, boxX + 13, boxY + 4, _iconPaint);
@@ -149,10 +149,10 @@ namespace NotchPeninsula
             _uiTextPaint.Color = _fgColor;
         }
 
-        // ================= 🖱 「显示内容」列表的行悬停动画 =================
+        // ---- 「显示内容」列表的行悬停动画 ----
         // 悬停是离散状态（指针在这一行 / 不在），底色硬切会闪；这里给每行一个 0→1 的进度，
         // 由窗口定时器逐拍逼近目标值，渲染时按进度算底色透明度 —— 进出都是淡入淡出。
-        // 与托盘菜单同一套做法：**定时器只在动画进行时存在**，跑完就 KillTimer，不空转。
+        // 与托盘菜单同一套做法：定时器只在动画进行时存在，跑完就 KillTimer，不空转。
 
         /// <summary>开表。已在跑、或窗口还没建好时什么都不做。</summary>
         private void StartDisplayHoverAnim()
@@ -184,7 +184,7 @@ namespace NotchPeninsula
                 animating = true;
             }
 
-            // 无条件重绘：最后那一拍会把进度**吸附**到目标值，这一帧必须画出来，
+            // 无条件重绘：最后那一拍会把进度吸附到目标值，这一帧必须画出来，
             // 否则会停在 0.99 那种「差一点点」的状态上。
             Render();
             return animating;
@@ -197,8 +197,8 @@ namespace NotchPeninsula
         /// <summary>
         /// 「显示内容」列表行尾的上 / 下移动箭头（原插件中心那对左右箭头的同款细描边三角，
         /// 只是方向朝上下）。
-        /// <paramref name="slotX"/> 是 16px 点击槽的**左边界**（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
-        /// <paramref name="centerY"/> 是它所在行的垂直中心；<paramref name="up"/> 为 false 时画朝下的三角。
+        ///  是 16px 点击槽的左边界（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
+        ///  是它所在行的垂直中心； 为 false 时画朝下的三角。
         /// </summary>
         private void DrawSortArrow(SKCanvas canvas, float slotX, float centerY, bool hovered, bool enabled, bool up)
         {
@@ -214,7 +214,7 @@ namespace NotchPeninsula
                 IsAntialias = true
             };
 
-            // ⚠️ 尺寸是原左右箭头（半宽 3 / 半高 5）**转 90° 后的结果**：两个半轴对调 → 10×6 的扁三角。
+            // 尺寸是原左右箭头（半宽 3 / 半高 5）转 90° 后的结果：两个半轴对调 → 10×6 的扁三角。
             //    照搬 6×10 直接改方向会得到一个又细又尖的竖三角，和原来那对完全不搭（踩过）。
             float cx = slotX + SORT_TRI_W / 2f;   // 水平居中于 16px 槽
             const float halfW = 5f, halfH = 3f;
@@ -256,8 +256,8 @@ namespace NotchPeninsula
             DrawToggleCard(canvas, 12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
             // 窗口置顶（与下方消息通知整组互换位置）
             DrawToggleCard(canvas, 84, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
-            // 🔔 「系统消息通知」—— 一张四行卡（总开关 + 三个附属设置行），yOffset 156..TOAST_CARD_BOTTOM = 404
-            //    行距恒为 62（与全页所有单行卡同节奏），**每行共用同一个行内锚点 ROW_ANCHOR_Y = 30**：
+            // 「系统消息通知」—— 一张四行卡（总开关 + 三个附属设置行），yOffset 156..TOAST_CARD_BOTTOM = 404
+            //    行距恒为 62（与全页所有单行卡同节奏），每行共用同一个行内锚点 ROW_ANCHOR_Y = 30：
             //      · 左侧文字墨迹中线 = 行首 + 30   （= 基线 行首 + 26，13px 字号墨迹中线在基线之上 5.5）
             //      · 右侧控件中心     = 行首 + 30   （开关轨道 +20..+40；下拉框高 32 则框顶 = 行首 + 14）
             //    行1 +156「系统消息通知」开关（标题基线 +26 / 副标题 +46 / 开关轨 +176..+196）
@@ -267,12 +267,12 @@ namespace NotchPeninsula
             //    行3 +280「消息提示音」开关（标题基线 +26 / 副标题 +46 / 开关轨 +300..+320）
             //    行4 +342「提示音」下拉 + 音量下拉 + [试听][重置]（标签基线 +26 / 控件 +356..+388）
             //
-            //    💡 提示音**是通知的附属设置**，所以和通知同卡不同行 —— 拆成两张独立卡会让层级关系丢失。
+            //    提示音是通知的附属设置，所以和通知同卡不同行 —— 拆成两张独立卡会让层级关系丢失。
             //       「消息通知内容」与「消息提示音」都是「系统消息通知」的子项，只是前者管内容、后者管声音。
-            //    ⚠️ 纵向对齐的唯一口径是**行内锚点**，绝不要拿「标签 vs 框内文字」当口径 ——
+            //    纵向对齐的唯一口径是行内锚点，绝不要拿「标签 vs 框内文字」当口径 ——
             //       框内文字本身在框里偏下，跟着它走会连带把标签拖偏（2026-09-22 返工三轮的根因）。
-            //    ⚠️ 卡片下沿必须贴合内容：行 4 控件底 388，卡片底 404，留 16px。
-            //    ⚠️ 改这里的数值时必须同步改 WM_MOUSEMOVE 的 tab 0 段与 RenderDropdowns 的浮层锚点。
+            //    卡片下沿必须贴合内容：行 4 控件底 388，卡片底 404，留 16px。
+            //    改这里的数值时必须同步改 WM_MOUSEMOVE 的 tab 0 段与 RenderDropdowns 的浮层锚点。
             var notifyCardRect = new SKRect(200, TITLE_BAR_HEIGHT + TOAST_ROW1_Y, WIDTH - 20, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
             canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBorder);
@@ -300,7 +300,7 @@ namespace NotchPeninsula
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + SOUND_SEP_Y, WIDTH - 36, TITLE_BAR_HEIGHT + SOUND_SEP_Y, _separatorPaint);
 
             // ── 行 3：消息提示音开关 ──
-            // 副标题保留，但**不写括号里的实现细节**（「（默认关闭，不吃任何内存）」不该出现在界面上）；
+            // 副标题保留，但不写括号里的实现细节（「（默认关闭，不吃任何内存）」不该出现在界面上）；
             // 超限的音频会在选中时通过红色副标题给出具体原因（见 _soundHint）。
             DrawToggleRow(canvas, SOUND_ROW3_Y, "消息提示音",
                 _soundHint.Length > 0 ? _soundHint : "新消息到达时播放提示音",
@@ -308,11 +308,11 @@ namespace NotchPeninsula
 
             // ── 行 4：提示音设置（行 3 的附属，无开关）──
             // 左起标签「提示音」，右起「提示音」下拉 + 音量下拉 + [试听][重置]。
-            // ⚠️ 这一行是全页唯一 4 控件并排的行（下拉+音量+两按钮 = 340px），内容区只有 348px，
-            //    所以左侧**只放一个短标签、不放描述文字** —— 放不下会叠到下拉框上。
+            // 这一行是全页唯一 4 控件并排的行（下拉+音量+两按钮 = 340px），内容区只有 348px，
+            //    所以左侧只放一个短标签、不放描述文字 —— 放不下会叠到下拉框上。
             //    「音量」下拉的可用性由 ToastSoundConfig.IsSourceReady 给出（父开关 + 有具体音源），
-            //    与命中侧 / 点击侧**同源**，不要再在这里手写 `SelectedIndex > 0`。
-            //    🎵 第 4 行整行是「消息提示音」开关的附属：父开关关掉时整行置灰、不吃指针
+            //    与命中侧 / 点击侧同源，不要再在这里手写 `SelectedIndex > 0`。
+            //    第 4 行整行是「消息提示音」开关的附属：父开关关掉时整行置灰、不吃指针
             //       （就是「父开关 → 附属行」的那套通用约定，面板上另一处例子是 tab 3 的自动隐藏卡片）。
             bool soundRowEnabled = ToastSoundConfig.IsRowEnabled;
             bool soundReady = ToastSoundConfig.IsSourceReady;
@@ -337,7 +337,7 @@ namespace NotchPeninsula
                 float tw = _uiTextPaint.MeasureText(label);
                 if (!enabled) _uiTextPaint.Color = Neutral(110);
                 canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + SOUND_BTN_Y + 17, _uiTextPaint);
-                // ⚠️ 恢复色必须是 _uiTextPaint 的**基准色** _fgColor，不能写 (240,240,240)：
+                // 恢复色必须是 _uiTextPaint 的基准色 _fgColor，不能写 (240,240,240)：
                 //    这一行之后还要画「剪贴板链接检测」「切换灵动岛字体」两张卡的标题，
                 //    残留的 240 会把它们一起压暗（置灰态下必现，因为 enabled=false 才会走这里）。
                 if (!enabled) _uiTextPaint.Color = _fgColor;
@@ -347,10 +347,10 @@ namespace NotchPeninsula
             DrawSoundButton(_soundResetHovered, "重置", SOUND_RESET_X, SOUND_BTN_W, soundReady);
 
             // 说明文字已移除：这一行本来写「仅接受 ≤N 秒、≤N MB 的音频」，
-            // 但它是**实现细节**，不该出现在设置界面上打扰用户 —— 超限的音频在选中时
+            // 但它是实现细节，不该出现在设置界面上打扰用户 —— 超限的音频在选中时
             // 会通过开关行的红色副标题给出具体原因（见 _soundHint）。
 
-            // 📋 剪贴板链接检测（2026-09-20 从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
+            // 剪贴板链接检测（2026-09-20 从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
             // 行首由 CLIPBOARD_CARD_Y 派生 = 通知卡底 + 10，通知卡长高时自动跟着走
             DrawToggleCard(canvas, CLIPBOARD_CARD_Y, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
 
@@ -381,9 +381,9 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 通用设置页的窄版下拉框。**位置与宽度全部由调用方传入**，热区直接复用同一组常数，
+        /// 通用设置页的窄版下拉框。位置与宽度全部由调用方传入，热区直接复用同一组常数，
         /// 不会再出现「渲染在一处、命中在另一处」的错位。
-        /// 禁用态（<paramref name="enabled"/> = false）会整体降低不透明度并画成灰色，
+        /// 禁用态（ = false）会整体降低不透明度并画成灰色，
         /// 与命中侧的置灰判据必须同源。
         /// </summary>
         private void DrawDropdownBox(SKCanvas canvas, float x, float yOffset, float w, float h,
@@ -396,7 +396,7 @@ namespace NotchPeninsula
 
             if (!enabled) _uiTextPaint.Color = Neutral(110);
             canvas.DrawText(TruncateText(text, _uiTextPaint, w - 26), rect.Left + 10, rect.Top + h / 2f + 5, _uiTextPaint);
-            // ⚠️ 恢复基准色 _fgColor（不是 240）—— 本方法后面还要画同帧的其它卡片标题，
+            // 恢复基准色 _fgColor（不是 240）—— 本方法后面还要画同帧的其它卡片标题，
             //    残留色会把它们一起压暗。当前唯一会传 enabled:false 的调用方是提示音行。
             if (!enabled) _uiTextPaint.Color = _fgColor;
 
@@ -499,9 +499,9 @@ namespace NotchPeninsula
             // ── 显示内容卡片 ──
             // 灵动岛显示什么、按什么次序，全在这一张列表里：每行 = 复选框（勾选 = 显示在岛上）
             // + 名称（内置模块后面跟一个蓝色「（内置）」标记）+ ‹ ›（调整在岛上的左右次序）。
-            // 列表内容与顺序都取自 PluginManager 那张**统一顺序表**（内置模块与插件混排），
+            // 列表内容与顺序都取自 PluginManager 那张统一顺序表（内置模块与插件混排），
             // 所以老版本在「插件中心」调好的插件位置，升级后会原样出现在这里。
-            // 🖱 条目数可能超过卡片高度：超出部分靠滚轮滚动查看（_displayScroll = 滚动首行），
+            // 条目数可能超过卡片高度：超出部分靠滚轮滚动查看（_displayScroll = 滚动首行），
             //    可滚范围与命中 / 滚轮共用 GetDisplayListLayout；右侧画一条滚动条指示。
             float contentCardY = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y;
             var contentCardRect = new SKRect(200, contentCardY, WIDTH - 20, HEIGHT - 20);
@@ -529,7 +529,7 @@ namespace NotchPeninsula
                 var item = displayItems[i];
                 float rowY = contentCardY + DISPLAY_FIRST_ROW_Y + slot * DISPLAY_ROW_H;
 
-                // 🖱 悬停底色：进度由定时器逐拍淡入淡出（0 = 完全不画），指针压在整行或任一箭头上都算
+                // 悬停底色：进度由定时器逐拍淡入淡出（0 = 完全不画），指针压在整行或任一箭头上都算
                 float hoverP = GetDisplayHoverProgress(slot);
                 if (hoverP > 0.01f)
                 {
@@ -545,7 +545,7 @@ namespace NotchPeninsula
                 string shownName = TruncateText(item.Name, _uiTextPaint, nameMax);
                 DrawCheckItem(canvas, rowY + 6, shownName, item.IsShown, _hoveredDisplayRow == i, false);
 
-                // 🔵 内置标记：紧跟名字右侧，用蓝色与第三方插件区分开
+                // 内置标记：紧跟名字右侧，用蓝色与第三方插件区分开
                 if (item.IsBuiltin)
                 {
                     _subTextPaint.Color = builtinTagColor;
@@ -561,7 +561,7 @@ namespace NotchPeninsula
             }
 
             // 超出可视区时在卡片右侧画一条滚动条指示（与下拉浮层同款），避免用户以为「列表就这么长」。
-            // ⚠️ 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
+            // 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
             if (maxFirstRow > 0 && visibleRows > 0)
             {
                 float trackTop = contentCardY + DISPLAY_FIRST_ROW_Y - 4;
@@ -584,9 +584,9 @@ namespace NotchPeninsula
         {
             DrawToggleCard(canvas, 12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
 
-            // 🎚 合并卡片：「目标媒体平台」+「匹配方式」共用一张卡（两行 × 62 = 124 高，84..208）
+            // 合并卡片：「目标媒体平台」+「匹配方式」共用一张卡（两行 × 62 = 124 高，84..208）
             //    第 1 行行首 84 / 分隔线 142（行首 +58）/ 第 2 行行首 146（行距 62）
-            //    ⚠️ 本段所有 y 值必须与 WM_MOUSEMOVE 的 tab 2 命中段保持同步（见字段区的坐标常量注释）
+            //    本段所有 y 值必须与 WM_MOUSEMOVE 的 tab 2 命中段保持同步（见字段区的坐标常量注释）
             var platformCardRect = new SKRect(200, PLATFORM_CARD_Y, WIDTH - 20, PLATFORM_CARD_Y + 124);
             canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBorder);
@@ -767,7 +767,7 @@ namespace NotchPeninsula
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 132, WIDTH - 36, TITLE_BAR_HEIGHT + 132, _separatorPaint);
 
-            // 行 3：🎵 「暂停播放后自动隐藏」：媒体暂停 / 停止时也把岛藏起来。
+            // 行 3：「暂停播放后自动隐藏」：媒体暂停 / 停止时也把岛藏起来。
             DrawToggleRow(canvas, 136, "暂停播放后自动隐藏",
                 !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "媒体暂停播放时，也把刘海藏起来",
                 NotchWindow.IsPauseAutoHideEnabled,
@@ -776,17 +776,17 @@ namespace NotchPeninsula
 
             canvas.DrawLine(216, TITLE_BAR_HEIGHT + 194, WIDTH - 36, TITLE_BAR_HEIGHT + 194, _separatorPaint);
 
-            // 行 4：🖥 「全屏自动隐藏」：检测到全屏视频 / 全屏游戏（含独占 D3D）时无条件让位，播放中也不显示。
+            // 行 4：「全屏自动隐藏」：检测到全屏视频 / 全屏游戏（含独占 D3D）时无条件让位，播放中也不显示。
             DrawToggleRow(canvas, 198, "全屏自动隐藏",
                 !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "检测到全屏视频 / 游戏时隐藏",
                 NotchWindow.IsFullscreenAutoHideEnabled,
                 !isModeDisabled && _fsHideToggleHovered,
                 isModeDisabled);
 
-            // 🎵 媒体交互方式 = **展开功能总闸**（2026-10-03 起口径）：组合模式同样可展开媒体面板
-            //    （2026-09-25 起），因此不再置灰。总闸开着时，折叠态的**展开入口由下一张卡片
-            //    「双击封面跳转应用」决定** —— 跳转开着走右键（左键留给双击跳转），跳转关掉走左键单击。
-            //    ⚠️ 副标题必须与命中侧同口径（见 Renderer.MediaExpandByRightClick / MediaExpandByLeftClick
+            // 媒体交互方式 = 展开功能总闸（2026-10-03 起口径）：组合模式同样可展开媒体面板
+            //    （2026-09-25 起），因此不再置灰。总闸开着时，折叠态的展开入口由下一张卡片
+            //    「双击封面跳转应用」决定 —— 跳转开着走右键（左键留给双击跳转），跳转关掉走左键单击。
+            //    副标题必须与命中侧同口径（见 Renderer.MediaExpandByRightClick / MediaExpandByLeftClick
             //       与 NotchWindow 的 WM_LBUTTONDOWN / WM_RBUTTONDOWN）：写成「点击展开」会让用户去左键点，
             //       点完发现没反应 —— 2026-10-02 用户改口径、2026-10-03 细化时都明确要求同步文案。
             DrawToggleCard(canvas, 270, "媒体交互方式",
@@ -795,17 +795,17 @@ namespace NotchPeninsula
                     : "展开功能已关闭：折叠态右键直达媒体设置",
                 Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
-            // 🖱 双击封面跳转应用（2026-09-27 新增，2026-09-30 把「双击哪里」统一到封面）：
-            //    双击封面把正在放媒体的那个应用切回前台 —— 折叠态双击媒体模块**左半边**（整条高度都算，
+            // 双击封面跳转应用（2026-09-27 新增，2026-09-30 把「双击哪里」统一到封面）：
+            //    双击封面把正在放媒体的那个应用切回前台 —— 折叠态双击媒体模块左半边（整条高度都算，
             //    不是只有缩略图那一小块）、展开态双击封面，两种形态同一块热区。
-            //    它同时也是**折叠态展开入口的开关**（2026-10-03）：开着时左键被双击跳转占用，展开走右键；
+            //    它同时也是折叠态展开入口的开关（2026-10-03）：开着时左键被双击跳转占用，展开走右键；
             //    关掉后左键空闲，恢复左键单击展开。
-            //    ⚠️ 副标题必须与命中侧（Renderer.MediaExpandByRightClick / MediaExpandByLeftClick、
+            //    副标题必须与命中侧（Renderer.MediaExpandByRightClick / MediaExpandByLeftClick、
             //      Renderer.HitMediaLaunchZone）同口径：折叠态是「左半边」而不是「左上角」——
             //      命中判定完全不看 y（折叠态整条都在封面这一行里），写成左上角会让用户
             //      只敢往缩略图上点，恰好复现 2026-10-01 那次「按十次有两三次落在边上、感觉要点两下」。
             //      四档文案分别对应两个开关的四种组合，把「现在到底怎么展开」写清楚，不多写。
-            //      ⚠️ 副标题（x=216 起、12px、开关左缘 522）宽度上限约 298px ≈ 24 个汉字，再长会压到开关上。
+            //      副标题（x=216 起、12px、开关左缘 522）宽度上限约 298px ≈ 24 个汉字，再长会压到开关上。
             string appLaunchSub = Renderer.MediaInteractionMode == 0
                 ? (MediaController.IsAppLaunchEnabled
                     ? "折叠态双击左半边，展开态双击封面"
@@ -908,7 +908,7 @@ namespace NotchPeninsula
 
                     canvas.DrawText(subLabels[i], 216, cardBtnY + 17, _subTextPaint);
 
-                    // 🎯 底部圆角只在「经典刘海」样式下参与圆角插值：切到灵动岛样式后该项会被
+                    // 底部圆角只在「经典刘海」样式下参与圆角插值：切到灵动岛样式后该项会被
                     //    islandRadius 完全覆盖（见 Renderer.Draw 的 rBottom 计算），调了也看不出来，
                     //    所以就地标明生效条件。
                     if (index == 7)
@@ -1015,7 +1015,7 @@ namespace NotchPeninsula
                 canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
                 _dynamicTextPaint.TextSize = 13f;
             }
-            // 🎯 「待机高度」与「媒体激活时高度」已合并为一个「全局折叠态高度」（index 3）：
+            // 「待机高度」与「媒体激活时高度」已合并为一个「全局折叠态高度」（index 3）：
             //    它同时管待机态、媒体折叠态与剪贴板面板的高度，值沿用原媒体控制存储的
             //    MEDIA_HEIGHT（注册表 Custom_MediaH），老用户的高度不会丢。
             DrawMultiCard(147, "待机显示", ["水平宽度", "全局折叠态高度", "底部圆角"], [0, 3, 7], "px");
@@ -1065,13 +1065,13 @@ namespace NotchPeninsula
                 string header = $"已安装插件 ({_pluginView.Count})";
                 float hintMax = (WIDTH - 36) - 216 - _uiTextPaint.MeasureText(header) - 16;
                 _subTextPaint.Color = _pluginHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
-                // ⚠️ 必须走 Emoji 回退版：文案里的「☑️」（U+2611 + U+FE0F）不在 YaHei UI 里，
+                // 必须走 Emoji 回退版：文案里的「」（U+2611 + U+FE0F）不在 YaHei UI 里，
                 //    直接 DrawText 画出来是个豆腐块。渲染器那套逐码点回退在 Renderer 内部，
                 //    设置窗口这样单独绘制的文字得自己带一次（见 DrawTextWithEmoji 的说明）。
                 DrawTextWithEmoji(canvas, _pluginHint, _subTextPaint, hintMax, WIDTH - 36, listY + 26, rightAlign: true);
                 _subTextPaint.Color = Neutral(170);
             }
-            // ⚠️ 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
+            // 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
             //    插件中心只负责启用 / 禁用，不再提供任何排序入口（2026-09-25 用户要求）。
 
             const int maxRows = 7;
@@ -1087,7 +1087,7 @@ namespace NotchPeninsula
             {
                 var entry = _pluginView[i];
                 // 行高 56：上行名称独占，下行按钮全部一行排列。
-                // ⚠️ 行起点必须与 OnMouseMove 的 tab 6 段严格一致（删掉「顺序一览」后整体上移了 20px）
+                // 行起点必须与 OnMouseMove 的 tab 6 段严格一致（删掉「顺序一览」后整体上移了 20px）
                 float rowY = listY + 44 + i * 56;
                 if (i > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
 
@@ -1110,7 +1110,7 @@ namespace NotchPeninsula
                 const float btnTop = 25f, btnH = 20f;       // 操作按钮矩形（上移 2px，远离底部分割线）
 
                 // 操作按钮（重载 / 移除）+ 开关
-                // ⚠️ 排序小三角已于 2026-09-25 移除：位置调整统一走「显示设置 → 显示内容」，
+                // 排序小三角已于 2026-09-25 移除：位置调整统一走「显示设置 → 显示内容」，
                 //    这里不再有 CanMoveOrder / MoveOrder 的入口。
                 void DrawRowButton(float bx, bool hovered, string label, bool danger)
                 {
@@ -1175,24 +1175,24 @@ namespace NotchPeninsula
 
         // 各页签展开的下拉浮层（媒体平台 / 匹配方式 / 目标软件 / 通知内容 / 目标显示器）
         /// <summary>
-        /// 画一个展开的下拉列表浮层。行高固定 <see cref="DROPDOWN_ROW_H"/>（26），
+        /// 画一个展开的下拉列表浮层。行高固定 DROPDOWN_ROW_H（26），
         /// 与命中判定、滚轮的可滚范围必须一致。
-        /// <paramref name="dimmedIndex"/> 那一项灰显（但仍可点，用于「自定义项失效」这种
+        ///  那一项灰显（但仍可点，用于「自定义项失效」这种
         /// 「能点进去重选、但当前值不可用」的场景）。
-        /// <paramref name="scrollFirst"/> 是**首行索引**，由调用方给定：
-        /// 只有提示音列表项数会超过可视区（传 <c>_dropdownScroll</c>），其余列表一律传 0。
-        /// ⚠️ 本方法**不做**「自动把选中项滚进可视区」——那件事只在展开那一刻做一次
-        ///    （见 <see cref="ScrollToastSoundMenuToSelected"/>），否则滚轮会被每帧拉回顶部。
+        ///  是首行索引，由调用方给定：
+        /// 只有提示音列表项数会超过可视区（传 _dropdownScroll），其余列表一律传 0。
+        /// 本方法不做「自动把选中项滚进可视区」——那件事只在展开那一刻做一次
+        ///    （见 ScrollToastSoundMenuToSelected），否则滚轮会被每帧拉回顶部。
         /// </summary>
         private void RenderDropdownList(SKCanvas canvas, float x, float yOffset, float w,
                                         string[] options, int selectedIndex, int hoveredIndex, int dimmedIndex,
                                         bool upward = false, int scrollFirst = 0, int visibleRowsOverride = 0)
         {
-            // 🔻 浮层高度必须**钳制**在窗口内：
-            //    提示音列表是**动态加载**的（data\sound 里丢多少 wav 就有多少项），
+            // 浮层高度必须钳制在窗口内：
+            //    提示音列表是动态加载的（data\sound 里丢多少 wav 就有多少项），
             //    若不做上限，16 项 = 416px 就会从提示音卡一直拖到窗口底部之外（40 项更夸张）。
             //    这里保证「浮层底边 ≤ 窗口高 - 12」，超出部分走滚动窗口（见 _dropdownScroll）。
-            //    upward=true 时改为**向上展开**（锚在控件上方），适合同一行的「音量」下拉 ——
+            //    upward=true 时改为向上展开（锚在控件上方），适合同一行的「音量」下拉 ——
             //    它天生贴近窗口下半区，向下展开 11 档必然出界。
             float anchorY = TITLE_BAR_HEIGHT + yOffset;   // 向下：控件下沿；向上：控件上沿
             int total = options.Length;
@@ -1200,8 +1200,8 @@ namespace NotchPeninsula
             int maxRows = upward
                 ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12) / DROPDOWN_ROW_H))
                 : Math.Max(1, (int)((HEIGHT - 12 - availFrom) / DROPDOWN_ROW_H));
-            // 🔻 调用方若已经用布局真源（GetToastSoundMenuLayout / GetVolumeMenuLayout）算过可视行数，
-            //    就**以它为准** —— 否则命中侧与绘制侧又变成两份独立算式（A7 的病根）。
+            // 调用方若已经用布局真源（GetToastSoundMenuLayout / GetVolumeMenuLayout）算过可视行数，
+            //    就以它为准 —— 否则命中侧与绘制侧又变成两份独立算式（A7 的病根）。
             int visible = visibleRowsOverride > 0
                 ? Math.Min(total, visibleRowsOverride)
                 : Math.Min(total, maxRows);
@@ -1211,7 +1211,7 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
             canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
 
-            // 滚动：首行**完全由调用方给**。以前这里会在选中项跑出可视区时把 first 强行拉回
+            // 滚动：首行完全由调用方给。以前这里会在选中项跑出可视区时把 first 强行拉回
             // 选中项附近 —— 于是滚轮刚滚下去、下一帧就被拉回顶部，用户看到的就是「滚不动」。
             int maxFirst = Math.Max(0, total - visible);
             int first = Math.Clamp(scrollFirst, 0, maxFirst);
@@ -1235,7 +1235,7 @@ namespace NotchPeninsula
             {
                 float trackH = listH - 8;
                 float thumbH = Math.Max(18, trackH * visible / total);
-                // ⚠️ 滑块只能走「轨道高 - 滑块高」这段行程。
+                // 滑块只能走「轨道高 - 滑块高」这段行程。
                 //    曾经写成 `trackH * first / maxFirst`：当滑块本身很长（可视行数接近总行数）时，
                 //    thumbY + thumbH 会一路超过轨道底边，滑块整条滑出下拉菜单往下掉 ——
                 //    用户点名的「下拉滑轨溢出菜单主体」。改这里必须保证
@@ -1326,7 +1326,7 @@ namespace NotchPeninsula
                     _toastModeOptions, _selectedToastModeIndex, _hoveredToastModeIndex, dimmedIndex: -1);
             }
 
-            // 🎵 消息提示音下拉菜单（通用设置）：无 / data\sound 里的每个 wav / 浏览音频…
+            // 消息提示音下拉菜单（通用设置）：无 / data\sound 里的每个 wav / 浏览音频…
             if (_selectedTab == 0 && _toastSoundDropdownOpen)
             {
                 // 浮层锚点与可滚范围都取自 GetToastSoundMenuLayout —— 绘制 / 悬停命中 / 滚轮三处同源，
@@ -1339,8 +1339,8 @@ namespace NotchPeninsula
                     scrollFirst: _dropdownScroll, visibleRowsOverride: soundVisible);
             }
 
-            // 🎵 音量下拉菜单：档位多（0%~100%，10% 一档共 11 项）且控件贴近窗口下半区，
-            //    所以**向上展开** —— 向下展开会一路拖出窗口。
+            // 音量下拉菜单：档位多（0%~100%，10% 一档共 11 项）且控件贴近窗口下半区，
+            //    所以向上展开 —— 向下展开会一路拖出窗口。
             //    可视行数由 GetVolumeMenuLayout 给出（与命中侧同源），绘制不再自己算一份。
             if (_selectedTab == 0 && _soundVolumeDropdownOpen)
             {

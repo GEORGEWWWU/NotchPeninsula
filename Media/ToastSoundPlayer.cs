@@ -8,18 +8,18 @@ using NAudio.Wave;
 namespace NotchPeninsula;
 
 /// <summary>
-/// 🎵 通知提示音播放器（单例）。
+/// 通知提示音播放器（单例）。
 ///
 /// 设计要点：
-/// 1. **串行队列播放** —— 短时间内多条消息时，提示音排队依次播放，绝不重叠。
-///    队列上限 <see cref="MaxQueue"/>，超出直接丢弃（宁可少响几声，也不让内存堆积）。
-/// 2. **单后台线程** —— 整个播放循环跑在一条 <see cref="Thread"/> 上（IsBackground = true，
+/// 1. 串行队列播放 —— 短时间内多条消息时，提示音排队依次播放，绝不重叠。
+///    队列上限 MaxQueue，超出直接丢弃（宁可少响几声，也不让内存堆积）。
+/// 2. 单后台线程 —— 整个播放循环跑在一条 Thread 上（IsBackground = true，
 ///    不阻止进程退出）。线程按需启动、队列排空后自动退出并释放设备，闲置时零开销、零句柄。
-/// 3. **参数在入队时就必须快照**，不能等到播放时才去读全局状态 —— 否则用户中途改路径
+/// 3. 参数在入队时就必须快照，不能等到播放时才去读全局状态 —— 否则用户中途改路径
 ///    会把队列里还没播的音效一起改掉。
-/// 4. **不缓存解码后的音频数据** —— 每次播放重新读文件。提示音文件有 2MB 上限、通常几十 KB，
+/// 4. 不缓存解码后的音频数据 —— 每次播放重新读文件。提示音文件有 2MB 上限、通常几十 KB，
 ///    重复读盘的代价远小于长期驻留一块音频缓冲抢占内存的风险。
-/// 5. 所有异常一律吞掉 + 记日志，**绝不允许提示音影响岛体的任何功能**。
+/// 5. 所有异常一律吞掉 + 记日志，绝不允许提示音影响岛体的任何功能。
 /// </summary>
 internal static class ToastSoundPlayer
 {
@@ -35,9 +35,9 @@ internal static class ToastSoundPlayer
     private static int _queued; // 队列中尚未播放完的数量（含正在播放的），供 UI 判定
 
     /// <summary>
-    /// 一次播放请求：**磁盘路径或 exe 内嵌资源名** + 音量，两者都在入队时就冻结。
-    /// 两个来源字段必有一个非空 —— 内置音在磁盘上不存在时走 <see cref="ResourceName"/>
-    /// （单文件 exe 被单独拷走的情况，见 <see cref="DataResources"/>）。
+    /// 一次播放请求：磁盘路径或 exe 内嵌资源名 + 音量，两者都在入队时就冻结。
+    /// 两个来源字段必有一个非空 —— 内置音在磁盘上不存在时走 ResourceName
+    /// （单文件 exe 被单独拷走的情况，见 DataResources）。
     /// </summary>
     private readonly record struct SoundRequest(string Path, string ResourceName, int VolumePercent)
     {
@@ -54,7 +54,7 @@ internal static class ToastSoundPlayer
     }
 
     /// <summary>
-    /// 投递一条**磁盘文件**提示音。路径为空、文件不存在、队列已满时静默忽略。
+    /// 投递一条磁盘文件提示音。路径为空、文件不存在、队列已满时静默忽略。
     /// 此方法极快（只入队 + 唤醒线程），可以从渲染线程 / HTTP 监听线程任意调用。
     /// </summary>
     internal static void Enqueue(string? path, int volumePercent)
@@ -78,8 +78,8 @@ internal static class ToastSoundPlayer
     }
 
     /// <summary>
-    /// 投递一条 **exe 内嵌资源**提示音 —— 单文件发布时磁盘上没有 <c>data\sound</c> 的兜底通路。
-    /// 资源名形如 <c>data/sound/QQ.wav</c>；资源不存在或队列已满时静默忽略。
+    /// 投递一条 exe 内嵌资源提示音 —— 单文件发布时磁盘上没有 data\sound 的兜底通路。
+    /// 资源名形如 data/sound/QQ.wav；资源不存在或队列已满时静默忽略。
     /// </summary>
     internal static void EnqueueResource(string? resourceName, int volumePercent)
     {
@@ -165,7 +165,7 @@ internal static class ToastSoundPlayer
     {
         error = "";
 
-        // 🔇 音量为 0% —— 用户把音量拉到最低就是要静音。
+        // 音量为 0% —— 用户把音量拉到最低就是要静音。
         //    这里直接返回，不必初始化 WASAPI、不必解码整个文件，省掉一次设备占用。
         if (req.VolumePercent <= 0) return;
 
@@ -197,10 +197,10 @@ internal static class ToastSoundPlayer
                 return;
             }
 
-            // 🔇 音量必须走「软件增益」，**绝不能碰 `WasapiOut.Volume`**。
-            //    ⚠️ NAudio 里 WasapiOut.Volume 的 setter 实现是：
+            // 音量必须走「软件增益」，绝不能碰 `WasapiOut.Volume`。
+            //    NAudio 里 WasapiOut.Volume 的 setter 实现是：
             //        mmDevice.AudioEndpointVolume.MasterVolumeLevelScalar = value;
-            //      它改的是**系统主音量**（任务栏音量条），不是本程序的音频会话。
+            //      它改的是系统主音量（任务栏音量条），不是本程序的音频会话。
             //      之前这里写过 `output.Volume = req.VolumePercent / 100f;`，
             //      结果每响一声提示音就把系统音量强行改成提示音档位 —— 已移除。
             //    提示音是独立音量通道，增益只在样本上做，与系统音量彻底解耦。
@@ -226,7 +226,7 @@ internal static class ToastSoundPlayer
     }
 
     /// <summary>
-    /// 播放并等待结束。主路径靠 <see cref="WasapiOut.PlaybackStopped"/> 事件唤醒；
+    /// 播放并等待结束。主路径靠 WasapiOut.PlaybackStopped 事件唤醒；
     /// 看门狗只是兜底 —— 设备热插拔 / 被独占时事件可能永远不来，不能死等。
     /// </summary>
     private static bool PlayAndWait(WasapiOut output, int watchdogMs)
@@ -261,7 +261,7 @@ internal static class ToastSoundPlayer
 
     /// <summary>
     /// 把读取器包装成 WasapiOut 能吃的 IWaveProvider。
-    /// 多声道（&gt;2）用手写搬运转成立体声，避免引入 NAudio.Wave 包里的扩展方法。
+    /// 多声道（大于 2 声道）用手写搬运转成立体声，避免引入 NAudio.Wave 包里的扩展方法。
     /// </summary>
     private static IWaveProvider BuildProvider(WaveStream reader)
     {
@@ -321,15 +321,14 @@ internal static class ToastSoundPlayer
     }
 
     /// <summary>
-    /// 软件增益（音量缩放）—— 提示音音量的**唯一**实现方式，与系统音量完全无关。
+    /// 软件增益（音量缩放）—— 提示音音量的唯一实现方式，与系统音量完全无关。
     ///
-    /// ⚠️ 为什么不用 <c>WasapiOut.Volume</c>：
-    ///     NAudio 里那个属性的 setter 是
-    ///     <c>mmDevice.AudioEndpointVolume.MasterVolumeLevelScalar = value;</c>，
-    ///     改的是**系统主音量**（任务栏音量条），而不是本程序的音频会话。
+    /// 为什么不用 WasapiOut.Volume：
+    ///     NAudio 里那个属性的 setter 是 mmDevice.AudioEndpointVolume.MasterVolumeLevelScalar = value;，
+    ///     改的是系统主音量（任务栏音量条），而不是本程序的音频会话。
     ///     提示音是独立音量通道，必须与系统音量解耦，所以直接在样本上乘增益。
     ///
-    /// 只做原地乘法，不改变格式 / 不改变块对齐，对 <see cref="WasapiOut"/> 完全透明。
+    /// 只做原地乘法，不改变格式 / 不改变块对齐，对 WasapiOut 完全透明。
     /// 音量 ≥ 100% 时直接透传（零开销）；遇到无法识别的编码也原样透传（宁可响大声，不能变哑巴）。
     /// </summary>
     private sealed class VolumeScaleProvider : IWaveProvider

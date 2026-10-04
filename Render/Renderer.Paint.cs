@@ -8,7 +8,7 @@ namespace NotchPeninsula
     public static partial class Renderer
     {
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
-        // 唤醒按钮：**面性（实心）底座 + 线条图标**。原先的「两个同心圆」是线条图形，既单薄又看不出可点击；
+        // 唤醒按钮：面性（实心）底座 + 线条图标。原先的「两个同心圆」是线条图形，既单薄又看不出可点击；
         // 现在底座换成深色圆角芯片（面性、有实体感），图标换成「两个线条折角箭头指向对角」。
         // 试错记录：实心三角头 + 实心杆太笨重（否）；鼠标指针 —— 屏幕上本来就有真指针，多一个很怪（否）。
         // 芯片在深色桌面上几乎隐形，此时退化成一枚白色折角箭头，同样成立；
@@ -32,7 +32,7 @@ namespace NotchPeninsula
 
         public const float WAKE_BTN_SIZE = 36f;
 
-        // 穿透唤醒按钮的水平位置 —— **唯一真源**。岛体本身水平居中，所以化简后
+        // 穿透唤醒按钮的水平位置 —— 唯一真源。岛体本身水平居中，所以化简后
         // `(WINDOW_WIDTH - 岛宽)/2 + (岛宽 - 36)/2` 就等于 `(WINDOW_WIDTH - 36)/2`，与岛宽无关。
         // 渲染 / 鼠标命中 / 手型指针三处必须都用它，别再各算一份 ——
         // 之前三处各写了一份，改位置时漏掉 WM_MOUSEMOVE 那处，
@@ -49,7 +49,7 @@ namespace NotchPeninsula
             return path;
         }
 
-        // 唤醒按钮图标：**两个线条折角箭头指向对角**（就是 `>` `>` 那种 V 形折角，不带杆）。
+        // 唤醒按钮图标：两个线条折角箭头指向对角（就是 `>` `>` 那种 V 形折角，不带杆）。
         // 每个箭头只画折角两笔：尖角落在对角方向，一臂竖直、一臂水平，各自延伸到画布中线 ——
         // 这样两臂与画布中线对齐，视觉重心稳，不会显得偏。不带杆是刻意的：中间留白让图标变轻，
         // 也避免两段斜线连成一根粗斜杠（那样就认不出是箭头了）。
@@ -112,18 +112,18 @@ namespace NotchPeninsula
             _compactAppPaint.Color = _currentSubTextColor; // 应用名灰色
             _mediaIconPaint.Color = _currentTextColor;
             _barPaint.Color = _currentTextColor;
-            _tlTextPaint.Color = _currentSubTextColor; // 🎵 时间轴时间文本
+            _tlTextPaint.Color = _currentSubTextColor; // 时间轴时间文本
             _shadowPaint.Color = _currentTextColor.WithAlpha(50);
             // 绑定悬浮圆圈底色为文字颜色的 25% 透明度，实现系统级无缝浅色适配
             _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
 
             // 渐变着色器需要重新生成一次，但必须先手动释放旧的，防止非托管内存泄漏。
             //
-            // ⚠️ 这一段必须与渲染线程互斥（2026-10-02 修）：本方法除了 UI 线程，还会被
-            //    SystemEvents 的 UserPreferenceChanged（系统深浅色切换）在**别的线程**上调用，
+            // 这一段必须与渲染线程互斥（2026-10-02 修）：本方法除了 UI 线程，还会被
+            //    SystemEvents 的 UserPreferenceChanged（系统深浅色切换）在别的线程上调用，
             //    而渲染线程每 16ms 正在用同一支 `_fadePaint` 画渐变。
             //    没有互斥时，「先 Dispose 旧 shader 再赋值」中间那一瞬，渲染线程手里拿的是一个
-            //    已被释放的 native shader → use-after-free，实测这类调用是**进程级 AV**（0xC0000005）。
+            //    已被释放的 native shader → use-after-free，实测这类调用是进程级 AV（0xC0000005）。
             //    取渲染锁即可：Draw 用的是 TryEnter，抢不到只是跳过这一帧，绝不会把 UI 线程堵住。
             bool locked = System.Threading.Monitor.TryEnter(_renderLock, 50);
             try
@@ -154,7 +154,7 @@ namespace NotchPeninsula
 
         private static readonly object _renderLock = new();
 
-        // 🚀 全局复用池 (彻底实现 60FPS 零 GC 分配)
+        // 全局复用池 (彻底实现 60FPS 零 GC 分配)
 
         private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
 
@@ -195,7 +195,7 @@ namespace NotchPeninsula
             _compactTimePaint.Typeface = _semiBoldTypeface;
             _compactAppPaint.Typeface = _normalTypeface;
             _tagTextPaint.Typeface = _boldTypeface;
-            _tlTextPaint.Typeface = _semiBoldTypeface; // 🎵 时间轴时间文本
+            _tlTextPaint.Typeface = _semiBoldTypeface; // 时间轴时间文本
 
             // 下面这些缓存都以「字体」为前提，换字体后必须作废，否则会沿用旧字体的排版宽度导致文字错位
             _lastMinute = -1;                 // 时间/日期文本与宽度缓存
@@ -229,7 +229,7 @@ namespace NotchPeninsula
         private static readonly SKPaint _mediaIconPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
 
         private static readonly SKPaint _barPaint = new() { Color = SKColors.White, IsAntialias = true };
-        // 🎵 时间轴左右两侧的时间文本画笔（颜色每帧按透明度刷新，Typeface 由 ApplyFont 热替换）
+        // 时间轴左右两侧的时间文本画笔（颜色每帧按透明度刷新，Typeface 由 ApplyFont 热替换）
 
         private static readonly SKPaint _tlTextPaint = new() { Color = SKColors.White, TextSize = 10f, IsAntialias = true, Typeface = _semiBoldTypeface };
 
@@ -253,10 +253,10 @@ namespace NotchPeninsula
 
         private static readonly SKPath _nextPath = CreateNextPath();
 
-        // ==================== 📋 剪贴板面板图标（纯矢量，无位图） ====================
+        // ---- 剪贴板面板图标（纯矢量，无位图） ----
         // 原先用 data/image/clipboard.png + open_the_link.png 两张位图，现已整体改为矢量直绘：
         // 任意 DPI 都锐利、不再有位图缩放的毛边，也不再需要圆角裁切路径。
-        // 颜色一律跟随主题的**纯黑 / 纯白**（每帧由 Draw 写入 _currentTextColor + 透明度），
+        // 颜色一律跟随主题的纯黑 / 纯白（每帧由 Draw 写入 _currentTextColor + 透明度），
         // 所以深色主题下是纯白、浅色主题下是纯黑，双色自适应。
         // 统一 24×24 设计画布，绘制时按目标像素尺寸等比缩放。
 
@@ -290,7 +290,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 胶囊（体育场形）轮廓：先在原点造形，再整体旋转 45° 后平移到 (cx, cy)。
-        /// ⚠️ 矩阵顺序是 `Concat(平移, 旋转)` = 「先旋转、再平移」，写反了链环会被绕原点转到画布外。
+        /// 矩阵顺序是 `Concat(平移, 旋转)` = 「先旋转、再平移」，写反了链环会被绕原点转到画布外。
         /// </summary>
 
         private static SKPath ClipboardCapsule(float w, float h, float cx, float cy)
@@ -304,7 +304,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 右图标「打开链接」：实心圆底 + 指向右上角的箭头。
-        /// 箭头不是叠画上去的第二种颜色，而是**圆底上的镂空**（圆底减去箭头描边轮廓的布尔差集）——
+        /// 箭头不是叠画上去的第二种颜色，而是圆底上的镂空（圆底减去箭头描边轮廓的布尔差集）——
         /// 整条路径只有一种颜色，主题反相时自动跟着变，也不需要知道岛体底色。
         /// </summary>
 
@@ -314,14 +314,14 @@ namespace NotchPeninsula
             disc.AddCircle(12f, 12f, 10.5f);
 
             // 折角箭头：斜杆 + 右上角的两笔折角（横臂、竖臂）
-            // ⚠️ 这两个是**临时路径**，用完必须 Dispose：SKPath 的轮廓在 native 侧，
+            // 这两个是临时路径，用完必须 Dispose：SKPath 的轮廓在 native 侧，
             //    本方法只由静态字段初始化调用一次，所以漏了不会"增长"，但白占一份 native 路径直到终结器跑。
             using var arrow = new SKPath();
             arrow.MoveTo(7f, 17f); arrow.LineTo(17f, 7f);
             arrow.MoveTo(7f, 7f); arrow.LineTo(17f, 7f); arrow.LineTo(17f, 17f);
 
             // 把描边展开成填充轮廓，再与圆底做差集。
-            // ⚠️ arrow / arrowFill 是**临时路径**，用完必须释放：SKPath 的轮廓在 native 侧，
+            // arrow / arrowFill 是临时路径，用完必须释放：SKPath 的轮廓在 native 侧，
             //    本方法只由静态字段初始化调用一次，所以漏了不会"增长"，但会白占一份 native 轮廓直到终结器跑。
             //    （disc 不临时 —— 下面 Op 结果为空时要把它交出去当兜底。）
             using var stroke = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 2.2f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
@@ -331,7 +331,7 @@ namespace NotchPeninsula
             return disc.Op(arrowFill, SKPathOp.Difference) ?? disc;
         }
 
-        // 🚀 PNG 图标缓存替换 SVG
+        // PNG 图标缓存替换 SVG
 
         private static SKBitmap? _defaultAppIcon;
 
@@ -448,7 +448,7 @@ namespace NotchPeninsula
                 bool missingInBase = baseTypeface.GetGlyph(cp) == 0;
                 bool forcedEmoji = false;
 
-                // 1. 向前探测：如果当前字符（比如 # 或 ⛸）后面紧跟了 Emoji 变体选择器(FE0F)或零宽连字(200D)，
+                // 1. 向前探测：如果当前字符（比如 # 或 ）后面紧跟了 Emoji 变体选择器(FE0F)或零宽连字(200D)，
                 // 说明它是 Emoji 组合的开头，强制视为 Emoji，防止被默认字体抢走。
                 if (!missingInBase && i + charLen < text.Length)
                 {
@@ -506,8 +506,8 @@ namespace NotchPeninsula
         ///   基础字体有这个字 → 基础字体；
         ///   缺字且是 Emoji → 彩色 Emoji 字体；
         ///   缺字的普通文字：
-        ///     · 用户选了自定义字体 → 系统兜底字体（<b>自定义字体优先级最高，多语言兜底层绝不插手</b>）；
-        ///     · 默认系统字体     → 先问 <see cref="LyricsFont"/> 要一套真正含该字形的系统字体
+        ///     · 用户选了自定义字体 → 系统兜底字体（自定义字体优先级最高，多语言兜底层绝不插手）；
+        ///     · 默认系统字体     → 先问 LyricsFont 要一套真正含该字形的系统字体
         ///       （韩文、泰文、阿拉伯文……），拿到就用，拿不到才落回原来的系统字体 / Emoji 兜底。
         /// </summary>
 
@@ -517,7 +517,7 @@ namespace NotchPeninsula
             if (forcedEmoji) return _emojiTypeface;
             if (IsEmojiCodePoint(cp) && _emojiTypeface.GetGlyph(cp) != 0) return _emojiTypeface;
 
-            // ★ 多语言兜底：只在默认字体下启用。Emoji 区段已在上一步分流，这里只处理"真的缺字的文字"。
+            // 多语言兜底：只在默认字体下启用。Emoji 区段已在上一步分流，这里只处理"真的缺字的文字"。
             //    LyricsFont 内部按码点缓存决定（含负缓存），同一句歌词每个码点只询问系统一次。
             if (!FontConfig.HasCustomFont && missingInBase)
             {
@@ -539,7 +539,7 @@ namespace NotchPeninsula
             || cp == 0x200D || cp == 0x20E3;
 
         /// <summary>
-        /// 折叠态媒体文本的绘制宽度（逐字字体回退后的真实总宽），直接读 <see cref="DrawKaraoke"/> 刚建好的 run 缓存，
+        /// 折叠态媒体文本的绘制宽度（逐字字体回退后的真实总宽），直接读 DrawKaraoke 刚建好的 run 缓存，
         /// 稳态下不产生任何额外测量。缓存未命中（刚换字体 / 刚换歌的那一帧）返回 0，调用方自行兜底。
         /// </summary>
 
@@ -571,7 +571,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 命中原有的卡拉OK run 缓存则直接复用（不重建、不测量）。命中与否由 <see cref="DrawKaraoke"/> 侧同一套 key 决定。
+        /// 命中原有的卡拉OK run 缓存则直接复用（不重建、不测量）。命中与否由 DrawKaraoke 侧同一套 key 决定。
         /// </summary>
 
         private static bool ReuseCachedRuns(string text, SKTypeface baseTypeface, out float totalWidth)

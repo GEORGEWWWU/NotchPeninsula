@@ -23,9 +23,9 @@ namespace NotchPeninsula
 
         private const int TITLE_BAR_HEIGHT = 32;
 
-        // 🧩 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
+        // 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
         //    名称独占上行，按钮全在下行：从左到右 [重载] [移除] [开关]
-        //    ⚠️ 排序小三角（← / →）已于 2026-09-25 移除 —— 显示与排序统一收敛到
+        //    排序小三角（← / →）已于 2026-09-25 移除 —— 显示与排序统一收敛到
         //       「显示设置 → 显示内容」那一张列表，插件中心只留启用/禁用这一件事。
 
         private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
@@ -34,9 +34,9 @@ namespace NotchPeninsula
 
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
-        // 📋 显示设置页「显示内容」列表（渲染与鼠标命中必须使用同一组坐标）
+        // 显示设置页「显示内容」列表（渲染与鼠标命中必须使用同一组坐标）
         //    每行 = 复选框（勾选显示 / 隐藏）+ 名称 + ∧ ∨（调整在岛上的先后次序）
-        //    行高与首行偏移是一对**渲染/命中同源**的常量，改一个必须两个一起改。
+        //    行高与首行偏移是一对渲染/命中同源的常量，改一个必须两个一起改。
 
         private const float DISPLAY_ROW_H = 34f;
 
@@ -54,7 +54,7 @@ namespace NotchPeninsula
 
         private const float SORT_TRI_W = 16f;             // 排序三角形的点击槽宽
 
-        // 🖱 行悬停底色动画：鼠标压到某一行时，行底由浅入深淡入，移开再淡出（与托盘菜单同款 16ms 节拍）。
+        // 行悬停底色动画：鼠标压到某一行时，行底由浅入深淡入，移开再淡出（与托盘菜单同款 16ms 节拍）。
         //    —— 只是把「指针在哪一行」这个离散状态补上过渡，避免硬切造成的闪烁感。
         private const uint DISPLAY_HOVER_TICK_MS = 16;
 
@@ -63,28 +63,28 @@ namespace NotchPeninsula
         // 行悬停动画的窗口定时器 id（与 BACKDROP_REFRESH_TIMER_ID 各自独立）
         private static readonly IntPtr DISPLAY_HOVER_TIMER_ID = new IntPtr(0x4E51); // "NQ"
 
-        // 🔤 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
-        // 📐 通用设置页卡片顺序（2026-09-22 提示音并入通知卡之后）：
+        // 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
+        // 通用设置页卡片顺序（2026-09-22 提示音并入通知卡之后）：
         //    开机自启 12 | 窗口置顶 84 | 系统消息通知卡 156..390（三行）| 剪贴板链接检测 400 | 切换灵动岛字体 474
         //
-        //  🔔 系统消息通知卡 = **一张三行卡 + 一行提示音设置**，把通知本体与它的两个附属设置放在一起：
+        //  系统消息通知卡 = 一张三行卡 + 一行提示音设置，把通知本体与它的两个附属设置放在一起：
         //     行1「系统消息通知」总开关（开关热区 +176..+196）    ← 主体
         //     行2「消息通知内容」下拉（+230..+262）              ← 附属（管内容）
         //     行3「消息提示音」开关（开关热区 +300..+320）        ← 附属（管声音）
         //     行4「提示音」下拉 + 音量下拉 + [试听][重置]（+354..+386）← 行3 的设置行，无开关
-        //     ⚠️ 提示音**是通知的附属设置**，必须和通知在同一张卡里 —— 拆成两张独立卡会让层级关系丢失。
-        //     ⚠️ 卡片下沿必须贴合内容（现距内容底 374 留 30px），别撑高。
-        //     ⚠️ 行 4 是全页唯一「4 控件并排」的行，控件加间隙正好占满整个内容区；
+        //     提示音是通知的附属设置，必须和通知在同一张卡里 —— 拆成两张独立卡会让层级关系丢失。
+        //     卡片下沿必须贴合内容（现距内容底 374 留 30px），别撑高。
+        //     行 4 是全页唯一「4 控件并排」的行，控件加间隙正好占满整个内容区；
         //        因此左侧标签须单独预留空间（SOUND_CTRL_X 由标签宽度派生），且该行不放描述文字。
-        //     ⚠️ 所有控件右边界一律 `WIDTH - 36`（卡片内右侧留白），横向绝不铺满整卡。
-        //     ⚠️ 改这里的数值时必须同步改 OnMouseMove 的 tab 0 段与 RenderDropdowns 的浮层锚点。
+        //     所有控件右边界一律 `WIDTH - 36`（卡片内右侧留白），横向绝不铺满整卡。
+        //     改这里的数值时必须同步改 OnMouseMove 的 tab 0 段与 RenderDropdowns 的浮层锚点。
 
         /// <summary>卡片内右侧内边距：所有右对齐控件的右边界都锚到这里。</summary>
         private const float CARD_PAD_RIGHT = 36f;
 
         // ---- ① 系统消息通知卡（三行 + 一行附属设置）----
         //
-        // 布局节奏：**行距恒为 62px**，与全页所有单行卡同一节奏。
+        // 布局节奏：行距恒为 62px，与全页所有单行卡同一节奏。
         //   · 行 1「系统消息通知」行首 156
         //   · 行 2「消息通知内容」行首 218 = 行 1 + 62
         //   · 行 3「消息提示音」  行首 280 = 行 2 + 62
@@ -92,9 +92,9 @@ namespace NotchPeninsula
         //   · 分隔线放在每一对行之间：+222、+284
         //   · 卡片 156..404（248 = 4 × 62）
         //
-        // ⚠️ 历史坑：卡片曾被撑到 320 而内容只用到 292 —— 多出的 28px 先表现为「分隔线到行 2
+        // 历史坑：卡片曾被撑到 320 而内容只用到 292 —— 多出的 28px 先表现为「分隔线到行 2
         //    之间一大块空白」，把分隔线往下挪之后空白又跑到行 1 下面。
-        //    **空白总量不变，挪分割线是治不好的** —— 唯一正解是让卡片贴合内容。
+        //    空白总量不变，挪分割线是治不好的 —— 唯一正解是让卡片贴合内容。
         //    判据：`卡片下沿 - 内容底` 必须落在 [8, 20]。
 
         /// <summary>「系统消息通知」总开关（行 1）行首偏移。</summary>
@@ -106,35 +106,35 @@ namespace NotchPeninsula
         /// <summary>行 1 与行 2 之间的分隔线（= 行 2 行首 + 4，落在行 1 内容底 202 与行 2 控件顶 230 之间）。</summary>
         private const float TOAST_SEP_Y = TOAST_ROW2_Y + 4f;
 
-        // ============================================================
-        //  ★ 行内纵向锚点（全页唯一真源，2026-09-22 第五次返工后定稿）
+        // ----  ----
+        // 行内纵向锚点（全页唯一真源，2026-09-22 第五次返工后定稿）
         //
-        //  目标：**「左侧文字块」与「右侧控件」同心对齐** —— 文字块的光学中心
+        //  目标：「左侧文字块」与「右侧控件」同心对齐 —— 文字块的光学中心
         //        和右排控件（开关轨道 / 下拉框 / 按钮）的中心落在同一条水平线上。
         //
         //  ── 返工史（前四轮都错在「拿什么当对齐参照」）────────────────
         //    第 1 轮：四行各写各的基线偏移 —— +26 / +33 / +26 / +21。
-        //    第 2 轮：改成「标签基线 = 框顶 + h/2 + 5」，即跟着**框内文字**走。
-        //             ❌ 错：框内文字在框里本身偏下，把行外标签也拖下去了。
+        //    第 2 轮：改成「标签基线 = 框顶 + h/2 + 5」，即跟着框内文字走。
+        // 错：框内文字在框里本身偏下，把行外标签也拖下去了。
         //    第 3 轮：改成「所有行统一基线 = 行首 + 26」。
-        //             ❌ 错：26 是**两行行**（标题+副标题）的标题基线，
+        // 错：26 是两行行（标题+副标题）的标题基线，
         //                单行行（行 4「提示音」）拿它当基线就飘到下拉框上面去了 —— 用户「现在太靠上了」。
         //    第 4 轮：改成「单行墨迹中线 == 控件中心」，偏移 = 30 + 5.5 = 35.5。
-        //             ❌ 错：35.5 只对**单行行**成立。两行行照抄之后，整个文字块
+        // 错：35.5 只对单行行成立。两行行照抄之后，整个文字块
         //                （标题墨迹顶 → 副标题墨迹底）比控件中心低了 10px —— 用户
         //                「开机自启、窗口置顶、系统消息通知、剪贴板链接检测的文字全部向下偏移」。
-        //    第 5 轮（本版）：**按「本行有几行文字」分别反解**，两个偏移都让
+        //    第 5 轮（本版）：按「本行有几行文字」分别反解，两个偏移都让
         //                「文字块的光学中心」落在同一个锚点上（见下面两个常量）。
         //
         //  ── 为什么锚点能同时适配「20px 轨道」和「32px 框」────────────────
-        //    因为 ROW_DROPDOWN_TOP 已经取 14，使**框中心**（14+16）恰好等于
-        //    **开关轨道中心**（20+10），两者都 = 行首 + 30 = ROW_ANCHOR_Y。
+        //    因为 ROW_DROPDOWN_TOP 已经取 14，使框中心（14+16）恰好等于
+        //    开关轨道中心（20+10），两者都 = 行首 + 30 = ROW_ANCHOR_Y。
         //    所以「控件中心」这个参照在两类行里是同一个数，文字只需要按行数选偏移。
         //
-        //  ⚠️ 直接把 `ROW_ANCHOR_Y`(30) 当基线是错的 —— 基线与墨迹中线差 5.5px。
-        //  ⚠️ 单行行与两行行**必须用不同的基线常量**，这是第 3/4 轮反复翻车的根因。
-        //  ⚠️ 改字号 / 改字体族必须重新标定 TEXT_INK_MID_OFFSET 与 TEXT_INK_ASCENT。
-        // ============================================================
+        //  直接把 `ROW_ANCHOR_Y`(30) 当基线是错的 —— 基线与墨迹中线差 5.5px。
+        //  单行行与两行行必须用不同的基线常量，这是第 3/4 轮反复翻车的根因。
+        //  改字号 / 改字体族必须重新标定 TEXT_INK_MID_OFFSET 与 TEXT_INK_ASCENT。
+        // ----  ----
 
         /// <summary>行内纵向锚点：每行「右侧控件中心 / 左侧文字块光学中心」的相对偏移。</summary>
         private const float ROW_ANCHOR_Y = 30f;
@@ -142,7 +142,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 13px 字号的墨迹几何（实测标定，Microsoft YaHei UI）：
         /// 绘制基线 y 之上 11px 到基线处是墨迹，即 `top = 基线-11`、`bot = 基线`、`中线 = 基线-5.5`。
-        /// ⚠️ 换字号 / 换字体族必须重新标定这两个数。
+        /// 换字号 / 换字体族必须重新标定这两个数。
         /// </summary>
         private const float TEXT_INK_MID_OFFSET = 5.5f;
 
@@ -153,39 +153,39 @@ namespace NotchPeninsula
         private const float ROW_SUB_OFFSET = 20f;
 
         /// <summary>
-        /// **单行行**（只有标题、没有副标题，如通知卡行 4 的「提示音」）的标题基线偏移。
+        /// 单行行（只有标题、没有副标题，如通知卡行 4 的「提示音」）的标题基线偏移。
         ///
         /// 反解：墨迹中线 = 基线 - 5.5，令它 = 行首 + ROW_ANCHOR_Y(30)
-        /// → 基线 = 行首 + 30 + 5.5 = **行首 + 35.5**。
+        /// → 基线 = 行首 + 30 + 5.5 = 行首 + 35.5。
         /// </summary>
         private const float ROW_TEXT_BASELINE_SINGLE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET;   // = 35.5
 
         /// <summary>
-        /// **两行行**（标题 + 副标题，如「开机自启」「系统消息通知」）的**标题**基线偏移。
+        /// 两行行（标题 + 副标题，如「开机自启」「系统消息通知」）的标题基线偏移。
         ///
         /// 反解：文字块的墨迹范围 = [基线 - 11, 基线 + ROW_SUB_OFFSET]，
         ///       块中线 = 基线 + (ROW_SUB_OFFSET - 11) / 2 = 基线 + 4.5，
         ///       令块中线 = 行首 + ROW_ANCHOR_Y(30)
-        /// → 标题基线 = 行首 + 30 + 5.5 - 20 / 2 = **行首 + 25.5**，副标题 = 行首 + 45.5。
+        /// → 标题基线 = 行首 + 30 + 5.5 - 20 / 2 = 行首 + 25.5，副标题 = 行首 + 45.5。
         ///
-        /// ⚠️ 曾经把它和单行行合并成 35.5：那是拿「标题那一行的墨迹中线」去对控件中心，
+        /// 曾经把它和单行行合并成 35.5：那是拿「标题那一行的墨迹中线」去对控件中心，
         ///    整个两行文字块因此整体下移 10px（用户 2026-09-22 点名的「文字全部向下偏移」）。
-        /// ⚠️ 也别写成 `ROW_ANCHOR_Y - 4`（= 26）：那是把「基线」当「视觉中心」，
+        /// 也别写成 `ROW_ANCHOR_Y - 4`（= 26）：那是把「基线」当「视觉中心」，
         ///    虽然只差 0.5px 看着没事，但语义是错的，下次改字号就会崩。
         /// </summary>
         private const float ROW_TEXT_BASELINE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET - ROW_SUB_OFFSET / 2f;   // = 25.5
 
         /// <summary>
         /// 下拉框（h=32）的框顶偏移：要让框中心落在 `行首 + ROW_ANCHOR_Y`，
-        /// 即 `框顶 + 16 = 30` → **框顶 = 行首 + 14**（与开关轨道同中心）。
-        /// ⚠️ 不是 +12（旧值，中心 28，比开关低 2px）也不是 0（旧值，中心 16，比开关高 14px）。
+        /// 即 `框顶 + 16 = 30` → 框顶 = 行首 + 14（与开关轨道同中心）。
+        /// 不是 +12（旧值，中心 28，比开关低 2px）也不是 0（旧值，中心 16，比开关高 14px）。
         /// </summary>
         private const float ROW_DROPDOWN_TOP = 14f;
 
         /// <summary>
         /// 下拉行「框内文字」相对框顶的基线偏移 = `DrawDropdownBox` 的 `h/2 + 5`。
-        /// ⚠️ 这是**框自己内部**的排版参数，只用于把框内文字摆正在框里，
-        ///     **绝不可拿它当「框外标签的对齐口径」**（2026-09-22 就是这么治错的）。
+        /// 这是框自己内部的排版参数，只用于把框内文字摆正在框里，
+        ///     绝不可拿它当「框外标签的对齐口径」（2026-09-22 就是这么治错的）。
         /// </summary>
         private const float DROPDOWN_TEXT_BASELINE = 21f;
 
@@ -229,9 +229,9 @@ namespace NotchPeninsula
 
         /// <summary>行 4 标题基线（= 行首 + 单行行基线偏移 ROW_TEXT_BASELINE_SINGLE = 行首 + 35.5）。
         ///
-        /// ⚠️ 行 4 只有「提示音」三个字、**没有副标题**，所以走**单行行**的口径：
+        /// 行 4 只有「提示音」三个字、没有副标题，所以走单行行的口径：
         ///    墨迹中线对齐行内锚点（= 行 4 下拉框 / 按钮中心，实测均为 404.0）。
-        ///    这里**不能**用两行行的 `ROW_TEXT_BASELINE`(25.5)，否则文字会飘到框上方。
+        ///    这里不能用两行行的 `ROW_TEXT_BASELINE`(25.5)，否则文字会飘到框上方。
         ///    两个常量的差别就是「这一行有几行文字」，见文件头部锚点说明。
         /// 行 4 只有左侧一个短标签、无描述（空间被 4 个控件占满，放不下第二行文字）。
         /// </summary>
@@ -240,32 +240,32 @@ namespace NotchPeninsula
         private const float SOUND_ROW_H = 32f;
 
         /// <summary>
-        /// 行 4 三个下拉框 / 两个按钮共用的**框顶**偏移 = 行首 + ROW_DROPDOWN_TOP（= 行 4 行首 + 14）。
+        /// 行 4 三个下拉框 / 两个按钮共用的框顶偏移 = 行首 + ROW_DROPDOWN_TOP（= 行 4 行首 + 14）。
         ///
-        /// ⚠️ 不要再把框顶直接写成 `SOUND_ROW_Y`（行首本身）：那会让框中心落在行首 + 16，
+        /// 不要再把框顶直接写成 `SOUND_ROW_Y`（行首本身）：那会让框中心落在行首 + 16，
         ///    比同一行的标签墨迹中心（行首 + 30）高 14px，视觉上就是「提示音三个字和右边按钮不齐」。
         ///    2026-09-22 用户点名的「子卡片顶部再加 5px padding」本质就是要把这一段往下压。
-        /// ✅ 所有「框/按钮的顶」都走本常量，「行首」只用来说明行从哪儿起（命中判定、浮层锚点用行首）。
+        /// 所有「框/按钮的顶」都走本常量，「行首」只用来说明行从哪儿起（命中判定、浮层锚点用行首）。
         /// </summary>
         private const float SOUND_BOX_Y = SOUND_ROW_Y + ROW_DROPDOWN_TOP;
 
         /// <summary>系统消息通知卡底部偏移。
         ///
-        /// ⚠️ **不能用「行数 × 62」硬套**：62 是「行首到行首」的行距，不是「行首到卡底」的间距。
+        /// 不能用「行数 × 62」硬套：62 是「行首到行首」的行距，不是「行首到卡底」的间距。
         ///    卡片底 = 行 4 控件底 + 收尾留白。行 4 控件占 +14..+46（框顶 14 + 高 32），
         ///    所以底 = 342 + 46 + 16 = 404。
         ///    收尾留白取 16px，与单行卡「开关轨底 40 → 卡底 62」的 22px 观感相当
         ///    （控件比文字矮，留白可以略小）。
-        ///    ⚠️ 曾经写成 404（硬套 4×62 = 248）时是巧合相等，后来框顶上移才暴露不对；
-        ///       现在这一版的 404 是**从 SOUND_BOX_Y 推出来的**，不是硬套。
+        ///    曾经写成 404（硬套 4×62 = 248）时是巧合相等，后来框顶上移才暴露不对；
+        ///       现在这一版的 404 是从 SOUND_BOX_Y 推出来的，不是硬套。
         ///    判据：`TOAST_CARD_BOTTOM - (SOUND_BOX_Y + SOUND_ROW_H)` 应落在 [12, 20]。</summary>
         private const float TOAST_CARD_BOTTOM = SOUND_BOX_Y + SOUND_ROW_H + 16f;
 
         /// <summary>
-        /// 提示音行「从右往左」排版时用的横向间隙。**整行必须刚好塞进卡片内容区**
+        /// 提示音行「从右往左」排版时用的横向间隙。整行必须刚好塞进卡片内容区
         /// （216 .. WIDTH-36，共 348px），所以每个宽度都是按实测文本宽度抠出来的：
         /// 最长选项「手表提示（watchOS）」132.9px + 左右内边距与箭头 ≈ 156。
-        /// ⚠️ 改任一宽度都要重算总和，加起来超过 348 就会像上一版那样怼出卡片左边界。
+        /// 改任一宽度都要重算总和，加起来超过 348 就会像上一版那样怼出卡片左边界。
         /// </summary>
         private const float SOUND_ROW_GAP = 12f;
 
@@ -297,11 +297,11 @@ namespace NotchPeninsula
         /// <summary>
         /// 「提示音」下拉左边界。
         ///
-        /// ⚠️ 这一行是**全页唯一 4 个控件并排**的行（下拉 + 音量 + 试听 + 重置，共 340px），
-        ///    而内容区只有 348px（216..564）。所以它**不能**像其它行那样从 216 起排 ——
-        ///    那样会把左侧标签区挤成负数（216 - 8 = 208 &lt; 216），文字直接叠到下拉框上。
+        /// 这一行是全页唯一 4 个控件并排的行（下拉 + 音量 + 试听 + 重置，共 340px），
+        ///    而内容区只有 348px（216..564）。所以它不能像其它行那样从 216 起排 ——
+        ///    那样会把左侧标签区挤成负数（216 - 8 = 208，小于 216），文字直接叠到下拉框上。
         ///    这里给标签留出实测宽度（「提示音」3 字 13.5px ≈ 39px）+ 8px 间隙。
-        ///    ⚠️ 改这里要同步 `SOUND_CTRL_W`，并确认 `SOUND_LABEL_X + 标签宽 + GAP == SOUND_CTRL_X`。
+        ///    改这里要同步 `SOUND_CTRL_W`，并确认 `SOUND_LABEL_X + 标签宽 + GAP == SOUND_CTRL_X`。
         /// </summary>
         private const float SOUND_CTRL_X = SOUND_LABEL_X + 40f + SOUND_LABEL_GAP;
 
@@ -311,7 +311,7 @@ namespace NotchPeninsula
         // ---- ② 剪贴板链接检测（通知卡之后，行首 = 通知卡底 + 标准卡片间隙 10）----
 
         /// <summary>剪贴板链接检测卡行首 = 通知卡底 + 10。
-        /// ⚠️ 必须由 TOAST_CARD_BOTTOM 派生：通知卡高度一改（本页改过三次），这里跟着自动走。
+        /// 必须由 TOAST_CARD_BOTTOM 派生：通知卡高度一改（本页改过三次），这里跟着自动走。
         ///    2026-09-22 就是因为剪贴板卡写死 400，而通知卡底从 390 长到 404，两卡直接叠在一起。</summary>
         private const float CLIPBOARD_CARD_Y = TOAST_CARD_BOTTOM + 10f;
 
@@ -333,11 +333,11 @@ namespace NotchPeninsula
 
         private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
 
-        // 🎚 媒体设置页「目标媒体平台 + 匹配方式」合并卡片（渲染与鼠标命中必须使用同一组坐标）
-        // 📐 媒体设置页卡片顺序（2026-09-20 合并后）：
+        // 媒体设置页「目标媒体平台 + 匹配方式」合并卡片（渲染与鼠标命中必须使用同一组坐标）
+        // 媒体设置页卡片顺序（2026-09-20 合并后）：
         //    媒体控制 12..74 | 合并卡片（两行）84..208 | 歌词设置 222..398
         //    合并卡片：第 1 行「目标媒体平台」行首 84、分隔线 142、第 2 行「匹配方式」行首 146（行距 62）
-        // ⚠️ 第 1 行下拉框 +96..+128 的命中判定写在 WM_MOUSEMOVE 的 tab 2 段里（+98..+128），
+        // 第 1 行下拉框 +96..+128 的命中判定写在 WM_MOUSEMOVE 的 tab 2 段里（+98..+128），
         //    第 2 行选项框/下拉菜单命中直接读下面的 MATCH_ROW_Y / MATCH_MENU_Y —— 改这里即两侧同时生效。
 
         private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + 84f;    // 合并卡片顶部
@@ -390,7 +390,7 @@ namespace NotchPeninsula
 
         private bool _topmostToggleHovered = false;
 
-        private bool _clipboardToggleHovered = false; // 📋「剪贴板链接检测」（2026-09-20 从交互设置搬到通用设置）
+        private bool _clipboardToggleHovered = false; // 「剪贴板链接检测」（从交互设置搬到通用设置）
         // 灵动岛字体切换状态（字体本身由 FontConfig 统一持有）
 
         private bool _fontPickHovered = false;
@@ -459,7 +459,7 @@ namespace NotchPeninsula
 
         private float _savedToastH = -1f; // 切到完整模式前的用户消息高度快照
 
-        // 🎵 消息提示音状态（值本身存在 ToastSoundConfig 静态类里，这里只放 UI 交互态）
+        // 消息提示音状态（值本身存在 ToastSoundConfig 静态类里，这里只放 UI 交互态）
         private bool _toastSoundDropdownOpen = false;
 
         private bool _toastSoundDropdownHovered = false;
@@ -467,7 +467,7 @@ namespace NotchPeninsula
         private int _hoveredToastSoundIndex = -1;
 
         /// <summary>
-        /// 提示音下拉浮层的**滚动首行**。列表是动态扫目录来的（可能 40 项），
+        /// 提示音下拉浮层的滚动首行。列表是动态扫目录来的（可能 40 项），
         /// 浮层高度被 RenderDropdownList 钳制在窗口内，超出的行靠这个偏移滚动查看。
         /// </summary>
         private int _dropdownScroll = 0;
@@ -476,10 +476,10 @@ namespace NotchPeninsula
         private const float DROPDOWN_ROW_H = 26f;
 
         /// <summary>
-        /// 提示音下拉浮层的**唯一布局真源**：把「浮层顶 / 可视行数 / 最大首行」算成一套，
+        /// 提示音下拉浮层的唯一布局真源：把「浮层顶 / 可视行数 / 最大首行」算成一套，
         /// 供绘制（RenderDropdownList）、悬停命中（OnMouseMove）、滚轮（WM_MOUSEWHEEL）三处共用。
         ///
-        /// ⚠️ 以前这三处各写一份，而且滚轮那份把浮层顶写成了 `SOUND_ROW_Y + SOUND_ROW_H + 2`
+        /// 以前这三处各写一份，而且滚轮那份把浮层顶写成了 `SOUND_ROW_Y + SOUND_ROW_H + 2`
         ///    （漏了 `ROW_DROPDOWN_TOP` = 14）—— 与绘制侧差 14px，可滚范围因此对不上，
         ///    表现就是「滚两下就滚不动了」。改这里即三处同时生效。
         /// </summary>
@@ -493,13 +493,13 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 「音量」下拉浮层的**唯一布局真源**（向上展开：底边贴住音量框上沿）。
+        /// 「音量」下拉浮层的唯一布局真源（向上展开：底边贴住音量框上沿）。
         /// 三个出参 = 浮层顶 / 浮层底 / 可视行数，绘制与命中都只认它。
         ///
-        /// ⚠️ 算式必须与 <see cref="RenderDropdownList"/> 的 `upward: true` 分支**逐字同源**
+        /// 算式必须与 RenderDropdownList 的 `upward: true` 分支逐字同源
         ///    （`availFrom = anchorY - 2`、`maxRows = (availFrom - TITLE_BAR_HEIGHT - 12) / 行高`）。
-        ///    以前绘制侧减了那个 2、命中侧没减，两边**靠巧合**算出同一个行数（都是 13），
-        ///    只要 <see cref="SOUND_BOX_Y"/> 挪动十几像素就会立刻错位 —— 与「提示音列表滚不动」
+        ///    以前绘制侧减了那个 2、命中侧没减，两边靠巧合算出同一个行数（都是 13），
+        ///    只要 SOUND_BOX_Y 挪动十几像素就会立刻错位 —— 与「提示音列表滚不动」
         ///    是同一种病：同一份布局在多处各写一份。绘制与命中现在都调本方法。
         /// </summary>
         private void GetVolumeMenuLayout(out float menuTop, out float menuBottom, out int visibleRows)
@@ -511,7 +511,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 展开提示音下拉时把滚动位置定到「当前选中项可见」处 —— **只在这一刻做一次**。
+        /// 展开提示音下拉时把滚动位置定到「当前选中项可见」处 —— 只在这一刻做一次。
         /// 之后滚动位置完全由滚轮决定：曾经在绘制与命中里每帧「抢回选中项」，
         /// 结果滚轮刚滚下去、下一帧就被拉回顶部，用户看到的就是「根本滚不动」。
         /// </summary>
@@ -570,7 +570,7 @@ namespace NotchPeninsula
         // 显示设置
         // 「显示内容」列表的悬停行：-1 = 没悬停任何行。
         // 三处分开记，是因为同一行里复选框与 ∧ / ∨ 的悬停反馈互不相同；
-        // _displayHoverRow 是「指针压在这一行的哪个部位都算」的**可视槽位**，专门驱动行底动画。
+        // _displayHoverRow 是「指针压在这一行的哪个部位都算」的可视槽位，专门驱动行底动画。
         private int _hoveredDisplayRow = -1;
 
         private int _hoveredDisplayMoveUp = -1;
@@ -578,14 +578,14 @@ namespace NotchPeninsula
         private int _hoveredDisplayMoveDown = -1;
 
         /// <summary>
-        /// 「显示内容」列表的**滚动首行**（绝对条目下标）。条目数（插件可能很多）会超过卡片
+        /// 「显示内容」列表的滚动首行（绝对条目下标）。条目数（插件可能很多）会超过卡片
         /// 能放下的行数，超出的部分靠这个偏移滚动查看；滚轮是唯一的改动入口。
-        /// 渲染、命中、滚轮三处都通过 <see cref="GetDisplayListLayout"/> 取可滚范围。
+        /// 渲染、命中、滚轮三处都通过 GetDisplayListLayout 取可滚范围。
         /// </summary>
         private int _displayScroll = 0;
 
         /// <summary>
-        /// 悬停行**在可视窗口里的槽位**（0 = 当前首行），-1 = 没悬停任何行。
+        /// 悬停行在可视窗口里的槽位（0 = 当前首行），-1 = 没悬停任何行。
         /// 存槽位而不是绝对下标，是因为行底动画数组按槽位索引（一屏最多十来行）。
         /// </summary>
         private int _displayHoverRow = -1;
@@ -597,9 +597,9 @@ namespace NotchPeninsula
         private bool _displayHoverTimerOn = false;
 
         /// <summary>
-        /// 「显示内容」列表的**唯一布局真源**：可视行数 / 最大首行。
-        /// 绘制（<c>RenderTabDisplay</c>）、悬停命中（<c>OnMouseMove</c>）、滚轮
-        /// （<c>WM_MOUSEWHEEL</c>）三处共用 —— 以前这类算式在各处各写一份，
+        /// 「显示内容」列表的唯一布局真源：可视行数 / 最大首行。
+        /// 绘制（RenderTabDisplay）、悬停命中（OnMouseMove）、滚轮
+        /// （WM_MOUSEWHEEL）三处共用 —— 以前这类算式在各处各写一份，
         /// 卡片高度或行高一改就会出现「滚不动 / 滚过头」。
         /// </summary>
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
@@ -660,8 +660,8 @@ namespace NotchPeninsula
 
         private float[] _customValues = new float[8];
         // 「恢复默认」用的出厂值，顺序 = [待机宽, ~~待机高~~(已废弃), 媒体宽, 全局折叠态高, 通知宽, 通知高, DPI, 底部圆角]。
-        // ⚠️ 数组按下标取值，废弃项也不能删，只能留位（29f 已不再被任何行引用）。
-        // ⚠️ 这三个地方必须同步改，否则「恢复默认」和首次安装会给出不同的值：
+        // 数组按下标取值，废弃项也不能删，只能留位（29f 已不再被任何行引用）。
+        // 这三个地方必须同步改，否则「恢复默认」和首次安装会给出不同的值：
         //    ① 本数组 ② Program.LoadSettings 里 key.GetValue 的兜底值 ③ Renderer 的字段初值
 
         private static readonly float[] _defaultCustomValues = [125f, 29f, 250f, 35f, 260f, 55f, 1.0f, 12f];
@@ -715,7 +715,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 打开设置窗口并直达指定页签（岛内右键按区域调用：媒体控制器 → 2 媒体设置、时间/硬件 → 1 显示设置）。
-        /// 窗口还没创建过就先创建（构造里会显示），再落地页签；已创建则切页签后走 <see cref="Toggle"/> 的显示流程。
+        /// 窗口还没创建过就先创建（构造里会显示），再落地页签；已创建则切页签后走 Toggle 的显示流程。
         /// </summary>
         public static void ShowTab(int tab)
         {
@@ -765,7 +765,7 @@ namespace NotchPeninsula
             // 消息通知内容模式（0=缩略, 1=完整）
             _selectedToastModeIndex = Renderer.IsToastFullMode ? 2 : (Renderer.IsToastCompactMode ? 1 : 0);
 
-            // 🎵 提示音：列表与选中值已由 Program.LoadSettings（RefreshBuiltins → Restore）恢复过，
+            // 提示音：列表与选中值已由 Program.LoadSettings（RefreshBuiltins → Restore）恢复过，
             //    这里只需把「自定义路径失效」的原因取出来显示在卡片上。
             //    RefreshBuiltins 幂等且只扫顶层 wav，这里再调一次是为了让「先开设置窗口、
             //    再往 data\sound 丢文件」的场景也能在打开窗口时就看到新文件。
@@ -837,7 +837,7 @@ namespace NotchPeninsula
             // 1) 背景窗：普通 DWM HWND，只负责 Acrylic / Mica 材质；
             // 2) 内容窗：继续使用 layered + UpdateLayeredWindow，负责 Skia 前景 UI。
             // 这样既能拿到真实背景材质，又能保留前景的 per-pixel alpha，不会再把历史帧叠进客户区造成残影。
-            // ⚠️ 背景窗标题必须留空：它用 DwmExtendFrameIntoClientArea 把整个客户区做成了玻璃，
+            // 背景窗标题必须留空：它用 DwmExtendFrameIntoClientArea 把整个客户区做成了玻璃，
             //    DWM 会把它当成「有标题栏的窗口」，最小化再还原时会把窗口标题直接画在客户区左上角
             //    （就是那个 "NotchPeninsulaBackdrop" 残影）。标题为空 → 无字可画。
             //    并且它永远不要走 SW_MINIMIZE，只走 SW_HIDE / SW_SHOWNOACTIVATE（见 HideBackdrop / ShowBackdrop）。
@@ -857,7 +857,7 @@ namespace NotchPeninsula
             TryEnableBackdropMaterial();
             ApplyBackdropPalette();
 
-            // ⚠️ 内容窗刻意用 WS_EX_APPWINDOW 而不是 WS_EX_TOOLWINDOW：
+            // 内容窗刻意用 WS_EX_APPWINDOW 而不是 WS_EX_TOOLWINDOW：
             //    工具窗（TOOLWINDOW）没有任务栏按钮，最小化时 Windows 只会把它画成
             //    「桌面左下角、浮在任务栏之上的小标题条」——既进不了任务栏，也没有入口点回来。
             //    换成 APPWINDOW 后最小化就是正常进任务栏，点任务栏按钮即可还原。
@@ -872,7 +872,7 @@ namespace NotchPeninsula
 
             SyncBackdropToContent();
 
-            // 🧩 插件中心支持把 DLL 直接拖进来导入（见 ConsoleWindow.PluginDrop.cs）
+            // 插件中心支持把 DLL 直接拖进来导入（见 ConsoleWindow.PluginDrop.cs）
             SetupPluginDropTarget();
 
             for (int i = 0; i < 8; i++)
@@ -968,7 +968,7 @@ namespace NotchPeninsula
                         ReapplyBackdropMaterial();
                         // DWM 的合成初始化是异步的，紧贴 WM_ACTIVATE 补的这一次仍可能被随后的
                         // 初始化覆盖，所以再挂一个短定时器，等激活流程彻底走完再补一次兜底。
-                        // ⚠️ Win10 上真正起作用的是定时器里那次「重建材质窗」，别把这里删掉。
+                        // Win10 上真正起作用的是定时器里那次「重建材质窗」，别把这里删掉。
                         Win32.SetTimer(hwnd, BACKDROP_REFRESH_TIMER_ID, 150, IntPtr.Zero);
                     }
                     break;
@@ -984,7 +984,7 @@ namespace NotchPeninsula
                     }
                     if (wParam == DISPLAY_HOVER_TIMER_ID)
                     {
-                        // 🖱 行悬停动画：逐拍把每行进度推向目标值；全部到位就自己停表，
+                        // 行悬停动画：逐拍把每行进度推向目标值；全部到位就自己停表，
                         //    所以「没有动画在跑」时不会有任何空转的定时器。
                         if (!TickDisplayHoverAnim()) StopDisplayHoverAnim(hwnd);
                         return IntPtr.Zero;
@@ -992,7 +992,7 @@ namespace NotchPeninsula
                     break;
 
                 // 系统「应用模式」（浅色 / 深色）切换时系统会广播 WM_SETTINGCHANGE。
-                // 只有**明暗真的变了**才重刷：亚克力 tint / 材质窗深色标题栏 / 全套底色都要跟着换。
+                // 只有明暗真的变了才重刷：亚克力 tint / 材质窗深色标题栏 / 全套底色都要跟着换。
                 // （WM_SETTINGCHANGE 也用于很多其它设置，白刷一遍整帧没必要，所以先比对再动。）
                 case Win32.WM_SETTINGCHANGE:
                 {
@@ -1018,7 +1018,7 @@ namespace NotchPeninsula
                     OnLeftButtonDown(hwnd, (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale));
                     break;
 
-                // 🖱 滚轮：服务于两张**条目数不封顶**的长列表 —— 提示音下拉浮层、以及
+                // 滚轮：服务于两张条目数不封顶的长列表 —— 提示音下拉浮层、以及
                 //    「显示设置 → 显示内容」（插件一多就会超出卡片高度）。
                 case Win32.WM_MOUSEWHEEL:
                     if (_toastSoundDropdownOpen)

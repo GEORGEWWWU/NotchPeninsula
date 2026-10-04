@@ -29,7 +29,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 全局折叠态高度：待机态、媒体折叠态、剪贴板链接面板共用同一个值。
         /// 原先「待机高度」(BASE_HEIGHT) 与它分开，2026-09-27 合并到本属性，
-        /// 存储沿用注册表 <c>Custom_MediaH</c>（见 Program.LoadSettings 的兼容回落）。
+        /// 存储沿用注册表 Custom_MediaH（见 Program.LoadSettings 的兼容回落）。
         /// </summary>
         public static float MEDIA_HEIGHT { get => _mediaHeight; set => _mediaHeight = value; }
 
@@ -65,7 +65,7 @@ namespace NotchPeninsula
 
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
 
-        // 🧩 组合模式已**常开**（2026-09-25 用户要求移除总开关）：灵动岛显示什么、按什么次序，
+        // 组合模式已常开（2026-09-25 用户要求移除总开关）：灵动岛显示什么、按什么次序，
         //    完全由「显示设置 → 显示内容」那张复选框 + 上下排序列表决定 —— 只勾一个就等于旧的
         //    「待机显示内容」，勾多个就是多模块并排。
         //    之所以还留着这个「恒为 true」的属性，是因为渲染 / 布局 / 宽度计算里到处都在问
@@ -84,95 +84,83 @@ namespace NotchPeninsula
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
 
         /// <summary>
-        /// 是否正有一批文件被拖着经过岛体（由 <see cref="IslandDropTarget"/> 在 DragEnter / DragLeave / Drop 维护）。
+        /// 是否正有一批文件被拖着经过岛体（由 IslandDropTarget 在 DragEnter / DragLeave / Drop 维护）。
         ///
-        /// <para>
         /// 置位期间穿透模式的「悬停即淡出到 0%」必须失效：岛体一旦降到全透明，它的像素就从 OLE 的命中测试里消失，
         /// 拖放目标会在拖动途中当场丢失 —— 表现就是「文件怎么都放不进详情页」。拖放一结束（离开 / 放下）自动恢复。
-        /// </para>
         ///
-        /// <para>
-        /// 写方是 UI 线程上的 OLE 回调，读方是渲染计时器线程，所以必须 <c>volatile</c>。
-        /// </para>
+        /// 写方是 UI 线程上的 OLE 回调，读方是渲染计时器线程，所以必须 volatile。
         /// </summary>
         public static volatile bool FileDragInProgress = false;
 
         /// <summary>
-        /// 岛体垂直基准位置（逻辑像素）：<c>0</c> = 贴目标显示器顶部（默认，也是当前唯一的形态）。
+        /// 岛体垂直基准位置（逻辑像素）：0 = 贴目标显示器顶部（默认，也是当前唯一的形态）。
         ///
-        /// <para>
-        /// <b>位置自定义的唯一真源</b>：窗口坐标（<c>ptDst.y</c>）、自动隐藏策略（上移出屏 / 完全隐藏）、
+        /// 位置自定义的唯一真源：窗口坐标（ptDst.y）、自动隐藏策略（上移出屏 / 完全隐藏）、
         /// 以及两处屏幕坐标轮询（穿透悬停、岛外点击兜底）全部从它派生 —— 将来开放「岛体位置自定义」
-        /// （无论做在宿主设置里还是给插件 API），**只需要写这一个值**，其余自动跟着走。
-        /// </para>
+        /// （无论做在宿主设置里还是给插件 API），只需要写这一个值，其余自动跟着走。
         /// </summary>
         public static float IslandBaseY { get; set; } = 0f;
 
         /// <summary>
-        /// 「完全隐藏」不透明度：<c>1</c> = 正常显示，<c>0</c> = 整块不可见。
+        /// 「完全隐藏」不透明度：1 = 正常显示，0 = 整块不可见。
         ///
-        /// <para>
         /// 岛体基准离开顶部时，上移出屏那套会在屏幕中间留下一条 4px 岛体残影（且岛体会从屏幕中间
         /// "飞"到顶部），所以改用原地淡出到 0% 透明 —— 全透明像素会被 Windows 判定为物理穿透，
-        /// 唤醒入口复用岛体正中的唤醒按钮（见 <see cref="Renderer.WakeButtonX"/>）。
-        /// 与 <see cref="PassthroughAlpha"/> 是两条独立通道（后者由穿透模式独占），渲染时取二者较小值。
-        /// </para>
+        /// 唤醒入口复用岛体正中的唤醒按钮（见 Renderer.WakeButtonX）。
+        /// 与 PassthroughAlpha 是两条独立通道（后者由穿透模式独占），渲染时取二者较小值。
         /// </summary>
         public static float FullHideAlpha = 1.0f;
 
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
 
-        // ================= 🖱 折叠态媒体区的**展开入口**（唯一真源） =================
+        // ---- 折叠态媒体区的展开入口（唯一真源） ----
         // 规则（2026-10-02 定下「展开走右键」，2026-10-03 用户细化为「入口跟着跳转开关走」）：
-        //   · 「媒体交互方式」（MediaInteractionMode）= **展开功能总闸**。关掉它就没有展开这一说，
+        //   · 「媒体交互方式」（MediaInteractionMode）= 展开功能总闸。关掉它就没有展开这一说，
         //     折叠态媒体区的右键照旧直达「媒体设置」，左键只剩（直接交互模式的）悬停播放控件。
         //   · 总闸开着时，入口由「双击封面跳转应用」（MediaController.IsAppLaunchEnabled）决定 ——
-        //     开启：左键被**双击跳转**占用（双击折叠态左半边 / 展开态封面），展开让位给**右键**；
-        //     关闭：左键空闲，恢复**左键单击**展开（2026-10-02 之前的老口径），右键直达「媒体设置」。
+        //     开启：左键被双击跳转占用（双击折叠态左半边 / 展开态封面），展开让位给右键；
+        //     关闭：左键空闲，恢复左键单击展开（2026-10-02 之前的老口径），右键直达「媒体设置」。
         //
-        // ⚠️ 命中侧（NotchWindow 的 WM_MOUSEMOVE / WM_LBUTTONDOWN / WM_RBUTTONDOWN）与设置页文案
+        // 命中侧（NotchWindow 的 WM_MOUSEMOVE / WM_LBUTTONDOWN / WM_RBUTTONDOWN）与设置页文案
         //    一律从这里取，不要再各自写 `MediaInteractionMode == 1` 之类的复合判断 —— 三处口径一分叉，
         //    就会出现「手型给了却点不动」或「设置里写着左键、实际要右键」。
-        /// <summary>折叠态媒体区是否用**右键**展开（总闸开启 + 「双击封面跳转应用」开启）。</summary>
+        /// <summary>折叠态媒体区是否用右键展开（总闸开启 + 「双击封面跳转应用」开启）。</summary>
         public static bool MediaExpandByRightClick => MediaInteractionMode == 1 && MediaController.IsAppLaunchEnabled;
 
-        /// <summary>折叠态媒体区是否用**左键单击**展开（总闸开启 + 「双击封面跳转应用」关闭）。</summary>
+        /// <summary>折叠态媒体区是否用左键单击展开（总闸开启 + 「双击封面跳转应用」关闭）。</summary>
         public static bool MediaExpandByLeftClick => MediaInteractionMode == 1 && !MediaController.IsAppLaunchEnabled;
 
         /// <summary>
         /// 岛体总长度上限：Toast / 剪贴板面板的自适应宽度、组合模式总宽、以及插件行的取舍都以它封顶。
         ///
-        /// <para>
-        /// <b>2026-09-20 由 800 放开到 1920（用户要求）</b>：用户原话「必须放开最大长度，灵动岛本体哪怕
+        /// 2026-09-20 由 800 放开到 1920（用户要求）：用户原话「必须放开最大长度，灵动岛本体哪怕
         /// 宽度 max=1920 都无所谓，宁愿灵动岛超长溢出屏幕都不要被裁切」。
-        /// 旧的 800 是「怕挤压到右边的插件」而设的，但实际效果是**长歌词被裁切**，
-        /// 而且插件行预算（= 本值 − 原生内容宽度）被长歌词吃光后，插件会**直接整帧不显示**
+        /// 旧的 800 是「怕挤压到右边的插件」而设的，但实际效果是长歌词被裁切，
+        /// 而且插件行预算（= 本值 − 原生内容宽度）被长歌词吃光后，插件会直接整帧不显示
         /// （不是被压缩，是彻底消失），体验很差 —— 这个顾虑被证明完全没必要。
-        /// </para>
         ///
-        /// <para>
-        /// 1920 是**本体**的上限（≈ 106 个汉字，任何真实歌词行都远达不到）。
-        /// 它同时也是窗口内容区的下限来源：<see cref="WINDOW_WIDTH"/> 必须 ≥ 本值，
+        /// 1920 是本体的上限（≈ 106 个汉字，任何真实歌词行都远达不到）。
+        /// 它同时也是窗口内容区的下限来源：WINDOW_WIDTH 必须 ≥ 本值，
         /// 否则岛体超出窗口的部分会被窗口边缘裁掉（那就又变成裁切了）。
         /// 岛体允许溢出屏幕 —— 窗口比屏幕宽是合法的，透明像素照常鼠标穿透。
-        /// </para>
         /// </summary>
         public const float MAX_ISLAND_WIDTH = 1920f;
 
-        // ⛔ 2026-09-20 用户明确要求「媒体控制器的长度也放开，多长都无所谓」，因此删掉了两个上限常量：
+        // 2026-09-20 用户明确要求「媒体控制器的长度也放开，多长都无所谓」，因此删掉了两个上限常量：
         //    · MEDIA_TEXT_MAX_WIDTH（默认 480 ≈ 27 个汉字）—— 非组合模式的媒体文本区上限
         //    · CompositeMediaMaxWidth（默认 460 ≈ 21 个汉字）—— 组合模式媒体模块的占宽上限
         //    这两个才是「歌词一长就被裁切」的真正元凶（它们都比 MAX_ISLAND_WIDTH 小得多，长歌词先撞到它们），
         //    而且把原生内容宽度钉死/压低后，插件行预算（= MAX_ISLAND_WIDTH − 原生宽度）被吃光，
-        //    装不下的插件会**整帧不显示**（不是压缩，是彻底消失）。
-        //    ⚠️ 不要再以「防止挤压插件」为由把它们加回来 —— 插件该不该显示由插件行预算决定，
+        //    装不下的插件会整帧不显示（不是压缩，是彻底消失）。
+        //    不要再以「防止挤压插件」为由把它们加回来 —— 插件该不该显示由插件行预算决定，
         //       而岛体该多长就多长（上限见 MAX_ISLAND_WIDTH）。
 
         // 动态计算最大边界，防止因刘海变大导致出界
         // 将透明原生窗口的基础画布拓宽，给极长歌词预留充足的物理空间，防止被系统窗口边缘裁切
-        // 🧩 插件详情页展开时，底层缓冲必须容得下详情页尺寸（+80 / +45 是原有的四周留白）
-        // ⚠️ 2026-09-20：岛体总长上限放宽到 MAX_ISLAND_WIDTH(1920) 后，窗口内容区**必须**跟着 ≥ 它 ——
+        // 插件详情页展开时，底层缓冲必须容得下详情页尺寸（+80 / +45 是原有的四周留白）
+        // 2026-09-20：岛体总长上限放宽到 MAX_ISLAND_WIDTH(1920) 后，窗口内容区必须跟着 ≥ 它 ——
         //    岛体是水平居中画的（islandLeft = (WINDOW_WIDTH - currentWidth) / 2），
         //    只要 currentWidth > WINDOW_WIDTH，islandLeft 就变成负数，超出窗口的那部分会被窗口边缘硬裁，
         //    等于又绕回「被裁切」。所以这里把 MAX_ISLAND_WIDTH 也纳入下限。
@@ -195,36 +183,36 @@ namespace NotchPeninsula
             {
                 canvas.Clear(SKColors.Transparent);
 
-                // 🖱 把本帧岛体高度同步给命中侧：双击跳转要用它区分「展开面板」与「折叠内联行」
+                // 把本帧岛体高度同步给命中侧：双击跳转要用它区分「展开面板」与「折叠内联行」
                 //    （判据必须与绘制分流同源，所以宁可每帧写一次快照，也不让命中侧另写一套高度条件）。
                 SetHitTestHeight(currentHeight);
 
-                // 🧩 每帧清空插件命中区，仅当本帧实际绘制插件行时才重新填充
+                // 每帧清空插件命中区，仅当本帧实际绘制插件行时才重新填充
                 // （防止 Toast / 媒体激活等不绘制插件的状态下残留上一帧的过期命中矩形）
                 InvalidatePluginHitAreas();
 
-                // 🎵 时间轴几何登记表帧首作废：本帧不画就等于命中区不存在
+                // 时间轴几何登记表帧首作废：本帧不画就等于命中区不存在
                 _tlBarX1 = _tlBarX2 = _tlBarY = 0f;
 
-                // 📋 剪贴板「打开」按钮热区帧首作废：本帧不画就等于命中区不存在
+                // 剪贴板「打开」按钮热区帧首作废：本帧不画就等于命中区不存在
                 _clipboardOpenHit = default;
 
-                // 🖱️ 原生模块（时间/日期、CPU/RAM、媒体）右键命中区同样帧首作废
+                // 原生模块（时间/日期、CPU/RAM、媒体）右键命中区同样帧首作废
                 InvalidateNativeHitZones();
 
                 // 岛体物理左边界（背景形状 / 裁剪范围以它为准）
                 float islandLeft = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）
                 float islandRight = islandLeft + currentWidth;
-                // 🧩 插件行的位置：
+                // 插件行的位置：
                 //   · 组合模式：插件已并入「内容顺序表」，与原生模块一起混排（宽度计在 GetCompositeWidth 内），
                 //     不单独占用预留区；
-                //   · 非组合模式：同样遵守这张顺序表 —— 排在「本帧原生模块」之前的插件画在原生内容**左边**，
+                //   · 非组合模式：同样遵守这张顺序表 —— 排在「本帧原生模块」之前的插件画在原生内容左边，
                 //     之后的画在右边。原生内容的左右边界据此内收，所以插件显示与否、排在哪一边，
                 //     都不会影响原生功能本身。
                 //     （2026-09-20 修复：此前非组合模式无条件把整行插件贴在岛体最右侧、完全不读顺序表，
                 //       导致「插件中心」的 ← / → 只在组合模式下有效。）
-                // ⚠️ 这里必须用**未缩放**的预留（GetPluginRowReserve，而不是 GetScaledPluginReserve）。
+                // 这里必须用未缩放的预留（GetPluginRowReserve，而不是 GetScaledPluginReserve）。
                 //    缩放版把预留按「当前宽度 / 目标宽度」缩小，而岛体宽度是弹簧动画过来的：
                 //    媒体控制器长度一变（换歌词 / 换标题 → 目标宽度变大），缩放系数立刻掉下来，
                 //    原生内容边界与插件行就会整体挪一下再挪回去 —— 表现出来就是「闪现一下又闪回来」。
@@ -247,7 +235,7 @@ namespace NotchPeninsula
                     // 本帧可能装不下「原生内容 + 两侧插件组」（典型：通知收起后插件行重新出现，
                     // 岛体才 260 而插件行要 400）。此时插件组按比例让位，给原生内容留出 MIN_NATIVE_AREA。
                     //
-                    // ⚠️ 判定阈值用**常量** MIN_NATIVE_AREA，不能换成「本帧原生内容所需宽度」——
+                    // 判定阈值用常量 MIN_NATIVE_AREA，不能换成「本帧原生内容所需宽度」——
                     //    后者与目标宽度同一刻跳变，而 currentWidth 还停在旧目标上，
                     //    换歌词那一帧就会误判「装不下」而把原生内容区一步拉宽（又是一次跳变）。
                     //    常量下限下：稳态（currentWidth == nativeWidth + reserve）永远不触发，
@@ -255,7 +243,7 @@ namespace NotchPeninsula
                     // 让位系数 k 随 currentWidth 连续变化（totalBlock 在预留不变时是常量），
                     // 不会引入新的跳变；收窄后的区间由绘制侧裁剪落实（见下方 ClipRect），
                     // 于是左右两组绝不会在岛体中间叠在一起，插件是随岛体长大从两侧滑入的。
-                    // ⚠️ 只在「本帧确有原生内容」时才介入：空白待机（nativeBuiltinId == null）时
+                    // 只在「本帧确有原生内容」时才介入：空白待机（nativeBuiltinId == null）时
                     //    原生内容区本来就是空的，没有东西会被负宽度翻面。
                     if (nativeBuiltinId != null)
                     {
@@ -335,7 +323,7 @@ namespace NotchPeninsula
                 _timePaint.Color = currentA;
                 _datePaint.Color = subA;
                 _mediaIconPaint.Color = currentA;
-                _clipboardLinkPaint.Color = currentA; // 📋 剪贴板图标同为矢量：跟着主题色 + 透明度走
+                _clipboardLinkPaint.Color = currentA; // 剪贴板图标同为矢量：跟着主题色 + 透明度走
                 _clipboardOpenPaint.Color = currentA;
                 _barPaint.Color = currentA;
                 _highQualitySampling.Color = SKColors.White.WithAlpha(alpha); // 同步作用于图片图标
@@ -352,7 +340,7 @@ namespace NotchPeninsula
                     return;
                 }
 
-                // ---------------- [ 📋 剪贴板链接（已识别到链接） ] ----------------
+                // ---------------- [ 剪贴板链接（已识别到链接） ] ----------------
                 // 优先级：系统通知 > 剪贴板链接 > 媒体控制器。通知展示期间上层已把链接拦住排队，
                 // 所以这里只要拿到链接，就把整块岛体交给剪贴板面板绘制。
                 if (!string.IsNullOrEmpty(clipboardUrl))
@@ -366,7 +354,7 @@ namespace NotchPeninsula
                     return;
                 }
 
-                // ---------------- [ 🧩 插件详情页（右键展开） ] ----------------
+                // ---------------- [ 插件详情页（右键展开） ] ----------------
                 // 详情页展开时整块岛体交给插件绘制：不再绘制原生内容，也不再绘制插件行。
                 // 岛体尺寸由 NotchWindow 依据详情页 MeasureWidth/MeasureHeight 决定（这里同步消费一次状态即可）。
                 // Toast 优先级高于详情页：通知到来时先显示通知，通知结束后详情页自动回来。
@@ -387,7 +375,7 @@ namespace NotchPeninsula
                 UpdateClockCache();
 
                 // ---------------- [ 自定义组合模式 / 原生布局 ] ----------------
-                // 🎵 媒体展开面板优先接管：组合模式与非组合模式一视同仁 —— 面板整块占满岛体，
+                // 媒体展开面板优先接管：组合模式与非组合模式一视同仁 —— 面板整块占满岛体，
                 //    时钟 / 硬件 / 插件行本帧都不画（宿主已把插件行预算归零、岛体锁成面板尺寸）。
                 //    判定与宿主尺寸决策共用 IsMediaExpanded，所以「组合模式也能展开」不需要额外分支。
                 if (IsMediaPanelShowing(media, currentHeight))
@@ -399,7 +387,7 @@ namespace NotchPeninsula
                     DrawNativeLayout(canvas, media, isHovered, bars, left, right,
                         currentHeight, textOffsetY, alpha);
 
-                // ================= 🧩 插件组件行（非组合模式） =================
+                // ---- 插件组件行（非组合模式） ----
                 // 组合模式下插件已并入「内容顺序表」跟原生模块混排（见上方组合模式分支），这里只处理其余模式：
                 // 待机(时间日期/空白/硬件)、媒体激活、媒体展开……原生内容一律不感知插件，插件也不影响原生布局。
                 // 与组合模式一样遵守顺序表：排在原生模块之前的插件画在原生内容左边，之后的画在右边。
@@ -411,7 +399,7 @@ namespace NotchPeninsula
                         // 只画「排在原生模块之前」的插件 —— 原生模块本身在它自己的位置由上面的原生分支绘制。
                         // 起点直接锚在岛体左边缘（而不是从 nativeLeft 倒推），这样岛体宽度做动画时
                         // 插件行只跟着边缘一起平移，不会自己额外挪动。
-                        // ✂️ 裁剪到 [islandLeft, left]：稳态下这个区间恰好 == 「左侧插件组 + 与原生内容的间距」，
+                        // 裁剪到 [islandLeft, left]：稳态下这个区间恰好 == 「左侧插件组 + 与原生内容的间距」，
                         //    裁剪等于没裁（零视觉影响）；只有岛体还在变宽的瞬态（leftPluginBlock 被按比例
                         //    让位收窄）才真的切到 —— 于是左右两组绝不会在岛体中间叠在一起，
                         //    插件是随岛体长大从两侧滑入的。

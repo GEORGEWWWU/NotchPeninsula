@@ -4,22 +4,15 @@ using ComTypes = System.Runtime.InteropServices.ComTypes;
 namespace NotchPeninsula.Plugins;
 
 /// <summary>
-/// 从 OLE 的 IDataObject 里取出「用户拖进来的文件」。
-///
-/// 拖进来的文件在 OLE 里是 <c>CF_HDROP</c> 格式（<c>TYMED_HGLOBAL</c> 的 STGMEDIUM），
-/// 它的 <c>unionmember</c> 就是一个 HDROP 句柄 —— 和 <c>WM_DROPFILES</c> 的 <c>wParam</c> 完全同源，
-/// 所以两条拖入路径（OLE 的 IDropTarget 与传统的 WM_DROPFILES）可以共用同一套读取逻辑。
-///
-/// 插件窗口（<see cref="PluginWindow"/>）与灵动岛本体（IslandDropTarget）都走这里，
-/// 保证「什么算一次合法拖入」的判断处处一致。
+/// 从 OLE 的 IDataObject 取出用户拖进来的文件路径。
+/// 拖入文件在 OLE 里是 CF_HDROP（TYMED_HGLOBAL），其 unionmember 就是 HDROP 句柄，
+/// 与 WM_DROPFILES 的 wParam 同源，因此 OLE 与 WM_DROPFILES 两条路径共用这里的读取逻辑。
 /// </summary>
 internal static class DropPayload
 {
     /// <summary>
-    /// 取出拖入的全部路径。不是文件拖入（网页文字、位图流等）时返回空列表。
-    ///
-    /// 只认文件系统上的真实路径：邮件附件、压缩包内条目这类「虚拟文件」在这里拿不到，
-    /// 会退化成空的 —— 调用方据此拒绝这次拖放即可。
+    /// 取出拖入的全部路径；非文件拖入（网页文字、位图等）返回空列表。
+    /// 只认文件系统真实路径：邮件附件、压缩包内条目等虚拟文件取不到，返回空由调用方拒绝。
     /// </summary>
     public static List<string> ReadFileDrop(ComTypes.IDataObject? dataObj)
     {
@@ -36,7 +29,7 @@ internal static class DropPayload
 
         try
         {
-            // 先问一句「有没有这个格式」，没有就立刻收手 —— 不用真把数据搬出来
+            // 先查格式是否存在，避免把数据整体搬出来
             if (dataObj.QueryGetData(ref format) != 0) return new List<string>();
 
             dataObj.GetData(ref format, out ComTypes.STGMEDIUM medium);
@@ -46,7 +39,7 @@ internal static class DropPayload
             }
             finally
             {
-                // 这份内存由 STGMEDIUM 持有，漏了就是泄漏
+                // 这块内存归 STGMEDIUM 所有，不释放即泄漏
                 Win32.ReleaseStgMedium(ref medium);
             }
         }
@@ -57,7 +50,7 @@ internal static class DropPayload
         }
     }
 
-    /// <summary>从 HDROP 句柄里读出全部路径。Windows 那句「先问长度再取内容」的两段式照抄即可。</summary>
+    /// <summary>从 HDROP 读出全部路径（先问数量，再逐个先问长度后取内容）。</summary>
     public static List<string> ReadDropPaths(IntPtr hDrop)
     {
         var files = new List<string>();
@@ -65,10 +58,10 @@ internal static class DropPayload
 
         try
         {
-            uint count = Win32.DragQueryFile(hDrop, 0xFFFFFFFFu, null, 0); // 0xFFFFFFFF = 问条目数量
+            uint count = Win32.DragQueryFile(hDrop, 0xFFFFFFFFu, null, 0); // 0xFFFFFFFF = 查条目数
             for (uint i = 0; i < count; i++)
             {
-                uint len = Win32.DragQueryFile(hDrop, i, null, 0);          // 先问长度（不含结尾 '\0'）
+                uint len = Win32.DragQueryFile(hDrop, i, null, 0);          // 长度不含结尾 '\0'
                 if (len == 0) continue;
 
                 var buffer = new StringBuilder((int)len + 1);
@@ -86,18 +79,10 @@ internal static class DropPayload
 }
 
 /// <summary>
-/// 记录「当前是否正由宿主自己发起一次拖出」，用来拒绝<b>拖到自己身上</b>。
-///
-/// <para>
-/// 为什么需要它：拖出时鼠标就按在发起者（岛体或某个插件窗口）上，OLE 拿光标底下的窗口去问
-/// 「你收不收」时，第一个问到的往往就是发起者自己。不拒绝的话，用户从列表里往外一拖、
-/// 手一抖原地松开，文件就被「拖回自己这里」又加了一遍，看着像莫名其妙复制了一份。
-/// </para>
-///
-/// <para>
-/// 用 HWND 比对而不是一刀切禁止：插件窗口之间互相拖是<b>合法且有用</b>的
-/// （把一个窗口里的条目拖到另一个窗口），只有「自己拖给自己」才必须挡掉。
-/// </para>
+/// 记录「是否正由宿主自己发起拖出」，用于拒绝拖到自己身上。
+/// 拖出时光标下第一个被 OLE 问到的窗口往往就是发起者，不挡的话用户原地松手
+/// 会被当作一次新拖入，看起来像莫名多复制了一份。
+/// 按 HWND 比对而非一律禁止：插件窗口之间互拖是合法的，只有自己拖给自己才拒绝。
 /// </summary>
 internal static class DragOutState
 {
@@ -107,7 +92,7 @@ internal static class DragOutState
     /// <summary>当前是否有拖出正在进行。</summary>
     public static bool IsDragging => Volatile.Read(ref _depth) > 0;
 
-    /// <summary>拖放开始前调用，记下发起方的窗口句柄。必须与 <see cref="Exit"/> 配对（放 finally 里）。</summary>
+    /// <summary>拖出开始前调用，记下发起方窗口句柄；必须与 Exit 成对（放 finally）。</summary>
     public static void Enter(IntPtr sourceHwnd)
     {
         _sourceHwnd = sourceHwnd;
@@ -119,7 +104,7 @@ internal static class DragOutState
         if (Interlocked.Decrement(ref _depth) <= 0) _sourceHwnd = IntPtr.Zero;
     }
 
-    /// <summary>这次落在 targetHwnd 上的拖入，是不是发起者自己。是的话目标应当拒绝。</summary>
+    /// <summary>落在 targetHwnd 上的这次拖入是否由发起者自己产生；是则目标应拒绝。</summary>
     public static bool IsSelfDrop(IntPtr targetHwnd)
         => IsDragging && _sourceHwnd == targetHwnd;
 }

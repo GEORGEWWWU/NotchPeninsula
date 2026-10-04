@@ -27,7 +27,7 @@ namespace NotchPeninsula
         // 缓存判据：PluginManager 的变更序号
         private int _pluginViewVersion = -1;
 
-        // ================= 插件中心辅助逻辑 =================
+        // ---- 插件中心辅助逻辑 ----
         private void RefreshPluginView()
         {
             int version = PluginManager.Instance.ChangeVersion;
@@ -38,7 +38,7 @@ namespace NotchPeninsula
             _pluginView = mgr.Entries.ToList();
 
             // 副标题（状态 / 版本 / 作者）随插件状态变化，所以在这里跟列表一起重建，渲染路径只负责取用。
-            // ⚠️ 不再带「#N/M」位置序号 —— 位置改由「显示设置 → 显示内容」统一展示与调整（2026-09-25）。
+            // 不再带「#N/M」位置序号 —— 位置改由「显示设置 → 显示内容」统一展示与调整（2026-09-25）。
             _pluginSubTexts.Clear();
             for (int i = 0; i < _pluginView.Count; i++)
             {
@@ -161,22 +161,22 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 设置窗口专用的 Windows 自带 Emoji 字体。**只用于给缺字的单行文案兜底**，不是全局字体替换。
+        /// 设置窗口专用的 Windows 自带 Emoji 字体。只用于给缺字的单行文案兜底，不是全局字体替换。
         /// </summary>
         private static readonly SKTypeface _hintEmojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
 
         /// <summary>
         /// 画一行可能含 Emoji / 特殊符号的文案，缺字的码点自动改用 Segoe UI Emoji。
         ///
-        /// <para><b>为什么设置窗口必须自带这一层</b>：渲染器（<c>Renderer</c>）内部有逐码点的字体回退
+        /// 为什么设置窗口必须自带这一层：渲染器（Renderer）内部有逐码点的字体回退
         /// （缺字 → Emoji → 多语言兜底），但设置窗口的画笔固定是 Microsoft YaHei UI，
-        /// 单独 <c>DrawText</c> 一个 YaHei 没有的字形只会画出豆腐块。
-        /// 例如「☑️」（U+2611 + U+FE0F）两码点都不在 YaHei 里，而 <c>seguiemj.ttf</c> 两个都有
-        /// （已核对 cmap 表）。</para>
+        /// 单独 DrawText 一个 YaHei 没有的字形只会画出豆腐块。
+        /// 例如「」（U+2611 + U+FE0F）两码点都不在 YaHei 里，而 seguiemj.ttf 两个都有
+        /// （已核对 cmap 表）。
         ///
-        /// <para>做法：把文本切成「YaHei 画得出来」与「要交给 Emoji 字体」的若干段，逐段 set_typeface 绘制。
+        /// 做法：把文本切成「YaHei 画得出来」与「要交给 Emoji 字体」的若干段，逐段 set_typeface 绘制。
         /// 变体选择符（U+FE0F / U+FE0E）跟着前一个字符走，不单独成段 —— 否则会画出一个空框。
-        /// 只支持单行；本方法只服务于这一行提示文案，不做换行、不做双向文字。</para>
+        /// 只支持单行；本方法只服务于这一行提示文案，不做换行、不做双向文字。
         /// </summary>
         private static void DrawTextWithEmoji(SKCanvas canvas, string text, SKPaint paint, float maxWidth, float rightEdge, float baselineY, bool rightAlign = false)
         {
@@ -219,7 +219,7 @@ namespace NotchPeninsula
                 if (surrogatePair) { useEmoji[i + 1] = prev; i++; }
             }
 
-            // 起点：按**每段实际字体的推进宽度**求和，不能直接用基础字体量整串 ——
+            // 起点：按每段实际字体的推进宽度求和，不能直接用基础字体量整串 ——
             // Emoji 段的宽和 YaHei 量的不一样，右对齐时会整体偏出去。
             float total = 0f;
             for (int i = 0; i < shown.Length; i++)

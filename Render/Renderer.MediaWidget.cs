@@ -4,7 +4,7 @@ namespace NotchPeninsula
 {
     public static partial class Renderer
     {
-        // ================= 🎵 媒体控制模块（唯一入口） =================
+        // ---- 媒体控制模块（唯一入口） ----
         // 媒体控制的全部绘制都在本文件：折叠态内联行、展开态面板、遮罩 / 频谱 / 播放按钮、歌词与译文。
         // 时间轴的调度与命中在 Renderer.Media.cs。
         //
@@ -47,7 +47,7 @@ namespace NotchPeninsula
                 DrawMediaInline(canvas, media, isHovered, bars, geometry, currentHeight, textOffsetY, alpha);
         }
 
-        // ================= 折叠态内联行 =================
+        // ---- 折叠态内联行 ----
         // 缩略图 + 一行文字（歌词优先，否则「歌手 - 歌名」）+ 右端的频谱或播放按钮。
 
         private static void DrawMediaInline(SKCanvas canvas, MediaController media, bool isHovered, float[]? bars,
@@ -55,10 +55,10 @@ namespace NotchPeninsula
         {
             // 本模块的锚点同时也是宿主判定媒体按钮 / 悬停命中的右边界（组合模式下插件排在媒体右边时也不越界）
             _compositeMediaRight = geometry.AnchorRight;
-            // 🖱️ 本模块的右键命中区 = 文字 + 频谱 / 按钮锚点
+            // 本模块的右键命中区 = 文字 + 频谱 / 按钮锚点
             _mediaZoneL = geometry.ZoneLeft;
             _mediaZoneR = geometry.AnchorRight;
-            // 📺 折叠态双击热区按「模块左半边」算，需要模块本帧的真实左右端（见 Renderer.Layout）
+            // 折叠态双击热区按「模块左半边」算，需要模块本帧的真实左右端（见 Renderer.Layout）
             RegisterMediaBlock(geometry.ZoneLeft, geometry.AnchorRight);
 
             _textPaint.Color = _currentTextColor.WithAlpha(alpha);
@@ -66,13 +66,13 @@ namespace NotchPeninsula
             float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
             float textX = geometry.ContentLeft;
 
-            // 📺 双击跳转的命中区：**不管有没有封面位图都要登记**。
-            //    ⚠️ 曾经只在 Thumbnail != null 时登记，结果「封面还没加载出来 / 这个源根本没封面」
+            // 双击跳转的命中区：不管有没有封面位图都要登记。
+            //    曾经只在 Thumbnail != null 时登记，结果「封面还没加载出来 / 这个源根本没封面」
             //    的时候命中区是空的 —— 表现就是「双击没反应」。热区只认位置，不认那张图在不在。
             float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
             RegisterMediaCover(new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize));
 
-            // ⚠️ 一次读取存进局部变量再用：Thumbnail 由后台线程换（属性刷新 / 网络封面到达），
+            // 一次读取存进局部变量再用：Thumbnail 由后台线程换（属性刷新 / 网络封面到达），
             //    写成 `if (media.Thumbnail != null) { …DrawBitmap(media.Thumbnail…) }` 时两次读之间
             //    可能被换成 null，DrawBitmap(null) 会抛托管异常 —— 而这个异常会一路逃出无 catch 的
             //    RenderLoop，直接把进程带走。
@@ -104,7 +104,7 @@ namespace NotchPeninsula
                 DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
             }
 
-            // 右端：只有**直接交互**模式悬停时才把频谱换成播放按钮；展开交互模式悬停不显示控件
+            // 右端：只有直接交互模式悬停时才把频谱换成播放按钮；展开交互模式悬停不显示控件
             //（否则悬停已能直接控制，那个「点一下展开面板」的开关就没意义了），继续画频谱。
             if (isHovered && MediaInteractionMode == 0)
             {
@@ -132,7 +132,7 @@ namespace NotchPeninsula
                 canvas.DrawRect(0, 0, 1, 1, _fadePaint);
                 canvas.Restore();
 
-                // ⚠️ 用 SKRect 而不是 (x, y, 宽, 高) 那个重载：后者第 3 个参数是**宽度**，
+                // 用 SKRect 而不是 (x, y, 宽, 高) 那个重载：后者第 3 个参数是宽度，
                 //    写成右边缘会画出一条一直冲到岛体最右的色带。
                 if (maskR - maskL > fadeW * 2f)
                     canvas.DrawRect(new SKRect(maskL + fadeW, 0f, maskR - fadeW, currentHeight), _bgPaint);
@@ -154,7 +154,7 @@ namespace NotchPeninsula
             }
         }
 
-        // ================= 展开态面板 =================
+        // ---- 展开态面板 ----
         // 整块岛体就是一块 320 × (130 / 158) 的独立面板：封面 + 双行文字（歌名 + 歌词）+ 右侧律动频谱
         // + 底部放大播放控件（+ 可选时间轴）。几何完全按传入的命中区左右边界推，与「组合 / 非组合」无关。
         // 面板尺寸由宿主锁定（NotchWindow：宽 320、高 GetExpandedHeight），这里只负责画。
@@ -165,7 +165,7 @@ namespace NotchPeninsula
             float left = geometry.ZoneLeft;
             float right = geometry.AnchorRight;
 
-            // 🖱️ 展开面板整块就是媒体区域（右键直达媒体设置页签也按它判定）
+            // 展开面板整块就是媒体区域（右键直达媒体设置页签也按它判定）
             _mediaZoneL = left;
             _mediaZoneR = right;
 
@@ -175,7 +175,7 @@ namespace NotchPeninsula
 
             // 封面
             var coverRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
-            // 📺 登记封面矩形：展开态的「双击封面 → 跳转应用」命中的就是这一块。
+            // 登记封面矩形：展开态的「双击封面 → 跳转应用」命中的就是这一块。
             //    没有封面时这里画的是占位图标 —— 它同样占着封面这一格，双击照样算数，所以无条件登记。
             RegisterMediaCover(coverRect);
             // 同折叠态：一次读取存进局部变量，避免两次读之间被换成 null
@@ -263,7 +263,7 @@ namespace NotchPeninsula
             DrawSvgPath(canvas, _mediaIconPaint, centerX - 7f, playBtnY, media.IsPlaying ? _pausePath : _playPath, scale);
             DrawSvgPath(canvas, _mediaIconPaint, centerX + 45f, btnY, _nextPath, scale);
 
-            // 🎵 歌曲时间轴：必须画在文字遮罩之后（否则右半边被整块盖掉）。
+            // 歌曲时间轴：必须画在文字遮罩之后（否则右半边被整块盖掉）。
             //    高度没涨到 140 之前不画，避免展开动画途中与底部按钮叠字。
             if (TimelineVisible(media) && currentHeight > TL_MIN_HEIGHT)
                 DrawTimeline(canvas, media, left, right, currentHeight, alpha);

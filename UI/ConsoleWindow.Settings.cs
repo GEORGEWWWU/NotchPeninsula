@@ -70,7 +70,7 @@ namespace NotchPeninsula
         //   媒体控制卡：2 激活时宽度
         //   消息通知卡：4 弹出的宽度 / 5 弹出的高度
         //   DPI 卡    ：6 视觉比例
-        // ⚠️ 这里的行序必须与 DrawMultiCard 的调用、卡片高度（36 + 行数×34，卡间留 14）
+        // 这里的行序必须与 DrawMultiCard 的调用、卡片高度（36 + 行数×34，卡间留 14）
         //    严格对应 —— 改一处漏一处就会把控件画到卡片外面。
         private float GetBtnY(int index)
         {
@@ -91,7 +91,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 弹出文件对话框挑选字体文件，选中后热替换灵动岛全部文本字体，并把路径写入注册表实现记忆化。
         /// 加载失败时不做任何改动，只在卡片副标题上提示原因。
-        /// 走的是传统 Win32 对话框（见 <see cref="ShowOpenFileDialog"/>），不会把外壳组件拉进进程。
+        /// 走的是传统 Win32 对话框（见 ShowOpenFileDialog），不会把外壳组件拉进进程。
         /// </summary>
         private void PickCustomFont()
         {
@@ -131,13 +131,13 @@ namespace NotchPeninsula
             Render();
         }
 
-        // ================= 🎵 消息提示音 =================
+        // ---- 消息提示音 ----
 
         /// <summary>
         /// 应用提示音选项。索引 0 = 无；1..N = data\sound 里的第 i 个音频；
-        /// <see cref="ToastSoundConfig.CustomIndex"/> = 「浏览音频…」（弹文件对话框挑自定义文件）。
+        /// ToastSoundConfig.CustomIndex = 「浏览音频…」（弹文件对话框挑自定义文件）。
         ///
-        /// 选中即持久化。只有在**不处于静音档**时才试听一下 —— 否则用户每次切换都白响一声很烦。
+        /// 选中即持久化。只有在不处于静音档时才试听一下 —— 否则用户每次切换都白响一声很烦。
         /// </summary>
         private void ApplyToastSound(int index)
         {
@@ -159,13 +159,13 @@ namespace NotchPeninsula
             }
             else
             {
-                // 🔑 记下这条内置音的**文件名身份**。只存位置索引的话，
+                // 记下这条内置音的文件名身份。只存位置索引的话，
                 //    目录里增删一个 wav 就会让用户的选择悄悄换成另一个音。
                 ToastSoundConfig.SelectedKey = ToastSoundConfig.Builtins[index - ToastSoundConfig.BuiltinOffset].FileName;
                 ToastSoundConfig.PersistSelection();
                 _soundHint = "";
                 // 顺手把提示音开关打开 —— 用户主动选了音源，意图就是要听。
-                // ⚠️ 现在第 4 行整体由父开关「消息提示音」置灰（见 IsRowEnabled），
+                // 现在第 4 行整体由父开关「消息提示音」置灰（见 IsRowEnabled），
                 //    所以正常路径下走到这里时开关必然已开，这段只是一层保险。
                 if (!ToastSoundConfig.IsEnabled)
                 {
@@ -223,7 +223,7 @@ namespace NotchPeninsula
             ToastSoundConfig.SelectedIndex = 0;
             ToastSoundConfig.CustomPath = "";
             ToastSoundConfig.SelectedKey = ""; // 内置音的文件名身份也要一起清
-            // ⚠️ 必须用 DefaultVolumePercent，不能写 VolumeOptions[1]（那是 10，与出厂默认是两回事）
+            // 必须用 DefaultVolumePercent，不能写 VolumeOptions[1]（那是 10，与出厂默认是两回事）
             ToastSoundConfig.VolumePercent = ToastSoundConfig.DefaultVolumePercent;
             Program.SaveSetting("ToastSoundEnabled", 0);
             ToastSoundConfig.PersistSelection(); // 索引 / 文件名身份 / 自定义路径三者一次写回
@@ -242,7 +242,7 @@ namespace NotchPeninsula
                 if (!src.IsValid)
                 {
                     // 只有「用户明确点了试听」才值得提示；切到「无」时静默即可。
-                    // ⚠️ 原因必须按**当前选中的那一项**去问：内置项要看内置音本身（磁盘上的文件
+                    // 原因必须按当前选中的那一项去问：内置项要看内置音本身（磁盘上的文件
                     //    或 exe 内嵌资源），不能拿 CustomPath 去套 —— 那样内置音缺失时会糊上
                     //    「尚未选择音频文件」这种完全对不上的文案（见 DescribeUnavailable）。
                     if (ToastSoundConfig.SelectedIndex != 0)

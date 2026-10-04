@@ -10,7 +10,7 @@ namespace NotchPeninsula
     /// （单次约 0.04µs，基本免费）并在判定失效时限速重建捕获（单次约 7ms），同时订阅 Core Audio
     /// 事件在音频环境变化时立即复核，因此恢复延迟通常在 1 个检查周期内。
     ///
-    /// 另有一条独立的失效判据：**切换系统默认输出设备**（扬声器 ⇄ 耳机 ⇄ HDMI 等）。
+    /// 另有一条独立的失效判据：切换系统默认输出设备（扬声器 ⇄ 耳机 ⇄ HDMI 等）。
     /// 这种切换不会断开旧设备的 Loopback 流 —— 旧设备依然存在、依然在送静音帧，
     /// 所以「流是否还活着」永远发现不了它，必须主动比对默认端点 ID，否则只能重启软件才生效。
     /// </summary>
@@ -40,13 +40,13 @@ namespace NotchPeninsula
         // 用于 AGC 自动增益补偿的峰值追踪
         private float _currentPeak = 0.1f;
 
-        // ===== 捕获生命周期 =====
+        // ---- 捕获生命周期 ----
         private readonly object _captureLock = new();
         private WasapiLoopbackCapture? _capture;
         private volatile bool _restartingCapture; // 本类主动释放旧捕获时，忽略其停止回调
         private long _lastDataTicks;              // 最后一次收到音频数据（含静音帧）的时间
 
-        // ===== 默认输出设备跟踪 =====
+        // ---- 默认输出设备跟踪 ----
         // 当前捕获实际绑定在哪个输出端点上（构造捕获前记录，见 TryStartCapture 注释）。
         private volatile string _capturedDeviceId = "";
         // 默认输出设备「可能变了」的序号：收到 Core Audio 通知、或兜底轮询到点时 +1。
@@ -61,7 +61,7 @@ namespace NotchPeninsula
         private Task? _watchdogTask;
         private volatile bool _disposed;
 
-        // ===== Core Audio 事件订阅 =====
+        // ---- Core Audio 事件订阅 ----
         private readonly NotificationClient _notificationClient;
         private readonly SessionEventsHandler _sessionEvents;
         private MMDeviceEnumerator? _enumerator;
@@ -126,7 +126,7 @@ namespace NotchPeninsula
             }
         }
 
-        // ===================== 捕获初始化 / 恢复 =====================
+        // ---- 捕获初始化 / 恢复 ----
 
         private bool TryStartCapture(bool isRetry = false)
         {
@@ -153,7 +153,7 @@ namespace NotchPeninsula
                 catch (Exception ex)
                 {
                     // 独占占用期间会按退避反复重试（实测最快 1 次/秒、单次会话能刷上千行），
-                    // 所以重试失败走**去重**通道：10s 窗口内只留第一行 + 一行「重复 N 次」。
+                    // 所以重试失败走去重通道：10s 窗口内只留第一行 + 一行「重复 N 次」。
                     // 首次失败仍然记 Error 带完整异常 —— 那条是"到底为什么不行"的关键证据。
                     if (isRetry) Logger.DebugThrottled("音频捕获仍未就绪（按退避重试中，同类消息已折叠）");
                     else Logger.Error("音频捕获初始化失败，可能被独占占用或无音频设备", ex);
@@ -231,8 +231,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 捕获流本身是否健康。**不含**「默认输出设备是否被切换」这一条 ——
-        /// 那一条单独判定（见 <see cref="IsCapturedDeviceStillDefault"/>），
+        /// 捕获流本身是否健康。不含「默认输出设备是否被切换」这一条 ——
+        /// 那一条单独判定（见 IsCapturedDeviceStillDefault），
         /// 因为它必须优先于重建限速，不能和流失效混在一起被限速吃掉。
         /// </summary>
         private bool IsCaptureAlive()
@@ -251,7 +251,7 @@ namespace NotchPeninsula
         /// 平时零开销：没有变更通知就直接返回 true，不做任何 COM 查询；
         /// 只有序号被推进（收到通知 / 兜底轮询到点）后才真的去查一次默认端点。
         ///
-        /// ⚠️ 调用它会「消费」掉当前序号，所以**调用方必须保证：返回 false 时一定会真的去重建**。
+        /// 调用它会「消费」掉当前序号，所以调用方必须保证：返回 false 时一定会真的去重建。
         /// 否则这次变更判定就被吃掉了，要等下一个通知 / 10s 兜底轮询才会再发现。
         /// </summary>
         private bool IsCapturedDeviceStillDefault()
@@ -302,8 +302,8 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 常驻看门狗：健康时每 500ms 做一次约 0.04µs 的检查（外加每 10s 一次默认设备比对）；
-        /// 判定失效后重建捕获（约 7ms/次），重建之间至少间隔 <see cref="RestartAttemptIntervalMs"/>；
-        /// 被 Core Audio 事件唤醒时跳过限速立即重建；**默认输出设备被切换时同样跳过限速**——
+        /// 判定失效后重建捕获（约 7ms/次），重建之间至少间隔 RestartAttemptIntervalMs；
+        /// 被 Core Audio 事件唤醒时跳过限速立即重建；默认输出设备被切换时同样跳过限速——
         /// 那是低频的用户操作，不需要也不能等（等的话这次判定就被限速吃掉了）。
         /// </summary>
         private void WatchdogLoop()
@@ -329,7 +329,7 @@ namespace NotchPeninsula
 
                     // 两条独立的失效理由：① 默认输出设备被切换 ② 捕获流本身断了。
                     // ① 必须单独拿出来判定 —— 旧设备的 Loopback 在切换后往往还活着，
-                    //    只看 ② 永远发现不了切换；而且 ① 一旦成立就**必须**重建，
+                    //    只看 ② 永远发现不了切换；而且 ① 一旦成立就必须重建，
                     //    不能被下面的限速 continue 掉（否则这次判定被消费、白等一轮）。
                     bool deviceChanged = !IsCapturedDeviceStillDefault();
 
@@ -383,11 +383,11 @@ namespace NotchPeninsula
             RequestCheck(); // 释放与重启交给看门狗线程，避免在捕获线程里做耗时操作
         }
 
-        // ===================== Core Audio 事件订阅 =====================
+        // ---- Core Audio 事件订阅 ----
 
         private void SubscribeSystemEvents()
         {
-            // 幂等守卫：本方法只在构造时调用一次，但**不得**依赖这个事实 ——
+            // 幂等守卫：本方法只在构造时调用一次，但不得依赖这个事实 ——
             // 旧 enumerator 只在 Dispose 里反注册一次，多订阅一份就多漏一份回调与引用。
             // 失败时不置位，保留"下次再试"的能力。
             if (_systemEventsSubscribed) return;
@@ -422,7 +422,7 @@ namespace NotchPeninsula
                 if (enumerator == null) return;
 
                 // using：device 是真正的 COM 包装对象（IMMDevice），用完必须确定性释放。
-                // 本方法是**捕获重建路径**上最高频的 COM 分配点（独占占用时最快 1 次/秒、切设备、
+                // 本方法是捕获重建路径上最高频的 COM 分配点（独占占用时最快 1 次/秒、切设备、
                 // 看门狗恢复都会走），之前只靠 RCW 终结器兜底 = 每次重建都留一批待 GC 的 COM 垃圾。
                 // 同一文件里 TryGetDefaultRenderDeviceId 早就用了 using，只有这处漏了。
                 // 注：AudioSessionManager 与 AudioSessionControl 都不实现 IDisposable（NAudio 的投影如此），
@@ -436,7 +436,7 @@ namespace NotchPeninsula
                     var session = sessions[i];
                     if (session.GetProcessID != pid) continue;
 
-                    // ⚠️ session **必须留着**：既要在 ReleaseCapture 里做 UnRegisterEventClient，
+                    // session 必须留着：既要在 ReleaseCapture 里做 UnRegisterEventClient，
                     //    又要让 RegisterEventClient 挂上的回调持续有效 —— 它的寿命由 _sessionControl 持有。
                     session.RegisterEventClient(_sessionEvents);
                     _sessionControl = session;
@@ -482,7 +482,7 @@ namespace NotchPeninsula
             public void OnGroupingParamChanged(ref Guid groupingId) { }
         }
 
-        // ===================== 频谱计算 =====================
+        // ---- 频谱计算 ----
 
         private void ConfigureBands(WaveFormat format)
         {
@@ -556,7 +556,7 @@ namespace NotchPeninsula
                     }
                     _sampleCount = 0;
 
-                    // 🎛️ AGC 自动增益补偿核心逻辑
+                    // AGC 自动增益补偿核心逻辑
                     // 1. 包络追踪 (Envelope Tracking)：快升慢降
                     if (maxValThisFrame > _currentPeak)
                         _currentPeak = maxValThisFrame; // 极速起跳 (Attack)：大音量瞬间压制，防爆音

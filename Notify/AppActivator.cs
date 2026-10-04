@@ -50,7 +50,7 @@ namespace NotchPeninsula
             try
             {
                 // PackageManager / Package 都是 WinRT 包装对象（底层 COM RCW + 原生资源）。
-                // 这里要枚举当前用户的**全部**已安装包，单次就能产出数百个包装对象 ——
+                // 这里要枚举当前用户的全部已安装包，单次就能产出数百个包装对象 ——
                 // 不释放的话只能等 GC 终结器，高频点击通知会让 RCW 在两次 GC 之间持续累积。
                 var packageManager = new Windows.Management.Deployment.PackageManager();
                 try
@@ -108,8 +108,8 @@ namespace NotchPeninsula
         /// <summary>
         /// 尽力确定性释放一个 WinRT / COM 包装对象。
         ///
-        /// 用 <c>as IDisposable</c> 而不是 <c>using</c>：并非所有 WinRT 类型都投影出 IDisposable
-        /// （只有底层实现 IClosable 的才有），写死 <c>using</c> 会因类型不带该接口而编译不过。
+        /// 用 as IDisposable 而不是 using：并非所有 WinRT 类型都投影出 IDisposable
+        /// （只有底层实现 IClosable 的才有），写死 using 会因类型不带该接口而编译不过。
         /// 支持释放的当场释放，不支持的静默跳过。
         /// </summary>
         private static void ReleaseWinRT(object? o)

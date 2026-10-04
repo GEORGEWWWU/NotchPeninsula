@@ -11,41 +11,41 @@ namespace NotchPeninsula
     /// 为什么不用 WinForms 的 ContextMenuStrip：
     ///   原生菜单走的是系统 Menu 主题（Win10/11 那套灰白或跟随系统的方块），和我们整个
     ///   岛体 / 设置面板的暗色 UI 完全不是一个语言，观感很割裂。这里干脆自己画一个，
-    ///   刻意**不用任何材质**（不碰 SetWindowCompositionAttribute / Mica），就是一块纯色，
+    ///   刻意不用任何材质（不碰 SetWindowCompositionAttribute / Mica），就是一块纯色，
     ///   靠 per-pixel alpha 把圆角和抗锯齿边缘做干净。
     ///
     /// 实现要点：
     ///   - 复用 ConsoleWindow 那套「layered + UpdateLayeredWindow + Skia」的成熟画法，
     ///     保证和设置面板同一套颜色常量、同一种字体、同样的圆角/间距节奏。
-    ///   - 窗口带 WS_EX_NOACTIVATE：菜单弹出时**不抢焦点**。这很关键，托盘菜单本来就不该
+    ///   - 窗口带 WS_EX_NOACTIVATE：菜单弹出时不抢焦点。这很关键，托盘菜单本来就不该
     ///     夺走前台窗口的激活态。
-    ///   - ⚠️ 代价：WS_EX_NOACTIVATE 的窗口**永远不是前台窗口**，于是所有「靠前台身份才能收到
+    /// - 代价：WS_EX_NOACTIVATE 的窗口永远不是前台窗口，于是所有「靠前台身份才能收到
     ///     的通知」全都收不到 —— SetCapture 的捕获对后台窗口是残废的（见 CreateAndShow 的注释）、
     ///     WM_ACTIVATEAPP 不会来、WM_KEYDOWN(ESC) 也不会来。所以「点菜单外面收起」这条唯一的
-    ///     出路是**主动轮询**鼠标状态（<see cref="PollDismiss"/>，和岛体「点岛外收起」同一套办法）。
+    ///     出路是主动轮询鼠标状态（PollDismiss，和岛体「点岛外收起」同一套办法）。
     ///     历史坑：曾经先写过「延迟 200ms 再 SetCapture」，后来又改成「立刻 SetCapture」，
     ///     两条都不行 —— 不是时序问题，是这个窗口风格根本拿不到前台身份。
     ///
-    /// 菜单项状态（尤其「开机自启」的 ✅）由 <see cref="SyncAutoStart"/> 双向同步：
+    /// 菜单项状态（尤其「开机自启」的 ）由 SyncAutoStart 双向同步：
     ///   设置面板改了 → 调 SyncAutoStart，托盘菜单下次弹出/立即刷新都对得上；
     ///   托盘菜单点了 → 走 NotchWindow.ToggleAutoStart(enable, true) 回写注册表并通知设置面板。
     /// </summary>
     public class TrayMenuWindow
     {
-        // ==================== 布局常量（逻辑像素，最终按 DPI 缩放） ====================
+        // ---- 布局常量（逻辑像素，最终按 DPI 缩放） ----
         private const int MENU_WIDTH = 178;
         private const int ITEM_HEIGHT = 34;
         private const int PADDING_V = 6;
         private const int PADDING_H = 6;          // 外框到高亮块的水平内缩
         private const int CORNER_RADIUS = 8;
         private const int TEXT_LEFT = 16;         // 文字基线左侧起点（相对菜单左边缘）
-        private const int CHECK_SLOT = 18;        // ✅ 图标占位宽度，保证有无勾选时文字左对齐一致
+        private const int CHECK_SLOT = 18;        // 勾选图标占位宽度，保证有无勾选时文字左对齐一致
         private const int ARROW_SLOT = 18;        // 子菜单箭头占位
         private const float TEXT_SIZE = 13.5f;
 
         private const float HOVER_RADIUS = 5f;
 
-        // ==================== 收起轮询（菜单唯一的「点外面关掉」通路） ====================
+        // ---- 收起轮询（菜单唯一的「点外面关掉」通路） ----
         // 菜单窗口带 WS_EX_NOACTIVATE → 不是前台窗口 → SetCapture 只对「光标压在自己身上」有效，
         // 点菜单外面那一下会被正常投递给别的窗口，我们什么都收不到。所以只能自己按帧轮询按键状态。
         // 20ms ≈ 一帧：远小于人手一次点击的按住时长（通常 50ms 以上），既不会漏也不会太费。
@@ -61,7 +61,7 @@ namespace NotchPeninsula
         private static readonly SKColor COLOR_ACCENT = new SKColor(0, 120, 212);
         private static readonly SKColor COLOR_SEPARATOR = new SKColor(255, 255, 255, 20);
 
-        // ==================== 菜单项 ====================
+        // ---- 菜单项 ----
         private enum MenuAction
         {
             OpenSettings,
@@ -76,7 +76,7 @@ namespace NotchPeninsula
             public MenuAction Action;
             public string Text = string.Empty;
             public bool Enabled = true;
-            /// <summary>是否为可勾选项（渲染时预留 ✅ 槽位）。</summary>
+            /// <summary>是否为可勾选项（渲染时预留 槽位）。</summary>
             public bool IsCheckable;
             /// <summary>当前勾选状态。</summary>
             public bool Checked;
@@ -87,7 +87,7 @@ namespace NotchPeninsula
         private readonly List<MenuItem> _items = new();
         private readonly List<SKColor> _separatorColors = new(); // 与 _items 等长，仅分隔线项有意义
 
-        // ==================== 窗口与渲染状态 ====================
+        // ---- 窗口与渲染状态 ----
         private IntPtr _hwnd = IntPtr.Zero;
         private static IntPtr _classAtom = IntPtr.Zero;
         private static readonly Win32.WndProc _staticWndProc = StaticWndProc;
@@ -95,9 +95,9 @@ namespace NotchPeninsula
         private static int _tokenSeed;            // 每个实例发一个唯一标记
 
         /// <summary>
-        /// 本实例的唯一标记，随 <see cref="Win32.WM_TRAYMENU_CLOSE"/> 的 wParam 一起投递。
+        /// 本实例的唯一标记，随 Win32.WM_TRAYMENU_CLOSE 的 wParam 一起投递。
         ///
-        /// 为什么需要它：关闭走的是 PostMessage（排队），而**窗口句柄会被系统复用** ——
+        /// 为什么需要它：关闭走的是 PostMessage（排队），而窗口句柄会被系统复用 ——
         /// 用户"菜单开着时再点一次托盘图标"时，旧菜单刚排队的那条关闭消息，可能在
         /// CloseActive() 销毁旧窗、新菜单建好（并恰好拿到同一个 HWND 值）之后才被派发，
         /// 于是把刚弹出的新菜单秒掉。带上 token 就能把这类"发给上一个菜单的消息"识别出来丢掉。
@@ -197,7 +197,7 @@ namespace NotchPeninsula
             _pixelHeight = (int)Math.Ceiling(_logicalHeight * _dpiScale);
         }
 
-        // ==================== 对外入口 ====================
+        // ---- 对外入口 ----
 
         /// <summary>
         /// 在屏幕坐标 (x, y) 弹出菜单。锚点是托盘图标位置，菜单会自动调整方向避免出屏。
@@ -223,7 +223,7 @@ namespace NotchPeninsula
         /// 「开机自启」状态的双向同步入口。
         ///
         /// 设置面板里切换开关时调这个方法，托盘菜单（如果正开着或在下次弹出时）会立刻反映。
-        /// 注意这里**不回写注册表**——调用方才是状态的权威来源，这里只负责把 UI 对齐。
+        /// 注意这里不回写注册表——调用方才是状态的权威来源，这里只负责把 UI 对齐。
         /// </summary>
         public static void SyncAutoStart(bool enabled)
         {
@@ -250,7 +250,7 @@ namespace NotchPeninsula
             menu?.Destroy();
         }
 
-        // ==================== 窗口创建 ====================
+        // ---- 窗口创建 ----
 
         private void CreateAndShow()
         {
@@ -284,24 +284,24 @@ namespace NotchPeninsula
 
             // 立刻捕获鼠标。
             //
-            // ⚠️ 但必须说清楚：这个捕获对**本窗口是残废的**，它不是收起菜单的依靠。
+            // 但必须说清楚：这个捕获对本窗口是残废的，它不是收起菜单的依靠。
             //    SetCapture 官方 Remarks 写得很死：
             //      "Only the foreground window can capture the mouse. When a background window
             //       attempts to do so, the window receives messages only for mouse events that
             //       occur when the cursor hot spot is within the visible portion of the window."
-            //    而本窗口带 WS_EX_NOACTIVATE，**永远不可能成为前台窗口** —— 于是"捕获"退化成了
+            //    而本窗口带 WS_EX_NOACTIVATE，永远不可能成为前台窗口 —— 于是"捕获"退化成了
             //    "光标在自己身上时才收消息"，点菜单外面那一下会被正常投递给别的窗口，我们收不到。
             //    这就是"打开菜单后除了点菜单项，怎么都关不掉"的根因（不是时序问题，
             //    所以之前"延迟 200ms 再武装"和"立刻武装"两种写法都一样不行）。
             //    保留这次 SetCapture 只是因为：万一将来窗口变成前台，WM_LBUTTONDOWN / WM_RBUTTONUP
             //    那两条既有路径立刻就能用；它对现状无害。
             //
-            //    另外还要处理一个边界：菜单是由**右键抬起**拉起来的，如果用户此刻正按着右键，
+            //    另外还要处理一个边界：菜单是由右键抬起拉起来的，如果用户此刻正按着右键，
             //    捕获后第一个到达的可能就是我们自己那次右键的抬起 —— 用 _ignoreNextButtonUp 吃掉。
             _ignoreNextButtonUp = (Win32.GetAsyncKeyState(Win32.VK_RBUTTON) & 0x8000) != 0;
             Win32.SetCapture(_hwnd);
 
-            // ✅ 真正负责"点菜单外面收起"的是这个 20ms 轮询（见 PollDismiss）。
+            // 真正负责"点菜单外面收起"的是这个 20ms 轮询（见 PollDismiss）。
             //    走窗口自己的 SetTimer / WM_TIMER：回调天然在 UI 线程上，不用任何跨线程同步，
             //    也不用像 System.Timers.Timer 那样在 Destroy 里退订+Dispose（窗口销毁会自动清掉）。
             Win32.SetTimer(_hwnd, (IntPtr)POLL_TIMER_ID, POLL_INTERVAL_MS, IntPtr.Zero);
@@ -338,7 +338,7 @@ namespace NotchPeninsula
                 bottom = mi.rcWork.Bottom;
             }
 
-            // 默认把菜单的**左下角**贴到锚点（托盘图标的典型位置）
+            // 默认把菜单的左下角贴到锚点（托盘图标的典型位置）
             int fx = x - _pixelWidth;
             int fy = y - _pixelHeight;
 
@@ -435,7 +435,7 @@ namespace NotchPeninsula
             paint = null;
         }
 
-        // ==================== 消息处理 ====================
+        // ---- 消息处理 ----
 
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
@@ -487,7 +487,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDOWN:
                     {
-                        // 故意**不**在这里无条件 ReleaseCapture：
+                        // 故意不在这里无条件 ReleaseCapture：
                         // 释放捕获会立刻触发 WM_CAPTURECHANGED，那样"往菜单项上按一下"
                         // 就会把菜单关掉，连点击都送不到。
                         // 正确姿势是保持捕获，等 WM_LBUTTONUP 再统一判定：
@@ -496,7 +496,7 @@ namespace NotchPeninsula
                         int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
                         if (HitTest(x, y) == -1)
                         {
-                            // 按下位置在菜单外 → 收起，并**立刻**交还捕获，
+                            // 按下位置在菜单外 → 收起，并立刻交还捕获，
                             // 让这一下点击能正常落到用户真正想点的那个窗口上，
                             // 而不是被我们攥到鼠标抬起为止。
                             Win32.ReleaseCapture();
@@ -657,10 +657,10 @@ namespace NotchPeninsula
             _renderTimer.Start();
         }
 
-        // ==================== 收起判定（20ms 轮询） ====================
+        // ---- 收起判定（20ms 轮询） ----
 
         /// <summary>
-        /// 每 20ms 走一次：光标在菜单外且鼠标**新按下** → 收起菜单。
+        /// 每 20ms 走一次：光标在菜单外且鼠标新按下 → 收起菜单。
         ///
         /// 为什么必须轮询：菜单窗口带 WS_EX_NOACTIVATE，永远不是前台窗口，而系统只把鼠标捕获
         /// 交给前台窗口（见 CreateAndShow 里引的 SetCapture 文档原文）。所以
@@ -729,7 +729,7 @@ namespace NotchPeninsula
             RequestDismiss();
         }
 
-        // ==================== 绘制 ====================
+        // ---- 绘制 ----
 
         private unsafe void Render()
         {

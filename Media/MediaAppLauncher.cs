@@ -9,40 +9,38 @@ namespace NotchPeninsula
     /// <summary>
     /// 「双击封面 → 跳回正在放媒体的那个应用」的全部落地逻辑。
     ///
-    /// <para><b>目标身份只有一个来源：正在展示的那个会话。</b>
-    /// <see cref="MediaController.CurrentAppId"/> 就是当前接管（画在岛上）的会话的
-    /// <c>SourceAppUserModelId</c>，本类的一切定位都以它为起点，绝不去猜「哪个进程像这个应用」。</para>
+    /// 目标身份只有一个来源：正在展示的那个会话。
+    /// MediaController.CurrentAppId 就是当前接管（画在岛上）的会话的
+    /// SourceAppUserModelId，本类的一切定位都以它为起点，绝不去猜「哪个进程像这个应用」。
     ///
-    /// <para><b>三步定位（自上而下，一步都不成就不做事）：</b></para>
-    /// <list type="number">
-    /// <item><b>已采集到的窗口句柄</b>：把那个窗口还原并切到前台。句柄只在「该会话刚被接管、
+    /// 三步定位（自上而下，一步都不成就不做事）：
+    /// 已采集到的窗口句柄：把那个窗口还原并切到前台。句柄只在「该会话刚被接管、
     ///       且前台窗口确实属于这个 App」时采集；激活前还会再复核一次归属 —— 句柄可能已被系统回收，
-    ///       PID 也可能被复用给了别的程序。</item>
-    /// <item><b>按可执行文件名精确找窗口</b>：AUMID 里带的消息源文件名就是进程名
-    ///       （<c>QQMusic.exe</c> → 进程 <c>QQMusic</c>），按**全等**取进程，再枚举它自己的顶层窗口。
-    ///       不做任何模糊匹配：名字对不上就是不认。</item>
-    /// <item><b>按 AUMID 交给 Shell 激活</b>：<c>explorer.exe shell:AppsFolder\{AUMID}</c>，
-    ///       也就是 <c>SourceAppUserModelId</c> 的原样用法。⚠️ 但**必须先确认这个 AUMID 注册过**
-    ///       （<see cref="IsRegisteredAumid"/>）：没注册时 Shell 不报错，而是打开一个资源管理器窗口
-    ///       —— 那正是「跳转跳到了文件资源管理器」的成因。未注册时改为直接拉起同名进程自己的 exe 路径。</item>
-    /// </list>
+    ///       PID 也可能被复用给了别的程序。
+    /// 按可执行文件名精确找窗口：AUMID 里带的消息源文件名就是进程名
+    ///       （QQMusic.exe → 进程 QQMusic），按全等取进程，再枚举它自己的顶层窗口。
+    ///       不做任何模糊匹配：名字对不上就是不认。
+    /// 按 AUMID 交给 Shell 激活：explorer.exe shell:AppsFolder\{AUMID}，
+    /// 也就是 SourceAppUserModelId 的原样用法。但必须先确认这个 AUMID 注册过
+    ///       （IsRegisteredAumid）：没注册时 Shell 不报错，而是打开一个资源管理器窗口
+    ///       —— 那正是「跳转跳到了文件资源管理器」的成因。未注册时改为直接拉起同名进程自己的 exe 路径。
     ///
-    /// <para><b>做不到的：</b>SMTC 不提供任何深链接参数，所以只能跳到应用本体（主窗口 / 首页），
-    /// 无法跳到正在播放的那首歌 / 那个视频的页面。这是协议本身的限制，不是实现取舍。</para>
+    /// 做不到的：SMTC 不提供任何深链接参数，所以只能跳到应用本体（主窗口 / 首页），
+    /// 无法跳到正在播放的那首歌 / 那个视频的页面。这是协议本身的限制，不是实现取舍。
     /// </summary>
     internal static class MediaAppLauncher
     {
         /// <summary>
-        /// 每个 AppID 的定位结果：会话所属进程 + 采到的顶层窗口（<see cref="IntPtr.Zero"/> = 还没采到）。
-        /// AppID 比较一律 OrdinalIgnoreCase，与 <see cref="MediaController"/> 的会话匹配保持一致。
+        /// 每个 AppID 的定位结果：会话所属进程 + 采到的顶层窗口（IntPtr.Zero = 还没采到）。
+        /// AppID 比较一律 OrdinalIgnoreCase，与 MediaController 的会话匹配保持一致。
         /// </summary>
         private sealed class AppTarget
         {
             public uint ProcessId;
             public IntPtr Window;
             /// <summary>
-            /// 采到窗口那一刻顺手记下的 exe 完整路径。**这是「应用已经关了还能把它拉起来」的关键**：
-            /// 进程一旦退出，<c>Process.MainModule</c> 就再也读不到路径了，届时第 3 步会陷入
+            /// 采到窗口那一刻顺手记下的 exe 完整路径。这是「应用已经关了还能把它拉起来」的关键：
+            /// 进程一旦退出，Process.MainModule 就再也读不到路径了，届时第 3 步会陷入
             /// 「既没 AUMID 注册、又拿不到路径」的死局（实测就是这样，双击完全没反应）。
             /// 路径在进程活着的时候取一次、一直留着，代价是一个字符串。
             /// </summary>
@@ -52,11 +50,11 @@ namespace NotchPeninsula
         private static readonly ConcurrentDictionary<string, AppTarget> s_targets
             = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>守护 <see cref="s_targets"/> 里每个 AppTarget 的字段读写（字典自身已是并发安全）。</summary>
+        /// <summary>守护 s_targets 里每个 AppTarget 的字段读写（字典自身已是并发安全）。</summary>
         private static readonly object s_lock = new();
 
         /// <summary>
-        /// 上一次采样针对的会话 AppID：只在**接管目标真的换了**（换应用 / 换平台）时才重新采样。
+        /// 上一次采样针对的会话 AppID：只在接管目标真的换了（换应用 / 换平台）时才重新采样。
         /// 会话刷新（换歌 / 播放暂停 / 会话表变动）非常频繁，每次都采的话，用户只要在别的程序里忙着
         /// （比如正在 QQ 里聊天）而媒体恰好换歌，「当前前台窗口」就会被当成媒体的窗口记下来 ——
         /// 之后双击封面就会跳到那个无关程序去。这正是「双击跳到了 QQ」的根因，别把这道闸门删了。
@@ -70,16 +68,14 @@ namespace NotchPeninsula
         /// 采样当前接管会话：在应用正处于前台时抓住它的窗口句柄。整个采样只有「取前台窗口 + 问它属于哪个进程」
         /// 两次 API 调用，没有枚举、没有等待，可以放心放在 UI 线程。
         ///
-        /// <para><b>三道保险（改这段之前先读完，每条都对应一个真实踩过的坑）：</b></para>
-        /// <list type="number">
-        /// <item><b>只在接管目标真的换了的时候采样</b>（见 <see cref="s_sampledAppId"/>）。
-        ///       否则用户正在别的程序里忙着的时候，媒体一换歌就会把那个无关程序的前台窗口记成媒体窗口。</item>
-        /// <item><b>前台窗口的进程名必须与 AUMID 里的文件名完全相等</b>（<see cref="IsProcessOfApp"/>）。
-        ///       对不上、或推不出进程名，一律不采 —— 宁可双击时走第 2 步按进程找窗口，
-        ///       也绝不把另一个程序切到前台。</item>
-        /// <item><b>激活前还要复核一次</b>（见 <see cref="OpenCurrentSessionApp"/> 第 1 步）：
-        ///       句柄可能已被回收、PID 也可能被复用，不复核就等于闭着眼睛按句柄切前台。</item>
-        /// </list>
+        /// 三道保险（改这段之前先读完，每条都对应一个真实踩过的坑）：
+        ///   1. 只在接管目标真的换了的时候采样（见 s_sampledAppId）。
+        ///      否则用户正在别的程序里忙着的时候，媒体一换歌就会把那个无关程序的前台窗口记成媒体窗口。
+        ///   2. 前台窗口的进程名必须与 AUMID 里的文件名完全相等（IsProcessOfApp）。
+        ///      对不上、或推不出进程名，一律不采 —— 宁可双击时走第 2 步按进程找窗口，
+        ///      也绝不把另一个程序切到前台。
+        ///   3. 激活前还要复核一次（见 OpenCurrentSessionApp 第 1 步）：
+        ///      句柄可能已被回收、PID 也可能被复用，不复核就等于闭着眼睛按句柄切前台。
         /// </summary>
         /// <param name="session">当前接管的会话；为 null 表示没有接管会话。</param>
         internal static void CaptureSession(GlobalSystemMediaTransportControlsSession? session)
@@ -139,7 +135,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 「双击封面」的入口：跳回**当前正在展示的那个会话**所属的应用。
+        /// 「双击封面」的入口：跳回当前正在展示的那个会话所属的应用。
         /// 三步依次尝试，全都不成就不做事（绝不去激活一个不属于它的窗口）。
         /// 调用方（WndProc）已经保证「双击落点在封面上」，这里不再做任何命中判定。
         /// </summary>
@@ -217,7 +213,7 @@ namespace NotchPeninsula
 
             // ---------- 第 3 步：把应用本体拉起来 ----------
             // 2026-09-30 深夜改：上一版在这里加了「AUMID 未注册就不交给 Shell」的闸门，
-            // 结果把**唯一还能用的**那条路也堵死了 —— Just Solo 这类应用只在开始菜单注册了带 AUMID 的快捷方式
+            // 结果把唯一还能用的那条路也堵死了 —— Just Solo 这类应用只在开始菜单注册了带 AUMID 的快捷方式
             // （`shell:AppsFolder\{AUMID}` 正是靠它解析的，实测 `Just Solo.lnk` 就带着这个 AUMID），
             // 注册表里查不到 → 判定「未注册」→ 一旦应用已经关闭（进程没了，读不到 exe 路径）就彻底没反应。
             // 现在按可靠性排序：
@@ -234,9 +230,9 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 取这个应用的 exe 路径，两条来源按可靠性排序：
-        ///   1. <b>采集时缓存的路径</b> —— 会话刚被接管、进程还在的时候记下来的，**进程退出后依然有效**
-        ///      （这是「应用关了也能把它拉起来」的关键：进程一退出 <c>Process.MainModule</c> 就再也读不到路径）；
-        ///   2. <b>从当前还活着的同名进程读</b>（进程名全等才认）。
+        ///   1. 采集时缓存的路径 —— 会话刚被接管、进程还在的时候记下来的，进程退出后依然有效
+        ///      （这是「应用关了也能把它拉起来」的关键：进程一退出 Process.MainModule 就再也读不到路径）；
+        ///   2. 从当前还活着的同名进程读（进程名全等才认）。
         /// 都没有就返回 false，调用方转去按 AUMID 交给 Shell。
         /// </summary>
         private static bool TryGetExePath(string appId, string exeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? exePath)
@@ -258,13 +254,13 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 从 AUMID 取出可执行文件名（不含扩展名），作为进程名使用。这是**确定性提取**，不是猜测：
-        ///   · <c>QQMusic.exe</c> → <c>QQMusic</c>
-        ///   · <c>chrome.exe</c> → <c>chrome</c>
-        ///   · <c>JustSolo.JustSolo</c>（包标识）→ <c>JustSolo</c>
-        ///   · <c>PotPlayerMini64.exe</c> → <c>PotPlayerMini64</c>
-        /// 取最后一个 <c>'!'</c> / <c>'\'</c> / <c>'/'</c> 之后那段再去掉扩展名与标点。
-        /// ⚠️ 分隔符里**不含 <c>'.'</c>**：把点当分隔符会让 <c>"QQMusic.exe"</c> 变成 <c>"exe"</c>。
+        /// 从 AUMID 取出可执行文件名（不含扩展名），作为进程名使用。这是确定性提取，不是猜测：
+        ///   · QQMusic.exe → QQMusic
+        ///   · chrome.exe → chrome
+        ///   · JustSolo.JustSolo（包标识）→ JustSolo
+        ///   · PotPlayerMini64.exe → PotPlayerMini64
+        /// 取最后一个 '!' / '\' / '/' 之后那段再去掉扩展名与标点。
+        /// 分隔符里不含 '.'：把点当分隔符会让 "QQMusic.exe" 变成 "exe"。
         /// </summary>
         private static string ExeNameOf(string appId)
         {
@@ -284,7 +280,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 这个进程是不是 AUMID 指向的那个应用 —— **全等比较**（都归一成不含扩展名、只留字母数字的形式）。
+        /// 这个进程是不是 AUMID 指向的那个应用 —— 全等比较（都归一成不含扩展名、只留字母数字的形式）。
         /// 做成全等是刻意的：任何模糊匹配（包含 / 前缀 / 相似度）都可能在同类软件之间张冠李戴，
         /// 而这个方法的返回值直接决定「要不要把一个窗口切到前台」，容不得猜。
         /// 读不到进程名（进程已退出 / 无权限）时一律返回 false。
@@ -306,7 +302,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 按可执行文件名**全等**取进程，再枚举它自己的顶层窗口（按「有标题 + 可见」优先，
+        /// 按可执行文件名全等取进程，再枚举它自己的顶层窗口（按「有标题 + 可见」优先，
         /// EnumWindows 本身按 Z 序返回，所以取到的是它最近用过的那个窗口）。找不到返回 false。
         /// </summary>
         private static bool TryFindAppWindow(string exeName, out IntPtr found, out uint foundPid)
@@ -418,7 +414,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 在某个进程的顶层窗口里挑一个能当前台目标的：可见、非 <c>WS_EX_TOOLWINDOW</c>、
+        /// 在某个进程的顶层窗口里挑一个能当前台目标的：可见、非 WS_EX_TOOLWINDOW、
         /// 且带标题（标题为空的多半是隐藏的消息窗 / 宿主窗，切上去等于什么都没发生）。
         /// EnumWindows 按 Z 序枚举，所以这里天然优先返回最靠前的那个窗口。
         /// </summary>
@@ -448,12 +444,12 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 这个 AUMID 在系统里注册过吗（注册过才敢交给 <c>shell:AppsFolder</c> 激活）。
+        /// 这个 AUMID 在系统里注册过吗（注册过才敢交给 shell:AppsFolder 激活）。
         /// 两条注册表路径覆盖两类应用，都很便宜、只读不写（HKCU / HKLM 都查，打包应用通常落在 HKLM）：
-        ///   · <c>{HK??}\Software\Classes\AppUserModelId\{AUMID}</c> —— 自己注册了 AUMID 的 Win32 应用
+        ///   · {HK??}\Software\Classes\AppUserModelId\{AUMID} —— 自己注册了 AUMID 的 Win32 应用
         ///     （键名就是完整的 AUMID）；
-        ///   · <c>{HK??}\Software\Classes\ActivatableClasses\Package\{包族名}…</c> —— 打包应用（UWP / MSIX），
-        ///     它的 AUMID 形如 <c>PackageFamilyName!AppId</c>。
+        ///   · {HK??}\Software\Classes\ActivatableClasses\Package\{包族名}… —— 打包应用（UWP / MSIX），
+        ///     它的 AUMID 形如 PackageFamilyName!AppId。
         /// 两条都查不到时返回 false：此时 Shell 会退化成「打开资源管理器」而不是应用，
         /// 所以宁可走「直接拉起它自己的 exe」那条保守路径。
         /// </summary>
@@ -559,8 +555,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 按 AUMID 交给 Shell 激活（<c>shell:AppsFolder\{AUMID}</c>），也就是 <c>SourceAppUserModelId</c>
-        /// 的原样用法。**调用前必须确认它已注册**（见 <see cref="IsRegisteredAumid"/>），
+        /// 按 AUMID 交给 Shell 激活（shell:AppsFolder\{AUMID}），也就是 SourceAppUserModelId
+        /// 的原样用法。调用前必须确认它已注册（见 IsRegisteredAumid），
         /// 否则 Shell 会打开一个资源管理器窗口而不是应用。
         /// </summary>
         private static void LaunchByAumid(string appId)
@@ -587,7 +583,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 第 3 步的保守分支：拿这个应用**自己的 exe 路径**直接把它拉起来。
+        /// 第 3 步的保守分支：拿这个应用自己的 exe 路径直接把它拉起来。
         /// 只在「AUMID 未注册」时才走这里。路径来自同名进程的模块信息，所以拉起来的必然是它本人；
         /// 媒体类应用基本都是单实例，已在运行时再启动一次也只会激活现有实例。
         /// </summary>

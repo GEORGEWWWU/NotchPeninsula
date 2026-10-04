@@ -7,21 +7,17 @@ namespace NotchPeninsula
     /// <summary>
     /// 极简文件日志：一个常开的写入器 + 按大小轮转 + 高频重复消息去重。
     ///
-    /// <para><b>为什么不是"每行 File.AppendAllText"</b>（2026-10-02 改）：老写法每写一行就要
-    /// 开→写→关一次文件句柄。平时一天几百行无所谓，但**出错重试路径**是 1 行/秒级别的
-    /// （实测：独占音频设备时「音频捕获仍未就绪」单次会话刷了 890~1189 行），
-    /// 那种频率下每秒开关一次文件纯属浪费，还会和杀软的文件扫描叠加成卡顿。
-    /// 现在改为常开 <see cref="StreamWriter"/>（AutoFlush，崩溃最多丢最后一行），
-    /// 只有轮转时才关文件、改名、重开。</para>
+    /// 不用「每行 File.AppendAllText」：那样每写一行就要开→写→关一次文件句柄。平时一天几百行
+    /// 无所谓，但出错重试路径是 1 行/秒级别（实测独占音频设备时「音频捕获仍未就绪」单次会话
+    /// 刷了 890~1189 行），每秒开关一次文件纯属浪费，还会和杀软扫描叠加成卡顿。现在改为常开
+    /// StreamWriter（AutoFlush，崩溃最多丢最后一行），只有轮转时才关文件、改名、重开。
     ///
-    /// <para><b>为什么要轮转</b>：日志只有"最近一段"有价值。实测 13 天攒到 838KB / 8862 行，
-    /// 越老的越没用，而用户反馈问题时翻一个大文件很痛苦。现在单文件超过
-    /// <see cref="MaxBytes"/> 就改名成带时间戳的备份，最多保留 <see cref="MaxRotatedFiles"/> 份，
-    /// 更老的直接删 —— 总占用因此有硬上限（≈3MB），长期挂机也不会无限增长。</para>
+    /// 为什么要轮转：日志只有「最近一段」有价值（实测 13 天攒到 838KB / 8862 行，越老的越没用，
+    /// 用户反馈问题时翻大文件很痛苦）。单文件超过 MaxBytes 就改名成带时间戳的备份，
+    /// 最多保留 MaxRotatedFiles 份，更老的直接删，总占用因此有硬上限（约 3MB）。
     ///
-    /// <para><b>为什么不给"写入"做全局限流</b>：INFO/WARN/ERROR 是诊断的主干信息，量级天然有限
-    /// （通知、插件、媒体跳转各几十行量级），限流只会让真出问题时丢证据。
-    /// 只有明确知道会成片刷屏的调用点才用 <see cref="DebugThrottled"/>。</para>
+    /// 为什么不做全局限流：INFO/WARN/ERROR 是诊断主干，量级天然有限，限流只会让真出问题时丢证据。
+    /// 只有明确知道会成片刷屏的调用点才用 DebugThrottled。
     /// </summary>
     public static class Logger
     {
@@ -70,19 +66,19 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 调试日志。**始终写入**（不再要求 <c>-debug</c> 启动）：
-        /// 这些内容原本只在调试模式下才落盘，结果"用户那边到底怎么了"永远看不到 ——
-        /// 而它们的量级本身很小（一次事件一行），真正的刷屏点已经全部改走 <see cref="DebugThrottled"/>。
+        /// 调试日志。始终写入（不再要求 -debug 启动）：
+        /// 这些内容原本只在调试模式下才落盘，结果「用户那边到底怎么了」永远看不到 ——
+        /// 而它们的量级本身很小（一次事件一行），真正的刷屏点已全部改走 DebugThrottled。
         /// </summary>
         public static void Debug(string msg) => Write("DEBUG", msg, null);
 
         /// <summary>
-        /// 高频重复消息专用：同一条消息（按<b>未格式化前的模板</b>比对）在
-        /// <see cref="ThrottleWindow"/> 内只写第一行，窗口结束时补一行「期间重复 N 次」。
+        /// 高频重复消息专用：同一条消息（按未格式化前的模板比对）在 ThrottleWindow 内只写第一行，
+        /// 窗口结束时补一行「期间重复 N 次」。
         ///
-        /// <para>用在「按秒重试」这类路径上（音频捕获重试、WebSocket 重连、材质窗重建）：
-        /// 既保留"什么时候开始不行的"这一关键信息，又不会把日志刷成几千行。
-        /// ⚠️ 模板必须是**常量**：动态消息（含歌名 / 路径 / 错误消息）各写各的，无法归并。</para>
+        /// 用在「按秒重试」这类路径上（音频捕获重试、WebSocket 重连、材质窗重建）：既保留
+        /// 「什么时候开始不行的」这一关键信息，又不会把日志刷成几千行。
+        /// 模板必须是常量：动态消息（含歌名 / 路径 / 错误消息）各写各的，无法归并。
         /// </summary>
         public static void DebugThrottled(string template) => Write("DEBUG", template, template);
 
@@ -165,8 +161,8 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 轮转：先关掉写入器（Windows 下文件被占用就改不了名），再把当前文件改名成带时间戳的备份，
-        /// 顺手删掉超出 <see cref="MaxRotatedFiles"/> 的老备份。跨进程用命名互斥体串行化，
-        /// 拿不到锁就跳过这一轮（下次写入还会再触发，不会漏）。
+        /// 顺手删掉超出 MaxRotatedFiles 的老备份。跨进程用命名互斥体串行化，拿不到锁就跳过这一轮
+        ///（下次写入还会再触发，不会漏）。
         /// </summary>
         private static void Rotate()
         {
@@ -208,7 +204,7 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>只保留最近 <see cref="MaxRotatedFiles"/> 份历史日志，更老的删掉。</summary>
+        /// <summary>只保留最近 MaxRotatedFiles 份历史日志，更老的删掉。</summary>
         private static void PruneOldLogs(string dir, string baseName, string ext)
         {
             try

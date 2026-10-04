@@ -24,8 +24,8 @@ namespace NotchPeninsula
         public const int WM_SETTINGCHANGE = 0x001A; // 系统设置变化广播（含「应用模式」浅色/深色切换）
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
-        // 🖱 双击：**只有窗口类带 CS_DBLCLKS** 时系统才会派发它（同一位置的第二次按下由它取代
-        //    普通 WM_LBUTTONDOWN）。岛体类已在 NotchWindow 里声明该样式，媒体控制的双击跳转靠它。
+        // 双击：只有窗口类带 CS_DBLCLKS 时系统才会派发它（同一位置的第二次按下由它取代普通
+        // WM_LBUTTONDOWN）。岛体类已在 NotchWindow 里声明该样式，媒体控制的双击跳转靠它。
         public const int WM_LBUTTONDBLCLK = 0x0203;
 
         // 窗口类样式：注册时声明「本类窗口要收双击消息」，否则系统永不派发 WM_LBUTTONDBLCLK
@@ -34,10 +34,10 @@ namespace NotchPeninsula
         /// <summary>
         /// 系统的「双击判定间隔」（毫秒）。
         ///
-        /// <para>岛体用它把一次<b>左键按下</b>与紧随其后的 <see cref="WM_LBUTTONDBLCLK"/> 认成**同一次手势**：
-        /// 折叠态左半边单击会展开媒体面板（见 NotchWindow 的高度折叠态分支），若第二下也被当成独立点击，
-        /// 它就会落在刚铺开的展开面板封面上、被双击跳转吃掉 —— 用户看到的正是「点一下左半边，应用被打开了」。
-        /// 取系统值而不是写死 300ms，是为了与「系统肯把第二下升格成双击消息」的那个窗口严格同源。</para>
+        /// 岛体用它把一次左键按下与紧随其后的 WM_LBUTTONDBLCLK 认成同一次手势：折叠态左半边单击
+        /// 会展开媒体面板（见 NotchWindow 的高度折叠态分支），若第二下也被当成独立点击，它就会落在
+        /// 刚铺开的展开面板封面上、被双击跳转吃掉 —— 用户看到的正是「点一下左半边，应用被打开了」。
+        /// 取系统值而不是写死 300ms，是为了与「系统肯把第二下升格成双击消息」的那个窗口严格同源。
         /// </summary>
         [DllImport("user32.dll")]
         public static extern uint GetDoubleClickTime();
@@ -165,7 +165,7 @@ namespace NotchPeninsula
 
         // 核心修复1：指定 CharSet.Unicode 让字符串正确传递给 Windows
         //
-        // ⚠️ 字段顺序必须与 Win32 的 WNDCLASS 完全一致 —— 这是纯内存布局的结构体，
+        // 字段顺序必须与 Win32 的 WNDCLASS 完全一致 —— 这是纯内存布局的结构体，
         //    少一个字段后面全体错位（历史坑：以前缺 `style`，于是 cbWndExtra 实际落在 cbClsExtra 的位置上，
         //    类的样式也永远为 0，系统因此从不派发 WM_LBUTTONDBLCLK）。
         //    `style` 自 2026-09-27 补上，岛体类借此声明 CS_DBLCLKS 以接收双击消息。
@@ -382,7 +382,7 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
-        // ================= 🪟 窗口查询（媒体会话 → 应用窗口 的定位 / 前台激活） =================
+        // ---- 窗口查询（媒体会话 → 应用窗口 的定位 / 前台激活） ----
         // 媒体侧的「双击封面跳转对应应用」要用它们：
         //   · GetForegroundWindow 在「会话刚被接管」那一刻顺手抓住应用的主窗口句柄；
         //   · GetWindowThreadProcessId / IsWindow / IsWindowVisible / GetWindowLongPtr 做归属与可用性校验
@@ -390,9 +390,9 @@ namespace NotchPeninsula
         //   · ShowWindow / IsIconic / SetForegroundWindow / AttachThreadInput 负责把窗口还原并切到前台。
         //
         // 注：这里以前还有 EnumWindows + EnumWindowsProc（用来按进程号枚举窗口），2026-09-30 删除过一次；
-        //     同日又加回来 —— 兜底路径不再无条件相信 `shell:AppsFolder`（它解析不出来时会**打开资源管理器**，
+        //     兜底路径不再无条件相信 shell:AppsFolder（它解析不出来时会打开资源管理器，
         //     表现就是「跳转跳到了文件资源管理器」），改成「先在已知进程里精确找窗口，找不到才考虑 Shell 激活」。
-        //     这里的枚举是**精确按进程号挑窗口**，不是按进程名猜应用，和当初被放弃的模糊匹配不是一回事。
+        //     这里的枚举是精确按进程号挑窗口，不是按进程名猜应用，和当初被放弃的模糊匹配不是一回事。
 
         [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hWnd);
@@ -502,7 +502,7 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
 
-        // ==================== 多显示器工作区（自绘托盘菜单防止出屏） ====================
+        // ---- 多显示器工作区（自绘托盘菜单防止出屏） ----
         [StructLayout(LayoutKind.Sequential)]
         public struct MONITORINFO
         {
@@ -520,7 +520,7 @@ namespace NotchPeninsula
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
-        // ==================== 剪贴板监听 ====================
+        // ---- 剪贴板监听 ----
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool AddClipboardFormatListener(IntPtr hwnd);
 
@@ -545,16 +545,16 @@ namespace NotchPeninsula
         [DllImport("kernel32.dll")]
         public static extern bool GlobalUnlock(IntPtr hMem);
 
-        // ====================================================================
+        // ----  ----
         // 传统打开文件对话框（comdlg32）
         //
         // 为什么不用 System.Windows.Forms.OpenFileDialog：
         //   WinForms 的 OpenFileDialog 在 .NET Core+ 上走的是 Vista「通用项对话框」
-        //   （CLSID_FileOpenDialog），它会在**本进程内**拉起 ExplorerBrowser + 外壳命名空间
+        //   （CLSID_FileOpenDialog），它会在本进程内拉起 ExplorerBrowser + 外壳命名空间
         //   + 图标/缩略图缓存。这些是进程级 DLL 与缓存，第一次打开就常驻 20~30MB，
         //   并且 Dispose 对话框、关闭资源管理器都不会归还（Windows 不会卸载已加载的外壳组件）。
         //   传统对话框只是 comdlg32 的一个普通模态窗口，完全不碰 ExplorerBrowser。
-        // ====================================================================
+        // ----  ----
 
         public const uint OFN_HIDEREADONLY = 0x00000004;
         public const uint OFN_NOCHANGEDIR = 0x00000008;
@@ -603,8 +603,8 @@ namespace NotchPeninsula
         [DllImport("comdlg32.dll")]
         public static extern uint CommDlgExtendedError();
 
-        // ==================== 全屏检测（「全屏自动隐藏」用） ====================
-        // SHQueryUserNotificationState 是**系统自己的**「现在该不该打扰用户」判定，一次调用就拿到答案，
+        // ---- 全屏检测（「全屏自动隐藏」用） ----
+        // SHQueryUserNotificationState 是系统自己的「现在该不该打扰用户」判定，一次调用就拿到答案，
         // 不用自己 GetForegroundWindow + GetWindowRect + 比对显示器矩形（那套还要处理多显示器与边界误差）。
         // 而且它和「Windows 要不要压掉 Toast」用的是同一套标准，不会出现两套判据打架。
         //
@@ -613,7 +613,7 @@ namespace NotchPeninsula
         //   · 全屏游戏（无边框全屏）           → QUNS_BUSY
         //   · 全屏游戏（独占模式 D3D）         → QUNS_RUNNING_D3D_FULL_SCREEN（矩形比对会漏掉这类）
         //   · 演示文稿模式                     → QUNS_BUSY / QUNS_PRESENTATION_MODE
-        // ⚠️ 返回的是 **HRESULT（0 = S_OK）**，非 0 时 out 值不可信，调用方必须先看返回值。
+        // 返回的是 HRESULT（0 = S_OK），非 0 时 out 值不可信，调用方必须先看返回值。
         [DllImport("shell32.dll")]
         public static extern int SHQueryUserNotificationState(out int pquns);
 
@@ -625,15 +625,15 @@ namespace NotchPeninsula
         public const int QUNS_QUIET_TIME = 6;              // 新用户首次登录 / 升级后的静默期
         public const int QUNS_APP = 7;                     // Windows 应用商店应用运行中（与全屏无关）
 
-        // ====================================================================
+        // ----  ----
         // 插件窗口的拖放：拖入（WM_DROPFILES）与拖出（DoDragDrop）
         //
         // 拖入：DragAcceptFiles(hwnd, true) 会同时给窗口加上 WS_EX_ACCEPTFILES 扩展样式，
         //       之后用户从资源管理器把文件拖到窗口上松手，系统投递一次 WM_DROPFILES，
-        //       wParam 就是 HDROP —— 用 DragQueryFile 逐条取路径，最后**必须** DragFinish 归还。
+        //       wParam 就是 HDROP —— 用 DragQueryFile 逐条取路径，最后必须 DragFinish 归还。
         // 拖出：DoDragDrop 发起系统拖放，需要一个 IDataObject（装在 STGMEDIUM 里的 CF_HDROP）
         //       和一个 IDropSource（回答「继续 / 放下 / 取消」）—— 后者就是下面的 IDropSource 接口。
-        // ====================================================================
+        // ----  ----
 
         public const int WM_DROPFILES = 0x0233;
 
@@ -641,8 +641,8 @@ namespace NotchPeninsula
         public static extern void DragAcceptFiles(IntPtr hWnd, bool fAccept);
 
         /// <summary>
-        /// 查 HDROP 里的路径。<paramref name="iFile"/> 传 <c>0xFFFFFFFF</c> 时返回条目数量；
-        /// 传 0..n-1 时：<paramref name="lpszFile"/> 为 null 则返回该路径的字符数（不含结尾 '\0'），
+        /// 查 HDROP 里的路径。iFile 传 0xFFFFFFFF 时返回条目数量；
+        /// 传 0..n-1 时： 为 null 则返回该路径的字符数（不含结尾 '\0'），
         /// 否则把路径拷进缓冲区并返回实际拷贝的字符数。
         /// </summary>
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
@@ -672,7 +672,7 @@ namespace NotchPeninsula
         /// 刻意不配对 OleUninitialize：这个引用会活到进程结束，而 OLE 初始化本身是引用计数式的，
         /// 多留一个引用不影响任何东西，却省掉了「谁负责收回」的记账。
         ///
-        /// OLE 初始化是<b>线程级</b>的，所以状态用 ThreadStatic 存。
+        /// OLE 初始化是线程级的，所以状态用 ThreadStatic 存。
         /// </summary>
         public static bool EnsureOleInitialized()
         {
@@ -695,8 +695,8 @@ namespace NotchPeninsula
         [ThreadStatic] private static bool _oleInitialized;
 
         /// <summary>
-        /// 发起一次系统拖放。会<b>阻塞</b>到用户松手或取消（内部自建消息循环并接管鼠标）。
-        /// <paramref name="pdwEffect"/> 返回目标最终接受的效果，0 表示没被接受（取消 / 拖到了不接收的地方）。
+        /// 发起一次系统拖放。会阻塞到用户松手或取消（内部自建消息循环并接管鼠标）。
+        ///  返回目标最终接受的效果，0 表示没被接受（取消 / 拖到了不接收的地方）。
         /// </summary>
         [DllImport("ole32.dll", ExactSpelling = true)]
         public static extern int DoDragDrop(
@@ -718,7 +718,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 拖放源接口（oleidl.h 的 IDropSource）。系统在拖放过程中反复回调它：
-        /// <see cref="QueryContinueDrag"/> 问「继续 / 放下 / 取消」，<see cref="GiveFeedback"/> 问「用什么光标」。
+        /// QueryContinueDrag 问「继续 / 放下 / 取消」，GiveFeedback 问「用什么光标」。
         /// 实现类见 PluginWindow.FileDropSource。
         /// </summary>
         [ComImport, Guid("00000121-0000-0000-C000-000000000046"),
@@ -732,7 +732,7 @@ namespace NotchPeninsula
             [PreserveSig] int GiveFeedback(uint dwEffect);
         }
 
-        // ====================================================================
+        // ----  ----
         // OLE 拖入目标（IDropTarget）
         //
         // 为什么要有它：WM_DROPFILES 只在用户松手那一刻投递一次消息，拖动过程中窗口完全收不到通知，
@@ -744,7 +744,7 @@ namespace NotchPeninsula
         //
         // 注意：一个窗口同时挂了 IDropTarget 和 WS_EX_ACCEPTFILES 时，OLE 拖放会走 IDropTarget，
         //       WM_DROPFILES 不再投递 —— 所以两者不能并存当两条路径用，只能二选一（见 PluginWindow）。
-        // ====================================================================
+        // ----  ----
 
         public const uint DROPEFFECT_NONE = 0;
         public const uint CF_HDROP = 15;
@@ -764,8 +764,8 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 拖入目标接口（oleidl.h 的 IDropTarget）。
-        /// 参数里的 <see cref="POINT"/> 就是原生 POINTL（两个 32 位 LONG，布局与 POINT 相同），
-        /// 坐标是<b>屏幕物理像素</b> —— 要自己 ScreenToClient 再除以 DPI 才是窗口内的逻辑坐标。
+        /// 参数里的 POINT 就是原生 POINTL（两个 32 位 LONG，布局与 POINT 相同），
+        /// 坐标是屏幕物理像素 —— 要自己 ScreenToClient 再除以 DPI 才是窗口内的逻辑坐标。
         /// 实现类见 PluginWindow 里的 WindowDropTarget。
         /// </summary>
         [ComImport, Guid("00000122-0000-0000-C000-000000000046"),

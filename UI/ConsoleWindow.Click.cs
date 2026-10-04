@@ -11,7 +11,7 @@ namespace NotchPeninsula
     {
         // 鼠标左键按下：整窗点击分派。
         //
-        // ⚠️ 这是一条**顺序敏感**的 if / else if 链：先匹配到的分支执行，后面的不再看。
+        // 这是一条顺序敏感的 if / else if 链：先匹配到的分支执行，后面的不再看。
         //    越靠前的分支优先级越高（关闭按钮 > 最小化 > 标题栏拖拽 > 收下拉 > 切页签 > 卡片控件…）。
         //    调整任何分支的位置都等于改行为，所以整条链保持平铺，不要拆散。
         private void OnLeftButtonDown(IntPtr hwnd, int clickY)
@@ -73,7 +73,7 @@ namespace NotchPeninsula
                 _toastModeDropdownOpen = false;
                 Render();
             }
-            // 🎵 消息提示音：开关 / 下拉 / 音量下拉 / 两个按钮
+            // 消息提示音：开关 / 下拉 / 音量下拉 / 两个按钮
             //    （必须排在剪贴板、字体等通用开关分支之前，否则会被后者抢先吃掉）
             else if (_soundToggleHovered)
             {
@@ -83,14 +83,14 @@ namespace NotchPeninsula
                 if (!ToastSoundConfig.IsEnabled)
                 {
                     ToastSoundPlayer.ClearQueue();
-                    // 🎵 第 4 行整行是这条开关的附属：关掉它，附属设置行立刻置灰、不吃指针，
+                    // 第 4 行整行是这条开关的附属：关掉它，附属设置行立刻置灰、不吃指针，
                     //    所以这时还开着的浮层（提示音下拉 / 音量下拉）必须一起收掉，
                     //    否则会留下一个「盖在禁用区域上、却还能点」的浮窗。
                     CloseAllDropdowns();
                 }
                 Render();
             }
-            // 🎵 行 4 的四个控件都要求父开关「消息提示音」已打开
+            // 行 4 的四个控件都要求父开关「消息提示音」已打开
             //    （判据与绘制侧置灰、命中侧不吃指针同源，见 ToastSoundConfig.IsRowEnabled）
             else if (_toastSoundDropdownHovered && ToastSoundConfig.IsRowEnabled)
             {
@@ -100,7 +100,7 @@ namespace NotchPeninsula
                 // （增删 wav 造成的位置漂移 / 索引越界都在那里自愈），所以这里不用再补。
                 ToastSoundConfig.RefreshBuiltins();
                 _toastSoundDropdownOpen = true;
-                // 展开时把滚动位置定到「当前选中项可见」处；**之后滚动完全交给滚轮**，
+                // 展开时把滚动位置定到「当前选中项可见」处；之后滚动完全交给滚轮，
                 // 绘制与命中都不再抢回选中项（那是「滚不动」的元凶）。
                 ScrollToastSoundMenuToSelected();
                 Render();
@@ -196,7 +196,7 @@ namespace NotchPeninsula
                 // index 1（原「垂直高度」）已合并进 index 3「全局折叠态高度」，不再有处理器
                 if (updateIdx == 0) { Renderer.STANDBY_WIDTH = _customValues[0]; Program.SaveSetting("Custom_StandbyW", _customValues[0]); }
                 else if (updateIdx == 2) { Renderer.MEDIA_WIDTH = _customValues[2]; Program.SaveSetting("Custom_MediaW", _customValues[2]); }
-                // 🎯 全局折叠态高度：写回原媒体控制的键（Custom_MediaH），与 LoadSettings 的读取口径一致
+                // 全局折叠态高度：写回原媒体控制的键（Custom_MediaH），与 LoadSettings 的读取口径一致
                 else if (updateIdx == 3) { Renderer.MEDIA_HEIGHT = _customValues[3]; Program.SaveSetting("Custom_MediaH", _customValues[3]); }
                 else if (updateIdx == 4) { Renderer.TOAST_WIDTH = _customValues[4]; Program.SaveSetting("Custom_ToastW", _customValues[4]); }
                 else if (updateIdx == 5) { Renderer.TOAST_HEIGHT = _customValues[5]; Program.SaveSetting("Custom_ToastH", _customValues[5]); }
@@ -346,7 +346,7 @@ namespace NotchPeninsula
             }
             else if (_appLaunchToggleHovered)
             {
-                // 🖱 双击封面跳转开关：关掉后双击封面完全不消费、不做事；
+                // 双击封面跳转开关：关掉后双击封面完全不消费、不做事；
                 //    已缓存的窗口句柄留在 MediaAppLauncher 里（几十字节），
                 //    重新打开时下一次接管刷新就会继续采样，不需要清缓存。
                 MediaController.IsAppLaunchEnabled = !MediaController.IsAppLaunchEnabled;
@@ -362,7 +362,7 @@ namespace NotchPeninsula
             }
             else if (_clipboardToggleHovered)
             {
-                // 📋 剪贴板链接检测开关（关闭后正在展示的链接会由渲染循环立即收起）
+                // 剪贴板链接检测开关（关闭后正在展示的链接会由渲染循环立即收起）
                 NotchWindow.IsClipboardEnabled = !NotchWindow.IsClipboardEnabled;
                 Program.SaveSetting("ClipboardEnabled", NotchWindow.IsClipboardEnabled ? 1 : 0);
                 Render();
@@ -383,7 +383,7 @@ namespace NotchPeninsula
                 _dropdownOpen = false;
                 Render();
             }
-            // ===== 显示内容列表 =====
+            // ---- 显示内容列表 ----
             // 顺序项同时含内置模块与插件，统一走 PluginManager 那张顺序表 ——
             // 所以这里不需要（也不该）再区分「原生模块」与「插件」两套逻辑。
             else if (_selectedTab == 1 && (_hoveredDisplayRow != -1 || _hoveredDisplayMoveUp != -1 || _hoveredDisplayMoveDown != -1))
@@ -409,7 +409,7 @@ namespace NotchPeninsula
 
                 Render();
             }
-            // ===== 插件中心交互 =====
+            // ---- 插件中心交互 ----
             else if (_selectedTab == 6 && _hoveredPluginAction != -1)
             {
                 switch (_hoveredPluginAction)
