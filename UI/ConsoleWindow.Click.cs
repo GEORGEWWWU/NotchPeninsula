@@ -51,6 +51,52 @@ namespace NotchPeninsula
                 Program.SaveSetting("NotchStyle", _hoveredStyleIndex);
                 Render();
             }
+            else if (_selectedTab == 1 && _hoveredStandbySceneIndex != -1)
+            {
+                // 待机模式显示内容：只改设置，不影响「当前是否处于待机」——
+                // 待机中的话下一帧就按新场景渲染，待机外则等下次进入时生效。
+                Renderer.StandbyScene = _hoveredStandbySceneIndex;
+                Program.SaveSetting("StandbyScene", Renderer.StandbyScene);
+                Render();
+            }
+            else if (_selectedTab == 1 && _standbyToggleHovered)
+            {
+                Renderer.StandbyToggleByDoubleClick = !Renderer.StandbyToggleByDoubleClick;
+                Program.SaveSetting("StandbyToggleByDoubleClick",
+                    Renderer.StandbyToggleByDoubleClick ? 1 : 0);
+                Render();
+            }
+            else if (_selectedTab == 1 && _pageScrollbarHovered)
+            {
+                // 与整页滚动条交互：之后的滚轮优先滚整页，并把页面跳到点击处
+                _wheelPriorityList = false;
+                float pageMax = GetDisplayPageMaxScroll();
+                GetPageScrollbarLayout(out float top, out float trackH);
+                float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f;
+                float thumbH = Math.Max(24f, trackH * HEIGHT / contentH);
+                float travel = Math.Max(1f, trackH - thumbH);
+                float ratio = Math.Clamp((clickY - top - thumbH / 2f) / travel, 0f, 1f);
+                _displayPageScroll = ratio * pageMax;
+                SyncHoverFromCursor();
+                Render();
+            }
+            else if (_selectedTab == 1 && _listScrollbarHovered)
+            {
+                // 与「显示内容」列表滚动条交互：之后的滚轮优先滚列表，并把列表跳到点击处
+                _wheelPriorityList = true;
+                GetDisplayListLayout(out int visibleRows, out int maxFirstRow);
+                if (maxFirstRow > 0 && visibleRows > 0)
+                {
+                    GetListScrollbarLayout(out float top, out float trackH);
+                    float thumbH = Math.Max(18f,
+                        trackH * visibleRows / PluginManager.Instance.DisplayItems.Count);
+                    float travel = Math.Max(1f, trackH - thumbH);
+                    float ratio = Math.Clamp((clickY - top - thumbH / 2f) / travel, 0f, 1f);
+                    _displayScroll = (int)Math.Round(ratio * maxFirstRow);
+                }
+                SyncHoverFromCursor();
+                Render();
+            }
             else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; CloseAllDropdowns(); Render(); }
             else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; CloseAllDropdowns(); Render(); }
             else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; CloseAllDropdowns(); Render(); }

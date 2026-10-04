@@ -1873,6 +1873,26 @@ namespace NotchPeninsula
                             _media.OpenCurrentApp();
                             return (IntPtr)0; // 消费掉：别再让第二下点到底下的播放按钮上
                         }
+
+                        // 待机模式切换（开关打开时）：默认态双击「空白」进入；待机态双击空白退出 ——
+                        // 而场景选「折叠媒体控制」时岛内被媒体模块占满、没有空白，改用双击频谱那一块退出。
+                        // 判定排在插件分发与封面跳转之后，插件组件上与封面上永远不会触发。
+                        if (Renderer.StandbyToggleByDoubleClick && _isHovered
+                            && _currentToast == null && !isClipboardActive
+                            && !Renderer.HasActiveDetailPage)
+                        {
+                            bool hitsToggleZone = Renderer.StandbyActive && Renderer.StandbyScene == 3
+                                ? Renderer.HitMediaSpectrumZone(dx)
+                                : Renderer.IsBlankAt(dx, dy, _currentHeight);
+
+                            if (hitsToggleZone)
+                            {
+                                Renderer.StandbyActive = !Renderer.StandbyActive;
+                                Logger.Info($"[待机模式] {(Renderer.StandbyActive ? "进入" : "退出")}"
+                                    + $"（双击 {dx},{dy}，场景={Renderer.StandbyScene}）");
+                                return (IntPtr)0;
+                            }
+                        }
                         break;
                     }
 

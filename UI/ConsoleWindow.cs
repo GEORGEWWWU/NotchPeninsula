@@ -42,11 +42,44 @@ namespace NotchPeninsula
 
         private const float DISPLAY_FIRST_ROW_Y = 56f;    // 首行顶部相对卡片顶部的偏移
 
-        /// <summary>「显示内容」卡片顶部相对窗口顶部的偏移（渲染与命中必须同源）。</summary>
-        private const float DISPLAY_CARD_Y = 248f;
+        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源）。</summary>
+        private const float DISPLAY_CARD_Y = 482f;
+
+        /// <summary>
+        /// 「显示内容」卡片高度（固定值）：页面整体可滚动，卡片高度与窗口高无关，
+        /// 列表超出可视行数的部分靠它自身的滚动查看。
+        /// </summary>
+        private const float DISPLAY_CARD_H = 360f;
 
         /// <summary>滚轮一格（120）滚动几行。</summary>
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
+
+        // ---- 显示设置页整页滚动 + 「待机模式」卡片（渲染与鼠标命中必须同源）----
+
+        /// <summary>整页滚轮一格（120）滚动的像素。</summary>
+        private const float DISPLAY_PAGE_WHEEL_STEP = 48f;
+
+        /// <summary>「待机模式」卡顶部相对标题栏的偏移。</summary>
+        private const float STANDBY_CARD_Y = 172f;
+
+        private const float STANDBY_CARD_H = 224f;
+
+        /// <summary>三个待机场景选项的顶部与尺寸（相对标题栏，横向排列）。</summary>
+        private const float STANDBY_OPT_Y = STANDBY_CARD_Y + 56f;
+
+        private const float STANDBY_OPT_W = 112f;
+
+        private const float STANDBY_OPT_H = 92f;
+
+        private const float STANDBY_OPT_GAP = 8f;
+
+        private const float STANDBY_OPT_X = 208f;
+
+        /// <summary>「双击空白切换待机模式」开关行的 yOffset（喂给 DrawToggleRow）。</summary>
+        private const float STANDBY_TOGGLE_ROW_Y = STANDBY_CARD_Y + 148f;
+
+        /// <summary>目标显示器卡顶部相对标题栏的偏移。</summary>
+        private const float MONITOR_CARD_Y = 408f;
 
         private const float DISPLAY_MOVE_UP_X = 486f;     // ∧ 槽左边界（槽宽 = SORT_TRI_W）
 
@@ -604,12 +637,35 @@ namespace NotchPeninsula
         /// </summary>
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
         {
-            // 卡片能放下几行（与旧渲染侧的 maxDisplayRows 同一算式）
+            // 卡片能放下几行：卡片高度固定（DISPLAY_CARD_H），底部留 20px
             int maxRows = Math.Max(1,
-                (int)((HEIGHT - 20 - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y)) / DISPLAY_ROW_H));
+                (int)((DISPLAY_CARD_H - DISPLAY_FIRST_ROW_Y - 20f) / DISPLAY_ROW_H));
             int total = PluginManager.Instance.DisplayItems.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
+        }
+
+        /// <summary>
+        /// 显示设置页整页可滚的最大偏移：内容总高减窗口高，不足一屏返回 0。
+        /// 渲染偏移、滚轮上限、命中坐标换算三处共用这一个真源。
+        /// </summary>
+        private static float GetDisplayPageMaxScroll()
+            => Math.Max(0f, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f - HEIGHT);
+
+        /// <summary>整页滚动条的轨道（相对窗口顶部）——渲染与命中必须同源。</summary>
+        private static void GetPageScrollbarLayout(out float trackTop, out float trackH)
+        {
+            trackTop = TITLE_BAR_HEIGHT + 6f;
+            trackH = HEIGHT - TITLE_BAR_HEIGHT - 12f;
+        }
+
+        /// <summary>「显示内容」列表滚动条的轨道（相对窗口顶部，已含整页滚动偏移）——渲染与命中必须同源。</summary>
+        private void GetListScrollbarLayout(out float trackTop, out float trackH)
+        {
+            GetDisplayListLayout(out int visibleRows, out _);
+            float contentCardY = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y - _displayPageScroll;
+            trackTop = contentCardY + DISPLAY_FIRST_ROW_Y - 4f;
+            trackH = Math.Max(0f, visibleRows * DISPLAY_ROW_H - 4f);
         }
 
         /// <summary>当前光标位置换算成窗口客户区坐标（DIP，已除 DPI 缩放）；取不到返回 false。</summary>
@@ -624,6 +680,26 @@ namespace NotchPeninsula
         }
 
         private int _hoveredStyleIndex = -1;
+
+        /// <summary>显示设置页整页滚动的纵向偏移（像素）：内容高于窗口时才可滚。</summary>
+        private float _displayPageScroll;
+
+        /// <summary>
+        /// 滚轮优先滚哪一层：false = 整页（默认），true = 「显示内容」列表。
+        /// 由用户最后点击的是哪条滚动条决定；滚到边界后自动接力滚另一层。
+        /// </summary>
+        private bool _wheelPriorityList;
+
+        /// <summary>两条滚动条的悬停态（点击它们用于切换滚轮优先级）。</summary>
+        private bool _pageScrollbarHovered;
+
+        private bool _listScrollbarHovered;
+
+        /// <summary>「待机模式」三个场景选项的悬停下标（-1 = 无）。</summary>
+        private int _hoveredStandbySceneIndex = -1;
+
+        /// <summary>「双击空白切换待机模式」开关的悬停态。</summary>
+        private bool _standbyToggleHovered;
 
         private bool _monitorDropdownOpen = false;
 
@@ -1040,24 +1116,45 @@ namespace NotchPeninsula
                         return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
                     }
 
-                    // 「显示内容」列表：只在光标落在列表区域时才滚动，免得在页面别处滚轮误动列表
-                    if (_selectedTab == 1 && TryGetCursorClientPos(out int wheelX, out int wheelY)
-                        && wheelX >= 200 && wheelX <= WIDTH - 20
-                        && wheelY >= TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y - DISPLAY_ROW_H)
+                    // 显示设置页滚轮分两层：整页平移与「显示内容」列表内滚动。两层可能同时存在，
+                    // 所以按「用户最后点击过的滚动条」决定先滚哪一层，滚到边界后自动接力滚另一层
+                    // （默认优先整页；点过列表滚动条改为优先列表，再点整页滚动条又切回来）。
+                    if (_selectedTab == 1)
                     {
+                        float pageMax = GetDisplayPageMaxScroll();
+                        _displayPageScroll = Math.Clamp(_displayPageScroll, 0f, pageMax);
                         GetDisplayListLayout(out _, out int displayMaxFirst);
-                        if (displayMaxFirst > 0)
+
+                        int wheelDelta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                        int rows = wheelDelta / 120 * DISPLAY_WHEEL_STEP_ROWS;
+                        float px = wheelDelta / 120 * DISPLAY_PAGE_WHEEL_STEP;
+
+                        bool TryList()
                         {
-                            int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
-                            int target = Math.Clamp(_displayScroll - delta / 120 * DISPLAY_WHEEL_STEP_ROWS, 0, displayMaxFirst);
-                            if (target != _displayScroll)
-                            {
-                                _displayScroll = target;
-                                // 同上：滚动后光标下的行号变了，hover 还停在旧行上，
-                                // 不补这一次命中，紧接着点下去就会勾错 / 移错条目。
-                                SyncHoverFromCursor();
-                                Render();
-                            }
+                            if (displayMaxFirst <= 0) return false;
+                            int target = Math.Clamp(_displayScroll - rows, 0, displayMaxFirst);
+                            if (target == _displayScroll) return false;
+                            _displayScroll = target;
+                            return true;
+                        }
+
+                        bool TryPage()
+                        {
+                            if (pageMax <= 0f) return false;
+                            float target = Math.Clamp(_displayPageScroll - px, 0f, pageMax);
+                            if (Math.Abs(target - _displayPageScroll) <= 0.5f) return false;
+                            _displayPageScroll = target;
+                            return true;
+                        }
+
+                        // || 短路：优先的那层滚动成功就不再动另一层 —— 到边界时自然接力
+                        bool moved = _wheelPriorityList ? (TryList() || TryPage()) : (TryPage() || TryList());
+                        if (moved)
+                        {
+                            // 滚动后光标下的行号与控件位置都变了，必须重算悬停，
+                            // 否则紧接着的点击会拿旧下标命中错误的条目。
+                            SyncHoverFromCursor();
+                            Render();
                         }
                         return IntPtr.Zero;
                     }

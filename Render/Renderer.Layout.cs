@@ -126,6 +126,17 @@ namespace NotchPeninsula
             var contentOrder = Plugins.PluginManager.Instance.Host.ContentOrder;
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;
 
+            // 待机模式：岛上只保留所选的那一样，插件组件行整体隐去 —— 显示内容由 StandbyScene 决定
+            // （1=只显示时间 / 2=空白 / 3=折叠媒体控制），进入与退出由 StandbyActive 表示。
+            // 这一支刻意不看 CompShow* 复选框：待机是独立的顶层预设，选了哪样就显示哪样。
+            if (StandbyActive)
+            {
+                if (StandbyScene == 1) DrawClockModule();
+                else if (StandbyScene == 3 && media.IsActive) DrawMediaModule();
+                // StandbyScene == 2（空白）不画任何内容；选了折叠媒体但当前没有媒体时同样退化为空白
+                return;
+            }
+
             for (int oi = 0; oi < contentOrder.Count; oi++)
             {
                 string item = contentOrder[oi];
@@ -427,6 +438,34 @@ namespace NotchPeninsula
         }
 
         private static bool InZone(float x, float l, float r) => l >= 0f && x >= l && x <= r;
+
+        /// <summary>
+        /// 折叠态媒体模块的右半边（频谱 / 悬停播放按钮那一带），与 <see cref="HitMediaLaunchZone"/>
+        /// 的左半边互补。待机模式选「折叠媒体控制」时岛内被媒体模块占满、没有空白可双击，
+        /// 退出待机就靠这一块；其余场景一律走双击空白。
+        /// </summary>
+        public static bool HitMediaSpectrumZone(float x)
+        {
+            if (_mediaBlockL < 0f || _mediaBlockR <= _mediaBlockL) return false;
+            return x > (_mediaBlockL + _mediaBlockR) / 2f && x <= _mediaBlockR;
+        }
+
+        /// <summary>
+        /// 岛内该坐标是否算「空白」—— 不落在任何可交互控件（插件组件、剪贴板按钮、
+        /// 媒体区与它的各类按钮、时间轴）上。待机模式的「双击空白进入 / 退出」用它判定：
+        /// 时间、硬件这类纯展示模块虽然画了内容，但不含任何左键交互，同样算空白。
+        /// </summary>
+        public static bool IsBlankAt(float x, float y, float currentHeight)
+        {
+            if (HitPluginZone(x, y)) return false;
+            if (HitClipboardOpen(x, y)) return false;
+            if (HitMediaZone(x)) return false;
+            if (HitMediaLaunchZone(x, y)) return false;
+            if (HitMediaSpectrumZone(x)) return false;
+            if (HitTimeline(x, y)) return false;
+            if (HitExpandedButton(x, y, currentHeight) >= 0) return false;
+            return true;
+        }
 
     }
 }

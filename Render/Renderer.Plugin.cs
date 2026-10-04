@@ -228,6 +228,23 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 岛内坐标是否落在任一插件组件的绘制矩形内（只看矩形，不问插件自己的 HitTest）。
+        /// 供「待机模式双击空白」判定使用：插件组件占着的位置不算空白，交回插件自己处理。
+        /// </summary>
+        public static bool HitPluginZone(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                for (int i = 0; i < _pluginSlots.Count; i++)
+                {
+                    var r = _pluginSlots[i].Rect;
+                    if (x >= r.Left && x <= r.Right && y >= r.Top && y <= r.Bottom) return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>把岛内逻辑坐标 (x,y) 的左键事件分发给插件组件；命中并处理返回 true。</summary>
 
         public static bool DispatchPluginLeftClick(float x, float y)
