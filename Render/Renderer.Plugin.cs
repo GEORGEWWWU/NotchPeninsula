@@ -731,9 +731,9 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 当前详情页要求的「鼠标离开后自动收起」时长（毫秒）。三种返回：
-    /// null —— 未展开、详情页没指定、或取值抛异常 → 调用方沿用宿主内置时长。
-    /// CollapseNever —— 详情页明确要求鼠标离开也别收 → 调用方连计时都不用挂。
-    /// 正数 —— 自定义时长，已夹在 0.5 秒 ~ 60 秒之间。
+        ///   null —— 未展开、详情页没指定、或取值抛异常 → 调用方沿用宿主内置时长。
+        ///   CollapseNever —— 详情页明确要求鼠标离开也别收 → 调用方连计时都不用挂。
+        ///   正数 —— 自定义时长，已夹在 0.5 秒 ~ 60 秒之间。
         /// </summary>
         public static int? ActiveDetailCollapseDelayMs
         {

@@ -69,13 +69,13 @@ namespace NotchPeninsula
         /// 两次 API 调用，没有枚举、没有等待，可以放心放在 UI 线程。
         ///
         /// 三道保险（改这段之前先读完，每条都对应一个真实踩过的坑）：
-    /// 只在接管目标真的换了的时候采样（见 s_sampledAppId）。
-        ///       否则用户正在别的程序里忙着的时候，媒体一换歌就会把那个无关程序的前台窗口记成媒体窗口。
-    /// 前台窗口的进程名必须与 AUMID 里的文件名完全相等（IsProcessOfApp）。
-        ///       对不上、或推不出进程名，一律不采 —— 宁可双击时走第 2 步按进程找窗口，
-        ///       也绝不把另一个程序切到前台。
-    /// 激活前还要复核一次（见 OpenCurrentSessionApp 第 1 步）：
-        ///       句柄可能已被回收、PID 也可能被复用，不复核就等于闭着眼睛按句柄切前台。
+        ///   1. 只在接管目标真的换了的时候采样（见 s_sampledAppId）。
+        ///      否则用户正在别的程序里忙着的时候，媒体一换歌就会把那个无关程序的前台窗口记成媒体窗口。
+        ///   2. 前台窗口的进程名必须与 AUMID 里的文件名完全相等（IsProcessOfApp）。
+        ///      对不上、或推不出进程名，一律不采 —— 宁可双击时走第 2 步按进程找窗口，
+        ///      也绝不把另一个程序切到前台。
+        ///   3. 激活前还要复核一次（见 OpenCurrentSessionApp 第 1 步）：
+        ///      句柄可能已被回收、PID 也可能被复用，不复核就等于闭着眼睛按句柄切前台。
         /// </summary>
         /// <param name="session">当前接管的会话；为 null 表示没有接管会话。</param>
         internal static void CaptureSession(GlobalSystemMediaTransportControlsSession? session)

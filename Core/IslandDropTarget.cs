@@ -39,18 +39,18 @@ internal sealed class IslandDropTarget : Win32.IDropTarget
 
     internal IslandDropTarget(NotchWindow window) => _window = window;
 
-    /// <summary>
-    /// 光标压在一个「收起态也愿意收文件」的组件上时，把它的详情页展开。
-    ///
-    /// 为什么 DragEnter 里判一次不够、DragOver 里还得一直判：岛体窗口是整块超大透明窗口
-    ///（WINDOW_WIDTH ≥ 1200），可见岛体只占中间一小块，而 OLE 只在「进入窗口」那一刻调一次
-    /// DragEnter —— 用户从窗口边缘进来时，那一瞬间的落点离组件还远得很。所以必须靠 DragOver
-    /// 在光标真正压到组件上时才动手。
-    ///
-    /// 展开不等于接受：详情页要下一帧才画出来、命中矩形也是那时才登记，所以调用方这次仍按原样走
-    ///（多半被拒），由 DragOver 那套「持续重试接受」在一两帧后接上。
-    /// </summary>
-    private void TryExpandCollapsedDropWidget(float x, float y)
+        /// <summary>
+        /// 光标压在一个「收起态也愿意收文件」的组件上时，把它的详情页展开。
+        ///
+        /// 为什么 DragEnter 里判一次不够、DragOver 里还得一直判：岛体窗口是整块超大透明窗口
+        /// （WINDOW_WIDTH ≥ 1200），可见岛体只占中间一小块，而 OLE 只在「进入窗口」那一刻调一次
+        /// DragEnter —— 用户从窗口边缘进来时，那一瞬间的落点离组件还远得很。所以必须靠 DragOver
+        /// 在光标真正压到组件上时才动手。
+        ///
+        /// 展开不等于接受：详情页要下一帧才画出来、命中矩形也是那时才登记，所以调用方这次仍按原样走
+        /// （多半被拒），由 DragOver 那套「持续重试接受」在一两帧后接上。
+        /// </summary>
+        private void TryExpandCollapsedDropWidget(float x, float y)
     {
         if (Renderer.HasActiveDetailPage) return;   // 已经有面板开着，不抢
 

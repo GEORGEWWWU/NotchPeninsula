@@ -324,8 +324,7 @@ internal static class ToastSoundPlayer
     /// 软件增益（音量缩放）—— 提示音音量的唯一实现方式，与系统音量完全无关。
     ///
     /// 为什么不用 WasapiOut.Volume：
-    ///     NAudio 里那个属性的 setter 是
-    ///     mmDevice.AudioEndpointVolume.MasterVolumeLevelScalar = value;，
+    ///     NAudio 里那个属性的 setter 是 mmDevice.AudioEndpointVolume.MasterVolumeLevelScalar = value;，
     ///     改的是系统主音量（任务栏音量条），而不是本程序的音频会话。
     ///     提示音是独立音量通道，必须与系统音量解耦，所以直接在样本上乘增益。
     ///
