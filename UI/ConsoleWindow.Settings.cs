@@ -91,7 +91,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 弹出文件对话框挑选字体文件，选中后热替换灵动岛全部文本字体，并把路径写入注册表实现记忆化。
         /// 加载失败时不做任何改动，只在卡片副标题上提示原因。
-        /// 走的是传统 Win32 对话框（见 <see cref="ShowOpenFileDialog"/>），不会把外壳组件拉进进程。
+        /// 走的是传统 Win32 对话框（见 ShowOpenFileDialog），不会把外壳组件拉进进程。
         /// </summary>
         private void PickCustomFont()
         {
@@ -135,7 +135,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 应用提示音选项。索引 0 = 无；1..N = data\sound 里的第 i 个音频；
-        /// <see cref="ToastSoundConfig.CustomIndex"/> = 「浏览音频…」（弹文件对话框挑自定义文件）。
+        /// ToastSoundConfig.CustomIndex = 「浏览音频…」（弹文件对话框挑自定义文件）。
         ///
         /// 选中即持久化。只有在不处于静音档时才试听一下 —— 否则用户每次切换都白响一声很烦。
         /// </summary>

@@ -339,7 +339,7 @@ namespace NotchPeninsula
         /// </summary>
         private static SKRect _mediaCoverRect;
 
-        /// <summary>折叠态媒体模块的左右端（每帧由 <see cref="RegisterMediaBlock"/> 登记）。</summary>
+        /// <summary>折叠态媒体模块的左右端（每帧由 RegisterMediaBlock 登记）。</summary>
         private static float _mediaBlockL = -1f, _mediaBlockR = -1f;
 
         /// <summary>
@@ -355,7 +355,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 折叠内联行登记媒体模块的左右端。折叠态的双击热区按「模块左半边」算（见
-        /// <see cref="HitMediaLaunchZone"/>），需要它才能覆盖缩略图 + 紧跟其后的文字起点那一段。
+        /// HitMediaLaunchZone），需要它才能覆盖缩略图 + 紧跟其后的文字起点那一段。
         /// </summary>
         private static void RegisterMediaBlock(float left, float right)
         {
@@ -365,7 +365,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 岛内右键落在哪块原生内容上，返回设置窗口应直达的页签下标；未命中任何原生模块返回 -1。
-        /// 页签下标与 <see cref="ConsoleWindow"/> 的侧边栏一致：1 = 显示设置、2 = 媒体设置。
+        /// 页签下标与 ConsoleWindow 的侧边栏一致：1 = 显示设置、2 = 媒体设置。
         /// 只按 x 判定 —— 三块区域在岛内是互不重叠的横向切片，y 由调用方（岛体悬停）保证。
         /// </summary>
         public static int NativeRightClickTab(float x)
@@ -387,18 +387,18 @@ namespace NotchPeninsula
         /// <summary>
         /// 双击跳转的命中区 —— 折叠态与展开态都只认封面那一块。
         ///
-    /// <b>折叠态：左端的 22px 缩略图</b>。右半边（频谱 / 播放按钮那一带）留给原有交互，
+    /// 折叠态：左端的 22px 缩略图。右半边（频谱 / 播放按钮那一带）留给原有交互，
         ///       双击不参与，也就不会跟「悬停直接控制」抢同一片区域。
-    /// <b>展开态：封面那一块</b>（绘制在 y = 20 ~ 70）。双击标题 / 歌词 / 频谱都不算，
+    /// 展开态：封面那一块（绘制在 y = 20 ~ 70）。双击标题 / 歌词 / 频谱都不算，
         ///       播放按钮与时间轴更在它下方。
         ///
-        /// <b>为什么展开态只认封面那一块</b>（2026-09-27 实测两次收窄后定稿）：
+        /// 为什么展开态只认封面那一块（2026-09-27 实测两次收窄后定稿）：
         /// 早先版本把整个上半区（歌名 / 歌手 / 歌词 / 频谱）都算成双击区，用户只是随手点一下面板
         /// 就会飞到媒体应用去；同时那块热区还会跟底部按钮的命中判定贴在一起，按起来发涩。
         /// 现在范围压到封面，且与按钮热区之间隔着一整条歌词带，两条路径彻底互不干扰。
         ///
-        /// <b>两种形态共用一条判据</b>（2026-09-30 统一）：命中区不再各写一套坐标，
-        /// 而是直接取本帧绘制时登记的封面矩形（<see cref="_mediaCoverRect"/>）——
+        /// 两种形态共用一条判据（2026-09-30 统一）：命中区不再各写一套坐标，
+        /// 而是直接取本帧绘制时登记的封面矩形（_mediaCoverRect）——
         /// 折叠态那块缩略图、展开态那块封面画在哪儿，双击区就在哪儿，改绘制不会让命中区漂走。
         /// 本帧没画封面（未激活 / 被通知 / 剪贴板 / 详情页接管）时矩形为空，天然返回 false。
         /// </summary>

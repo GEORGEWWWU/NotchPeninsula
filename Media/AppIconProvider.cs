@@ -24,11 +24,11 @@ namespace NotchPeninsula
 
     /// <summary>
     /// 从「任意 shell 项」抠出应用图标 —— 用的是 Windows 自己给资源管理器列表用的那套：
-    /// <c>SHCreateItemFromParsingName</c> + <c>IShellItemImageFactory::GetImage</c>。
+    /// SHCreateItemFromParsingName + IShellItemImageFactory::GetImage。
     ///
-    /// 相比 <c>ExtractIconEx</c> / <c>SHGetFileInfo</c> 的好处：同时接受 exe 完整路径与 UWP 的
-    /// <c>shell:AppsFolder\&lt;AUMID&gt;</c>，一套代码通吃；返回的 HBITMAP 自带 32bpp alpha，
-    /// 不用自己合成掩码位图；拿到的是 shell 按注册表 <c>DefaultIcon</c> / 应用清单解析后的真实应用图标，
+    /// 相比 ExtractIconEx / SHGetFileInfo 的好处：同时接受 exe 完整路径与 UWP 的
+    /// shell:AppsFolder\AUMID，一套代码通吃；返回的 HBITMAP 自带 32bpp alpha，
+    /// 不用自己合成掩码位图；拿到的是 shell 按注册表 DefaultIcon / 应用清单解析后的真实应用图标，
     /// 而不是 exe 里的第一个图标资源（那常常是安装程序图标或旧版本图标）。
     ///
     /// 任何一步失败都返回 null，由调用方回退到占位绘制 —— 本类不抛异常。
@@ -46,8 +46,8 @@ namespace NotchPeninsula
             [MarshalAs(UnmanagedType.Interface)] out IShellItemImageFactory ppv);
 
         /// <summary>
-        /// 按 shell 解析名取图标。<paramref name="parsingName"/> 可以是 exe 完整路径，
-        /// 也可以是 <c>shell:AppsFolder\Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic</c>。
+        /// 按 shell 解析名取图标。 可以是 exe 完整路径，
+        /// 也可以是 shell:AppsFolder\Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic。
         /// </summary>
         /// <param name="size">期望边长（逻辑像素）—— 岛上最大只画 50px，取 32 放大也够用</param>
         public static SKBitmap? Load(string parsingName, int size = 32)
@@ -138,15 +138,15 @@ namespace NotchPeninsula
     }
 
     /// <summary>
-    /// 媒体程序应用图标的缓存与解析：SMTC 会话的 AUMID → 该程序自己的 <see cref="SKBitmap"/>。
+    /// 媒体程序应用图标的缓存与解析：SMTC 会话的 AUMID → 该程序自己的 SKBitmap。
     ///
-    /// <b>用途</b>（2026-10-01 起）：媒体封面不再引用 <c>data\image</c> 里的内置平台站标
+    /// 用途（2026-10-01 起）：媒体封面不再引用 data\image 里的内置平台站标
     /// （资源保留，只是不再被引用），改为按会话动态取图 ——
     /// 视频模式直接用它，音乐模式把它当作网络封面与 SMTC 缩略图之后的最后兜底。
     ///
-    /// <b>三级解析</b>（按可靠性排序，逐级回退）：
+    /// 三级解析（按可靠性排序，逐级回退）：
     /// AUMID 本身就是可执行文件路径 —— 直接用（部分 Win32 播放器这么上报）；
-    /// AUMID 是 UWP / MSIX 的 <c>PackageFamily!AppId</c> —— 交给 <c>shell:AppsFolder</c> 解析；
+    /// AUMID 是 UWP / MSIX 的 PackageFamily!AppId —— 交给 shell:AppsFolder 解析；
     /// 从 AUMID 推出应用名，去进程表里找同名 exe，再取其图标 —— 常规 Win32 播放器走这条；
     ///       对不上名字时再按「词元重叠」兜底（反向域名式 AUMID 只有这一级能命中）。
     ///
@@ -271,7 +271,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 按可执行文件名找该应用的 exe 路径。命中优先级：归一化后完全同名 &gt; 互相包含（取匹配得最长的那个）。
+        /// 按可执行文件名找该应用的 exe 路径。命中优先级：归一化后完全同名 > 互相包含（取匹配得最长的那个）。
         /// 顺序不保证时「谁先被枚举到就算谁」会让长得像同一家的应用互相串图标，所以要显式排序。
         /// </summary>
         private static string FindExeByAumid(string aumid)
@@ -329,8 +329,8 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 最后一级：AUMID 与进程的「词元集合」做重叠打分，只在唯一最高分时认。
-        /// 反向域名式 AUMID 靠它命中 —— <c>com.bilibili.bilibiliPC</c> 与
-        /// <c>Program Files\bilibili\哔哩哔哩.exe</c> 共享目录名词元 bilibili。
+        /// 反向域名式 AUMID 靠它命中 —— com.bilibili.bilibiliPC 与
+        /// Program Files\bilibili\哔哩哔哩.exe 共享目录名词元 bilibili。
         /// 并列最高分直接放弃：宁可没有图标，也不能挂上别的程序的图标。
         /// </summary>
         private static string FindExeByTokenOverlap(string aumid)
@@ -390,7 +390,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 「通用词」：单独命中它不足以指认一个应用，必须有第二个词元一起命中才算数。
-        /// 否则 Rainmeter 的文件描述里带 "desktop"，就会把 <c>cn.toside.music.desktop</c> 配到它身上 ——
+        /// 否则 Rainmeter 的文件描述里带 "desktop"，就会把 cn.toside.music.desktop 配到它身上 ——
         /// 那比配不上更糟：用户看到的是完全不相干的图标。
         /// </summary>
         private static readonly HashSet<string> GenericTokens = new(StringComparer.Ordinal)
@@ -403,12 +403,12 @@ namespace NotchPeninsula
         /// <summary>
         /// 从 AUMID 推出一个能拿去进程表里比对的「应用名」。
         ///
-        /// 不能对整串直接套 <see cref="Path.GetFileNameWithoutExtension"/>：
-        /// 反向域名式 AUMID（<c>com.tencent.qqmusic</c>）会被它当成「扩展名是 qqmusic」，
-        /// 截出 <c>com.tencent</c> 这种残片，拿残片去比对就会命中任意一个腾讯系进程。
+        /// 不能对整串直接套 Path.GetFileNameWithoutExtension：
+        /// 反向域名式 AUMID（com.tencent.qqmusic）会被它当成「扩展名是 qqmusic」，
+        /// 截出 com.tencent 这种残片，拿残片去比对就会命中任意一个腾讯系进程。
         ///
         /// 规则：带路径分隔符 → 取文件名去扩展名；反向域名式 → 取最后一段
-        /// （最后一段短于 4 个字符时判定为扩展名，退回整串 —— <see cref="Normalize"/> 本来就会去掉结尾的 exe）。
+        /// （最后一段短于 4 个字符时判定为扩展名，退回整串 —— Normalize 本来就会去掉结尾的 exe）。
         /// </summary>
         private static string ProbeName(string aumid)
         {
@@ -432,7 +432,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>切成「够长、可能承载信息」的词元：长度 ≥ 4 的字母数字片段转小写。
-        /// 门槛定在 4 是为了避开 <c>com</c> / <c>exe</c> 这类无意义短片段，同时留住 <c>music</c> / <c>bilibili</c>。</summary>
+        /// 门槛定在 4 是为了避开 com / exe 这类无意义短片段，同时留住 music / bilibili。</summary>
         private static HashSet<string> Tokenize(string text)
         {
             var set = new HashSet<string>(StringComparer.Ordinal);

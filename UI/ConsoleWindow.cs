@@ -299,7 +299,7 @@ namespace NotchPeninsula
         ///
         /// 这一行是全页唯一 4 个控件并排的行（下拉 + 音量 + 试听 + 重置，共 340px），
         ///    而内容区只有 348px（216..564）。所以它不能像其它行那样从 216 起排 ——
-        ///    那样会把左侧标签区挤成负数（216 - 8 = 208 &lt; 216），文字直接叠到下拉框上。
+        ///    那样会把左侧标签区挤成负数（216 - 8 = 208，小于 216），文字直接叠到下拉框上。
         ///    这里给标签留出实测宽度（「提示音」3 字 13.5px ≈ 39px）+ 8px 间隙。
         ///    改这里要同步 `SOUND_CTRL_W`，并确认 `SOUND_LABEL_X + 标签宽 + GAP == SOUND_CTRL_X`。
         /// </summary>
@@ -496,10 +496,10 @@ namespace NotchPeninsula
         /// 「音量」下拉浮层的唯一布局真源（向上展开：底边贴住音量框上沿）。
         /// 三个出参 = 浮层顶 / 浮层底 / 可视行数，绘制与命中都只认它。
         ///
-        /// 算式必须与 <see cref="RenderDropdownList"/> 的 `upward: true` 分支逐字同源
+        /// 算式必须与 RenderDropdownList 的 `upward: true` 分支逐字同源
         ///    （`availFrom = anchorY - 2`、`maxRows = (availFrom - TITLE_BAR_HEIGHT - 12) / 行高`）。
         ///    以前绘制侧减了那个 2、命中侧没减，两边靠巧合算出同一个行数（都是 13），
-        ///    只要 <see cref="SOUND_BOX_Y"/> 挪动十几像素就会立刻错位 —— 与「提示音列表滚不动」
+        ///    只要 SOUND_BOX_Y 挪动十几像素就会立刻错位 —— 与「提示音列表滚不动」
         ///    是同一种病：同一份布局在多处各写一份。绘制与命中现在都调本方法。
         /// </summary>
         private void GetVolumeMenuLayout(out float menuTop, out float menuBottom, out int visibleRows)
@@ -580,7 +580,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 「显示内容」列表的滚动首行（绝对条目下标）。条目数（插件可能很多）会超过卡片
         /// 能放下的行数，超出的部分靠这个偏移滚动查看；滚轮是唯一的改动入口。
-        /// 渲染、命中、滚轮三处都通过 <see cref="GetDisplayListLayout"/> 取可滚范围。
+        /// 渲染、命中、滚轮三处都通过 GetDisplayListLayout 取可滚范围。
         /// </summary>
         private int _displayScroll = 0;
 
@@ -598,8 +598,8 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 「显示内容」列表的唯一布局真源：可视行数 / 最大首行。
-        /// 绘制（<c>RenderTabDisplay</c>）、悬停命中（<c>OnMouseMove</c>）、滚轮
-        /// （<c>WM_MOUSEWHEEL</c>）三处共用 —— 以前这类算式在各处各写一份，
+        /// 绘制（RenderTabDisplay）、悬停命中（OnMouseMove）、滚轮
+        /// （WM_MOUSEWHEEL）三处共用 —— 以前这类算式在各处各写一份，
         /// 卡片高度或行高一改就会出现「滚不动 / 滚过头」。
         /// </summary>
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
@@ -715,7 +715,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 打开设置窗口并直达指定页签（岛内右键按区域调用：媒体控制器 → 2 媒体设置、时间/硬件 → 1 显示设置）。
-        /// 窗口还没创建过就先创建（构造里会显示），再落地页签；已创建则切页签后走 <see cref="Toggle"/> 的显示流程。
+        /// 窗口还没创建过就先创建（构造里会显示），再落地页签；已创建则切页签后走 Toggle 的显示流程。
         /// </summary>
         public static void ShowTab(int tab)
         {

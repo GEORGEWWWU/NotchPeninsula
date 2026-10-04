@@ -232,7 +232,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 捕获流本身是否健康。不含「默认输出设备是否被切换」这一条 ——
-        /// 那一条单独判定（见 <see cref="IsCapturedDeviceStillDefault"/>），
+        /// 那一条单独判定（见 IsCapturedDeviceStillDefault），
         /// 因为它必须优先于重建限速，不能和流失效混在一起被限速吃掉。
         /// </summary>
         private bool IsCaptureAlive()
@@ -302,7 +302,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 常驻看门狗：健康时每 500ms 做一次约 0.04µs 的检查（外加每 10s 一次默认设备比对）；
-        /// 判定失效后重建捕获（约 7ms/次），重建之间至少间隔 <see cref="RestartAttemptIntervalMs"/>；
+        /// 判定失效后重建捕获（约 7ms/次），重建之间至少间隔 RestartAttemptIntervalMs；
         /// 被 Core Audio 事件唤醒时跳过限速立即重建；默认输出设备被切换时同样跳过限速——
         /// 那是低频的用户操作，不需要也不能等（等的话这次判定就被限速吃掉了）。
         /// </summary>

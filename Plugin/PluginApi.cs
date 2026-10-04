@@ -5,7 +5,7 @@ namespace NotchPeninsula.Plugins;
 // 插件 API 契约：本文件只定义接口与数据模型，不引用任何实现。
 // 暂放在主项目命名空间下；如需拆分，可独立成 Abstractions 程序集。
 
-/// <summary>插件入口。主机反射实例化后调用 <see cref="Initialize"/>。</summary>
+/// <summary>插件入口。主机反射实例化后调用 Initialize。</summary>
 public interface INotchPlugin
 {
     string Id { get; }
@@ -58,11 +58,12 @@ public readonly record struct WidgetFrame(
 
 // ---- 五种「页」 ----
 
-/// <summary>主显示区小组件。</summary>
-/// <remarks>
+/// <summary>
+/// 主显示区小组件。
+///
 /// 线程模型：MeasureWidth / Draw 在渲染线程每帧调用，而 ScheduleRefresh 回调在后台线程执行。
 /// 因此 Draw / MeasureWidth 读到的插件内部状态必须线程安全（volatile / lock / Interlocked）。
-/// </remarks>
+/// </summary>
 public interface IWidget
 {
     string Id { get; }
@@ -209,7 +210,7 @@ public interface ICustomSettingsPage
     void OnMouseUp(float x, float y);
 }
 
-/// <summary>插件窗口（由 <see cref="IPluginHost.CreateWindow"/> 创建）。</summary>
+/// <summary>插件窗口（由 IPluginHost.CreateWindow 创建）。</summary>
 public interface IPluginWindow
 {
     /// <summary>设置绘制回调 (canvas, width, height)。每次重绘时调用。</summary>
@@ -227,7 +228,7 @@ public interface IPluginWindow
     /// 只接受文件拖入：拖入内容里没有文件系统路径时（网页文字、位图），宿主直接拒绝，本回调不触发。
     /// 回调在窗口消息线程同步执行，可以安全更新自己的列表、调 RequestRedraw；宿主捕获异常记日志，不打断消息循环。
     /// 回调只告知「拖进来了哪些路径」，不会移动 / 复制 / 删除任何文件——引用原路径还是拷贝到暂存目录由插件决定。
-    /// 本方法只在松手那一刻触发；拖动过程中的悬停反馈请用 <see cref="SetDragHover"/>，两者互不依赖。
+    /// 本方法只在松手那一刻触发；拖动过程中的悬停反馈请用 SetDragHover，两者互不依赖。
     /// </summary>
     void SetFilesDrop(Action<string[]>? onFiles);
 

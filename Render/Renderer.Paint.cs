@@ -506,8 +506,8 @@ namespace NotchPeninsula
         ///   基础字体有这个字 → 基础字体；
         ///   缺字且是 Emoji → 彩色 Emoji 字体；
         ///   缺字的普通文字：
-        ///     · 用户选了自定义字体 → 系统兜底字体（<b>自定义字体优先级最高，多语言兜底层绝不插手</b>）；
-        ///     · 默认系统字体     → 先问 <see cref="LyricsFont"/> 要一套真正含该字形的系统字体
+        ///     · 用户选了自定义字体 → 系统兜底字体（自定义字体优先级最高，多语言兜底层绝不插手）；
+        ///     · 默认系统字体     → 先问 LyricsFont 要一套真正含该字形的系统字体
         ///       （韩文、泰文、阿拉伯文……），拿到就用，拿不到才落回原来的系统字体 / Emoji 兜底。
         /// </summary>
 
@@ -539,7 +539,7 @@ namespace NotchPeninsula
             || cp == 0x200D || cp == 0x20E3;
 
         /// <summary>
-        /// 折叠态媒体文本的绘制宽度（逐字字体回退后的真实总宽），直接读 <see cref="DrawKaraoke"/> 刚建好的 run 缓存，
+        /// 折叠态媒体文本的绘制宽度（逐字字体回退后的真实总宽），直接读 DrawKaraoke 刚建好的 run 缓存，
         /// 稳态下不产生任何额外测量。缓存未命中（刚换字体 / 刚换歌的那一帧）返回 0，调用方自行兜底。
         /// </summary>
 
@@ -571,7 +571,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 命中原有的卡拉OK run 缓存则直接复用（不重建、不测量）。命中与否由 <see cref="DrawKaraoke"/> 侧同一套 key 决定。
+        /// 命中原有的卡拉OK run 缓存则直接复用（不重建、不测量）。命中与否由 DrawKaraoke 侧同一套 key 决定。
         /// </summary>
 
         private static bool ReuseCachedRuns(string text, SKTypeface baseTypeface, out float totalWidth)

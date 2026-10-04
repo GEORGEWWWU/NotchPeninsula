@@ -168,10 +168,10 @@ namespace NotchPeninsula
         /// <summary>
         /// 画一行可能含 Emoji / 特殊符号的文案，缺字的码点自动改用 Segoe UI Emoji。
         ///
-        /// <b>为什么设置窗口必须自带这一层</b>：渲染器（<c>Renderer</c>）内部有逐码点的字体回退
+        /// 为什么设置窗口必须自带这一层：渲染器（Renderer）内部有逐码点的字体回退
         /// （缺字 → Emoji → 多语言兜底），但设置窗口的画笔固定是 Microsoft YaHei UI，
-        /// 单独 <c>DrawText</c> 一个 YaHei 没有的字形只会画出豆腐块。
-        /// 例如「」（U+2611 + U+FE0F）两码点都不在 YaHei 里，而 <c>seguiemj.ttf</c> 两个都有
+        /// 单独 DrawText 一个 YaHei 没有的字形只会画出豆腐块。
+        /// 例如「」（U+2611 + U+FE0F）两码点都不在 YaHei 里，而 seguiemj.ttf 两个都有
         /// （已核对 cmap 表）。
         ///
         /// 做法：把文本切成「YaHei 画得出来」与「要交给 Emoji 字体」的若干段，逐段 set_typeface 绘制。

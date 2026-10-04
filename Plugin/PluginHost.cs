@@ -23,10 +23,10 @@ public static class BuiltinWidgets
 
 /// <summary>
 /// 插件宿主：注册中心 + 服务入口。
-/// 由 NotchWindow 持有单例。外部插件通过 <see cref="CreateScopedHost"/> 获得绑定自身 Id 的视图。
+/// 由 NotchWindow 持有单例。外部插件通过 CreateScopedHost 获得绑定自身 Id 的视图。
 ///
 /// 热加载关键点：所有注册物（组件/设置页/刷新句柄/设置事件）都按 PluginId 归组登记，
-/// <see cref="UnregisterPlugin"/> 能把某个插件留下的引用全部摘掉，这样承载它的
+/// UnregisterPlugin 能把某个插件留下的引用全部摘掉，这样承载它的
 /// AssemblyLoadContext 才有可能被 GC 真正回收。
 /// </summary>
 public sealed class PluginHost
@@ -137,8 +137,8 @@ public sealed class PluginHost
 
     /// <summary>
     /// 主显示区组件（已按插件显示顺序排列）。
-    /// 顺序由 <see cref="SetPluginOrder"/> 注入；未登记顺序的组件保持注册顺序追加在末尾。
-    /// <see cref="SetHiddenPlugins"/> 标记的插件，其组件一律不出现在这里（既不排布也不绘制）。
+    /// 顺序由 SetPluginOrder 注入；未登记顺序的组件保持注册顺序追加在末尾。
+    /// SetHiddenPlugins 标记的插件，其组件一律不出现在这里（既不排布也不绘制）。
     /// </summary>
     public IReadOnlyList<IWidget> Widgets
     {
@@ -262,7 +262,7 @@ public sealed class PluginHost
 
     /// <summary>
     /// 请求宿主重新测量插件组件宽度：把注册表版本号自增一次，
-    /// 渲染侧下一帧的 <c>RefreshPluginWidgets</c> 就会重新调用各组件的 MeasureWidth 并重建快照，
+    /// 渲染侧下一帧的 RefreshPluginWidgets 就会重新调用各组件的 MeasureWidth 并重建快照，
     /// NotchWindow 随之把岛体宽度平滑过渡到新值（宽度变化走既有弹簧动画）。
     ///
     /// 供「宽度随内容变化」的插件使用（内容变化时调一次即可，别每帧调用）。
@@ -275,10 +275,10 @@ public sealed class PluginHost
     /// <summary>
     /// 本帧插件行的总可用宽度（含与原生内容之间的 16px 间距）。转发到渲染侧的预算字段——
     /// 它由 NotchWindow 每帧按「岛体总长上限 − 原生内容本帧占用宽度」写入，
-    /// 组合模式则由 <c>GetCompositeWidth</c> 内部按同一规则写入。
+    /// 组合模式则由 GetCompositeWidth 内部按同一规则写入。
     ///
     /// 注意这是整行预算；某个插件实际能用多少还取决于它排在第几位，
-    /// 插件应通过 <see cref="ScopedPluginHost"/> 拿 <see cref="GetPluginRowBudgetFor"/> 的结果。
+    /// 插件应通过 ScopedPluginHost 拿 GetPluginRowBudgetFor 的结果。
     /// </summary>
     public float GetPluginRowBudget() => Renderer.GetPluginRowBudget();
 
@@ -319,7 +319,7 @@ public sealed class PluginHost
 
     /// <summary>
     /// 标记 / 解除「某个插件正在卸载」。卸载期间新的刷新登记与窗口登记一律被拒绝。
-    /// 由 <see cref="PluginManager"/> 的卸载流程包住「插件 Dispose + 宿主注销」这一整段。
+    /// 由 PluginManager 的卸载流程包住「插件 Dispose + 宿主注销」这一整段。
     /// </summary>
     internal void SetUnregistering(string pluginId, bool value)
     {
@@ -505,8 +505,8 @@ public sealed class PluginHost
     }
 
     /// <summary>
-    /// 把「这次没关掉的窗口」挂进重试队列（去重）。之后由 <see cref="DrainPendingWindowClose"/>
-    /// 每帧重试，直到窗口真的销毁（<see cref="DetachWindow"/> 会顺手把它从队列里摘掉）。
+    /// 把「这次没关掉的窗口」挂进重试队列（去重）。之后由 DrainPendingWindowClose
+    /// 每帧重试，直到窗口真的销毁（DetachWindow 会顺手把它从队列里摘掉）。
     /// </summary>
     private void ScheduleWindowCloseRetry(IPluginWindow window)
     {
@@ -579,8 +579,8 @@ public sealed class PluginHost
     }
 
     /// <summary>
-    /// 摘掉某个窗口在宿主这里的全部记账（<c>_windows</c> 归属表 + 待关队列）。
-    /// 与 <see cref="DetachWindow"/> 的区别：那个由窗口自己回调（真销毁时），这个给"放弃重试"用。
+    /// 摘掉某个窗口在宿主这里的全部记账（_windows 归属表 + 待关队列）。
+    /// 与 DetachWindow 的区别：那个由窗口自己回调（真销毁时），这个给"放弃重试"用。
     /// </summary>
     private void ForgetWindowAccounting(IPluginWindow window)
     {
@@ -693,7 +693,7 @@ public sealed class PluginHost
 
     // ---- 窗口 ----
     /// <summary>
-    /// 创建插件自有窗口。必须带上 <paramref name="pluginId"/>：宿主按插件记账，
+    /// 创建插件自有窗口。必须带上 ：宿主按插件记账，
     /// 卸载时统一关闭 —— 否则窗口会一直强引用插件类型，让可回收 ALC 回收失败。
     /// </summary>
     public IPluginWindow CreateWindow(string pluginId, string title, int width, int height)
@@ -707,12 +707,12 @@ public sealed class PluginHost
     /// 在灵动岛本体上发起一次系统拖放（详情页「拖出」用）。
     ///
     /// 详情页画在岛体上、没有自己的窗口，所以「把条目拖出去」这件事只能由宿主代为发起。
-    /// 会阻塞到用户松手或取消，语义详见 <see cref="IPluginHost.StartFileDrag"/>。
+    /// 会阻塞到用户松手或取消，语义详见 IPluginHost.StartFileDrag。
     /// </summary>
     public bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false)
         => NotchWindow.StartFileDragOnIsland(paths, allowMove);
 
-    /// <summary>窗口创建成功后由 <see cref="PluginWindow"/> 回调登记。</summary>
+    /// <summary>窗口创建成功后由 PluginWindow 回调登记。</summary>
     internal void AttachWindow(string pluginId, IPluginWindow window)
     {
         lock (_lock)
@@ -733,7 +733,7 @@ public sealed class PluginHost
         }
     }
 
-    /// <summary>窗口销毁时由 <see cref="PluginWindow"/> 回调注销（含用户手动关窗），避免记账表无限增长。</summary>
+    /// <summary>窗口销毁时由 PluginWindow 回调注销（含用户手动关窗），避免记账表无限增长。</summary>
     internal void DetachWindow(string pluginId, IPluginWindow window)
     {
         lock (_lock)
@@ -784,7 +784,7 @@ public sealed class PluginHost
     }
 }
 
-/// <summary>绑定插件 Id 的宿主视图，自动为设置 key 加 "Plugin.&lt;id&gt;." 前缀。</summary>
+/// <summary>绑定插件 Id 的宿主视图，自动为设置 key 加 "Plugin.[id]." 前缀。</summary>
 public sealed class ScopedPluginHost : IPluginHost
 {
     private readonly PluginHost _host;
@@ -815,7 +815,7 @@ public sealed class ScopedPluginHost : IPluginHost
     /// <summary>本插件所在位置的剩余可用宽度（已扣掉排在它前面的插件占用）——见 PluginHost.GetPluginRowBudgetFor。</summary>
     public float GetPluginRowBudget() => _host.GetPluginRowBudgetFor(_pluginId);
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
-    /// <summary>与 <see cref="OpenDetailPage"/> 同一动作，但把宿主内部的成功 / 失败结果带回给插件。</summary>
+    /// <summary>与 OpenDetailPage 同一动作，但把宿主内部的成功 / 失败结果带回给插件。</summary>
     public bool TryOpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
     public bool ToggleDetailPage(string widgetId) => _host.ToggleDetailPage(widgetId);

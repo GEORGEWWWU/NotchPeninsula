@@ -197,8 +197,8 @@ namespace NotchPeninsula
         /// <summary>
         /// 「显示内容」列表行尾的上 / 下移动箭头（原插件中心那对左右箭头的同款细描边三角，
         /// 只是方向朝上下）。
-        /// <paramref name="slotX"/> 是 16px 点击槽的左边界（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
-        /// <paramref name="centerY"/> 是它所在行的垂直中心；<paramref name="up"/> 为 false 时画朝下的三角。
+        ///  是 16px 点击槽的左边界（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
+        ///  是它所在行的垂直中心； 为 false 时画朝下的三角。
         /// </summary>
         private void DrawSortArrow(SKCanvas canvas, float slotX, float centerY, bool hovered, bool enabled, bool up)
         {
@@ -383,7 +383,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 通用设置页的窄版下拉框。位置与宽度全部由调用方传入，热区直接复用同一组常数，
         /// 不会再出现「渲染在一处、命中在另一处」的错位。
-        /// 禁用态（<paramref name="enabled"/> = false）会整体降低不透明度并画成灰色，
+        /// 禁用态（ = false）会整体降低不透明度并画成灰色，
         /// 与命中侧的置灰判据必须同源。
         /// </summary>
         private void DrawDropdownBox(SKCanvas canvas, float x, float yOffset, float w, float h,
@@ -1175,14 +1175,14 @@ namespace NotchPeninsula
 
         // 各页签展开的下拉浮层（媒体平台 / 匹配方式 / 目标软件 / 通知内容 / 目标显示器）
         /// <summary>
-        /// 画一个展开的下拉列表浮层。行高固定 <see cref="DROPDOWN_ROW_H"/>（26），
+        /// 画一个展开的下拉列表浮层。行高固定 DROPDOWN_ROW_H（26），
         /// 与命中判定、滚轮的可滚范围必须一致。
-        /// <paramref name="dimmedIndex"/> 那一项灰显（但仍可点，用于「自定义项失效」这种
+        ///  那一项灰显（但仍可点，用于「自定义项失效」这种
         /// 「能点进去重选、但当前值不可用」的场景）。
-        /// <paramref name="scrollFirst"/> 是首行索引，由调用方给定：
-        /// 只有提示音列表项数会超过可视区（传 <c>_dropdownScroll</c>），其余列表一律传 0。
+        ///  是首行索引，由调用方给定：
+        /// 只有提示音列表项数会超过可视区（传 _dropdownScroll），其余列表一律传 0。
         /// 本方法不做「自动把选中项滚进可视区」——那件事只在展开那一刻做一次
-        ///    （见 <see cref="ScrollToastSoundMenuToSelected"/>），否则滚轮会被每帧拉回顶部。
+        ///    （见 ScrollToastSoundMenuToSelected），否则滚轮会被每帧拉回顶部。
         /// </summary>
         private void RenderDropdownList(SKCanvas canvas, float x, float yOffset, float w,
                                         string[] options, int selectedIndex, int hoveredIndex, int dimmedIndex,

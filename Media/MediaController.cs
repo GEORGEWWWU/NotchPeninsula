@@ -35,12 +35,12 @@ namespace NotchPeninsula
         /// <summary>
         /// 歌词扫光总闸（唯一开关）：开着时歌词随演唱进度扫光，关掉则画纯实体文字。
         ///
-        /// 扫光由同一条链驱动（见 <see cref="ComputeScanProgress"/>）：逐字优先，
+        /// 扫光由同一条链驱动（见 ComputeScanProgress）：逐字优先，
         /// 逐字效果不可用时自动回退到整行均匀扫光。「不可用」有三种情形 —— 本行没对上字级数据、
-        /// 整首歌拿不到逐字数据（只有落月的两个源会带 <c>yrc</c>，网易云侧还只有部分歌有）、
+        /// 整首歌拿不到逐字数据（只有落月的两个源会带 yrc，网易云侧还只有部分歌有）、
         /// 或本开关没开。三者走同一条回退分支，所以「不扫光」只由本开关一个条件决定。
         ///
-        /// 关闭时连逐字数据都不解析（见 <c>FetchLyricsAsync</c> 的建表段），
+        /// 关闭时连逐字数据都不解析（见 FetchLyricsAsync 的建表段），
         /// 行为与只有整行时间轴时完全一致。
         /// </summary>
         internal static bool IsLyricScanEnabled = true;
@@ -64,12 +64,12 @@ namespace NotchPeninsula
         private (TimeSpan Time, string Text, string Translation)[] _lyrics = Array.Empty<(TimeSpan, string, string)>();
 
         /// <summary>
-        /// 逐字时间轴，与 <see cref="_lyrics"/> 逐行一一对应（同一趟循环里一起建表，索引天然对齐）。
+        /// 逐字时间轴，与 _lyrics 逐行一一对应（同一趟循环里一起建表，索引天然对齐）。
         ///
-        /// 只有落月的两个源会带回逐字数据（歌词接口的 <c>data.yrc</c>），其余源头完全没有；
-        /// 源头有逐字、但某一行没匹配上时，那个元素也是 <c>null</c>。
-        /// 这两种情况那一行都会由 <see cref="ComputeScanProgress"/> 自动回退到卡拉 OK 的整行扫光。
-        /// 整个数组为 <c>null</c> 表示这首歌压根没有逐字数据。
+        /// 只有落月的两个源会带回逐字数据（歌词接口的 data.yrc），其余源头完全没有；
+        /// 源头有逐字、但某一行没匹配上时，那个元素也是 null。
+        /// 这两种情况那一行都会由 ComputeScanProgress 自动回退到卡拉 OK 的整行扫光。
+        /// 整个数组为 null 表示这首歌压根没有逐字数据。
         /// </summary>
         private LyricWordTiming?[]? _lyricWordTimings;
 
@@ -167,7 +167,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 当前接管会话的 AUMID（没有会话时为空串）。供渲染线程零成本比对，
-        /// 也供「双击媒体控制 → 跳转对应应用」（<see cref="OpenCurrentApp"/>）取目标。
+        /// 也供「双击媒体控制 → 跳转对应应用」（OpenCurrentApp）取目标。
         /// </summary>
         public string CurrentAppId => _currentAppId;
 
@@ -210,14 +210,14 @@ namespace NotchPeninsula
         /// <summary>
         /// 换上新的封面位图。
         ///
-        /// <b>刻意不 Dispose 被换下的那一张。</b>渲染线程（<c>NotchWindow.RenderLoop</c>，16ms 线程池定时器）
-        /// 每帧都在 <c>canvas.DrawBitmap(media.Thumbnail, …)</c> 里直接读这个属性，而它<b>不持有本锁</b>：
+        /// 刻意不 Dispose 被换下的那一张。渲染线程（NotchWindow.RenderLoop，16ms 线程池定时器）
+        /// 每帧都在 canvas.DrawBitmap(media.Thumbnail, …) 里直接读这个属性，而它不持有本锁：
         /// 这里一 Dispose，正在绘制的那张原生位图就被释放 —— 这正是 SkiaSharp 的 use-after-free，
-        /// 表现为原生访问违例 <b>0xC0000005</b>，直接杀进程，且托管层的 try/catch 拦不住。
+        /// 表现为原生访问违例 0xC0000005，直接杀进程，且托管层的 try/catch 拦不住。
         ///
-        /// 放弃 Dispose 是安全的：<c>SKBitmap</c> 有终结器会释放原生内存，丢掉最后一个引用后由 GC 回收，
+        /// 放弃 Dispose 是安全的：SKBitmap 有终结器会释放原生内存，丢掉最后一个引用后由 GC 回收，
         /// 代价只是让一张封面多存活一小段时间（300×300 约 300KB）。同一取舍在
-        /// <c>ToastIconProvider</c> 的图标缓存里已经用过一次。
+        /// ToastIconProvider 的图标缓存里已经用过一次。
         /// </summary>
         private void SetThumbnail(SKBitmap? next)
         {
@@ -234,7 +234,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 换上「当前会话那个程序」的应用图标。
         /// 同一个程序的图标已经在位时直接返回 —— 视频模式下每次属性刷新都会走到这里，
-        /// 没有这道闸就会反复新建 / 释放原生位图（<see cref="AppIconProvider"/> 只发副本，那个副本由我们持有）。
+        /// 没有这道闸就会反复新建 / 释放原生位图（AppIconProvider 只发副本，那个副本由我们持有）。
         /// </summary>
         private void SetAppIcon()
         {
@@ -251,7 +251,7 @@ namespace NotchPeninsula
         /// 视频模式：这个会话只能展示「程序图标 + 名称」，没有可用的歌曲信息。
         ///
         /// 判据对所有软件一致，只有一条 —— SMTC 没同时给出歌名与歌手。
-        /// 反过来只要有歌名 + 歌手就是音乐模式：取歌词、取网络封面（见 <see cref="UpdateMediaMode"/>）。
+        /// 反过来只要有歌名 + 歌手就是音乐模式：取歌词、取网络封面（见 UpdateMediaMode）。
         ///
         /// B站 / 浏览器天然落在视频模式：B站的 Artist 在刷新时就被清空（网页不提供歌手），
         /// 浏览器则要靠网页标题里的「正在播放: 歌名 - 歌手」才能解析出歌手 —— 解析得出来就是音乐模式
@@ -263,7 +263,7 @@ namespace NotchPeninsula
         /// 当前会话是否不具备歌词能力 —— 就是视频模式，没有例外。
         ///
         /// 「用户手动锁定某个软件」过去是一条豁免（手动选中的会话即使被判成视频类，也照样去搜歌词）。
-        /// 现在取消了：判据收成一条 —— <b>SMTC 没给出歌手就一律按视频模式处理</b>：
+        /// 现在取消了：判据收成一条 —— SMTC 没给出歌手就一律按视频模式处理：
         /// 不搜歌词、不取网络封面，只显示标题 + 该程序自己的应用图标。
         /// </summary>
         private bool IsNonLyricSession => IsVideoMode;
@@ -327,10 +327,10 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 退出前释放媒体侧持有的后台资源：
-        ///   · Just Solo LyricServer 的 WebSocket 连接与重连循环（<see cref="JustSoloLyricClient.Stop"/>）；
+        ///   · Just Solo LyricServer 的 WebSocket 连接与重连循环（JustSoloLyricClient.Stop）；
         ///   · 当前封面位图（原生 Skia 位图，Dispose 前先切断属性引用）。
         ///
-        /// 刻意不处理的两样：SMTC 会话归系统管；<c>_http</c> 是进程级静态复用的 HttpClient，
+        /// 刻意不处理的两样：SMTC 会话归系统管；_http 是进程级静态复用的 HttpClient，
         /// 单例生命周期内复用是正确的，提前 Dispose 反而会导致退出前的请求抛异常。
         /// </summary>
         public void Shutdown()
@@ -608,8 +608,8 @@ namespace NotchPeninsula
         /// <summary>
         /// 这个 AUMID 是不是「网易云音乐」。
         ///
-        /// <b>单一数据源</b>：既供 <see cref="MatchesTargetPlatform"/> 判目标平台，也供取词链判
-        /// 「要不要走网易优先那两档」（见 <see cref="FetchLyricsAsync"/>）—— 两处必须同源，
+        /// 单一数据源：既供 MatchesTargetPlatform 判目标平台，也供取词链判
+        /// 「要不要走网易优先那两档」（见 FetchLyricsAsync）—— 两处必须同源，
         /// 否则会出现「接管的是网易云、取词却按 QQ 优先」这种半吊子状态。
         /// </summary>
         private static bool IsNeteaseAppId(string? id)
@@ -646,7 +646,7 @@ namespace NotchPeninsula
         ];
 
         /// <summary>
-        /// 这个会话是不是「优先用自带封面」的播放器（见 <see cref="SmtcCoverPreferredIds"/>）。
+        /// 这个会话是不是「优先用自带封面」的播放器（见 SmtcCoverPreferredIds）。
         /// 只在选定封面时用到，判定失败（未知客户端）走原有封面链即可，不影响播放与取词。
         /// </summary>
         private static bool IsSmtcCoverPreferredAppId(string? id)
@@ -676,16 +676,16 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// <see cref="RefreshProperties"/> 是否正在执行。
+        /// RefreshProperties 是否正在执行。
         ///
-        /// <b>为什么需要这道闸（2026-10-02 修）</b>：本方法有三个互不等待的 async 入口
-        /// （<c>OnMediaPropertiesChanged</c> / <c>OnPlaybackInfoChanged</c> / <c>UpdateSession</c>），
+        /// 为什么需要这道闸（2026-10-02 修）：本方法有三个互不等待的 async 入口
+        /// （OnMediaPropertiesChanged / OnPlaybackInfoChanged / UpdateSession），
         /// 而它内部有两处 await（取属性、开封面流）。两次调用真并发时，两边会各自读到同一个
-        /// <c>Thumbnail</c> 引用，然后各自 <c>oldThumb?.Dispose()</c> + 各自赋值 ——
+        /// Thumbnail 引用，然后各自 oldThumb?.Dispose() + 各自赋值 ——
         /// 结果是一份位图被释放两次、或者被换掉之后仍被渲染线程读。
-        /// 实测 SkiaSharp 的 <c>SKBitmap.Dispose()</c> 二次调用是安全的，但Dispose 之后再访问就是原生
+        /// 实测 SkiaSharp 的 SKBitmap.Dispose() 二次调用是安全的，但Dispose 之后再访问就是原生
         /// 访问违例（0xC0000005，直接杀进程） —— 也就是说这不只是"丢一份封面"，
-        /// 而是一条真实的进程级崩溃路径（渲染线程每帧都在读 <c>media.Thumbnail</c>）。
+        /// 而是一条真实的进程级崩溃路径（渲染线程每帧都在读 media.Thumbnail）。
         /// 丢掉这次刷新是安全的：下一次属性变化 / 轮询会重新拉一遍。
         /// </summary>
         private int _refreshingProperties;
@@ -707,7 +707,7 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary><see cref="RefreshProperties"/> 的主体（拿属性 / 换封面 / 同步播放状态与时长 / 触发取词）。</summary>
+        /// <summary>RefreshProperties 的主体（拿属性 / 换封面 / 同步播放状态与时长 / 触发取词）。</summary>
         private async Task RefreshPropertiesCore()
         {
             try
@@ -776,10 +776,10 @@ namespace NotchPeninsula
         /// <summary>
         /// 判定「音乐模式」并落定最终显示的标题 / 歌手。
         ///
-        /// <b>判据（对所有软件一致）</b>：SMTC 同时给出歌名与歌手 → 音乐模式（取歌词 + 网络封面）；
+        /// 判据（对所有软件一致）：SMTC 同时给出歌名与歌手 → 音乐模式（取歌词 + 网络封面）；
         /// 否则视频模式 —— 只显示标题，歌手一律不显示。
         ///
-        /// <b>为什么要缓存「稳定」标题 / 歌手，而不是直接用这一拍的采样</b>：SMTC 在 seek /
+        /// 为什么要缓存「稳定」标题 / 歌手，而不是直接用这一拍的采样：SMTC 在 seek /
         /// 换轨 / 刷新瞬间会间歇性给出空标题或空歌手。直接采信就会让同一首歌的模式来回翻转，
         /// 而渲染线程的「非歌词会话」闸门会在翻成视频模式的那一帧把已显示的歌词清空 ——
         /// 表现就是歌词一闪一闪、翻译消失、封面被程序图标顶掉。规则：
@@ -787,7 +787,7 @@ namespace NotchPeninsula
     /// 同一会话内标题变了 → 视为换曲，歌手跟着换成这一拍的值（新曲目的歌手可能还没上报）；
     /// 同一会话内标题没变 → 空的歌手不改动已记住的歌手，只在拿到非空值时补齐 / 纠正。
         ///
-        /// 另外给降级留了宽限（<see cref="MusicModeMissGrace"/> 次）：真实视频会一直缺歌手，
+        /// 另外给降级留了宽限（MusicModeMissGrace 次）：真实视频会一直缺歌手，
         /// 几次之后照样降级；而换曲瞬间「歌手晚一拍才到」不会把模式打回去。
         /// </summary>
         /// <param name="smtcTitle">SMTC 原始标题（浏览器已按网页标题规则清理过）</param>
@@ -838,19 +838,19 @@ namespace NotchPeninsula
         /// 选封面。视频模式 → 该程序自己的应用图标；音乐模式 → 外部封面 → 应用图标兜底。
         ///
         /// 外部封面有两条来源，都是异步补上，在它到达之前先用应用图标顶着：
-    /// <b>会话自带封面</b>（<see cref="FetchSmtcCoverAsync"/>）：只给
-        ///       <see cref="SmtcCoverPreferredIds"/> 里的平台用。由 <paramref name="allowSessionCover"/>
+    /// 会话自带封面（FetchSmtcCoverAsync）：只给
+        ///       SmtcCoverPreferredIds 里的平台用。由 
         ///       放行 —— 属性刷新时传「本会话确实带了图」，兜底重试时传 true（未知，试一次）。
         ///       它取到的就是正在播放的那张图，比曲库搜索更准；
-    /// <b>网络搜索封面</b>（<see cref="FetchCoverAsync"/>）：其余情况、以及上面那条取不到时的既有通路。
+    /// 网络搜索封面（FetchCoverAsync）：其余情况、以及上面那条取不到时的既有通路。
         ///
-        /// <b>读取节奏</b>：每一首曲目至少发起一次；同一曲目的重试按
-        /// <see cref="SessionCoverRetryInterval"/> 节流（兜底重试每帧都会走到这里）。
+        /// 读取节奏：每一首曲目至少发起一次；同一曲目的重试按
+        /// SessionCoverRetryInterval 节流（兜底重试每帧都会走到这里）。
         ///
         /// 本曲目的外部封面一旦就位就无条件保持 —— 判据里刻意不带「当前是不是视频模式」：
         /// 模式判定抖动或属性读取失败都不该把一张已经到手的专辑封面换成程序图标（换掉就再也回不来了）。
         ///
-        /// <b>不再引用 data\image 下的平台站标</b>（资源保留，只是不再被任何代码路径读到）。
+        /// 不再引用 data\image 下的平台站标（资源保留，只是不再被任何代码路径读到）。
         /// </summary>
         private void UpdateCover(bool allowSessionCover)
         {
@@ -952,7 +952,7 @@ namespace NotchPeninsula
         /// 这是协议本身的限制，只能到应用本体。
         ///
         /// 定位（前台窗口采样 / 进程内枚举窗口 / 注册表核验）都在
-        /// <see cref="MediaAppLauncher"/> 里，UI 线程上只做几次极廉价的 API 调用。
+        /// MediaAppLauncher 里，UI 线程上只做几次极廉价的 API 调用。
         /// </summary>
         public void OpenCurrentApp()
         {
@@ -1015,7 +1015,7 @@ namespace NotchPeninsula
         // 封面地址就是取词时的搜索顺带带回来的（见 FetchLyricsAsync 的返回值）。
 
         /// <summary>
-        /// 媒体资源获取的唯一入口：先取歌词，再取封面。由 <see cref="RefreshPropertiesCore"/>
+        /// 媒体资源获取的唯一入口：先取歌词，再取封面。由 RefreshPropertiesCore
         /// 在「歌名或歌手变化」时触发一次。
         /// </summary>
         private async Task FetchMediaAsync(string title, string artist, long durationSec)
@@ -1092,7 +1092,7 @@ namespace NotchPeninsula
         /// 会话是网易云音乐时走「网易优先」：网易系两档（落月 API(网易云) → 网易云官方）
         /// 整体提到最前，歌词与封面都优先网易云的源，其余档位依次顺延。
         /// </summary>
-        /// <returns>网络封面地址；没有则空串（交给 <see cref="FetchCoverAsync"/> 消费）。</returns>
+        /// <returns>网络封面地址；没有则空串（交给 FetchCoverAsync 消费）。</returns>
         private async Task<string> FetchLyricsAsync(string title, string artist, long durationSec)
         {
             // 等待获取通行证（防止多首歌同时修改 HttpClient 导致程序崩溃）
@@ -1335,10 +1335,10 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 取封面：下载 <paramref name="coverUrl"/> 并换上。地址来自 <see cref="FetchLyricsAsync"/>
+        /// 取封面：下载  并换上。地址来自 FetchLyricsAsync
         /// 搜索时顺带命中的专辑图（QQ 给 albummid、网易云给 album.picUrl）。
         ///
-        /// 任何一步失败都什么都不做 —— 保持 <see cref="UpdateCover"/> 已经选好的兜底封面
+        /// 任何一步失败都什么都不做 —— 保持 UpdateCover 已经选好的兜底封面
         /// （该程序的应用图标），绝不清空。
         /// </summary>
         private async Task FetchCoverAsync(string title, string artist, string coverUrl)
@@ -1398,21 +1398,21 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 取会话自带封面（SMTC 缩略图）并换上。只给 <see cref="SmtcCoverPreferredIds"/> 里的播放器用：
+        /// 取会话自带封面（SMTC 缩略图）并换上。只给 SmtcCoverPreferredIds 里的播放器用：
         /// 这些客户端会把自己正在播放的那张封面通过 SMTC 一并给出，比按歌名 + 歌手去曲库搜更准。
         ///
         /// 拿不到（会话没给缩略图 / 流读不出来 / 解码失败）就什么都不做 ——
-        /// 由随后的 <see cref="FetchCoverAsync"/> 按原链路接管，所以读取失败时封面仍由既有链路提供。
+        /// 由随后的 FetchCoverAsync 按原链路接管，所以读取失败时封面仍由既有链路提供。
         ///
-        /// 成功时同样记入 <see cref="_externalCoverTitle"/> / <see cref="_externalCoverAppId"/>，
+        /// 成功时同样记入 _externalCoverTitle / _externalCoverAppId，
         /// 于是这首歌不会再发网络封面请求。
         ///
-        /// <b>先等一小段再读</b>（<see cref="SessionCoverSettleDelay"/>）：属性变化的通知到达时，
+        /// 先等一小段再读（SessionCoverSettleDelay）：属性变化的通知到达时，
         /// 会话的缩略图往往还是上一首的（网易云音乐 / 酷狗实测如此，QQ 音乐同批更新所以没这个问题）。
         /// 当场读会把上一首的封面记到新曲目头上，而记账一旦命中就再也不会纠正。
         ///
-        /// 成功时同样记入 <see cref="_externalCoverTitle"/> / <see cref="_externalCoverAppId"/>，
-        /// 于是这首歌不会再发网络封面请求。发起频率由调用方（<see cref="UpdateCover"/>）按曲目节流。
+        /// 成功时同样记入 _externalCoverTitle / _externalCoverAppId，
+        /// 于是这首歌不会再发网络封面请求。发起频率由调用方（UpdateCover）按曲目节流。
         /// </summary>
         private async Task FetchSmtcCoverAsync(string title, string appId)
         {
@@ -1435,7 +1435,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 这个「曲目 + 会话」是不是仍然值得为会话封面记账。判据与封面记账同源
-        /// （<see cref="_trackTitle"/> / <see cref="_trackAppId"/>）—— 不能用 <see cref="IsLyricOwner"/>：
+        /// （_trackTitle / _trackAppId）—— 不能用 IsLyricOwner：
         /// 视频模式（浏览器放视频）没有歌词槽位，那会让封面被整批丢掉。
         /// </summary>
         private bool IsSessionCoverOwner(string title, string appId)
@@ -1512,7 +1512,7 @@ namespace NotchPeninsula
         private const string QQMusicSmartBoxApi = "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg";
         private const string QQMusicSingleSongApi = "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg";
 
-        /// <summary>QQ 歌词接口返回的正文是 HTML 实体转义的（换行写成 <c>&#10;</c>），统一还原成普通文本。</summary>
+        /// <summary>QQ 歌词接口返回的正文是 HTML 实体转义的（换行写成 &#10;），统一还原成普通文本。</summary>
         private static string UnescapeQqText(string? raw)
             => raw?.Replace("&#10;", "\n").Replace("&#13;", "\r")
                     .Replace("&#32;", " ").Replace("&#45;", "-")
@@ -1523,15 +1523,15 @@ namespace NotchPeninsula
         /// <param name="Trans">译文 LRC（data.trans）</param>
         /// <param name="Yrc">逐字歌词（data.yrc）。实测 QQ 侧基本都非空，格式是「文字在前」：`游(66,168)京(234,76)`</param>
         /// <param name="Cover">专辑封面地址（搜索项的 cover，已换成 300×300 变体）</param>
-        /// <param name="Mid">QQ 的 songmid（搜索项的 mid），交给 <see cref="QQMusicLyricApi"/> 用</param>
+        /// <param name="Mid">QQ 的 songmid（搜索项的 mid），交给 QQMusicLyricApi 用</param>
         private readonly record struct LuoYueResult(string? Lrc, string? Trans, string? Yrc, string? Cover, string? Mid);
 
         /// <summary>落月「网易云」一次取词的产出；没命中的项为 null。</summary>
-        /// <param name="Lrc">原文 LRC（实测字段是 <c>data.lrc</c>，兼容文档里的 <c>data.rc</c>）</param>
-        /// <param name="Trans">译文 LRC（<c>data.trans</c>，实测常为空）</param>
-        /// <param name="Yrc">逐字歌词（<c>data.yrc</c>）。实测只有部分歌有（孤勇者 / 勾指起誓有，花がら / 起风了 / 晴天 / Lemon 都是空串），
+        /// <param name="Lrc">原文 LRC（实测字段是 data.lrc，兼容文档里的 data.rc）</param>
+        /// <param name="Trans">译文 LRC（data.trans，实测常为空）</param>
+        /// <param name="Yrc">逐字歌词（data.yrc）。实测只有部分歌有（孤勇者 / 勾指起誓有，花がら / 起风了 / 晴天 / Lemon 都是空串），
         /// 格式是「时间在前」：`(21680,370,0)你(22050,340,0)是`</param>
-        /// <param name="Cover">网易云 CDN 专辑图地址（搜索项的 <c>cover</c>，已换成 300×300 变体）</param>
+        /// <param name="Cover">网易云 CDN 专辑图地址（搜索项的 cover，已换成 300×300 变体）</param>
         private readonly record struct LuoYueNeteaseResult(string? Lrc, string? Trans, string? Yrc, string? Cover);
 
         /// <summary>
@@ -1587,18 +1587,18 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 落月 API - 网易云：先 <c>/v2/music/netease?word=</c> 搜到曲目拿到 <c>id</c>，
-        /// 再用 <c>/v2/music/netease/lyric?id=</c> 取原文 / 译文
+        /// 落月 API - 网易云：先 /v2/music/netease?word= 搜到曲目拿到 id，
+        /// 再用 /v2/music/netease/lyric?id= 取原文 / 译文
         /// —— 落月的歌词接口是独立的，搜索响应里并不含歌词，必须分两步。
-        /// 搜索响应里会顺带给出网易云 CDN 的专辑图（<c>cover</c>），一并带回去。
+        /// 搜索响应里会顺带给出网易云 CDN 的专辑图（cover），一并带回去。
         ///
-        /// <b>与 QQ 版的异同</b>：两条路的搜索响应字段完全同构（<c>song</c> / <c>singer</c> /
-        /// <c>id</c> / <c>cover</c>），所以候选匹配直接复用 <see cref="MatchSong"/> 同一套打分；
-        /// 但网易云响应里没有时长（<c>time</c> 是发行日期字符串），因此这一档做不了时长校验，
+        /// 与 QQ 版的异同：两条路的搜索响应字段完全同构（song / singer /
+        /// id / cover），所以候选匹配直接复用 MatchSong 同一套打分；
+        /// 但网易云响应里没有时长（time 是发行日期字符串），因此这一档做不了时长校验，
         /// 只能靠「歌名 + 歌手」判定候选。
         ///
-        /// <b>字段名以实测为准</b>：歌词接口返回 <c>data.lrc</c>（部分文档写作 <c>rc</c>）、
-        /// <c>data.trans</c> 与 <c>data.yrc</c>（逐字歌词）。原文两个名字都收、按 <c>lrc</c> 优先。
+        /// 字段名以实测为准：歌词接口返回 data.lrc（部分文档写作 rc）、
+        /// data.trans 与 data.yrc（逐字歌词）。原文两个名字都收、按 lrc 优先。
         /// </summary>
         private async Task<LuoYueNeteaseResult> FetchFromLuoYueNeteaseAsync(string title, string artist, string ua)
         {
@@ -1653,20 +1653,20 @@ namespace NotchPeninsula
         private static string ReadJsonString(JsonElement obj, string name)
             => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() ?? "" : "";
 
-        /// <summary>网易云官方接口一次的产出；没命中的项为空串（<c>default</c> 下是 null，读取一律走 IsNullOrEmpty）。</summary>
-        /// <param name="Lrc">原文 LRC（<c>lrc.lyric</c>）</param>
-        /// <param name="Trans">译文 LRC（<c>tlyric.lyric</c>）</param>
-        /// <param name="Cover">专辑封面地址（<c>album.picUrl</c>，需 <c>allowCover</c> 才取）</param>
+        /// <summary>网易云官方接口一次的产出；没命中的项为空串（default 下是 null，读取一律走 IsNullOrEmpty）。</summary>
+        /// <param name="Lrc">原文 LRC（lrc.lyric）</param>
+        /// <param name="Trans">译文 LRC（tlyric.lyric）</param>
+        /// <param name="Cover">专辑封面地址（album.picUrl，需 allowCover 才取）</param>
         private readonly record struct NeteaseOfficialResult(string Lrc, string Trans, string Cover);
 
         /// <summary>
         /// 网易云官方接口：搜索 → 取词（原文 + 译文）→ 可选取封面。
         ///
-        /// <b>为什么单独抽成一个方法</b>：它在链上有两个调用位置 ——
+        /// 为什么单独抽成一个方法：它在链上有两个调用位置 ——
         /// 网易云音乐会话下被提到最前（「网易优先」段），其他会话下在引擎 4 的位置充当兜底档；
         /// 抽出来是为了让这两条路共用同一份实现。
         ///
-        /// <paramref name="allowCover"/> = false 时只取词不取封面：用在「网易优先」段，
+        ///  = false 时只取词不取封面：用在「网易优先」段，
         /// 让封面链的第一档始终留给落月的 QQ 搜索（封面来源与优先级不因会话类型而变）。
         /// </summary>
         private async Task<NeteaseOfficialResult> FetchFromNeteaseOfficialAsync(string title, string artist, long durationSec, bool allowCover)
@@ -1762,23 +1762,23 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 落月搜索结果里最匹配的一条。<paramref name="cover"/> 带出专辑封面地址、
-        /// <paramref name="mid"/> 带出 QQ 的 songmid；没匹配上返回 0（此时两者都是 null）。
+        /// 落月搜索结果里最匹配的一条。 带出专辑封面地址、
+        ///  带出 QQ 的 songmid；没匹配上返回 0（此时两者都是 null）。
         ///
-        /// <b>为什么要「宽容匹配」而不是全等</b>：全等在真实曲库里命中率偏低，实测两类情况直接落空 ——
-    /// <b>多歌手</b>：落月给 <c>Daoko/米津玄師</c>，播放器上报的歌手却只是 <c>DAOKO</c>（合作曲的常态）；
-    /// <b>标题带后缀</b>：落月给 <c>夜曲 - A35</c>、<c>晴天 (Live)</c>，播放器给的是 <c>夜曲</c>、<c>晴天</c>。
+        /// 为什么要「宽容匹配」而不是全等：全等在真实曲库里命中率偏低，实测两类情况直接落空 ——
+    /// 多歌手：落月给 Daoko/米津玄師，播放器上报的歌手却只是 DAOKO（合作曲的常态）；
+    /// 标题带后缀：落月给 夜曲 - A35、晴天 (Live)，播放器给的是 夜曲、晴天。
         /// 而一旦落空，歌词与封面会一起拿不到 —— 封面地址同样出自这次搜索。表现就是「有概率获取不到」。
         ///
         /// 规则：两侧先归一化（只留字母 / 数字 / 汉字假名，转小写，去掉空格括号连字符），
         /// 标题要求归一化后全等（分更高）或互相包含；歌手按分隔符拆成多个名字，任一对得上即算过。
         /// 取分数最高的那一条；歌手完全不沾边的不候用，免得挂到翻唱 / 同名曲上。
         ///
-        /// <paramref name="allowLooseTitle"/> = true 时，标题在前两档都落空后再试一次
-        /// 包含匹配（<see cref="IsLooseTitleMatch"/>）。它只给非中文曲目开（见
-        /// <see cref="IsChineseTitle"/>）：这类歌名在 QQ 曲库里普遍写成「原名 + 中译别名」——
+        ///  = true 时，标题在前两档都落空后再试一次
+        /// 包含匹配（IsLooseTitleMatch）。它只给非中文曲目开（见
+        /// IsChineseTitle）：这类歌名在 QQ 曲库里普遍写成「原名 + 中译别名」——
         /// 实测《花がら(Withered Flower)》在库里的条目是《花がら (枯花)》，归一化后
-        /// <c>花がらwitheredflower</c> 与 <c>花がら枯花</c> 互不包含，全字匹配必然落空；
+        /// 花がらwitheredflower 与 花がら枯花 互不包含，全字匹配必然落空；
         /// 换更短的搜索词也没用（实测三种搜索词返回的候选完全相同），卡点在打分。
         /// 歌手校验在任何档位都不放宽。
         /// </summary>
@@ -1817,8 +1817,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>候选打分：标题全等 2 分 / 互相包含 1 分（0 分直接淘汰）；歌手另计，最高 2 分。0 表示不候用。
-        /// <paramref name="allowLooseTitle"/> 为 true 时，全等与互相包含都落空的话再试一次包含匹配
-        /// （<see cref="IsLooseTitleMatch"/>），通过同样记 1 分 —— 排序上仍低于「全等」的候选。</summary>
+        ///  为 true 时，全等与互相包含都落空的话再试一次包含匹配
+        /// （IsLooseTitleMatch），通过同样记 1 分 —— 排序上仍低于「全等」的候选。</summary>
         private static int ScoreCandidate(string wantTitle, HashSet<string> wantArtists, string candTitle, HashSet<string> candArtists, bool allowLooseTitle)
         {
             int titleScore;
@@ -1837,7 +1837,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 曲目算不算「中文歌」—— 决定标题匹配落空后能否放宽到包含匹配
-        /// （即 <see cref="MatchSong"/> 与 <see cref="PickBestMid"/> 的 <c>allowLooseTitle</c>）。
+        /// （即 MatchSong 与 PickBestMid 的 allowLooseTitle）。
         ///
         /// 判据：歌名里出现汉字、且不含日文假名或韩文，就按中文歌处理。
         /// 中文歌按完整歌名基本都能在 QQ 曲库里搜到，不需要放宽；真正需要的是非中文曲目 ——
@@ -1867,10 +1867,10 @@ namespace NotchPeninsula
         /// <summary>
         /// 标题的「包含匹配」：两侧归一化后若存在足够长的公共子串，就当作标题对得上。
         ///
-        /// 门槛受两个条件同时约束 —— 公共子串既要不短于 <see cref="LooseTitleMinCommon"/>，
-        /// 又要覆盖较短标题的 <see cref="LooseTitleCoverage"/> 以上。是放宽标题写法差异，
-        /// 不是放宽「这是不是同一首歌」：<b>歌手校验照旧</b>，且它只在非中文曲目（见
-        /// <see cref="IsChineseTitle"/>）与前两档都落空时才启用。
+        /// 门槛受两个条件同时约束 —— 公共子串既要不短于 LooseTitleMinCommon，
+        /// 又要覆盖较短标题的 LooseTitleCoverage 以上。是放宽标题写法差异，
+        /// 不是放宽「这是不是同一首歌」：歌手校验照旧，且它只在非中文曲目（见
+        /// IsChineseTitle）与前两档都落空时才启用。
         /// </summary>
         private static bool IsLooseTitleMatch(string candTitle, string wantTitle)
         {
@@ -1919,9 +1919,9 @@ namespace NotchPeninsula
         /// 只走 QQ 音乐自己的两个接口取专辑封面，完全不依赖落月。
         /// 调用点在整条歌词链跑完之后、且一个封面地址都没拿到时。
         ///
-    /// <c>smartbox_new.fcg</c> —— QQ 的搜索建议接口。官方主搜索 <c>client_search_cp</c> 已恒 500，
+    /// smartbox_new.fcg —— QQ 的搜索建议接口。官方主搜索 client_search_cp 已恒 500，
         ///       但这个仍然可用，且正好给出曲名 / 歌手 / songmid，可以直接复用同一套匹配打分；
-    /// <c>fcg_play_single_song.fcg?songmid=</c> —— 用 songmid 换回 <c>album.mid</c>（albummid），
+    /// fcg_play_single_song.fcg?songmid= —— 用 songmid 换回 album.mid（albummid），
         ///       拼成 QQ 专辑图地址（与落月给的 cover 同一个 CDN 格式）。
         ///
         /// 任何一步失败都返回空串，调用方保持原有的兜底封面（程序图标）。
@@ -1997,7 +1997,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 归一化：只保留字母 / 数字 / 汉字假名谚文，其余（空格、括号、连字符、全角标点…）全部去掉并转小写。
-        /// 于是 <c>晴天 (Live)</c> → <c>晴天live</c>、<c>夜曲 - A35</c> → <c>夜曲a35</c>、<c>DAOKO</c> → <c>daoko</c>。
+        /// 于是 晴天 (Live) → 晴天live、夜曲 - A35 → 夜曲a35、DAOKO → daoko。
         /// </summary>
         private static string NormalizeToken(string s)
         {
@@ -2010,7 +2010,7 @@ namespace NotchPeninsula
         // 歌手串里的分隔符：中英日常见的并列写法都收进来
         private static readonly char[] ArtistSeparators = ['/', '、', ',', '，', '&', '×', ';', '；', '|', '+'];
 
-        /// <summary>把歌手串拆成名字集合并归一化：<c>Daoko/米津玄師</c> → <c>{daoko, 米津玄師}</c>。</summary>
+        /// <summary>把歌手串拆成名字集合并归一化：Daoko/米津玄師 → {daoko, 米津玄師}。</summary>
         private static HashSet<string> SplitArtists(string s)
         {
             var set = new HashSet<string>(StringComparer.Ordinal);
@@ -2024,7 +2024,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 浏览器原始标题里是否带哔哩哔哩的平台名（用于把封面切到会话自带的那张）。
-        /// 必须在 <see cref="CleanBrowserTitle"/> 之前调用 —— 清理会把 <c>_哔哩哔哩_bilibili</c>
+        /// 必须在 CleanBrowserTitle 之前调用 —— 清理会把 _哔哩哔哩_bilibili
         /// 这类后缀去掉，清完之后标题里就再也找不到平台名了。
         /// </summary>
         private static bool IsBilibiliTitle(string title)
@@ -2035,13 +2035,13 @@ namespace NotchPeninsula
         /// 把封面地址归一成小尺寸变体：岛上最大只画 50px，下原图纯属浪费带宽与解码内存
         /// （还直接吃掉 4 秒的 HttpClient 超时预算）。两类 CDN 的写法不同：
         ///
-    /// <b>QQ</b>（y.qq.com / y.gtimg.cn）：尺寸段写在文件名里 —— <c>R800x800M000</c> → <c>R300x300M000</c>
+    /// QQ（y.qq.com / y.gtimg.cn）：尺寸段写在文件名里 —— R800x800M000 → R300x300M000
         ///       （180KB → 33KB）；
-    /// <b>网易云</b>（p*.music.126.net）：URL 不带尺寸段，要用 <c>?param=NyN</c> 查询参数指定 ——
-        ///       同一张图原图 502KB、<c>?param=300y300</c> 为 94KB。
+    /// 网易云（p*.music.126.net）：URL 不带尺寸段，要用 ?param=NyN 查询参数指定 ——
+        ///       同一张图原图 502KB、?param=300y300 为 94KB。
         ///
-        /// <b>幂等</b>：归一过的地址再调用一次不会重复追加（QQ 那档已无 R800 段，
-        /// 网易云那档已带 <c>param=</c>）。不符合任何一类的地址原样返回。
+        /// 幂等：归一过的地址再调用一次不会重复追加（QQ 那档已无 R800 段，
+        /// 网易云那档已带 param=）。不符合任何一类的地址原样返回。
         /// </summary>
         private static string NormalizeCoverUrl(string url)
         {
@@ -2069,7 +2069,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 这段 LRC 里至少有一行能被解析出时间戳吗。
         ///
-        /// 引擎链按这个判据短路，而不是 <c>string.IsNullOrEmpty</c>：QQ 音乐在搜得到歌、
+        /// 引擎链按这个判据短路，而不是 string.IsNullOrEmpty：QQ 音乐在搜得到歌、
         /// 但歌词接口返回纯文本（版权提示、空壳响应）时会给出「非空却一行时间轴都没有」的结果 ——
         /// 只判空的话网易云与 LRCLIB 会被整段跳过，最终歌词是空的，表现就是「有时候没歌词」。
         /// </summary>
@@ -2123,7 +2123,7 @@ namespace NotchPeninsula
             return list.ToArray();
         }
 
-        // 取某条原文行对应的译文。<paramref name="cursor"/> 由调用方持有并随歌词推进单调后移 ——
+        // 取某条原文行对应的译文。 由调用方持有并随歌词推进单调后移 ——
         // 歌词是按时间升序解析的，所以线性扫描摊下来是 O(n)，不需要每次二分。
         private static string LookupTrans((long Ticks, string Text)[] table, long ticks, ref int cursor)
         {
@@ -2161,14 +2161,14 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 一行的逐字时间轴。时间片相对本行起始，单位毫秒。
-        /// <see cref="CumChars"/> 是「截至该片段结束时的累积有效字符数」——
+        /// CumChars 是「截至该片段结束时的累积有效字符数」——
         /// 扫光据此把「已经唱到第几个字」折算成 0~1 的比例，渲染层因此零改动。
         /// </summary>
         private readonly struct LyricWordTiming
         {
             /// <summary>第 i 个片段结束的时刻（相对本行起始，毫秒），非递减。</summary>
             public readonly int[] EndMs;
-            /// <summary>截至第 i 个片段结束时的累积有效字符数，与 <see cref="EndMs"/> 等长。</summary>
+            /// <summary>截至第 i 个片段结束时的累积有效字符数，与 EndMs 等长。</summary>
             public readonly int[] CumChars;
             /// <summary>有时间标注的字的总有效字符数（扫光比例的分子上限）。</summary>
             public readonly int TotalChars;
@@ -2187,7 +2187,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 解析 yrc，产出「行首毫秒 + 归一化文本 → 该行逐字时间轴」的表（按行首升序）。
-        /// <paramref name="timingFirst"/> 选片段语法方向（见本节开头的两组样例）——
+        ///  选片段语法方向（见本节开头的两组样例）——
         /// 由采纳它的那一档按源给出，比逐行猜更稳（歌词正文里出现括号也不会误判）。
         /// 语法不认识 / 整行没有可计时字符：跳过该行，它自然回落整行扫描。
         /// </summary>
@@ -2293,11 +2293,11 @@ namespace NotchPeninsula
         /// <summary>
         /// 取某条原文行对应的逐字时间轴。
         ///
-        /// <b>先用文本对</b>（忽略空白），<paramref name="cursor"/> 由调用方持有并单调后移 ——
+        /// 先用文本对（忽略空白）， 由调用方持有并单调后移 ——
         /// 歌词的行序与 yrc 的行序一致，命中就把游标推过该条，于是副歌重复出现时
         /// 第二次自然对上第二份逐字数据。文本相等是强约束，不会错配到别的句子。
         ///
-        /// 文本对不上时再退回按行首时间戳找（<see cref="YrcTimeFallbackMs"/>），
+        /// 文本对不上时再退回按行首时间戳找（YrcTimeFallbackMs），
         /// 应付个别标点不一致的行。两条都落空就返回 null，该行回落整行扫描。
         /// </summary>
         private static LyricWordTiming? LookupWordTiming(
@@ -2323,15 +2323,15 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 某一行扫光进度（0~1）的唯一出口 —— <b>逐字歌词与卡拉 OK 合并后的同一条链</b>。
+        /// 某一行扫光进度（0~1）的唯一出口 —— 逐字歌词与卡拉 OK 合并后的同一条链。
         ///
-    /// <b>逐字优先</b>：本行有字级时间轴时按每个字自己的时值推进（长的音就慢慢走、
-        ///       快念段就快速掠过），与 <see cref="ComputeWordAlignedProgress"/> 的口径一致；
-    /// <b>自动回退整行扫光</b>：逐字效果不可用时，按「本行起点 → 下一行起点」线性插值。
+    /// 逐字优先：本行有字级时间轴时按每个字自己的时值推进（长的音就慢慢走、
+        ///       快念段就快速掠过），与 ComputeWordAlignedProgress 的口径一致；
+    /// 自动回退整行扫光：逐字效果不可用时，按「本行起点 → 下一行起点」线性插值。
         ///       所谓「逐字不可用」有两种情形 —— 本行没对上字级数据、整首歌拿不到逐字数据
         ///       （只有落月的两个源会带 yrc，网易云侧还只有部分歌有）。
         ///
-        /// <b>为什么是一条链</b>：两条路径产出的是同一个 0~1 标量，
+        /// 为什么是一条链：两条路径产出的是同一个 0~1 标量，
         /// 渲染层的扫光依旧是「整行总宽 × 进度」，不需要知道自己拿到的是哪一种驱动。
         /// 于是「这首歌没有逐字数据」不会退化成不扫光，而只是自动降级成整行均匀扫光。
         /// </summary>
@@ -2360,9 +2360,9 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 按逐字时间轴把「本行已经唱到哪」折算成 0~1 的扫光比例。仅在逐字数据可用时被
-        /// <see cref="ComputeScanProgress"/> 调用；不可用时由那条链回退到整行扫光。
+        /// ComputeScanProgress 调用；不可用时由那条链回退到整行扫光。
         ///
-        /// <b>口径是「字符数」而不是像素宽度</b>：中文与日文基本等宽，折算误差肉眼不可见；
+        /// 口径是「字符数」而不是像素宽度：中文与日文基本等宽，折算误差肉眼不可见；
         /// 好处是渲染层零改动 —— 它拿到的仍然只是一个 0~1 的标量，扫光依旧是「整行总宽 × 比例」。
         /// 含大量拉丁字母 / 空格的行会有几像素偏差，这是已知取舍。
         /// </summary>
@@ -2594,7 +2594,7 @@ namespace NotchPeninsula
         private const double TimelineStallAheadSeconds = 1.2;
 
         /// <summary>
-        /// 推进当前歌词歌的时间轴。SMTC 采样已由 <see cref="UpdateLyrics"/> 统一完成（每帧最多一次），
+        /// 推进当前歌词歌的时间轴。SMTC 采样已由 UpdateLyrics 统一完成（每帧最多一次），
         /// 这里只做纯计算。提供真实时间轴的播放器（Apple Music / QQ音乐 等，EndTime 有效）以 SMTC 为准；
         /// 不提供时间轴的播放器（网易云、酷狗等，EndTime 恒为 0）才按播放状态自行累加。
         /// </summary>

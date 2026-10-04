@@ -642,7 +642,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 查 HDROP 里的路径。iFile 传 0xFFFFFFFF 时返回条目数量；
-        /// 传 0..n-1 时：<paramref name="lpszFile"/> 为 null 则返回该路径的字符数（不含结尾 '\0'），
+        /// 传 0..n-1 时： 为 null 则返回该路径的字符数（不含结尾 '\0'），
         /// 否则把路径拷进缓冲区并返回实际拷贝的字符数。
         /// </summary>
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
@@ -672,7 +672,7 @@ namespace NotchPeninsula
         /// 刻意不配对 OleUninitialize：这个引用会活到进程结束，而 OLE 初始化本身是引用计数式的，
         /// 多留一个引用不影响任何东西，却省掉了「谁负责收回」的记账。
         ///
-        /// OLE 初始化是<b>线程级</b>的，所以状态用 ThreadStatic 存。
+        /// OLE 初始化是线程级的，所以状态用 ThreadStatic 存。
         /// </summary>
         public static bool EnsureOleInitialized()
         {
@@ -695,8 +695,8 @@ namespace NotchPeninsula
         [ThreadStatic] private static bool _oleInitialized;
 
         /// <summary>
-        /// 发起一次系统拖放。会<b>阻塞</b>到用户松手或取消（内部自建消息循环并接管鼠标）。
-        /// <paramref name="pdwEffect"/> 返回目标最终接受的效果，0 表示没被接受（取消 / 拖到了不接收的地方）。
+        /// 发起一次系统拖放。会阻塞到用户松手或取消（内部自建消息循环并接管鼠标）。
+        ///  返回目标最终接受的效果，0 表示没被接受（取消 / 拖到了不接收的地方）。
         /// </summary>
         [DllImport("ole32.dll", ExactSpelling = true)]
         public static extern int DoDragDrop(
@@ -718,7 +718,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 拖放源接口（oleidl.h 的 IDropSource）。系统在拖放过程中反复回调它：
-        /// <see cref="QueryContinueDrag"/> 问「继续 / 放下 / 取消」，<see cref="GiveFeedback"/> 问「用什么光标」。
+        /// QueryContinueDrag 问「继续 / 放下 / 取消」，GiveFeedback 问「用什么光标」。
         /// 实现类见 PluginWindow.FileDropSource。
         /// </summary>
         [ComImport, Guid("00000121-0000-0000-C000-000000000046"),
@@ -764,8 +764,8 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 拖入目标接口（oleidl.h 的 IDropTarget）。
-        /// 参数里的 <see cref="POINT"/> 就是原生 POINTL（两个 32 位 LONG，布局与 POINT 相同），
-        /// 坐标是<b>屏幕物理像素</b> —— 要自己 ScreenToClient 再除以 DPI 才是窗口内的逻辑坐标。
+        /// 参数里的 POINT 就是原生 POINTL（两个 32 位 LONG，布局与 POINT 相同），
+        /// 坐标是屏幕物理像素 —— 要自己 ScreenToClient 再除以 DPI 才是窗口内的逻辑坐标。
         /// 实现类见 PluginWindow 里的 WindowDropTarget。
         /// </summary>
         [ComImport, Guid("00000122-0000-0000-C000-000000000046"),

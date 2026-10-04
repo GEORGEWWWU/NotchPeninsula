@@ -20,7 +20,7 @@ namespace NotchPeninsula
         public static bool IsMediaExpanded = false;
 
         /// <summary>
-        /// 本帧是否真的在画展开面板 —— 与 <c>DrawMediaControl</c> 内部分流用的是同一条判据
+        /// 本帧是否真的在画展开面板 —— 与 DrawMediaControl 内部分流用的是同一条判据
         /// （媒体激活 + 已展开 + 高度已涨过 60 的动画闸门）。命中侧（如双击跳转）据此区分
         /// 「点的是 130px 的面板」还是「点的是 35px 的折叠内联行」。
         /// </summary>
@@ -33,7 +33,7 @@ namespace NotchPeninsula
         /// </summary>
         private static float _currentHeightForHit;
 
-        /// <summary>渲染循环每帧同步一次当前岛体高度，供命中侧（<see cref="IsMediaPanelShowing(MediaController?)"/>）使用。</summary>
+        /// <summary>渲染循环每帧同步一次当前岛体高度，供命中侧（IsMediaPanelShowing(MediaController?)）使用。</summary>
         public static void SetHitTestHeight(float height) => _currentHeightForHit = height;
 
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
@@ -389,7 +389,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 画一句歌词（含可选的译文第二行）。
         ///
-        /// <paramref name="y"/> 传的是「整块文字（原文 + 译文）的竖向中心基线」：没有译文时就是原文基线，
+        ///  传的是「整块文字（原文 + 译文）的竖向中心基线」：没有译文时就是原文基线，
         /// 与改造前的行为完全一致；有译文时原文上移半格、译文下移半格，两行以原来的基线为轴心上下分开。
         /// 译文复用调用方那支画笔（字体 run 缓存与原文共用，不额外占缓存槽），
         /// 颜色改成次级灰、字号交给画布缩放 —— 直接改 TextSize 会让缓存里的宽度度量失效。
@@ -434,9 +434,9 @@ namespace NotchPeninsula
         /// <summary>
         /// 媒体模块在组合模式下的占宽（缩略图 + 文本 + 间距 + 频谱）。
         ///
-        /// <b>不封顶</b>（2026-09-20 删掉了原先的 <c>CompositeMediaMaxWidth</c>）：用户要求媒体控制器长度全放开，
-        /// 文本按真实内容计宽，超出部分只受 <see cref="MAX_ISLAND_WIDTH"/> 约束（而它已放宽到 1920）。
-        /// 组合模式总宽仍由 <see cref="GetCompositeWidth"/> 收口，且插件行预算是「总长上限 − 原生总宽」，
+        /// 不封顶（2026-09-20 删掉了原先的 CompositeMediaMaxWidth）：用户要求媒体控制器长度全放开，
+        /// 文本按真实内容计宽，超出部分只受 MAX_ISLAND_WIDTH 约束（而它已放宽到 1920）。
+        /// 组合模式总宽仍由 GetCompositeWidth 收口，且插件行预算是「总长上限 − 原生总宽」，
         /// 所以本值变大只会让岛体变长、不会把插件挤没（前提是原生总宽还没吃满总长上限）。
         /// </summary>
 
@@ -488,7 +488,7 @@ namespace NotchPeninsula
             => CompositeModeEnabled ? MeasureCompositeWidth(media, includePlugins: false) : 0f;
 
         /// <summary>
-        /// 组合模式宽度累加本体。<paramref name="includePlugins"/> 为 false 时跳过插件组件组，
+        /// 组合模式宽度累加本体。 为 false 时跳过插件组件组，
         /// 专门用来量「原生模块总宽」，好给插件行定预算。
         /// </summary>
 
@@ -557,7 +557,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 取「内容顺序表」的插件 Id 集合（大小写不敏感），按快照引用缓存。
-        /// 宿主 <c>ContentOrder</c> 返回的是内部快照数组，顺序不变时引用不变，因此可以零成本命中。
+        /// 宿主 ContentOrder 返回的是内部快照数组，顺序不变时引用不变，因此可以零成本命中。
         /// </summary>
         private static HashSet<string> GetOrderSet(IReadOnlyList<string> order)
         {

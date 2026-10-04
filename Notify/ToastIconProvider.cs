@@ -8,7 +8,7 @@ using SkiaSharp;
 namespace NotchPeninsula
 {
     /// <summary>
-    /// 把「图标描述」解析成可直接绘制的 <see cref="SKBitmap"/>，供 HTTP 消息 / 插件提醒自定义图标。
+    /// 把「图标描述」解析成可直接绘制的 SKBitmap，供 HTTP 消息 / 插件提醒自定义图标。
     ///
     /// 支持四种写法，按前缀自动识别：
     ///   1. 内置别名      "qq" / "windows"（见 ResolveBuiltin）
@@ -214,8 +214,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 约定：data/image 下的 <c>&lt;别名&gt;-icon.*</c> / <c>&lt;别名&gt;-logo.*</c> 都能直接用别名引用。
-        /// 想给某个 App 加内置图标，把 <c>wechat-icon.png</c> 丢进 data/image 即可，不用改代码。
+        /// 约定：data/image 下的「别名-icon.*」「别名-logo.*」都能直接用别名引用。
+        /// 想给某个 App 加内置图标，把 wechat-icon.png 丢进 data/image 即可，不用改代码。
         /// </summary>
         private static string? FindAliasFile(string alias)
         {

@@ -22,11 +22,11 @@ namespace NotchPeninsula
     /// - 代价：WS_EX_NOACTIVATE 的窗口永远不是前台窗口，于是所有「靠前台身份才能收到
     ///     的通知」全都收不到 —— SetCapture 的捕获对后台窗口是残废的（见 CreateAndShow 的注释）、
     ///     WM_ACTIVATEAPP 不会来、WM_KEYDOWN(ESC) 也不会来。所以「点菜单外面收起」这条唯一的
-    ///     出路是主动轮询鼠标状态（<see cref="PollDismiss"/>，和岛体「点岛外收起」同一套办法）。
+    ///     出路是主动轮询鼠标状态（PollDismiss，和岛体「点岛外收起」同一套办法）。
     ///     历史坑：曾经先写过「延迟 200ms 再 SetCapture」，后来又改成「立刻 SetCapture」，
     ///     两条都不行 —— 不是时序问题，是这个窗口风格根本拿不到前台身份。
     ///
-    /// 菜单项状态（尤其「开机自启」的 ）由 <see cref="SyncAutoStart"/> 双向同步：
+    /// 菜单项状态（尤其「开机自启」的 ）由 SyncAutoStart 双向同步：
     ///   设置面板改了 → 调 SyncAutoStart，托盘菜单下次弹出/立即刷新都对得上；
     ///   托盘菜单点了 → 走 NotchWindow.ToggleAutoStart(enable, true) 回写注册表并通知设置面板。
     /// </summary>
@@ -95,7 +95,7 @@ namespace NotchPeninsula
         private static int _tokenSeed;            // 每个实例发一个唯一标记
 
         /// <summary>
-        /// 本实例的唯一标记，随 <see cref="Win32.WM_TRAYMENU_CLOSE"/> 的 wParam 一起投递。
+        /// 本实例的唯一标记，随 Win32.WM_TRAYMENU_CLOSE 的 wParam 一起投递。
         ///
         /// 为什么需要它：关闭走的是 PostMessage（排队），而窗口句柄会被系统复用 ——
         /// 用户"菜单开着时再点一次托盘图标"时，旧菜单刚排队的那条关闭消息，可能在

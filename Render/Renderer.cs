@@ -29,7 +29,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 全局折叠态高度：待机态、媒体折叠态、剪贴板链接面板共用同一个值。
         /// 原先「待机高度」(BASE_HEIGHT) 与它分开，2026-09-27 合并到本属性，
-        /// 存储沿用注册表 <c>Custom_MediaH</c>（见 Program.LoadSettings 的兼容回落）。
+        /// 存储沿用注册表 Custom_MediaH（见 Program.LoadSettings 的兼容回落）。
         /// </summary>
         public static float MEDIA_HEIGHT { get => _mediaHeight; set => _mediaHeight = value; }
 
@@ -84,31 +84,31 @@ namespace NotchPeninsula
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
 
         /// <summary>
-        /// 是否正有一批文件被拖着经过岛体（由 <see cref="IslandDropTarget"/> 在 DragEnter / DragLeave / Drop 维护）。
+        /// 是否正有一批文件被拖着经过岛体（由 IslandDropTarget 在 DragEnter / DragLeave / Drop 维护）。
         ///
         /// 置位期间穿透模式的「悬停即淡出到 0%」必须失效：岛体一旦降到全透明，它的像素就从 OLE 的命中测试里消失，
         /// 拖放目标会在拖动途中当场丢失 —— 表现就是「文件怎么都放不进详情页」。拖放一结束（离开 / 放下）自动恢复。
         ///
-        /// 写方是 UI 线程上的 OLE 回调，读方是渲染计时器线程，所以必须 <c>volatile</c>。
+        /// 写方是 UI 线程上的 OLE 回调，读方是渲染计时器线程，所以必须 volatile。
         /// </summary>
         public static volatile bool FileDragInProgress = false;
 
         /// <summary>
-        /// 岛体垂直基准位置（逻辑像素）：<c>0</c> = 贴目标显示器顶部（默认，也是当前唯一的形态）。
+        /// 岛体垂直基准位置（逻辑像素）：0 = 贴目标显示器顶部（默认，也是当前唯一的形态）。
         ///
-        /// <b>位置自定义的唯一真源</b>：窗口坐标（<c>ptDst.y</c>）、自动隐藏策略（上移出屏 / 完全隐藏）、
+        /// 位置自定义的唯一真源：窗口坐标（ptDst.y）、自动隐藏策略（上移出屏 / 完全隐藏）、
         /// 以及两处屏幕坐标轮询（穿透悬停、岛外点击兜底）全部从它派生 —— 将来开放「岛体位置自定义」
         /// （无论做在宿主设置里还是给插件 API），只需要写这一个值，其余自动跟着走。
         /// </summary>
         public static float IslandBaseY { get; set; } = 0f;
 
         /// <summary>
-        /// 「完全隐藏」不透明度：<c>1</c> = 正常显示，<c>0</c> = 整块不可见。
+        /// 「完全隐藏」不透明度：1 = 正常显示，0 = 整块不可见。
         ///
         /// 岛体基准离开顶部时，上移出屏那套会在屏幕中间留下一条 4px 岛体残影（且岛体会从屏幕中间
         /// "飞"到顶部），所以改用原地淡出到 0% 透明 —— 全透明像素会被 Windows 判定为物理穿透，
-        /// 唤醒入口复用岛体正中的唤醒按钮（见 <see cref="Renderer.WakeButtonX"/>）。
-        /// 与 <see cref="PassthroughAlpha"/> 是两条独立通道（后者由穿透模式独占），渲染时取二者较小值。
+        /// 唤醒入口复用岛体正中的唤醒按钮（见 Renderer.WakeButtonX）。
+        /// 与 PassthroughAlpha 是两条独立通道（后者由穿透模式独占），渲染时取二者较小值。
         /// </summary>
         public static float FullHideAlpha = 1.0f;
 
@@ -135,14 +135,14 @@ namespace NotchPeninsula
         /// <summary>
         /// 岛体总长度上限：Toast / 剪贴板面板的自适应宽度、组合模式总宽、以及插件行的取舍都以它封顶。
         ///
-        /// <b>2026-09-20 由 800 放开到 1920（用户要求）</b>：用户原话「必须放开最大长度，灵动岛本体哪怕
+        /// 2026-09-20 由 800 放开到 1920（用户要求）：用户原话「必须放开最大长度，灵动岛本体哪怕
         /// 宽度 max=1920 都无所谓，宁愿灵动岛超长溢出屏幕都不要被裁切」。
         /// 旧的 800 是「怕挤压到右边的插件」而设的，但实际效果是长歌词被裁切，
         /// 而且插件行预算（= 本值 − 原生内容宽度）被长歌词吃光后，插件会直接整帧不显示
         /// （不是被压缩，是彻底消失），体验很差 —— 这个顾虑被证明完全没必要。
         ///
         /// 1920 是本体的上限（≈ 106 个汉字，任何真实歌词行都远达不到）。
-        /// 它同时也是窗口内容区的下限来源：<see cref="WINDOW_WIDTH"/> 必须 ≥ 本值，
+        /// 它同时也是窗口内容区的下限来源：WINDOW_WIDTH 必须 ≥ 本值，
         /// 否则岛体超出窗口的部分会被窗口边缘裁掉（那就又变成裁切了）。
         /// 岛体允许溢出屏幕 —— 窗口比屏幕宽是合法的，透明像素照常鼠标穿透。
         /// </summary>

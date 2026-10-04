@@ -92,7 +92,7 @@ internal static class DragOutState
     /// <summary>当前是否有拖出正在进行。</summary>
     public static bool IsDragging => Volatile.Read(ref _depth) > 0;
 
-    /// <summary>拖出开始前调用，记下发起方窗口句柄；必须与 <see cref="Exit"/> 成对（放 finally）。</summary>
+    /// <summary>拖出开始前调用，记下发起方窗口句柄；必须与 Exit 成对（放 finally）。</summary>
     public static void Enter(IntPtr sourceHwnd)
     {
         _sourceHwnd = sourceHwnd;

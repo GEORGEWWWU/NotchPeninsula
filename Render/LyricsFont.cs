@@ -12,41 +12,41 @@ namespace NotchPeninsula
     /// 日文假名虽勉强收录却用的是中文字形。缺的字过去会落到 Segoe UI Emoji —— 那里同样没有，
     /// 最终画出方块。
     ///
-    /// 本类把"缺字 → 该用哪套字体"的判定交给系统字体服务（<see cref="SKFontManager.MatchCharacter"/>），
+    /// 本类把"缺字 → 该用哪套字体"的判定交给系统字体服务（SKFontManager.MatchCharacter），
     /// 由 Windows 自己回答"这个码点该用哪套已安装字体"。这是唯一能正确覆盖
     /// 韩 / 日 / 俄 / 泰 / 阿拉伯 / 希伯来 / 天城文…… 的做法：硬编码字体族名既覆盖不全，
-    /// 又会在用户机器上没装那套字体时退化——更糟的是 <c>FromFamilyName</c> 找不到族时会
+    /// 又会在用户机器上没装那套字体时退化——更糟的是 FromFamilyName 找不到族时会
     /// 静默返回默认字体，继续画方块。
     ///
     /// 性能与内存纪律（常驻渲染路径的硬约束）：
-    ///   • <b>决定只在码点首次出现时解析一次</b>，之后走 <see cref="_perCp"/> 字典命中，全是引用比较；
+    ///   • 决定只在码点首次出现时解析一次，之后走 _perCp 字典命中，全是引用比较；
     ///     歌词每个码点正常只出现一次，因此稳态 60FPS 下本类几乎不被触碰。
-    ///   • <b>不做任何后台预热、不建常驻表</b>：字典条目随真实歌词增长，一首多语言歌最多几十条。
-    ///   • <b>解析失败时为负缓存</b>（记 <c>null</c>），保证同一个码点绝不会被反复询问系统字体服务。
-    ///   • <b>字体面一律以弱引用持有、绝不手动 Dispose</b>：<c>MatchCharacter</c> / <c>FromFamilyName</c>
+    ///   • 不做任何后台预热、不建常驻表：字典条目随真实歌词增长，一首多语言歌最多几十条。
+    ///   • 解析失败时为负缓存（记 null），保证同一个码点绝不会被反复询问系统字体服务。
+    ///   • 字体面一律以弱引用持有、绝不手动 Dispose：MatchCharacter / FromFamilyName
     ///     返回的对象所有权归调用方 —— SkiaSharp 2.88.8 的 SKObject 维护一张「native 指针 → 托管对象」
     ///     全局注册表 + 引用计数，只有终结器或 Dispose 才会把计数放掉。本类若用 static 字段强引用
-    ///     它们，对象就永远可达、终结器永不运行 → 引用计数永不归零 = <b>永久泄漏</b>。
-    ///     所以缓存值只是 <see cref="WeakReference{T}"/>：不可达即被 GC 终结器回收，既无泄漏，
+    ///     它们，对象就永远可达、终结器永不运行 → 引用计数永不归零 = 永久泄漏。
+    ///     所以缓存值只是 WeakReference{T}：不可达即被 GC 终结器回收，既无泄漏，
     ///     也彻底避开「手动 Dispose 掉别人（FontConfig / 静态画笔）还在用的共享字体面」这种
     ///     use-after-dispose —— 2.x 的实例注册表会让同一 native 指针返回同一个托管对象，这个坑很实在。
     ///
     /// 与自定义字体的关系（优先级铁律）：
     ///   用户选了自定义字体 ⇒ 用户已经明确表达了自己要的那套字面，
-    ///   此时本类<b>完全不参与</b>，由 Renderer 沿用原有的「基础字体 → 系统字体 → Emoji」链路。
+    ///   此时本类完全不参与，由 Renderer 沿用原有的「基础字体 → 系统字体 → Emoji」链路。
     /// </summary>
     internal static class LyricsFont
     {
         /// <summary>
         /// 码点 → 该用哪套字体面。值为 null 表示「系统也给不出」（负缓存）。
-        /// <b>值必须是弱引用</b>：本字典是 static 的，一旦强引用字体面，那些对象就永远可达、
+        /// 值必须是弱引用：本字典是 static 的，一旦强引用字体面，那些对象就永远可达、
         /// 终结器永不运行，SkiaSharp 的 native 引用计数便永不归零 —— 即永久泄漏。
         /// </summary>
         private static readonly Dictionary<int, WeakReference<SKTypeface>?> _perCp = new(96);
 
         /// <summary>
-        /// <see cref="_perCp"/> 的 FIFO 顺序，只用于容量兜底。
-        /// 与 <see cref="_perCp"/> 的键集始终一一对应（只在新增键时入队），因此不会无界增长。
+        /// _perCp 的 FIFO 顺序，只用于容量兜底。
+        /// 与 _perCp 的键集始终一一对应（只在新增键时入队），因此不会无界增长。
         /// </summary>
         private static readonly Queue<int> _cpOrder = new(96);
 
@@ -119,13 +119,13 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 写入码点缓存（<paramref name="face"/> 为 null 即负缓存）。两条纪律：
+        /// 写入码点缓存（ 为 null 即负缓存）。两条纪律：
         ///
-        /// ① <b>只存弱引用，绝不 Dispose</b> —— 见类注释：SkiaSharp 2.x 的实例注册表可能让
-        /// <c>MatchCharacter</c> / <c>FromFamilyName</c> 返回<b>同一个托管对象</b>，手动 Dispose
+        /// ① 只存弱引用，绝不 Dispose —— 见类注释：SkiaSharp 2.x 的实例注册表可能让
+        /// MatchCharacter / FromFamilyName 返回同一个托管对象，手动 Dispose
         /// 会让别处手里的对象变成已释放状态。弱引用把回收交给 GC 的终结器，天然安全。
-        /// ② <b>键已存在时不重复入队</b> —— 弱引用失效不会移除键，若每次重解析都入队，
-        /// <see cref="_cpOrder"/> 就会成为新的无界增长点；只在真正新增键时入队可保证两者一一对应。
+        /// ② 键已存在时不重复入队 —— 弱引用失效不会移除键，若每次重解析都入队，
+        /// _cpOrder 就会成为新的无界增长点；只在真正新增键时入队可保证两者一一对应。
         /// </summary>
         private static void Store(int cp, SKTypeface? face)
         {
@@ -145,9 +145,9 @@ namespace NotchPeninsula
         /// <summary>
         /// 向系统字体服务询问「这个码点该用哪套字体」，并对结果做字形校验。
         ///
-        /// 校验不可省略：<c>MatchCharacter</c> 在少数情况下会返回一个<b>并不含该字形</b>的面
+        /// 校验不可省略：MatchCharacter 在少数情况下会返回一个并不含该字形的面
         /// （任务栏 / 浏览器过去正是这样拿到错误结果而画出方块）。拿到结果后自己再确认一次
-        /// <see cref="SKTypeface.GetGlyph"/> 有值，有值才采纳。
+        /// SKTypeface.GetGlyph 有值，有值才采纳。
         /// </summary>
         private static SKTypeface? Lookup(int cp, SKTypeface baseTypeface)
         {
@@ -201,7 +201,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 整串文本的排版宽度（带缓存）。
-        /// 单码点逐次 <c>MeasureText</c> 求和会丢失字距调整，行宽会失真；
+        /// 单码点逐次 MeasureText 求和会丢失字距调整，行宽会失真；
         /// 而同一句歌词每个渲染帧都要测量，所以必须缓存 —— 稳定期 60FPS 零重算、零分配。
         /// </summary>
         internal static float MeasureText(string text, SKPaint paint)

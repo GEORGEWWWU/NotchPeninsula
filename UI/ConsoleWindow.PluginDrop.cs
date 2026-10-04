@@ -190,18 +190,16 @@ namespace NotchPeninsula
                     Logger.Info($"[PluginCenter] 拖入导入 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
-                // 提示文案（2026-10-02 用户指定）：
-                // · 有成功 → 「（）已成功导入 X 个插件」。那个 （U+2611 + U+FE0F）是彩色 Emoji，
-                //     在 Windows 上就是用户要的那颗绿色勾选框（已核对 seguiemj.ttf 的 cmap 表两个码点都在；
-                //     设置窗口的 YaHei 画笔没有它，所以绘制走 DrawTextWithEmoji 做逐段回退）。
+                // 提示文案：
+                // · 全成功 → 「（☑️）已成功导入 X 个插件」。前面那颗勾选框是彩色 Emoji，得走 DrawTextWithEmoji 逐段回退才画得出来。
                 //     以前只贴最后一条 Import() 的返回串（「已导入并加载：中文名」），拖三个也只看得到一个名字。
-                //   · 有失败 → 在结论后面补「N 个失败：<原因>」。颜色随结果走（见 _pluginHintIsError），
-                //     所以半个成功也会是绿的 —— 这是"至少成了一些"的语义，失败明细照样在提示里和日志里。
-                //   · 全失败 → 保留 Bot 返回的具体原因，那才是排查要的信息，统一成"导入失败"反而抹掉线索。
+                // · 有失败 → 在结论后面补「N 个失败：<原因>」。颜色随结果走（见 _pluginHintIsError），
+                //     所以半个成功也会是绿的 —— 这是「至少成了一些」的语义，失败明细照样在提示里和日志里。
+                // · 全失败 → 保留 Bot 返回的具体原因，那才是排查要的信息，统一成「导入失败」反而抹掉线索。
                 if (okCount > 0 && okCount == dlls.Count)
-                    _pluginHint = $"已成功导入 {okCount} 个插件";
+                    _pluginHint = $"（☑️）已成功导入 {okCount} 个插件";
                 else if (okCount > 0)
-                    _pluginHint = $"已成功导入 {okCount} 个插件，{dlls.Count - okCount} 个失败：{lastMsg}";
+                    _pluginHint = $"（☑️）已成功导入 {okCount} 个插件，{dlls.Count - okCount} 个失败：{lastMsg}";
                 else
                     _pluginHint = lastMsg;
 
@@ -219,7 +217,7 @@ namespace NotchPeninsula
     }
 
 /// <summary>
-/// 设置窗口的 OLE 拖入目标（IDropTarget）：把系统发来的四个拖放回调转给 <see cref="ConsoleWindow"/> 处理。
+/// 设置窗口的 OLE 拖入目标（IDropTarget）：把系统发来的四个拖放回调转给 ConsoleWindow 处理。
 ///
 /// 为什么单独拆一个类而不让 ConsoleWindow 直接实现：接口方法必须是 public，
 /// 塞进 ConsoleWindow 会让它表面上看多出一堆拖放公开 API；这个类是 internal，

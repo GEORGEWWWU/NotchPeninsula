@@ -125,8 +125,8 @@ namespace NotchPeninsula
         private const double FullscreenProbeIntervalSeconds = 0.8;
 
         /// <summary>
-        /// 节流刷新全屏检测缓存。由渲染循环在算 <c>shouldHide</c> 之前调用一次。
-        /// 唤醒点击分支只读缓存（<see cref="IsFullscreenHideActive"/>），不重复探测。
+        /// 节流刷新全屏检测缓存。由渲染循环在算 shouldHide 之前调用一次。
+        /// 唤醒点击分支只读缓存（IsFullscreenHideActive），不重复探测。
         /// </summary>
         private static void TickFullscreenProbe()
         {
@@ -158,7 +158,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 「现在允许自动隐藏吗」——自动隐藏判定的单一真源。
-        /// <c>shouldHide</c>（藏不藏）与 <c>WM_LBUTTONDOWN</c> 的唤醒分支（点了能不能唤回）必须共用它，
+        /// shouldHide（藏不藏）与 WM_LBUTTONDOWN 的唤醒分支（点了能不能唤回）必须共用它，
         /// 否则就会出现「藏得下去、点不回来」。
         ///
         /// 三种模式互相独立、可任意组合，且都被总开关拦住（总开关关掉时三个 Effective 全为 false）：
@@ -271,8 +271,8 @@ namespace NotchPeninsula
 
             /// <summary>
             /// 挂起延迟折叠（重复挂起按最后一次重新计时）。
-            /// <paramref name="delayMs"/> 传 null 就用构造时的默认值 ——
-            /// 插件详情页允许自定义这段时长（<c>IDetailPage.AutoCollapseDelay</c>），所以这里得能被覆盖。
+            ///  传 null 就用构造时的默认值 ——
+            /// 插件详情页允许自定义这段时长（IDetailPage.AutoCollapseDelay），所以这里得能被覆盖。
             /// </summary>
             public void Schedule(int? delayMs = null)
                 => _deadline = DateTime.Now.AddMilliseconds(delayMs ?? _delayMs);
@@ -553,8 +553,8 @@ namespace NotchPeninsula
         private static NotchWindow? _instanceForExit;
 
         /// <summary>
-        /// 当前活跃的岛体实例 —— 给 <see cref="StartFileDragOnIsland"/> 这类静态入口
-        /// 回过头调用实例方法用（拖出结束后要补一次悬停判定，见 <see cref="NotifyDragExit"/>）。
+        /// 当前活跃的岛体实例 —— 给 StartFileDragOnIsland 这类静态入口
+        /// 回过头调用实例方法用（拖出结束后要补一次悬停判定，见 NotifyDragExit）。
         /// </summary>
         private static NotchWindow? _liveInstance;
         #region 监听
@@ -728,7 +728,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 穿透唤醒按钮的命中判定（逻辑坐标）。
-        /// 位置算式的唯一真源在渲染侧（<see cref="Renderer.WakeButtonX"/> / <see cref="Renderer.WAKE_BTN_SIZE"/>），
+        /// 位置算式的唯一真源在渲染侧（Renderer.WakeButtonX / Renderer.WAKE_BTN_SIZE），
         /// 这里只补上岛体的垂直偏移。鼠标移动（手型指针）与左键按下（唤醒）必须共用它 ——
         /// 之前两处各写一份算式，改位置时漏了一处，结果按钮移到了中心、hover 却没有小手。
         /// </summary>
@@ -1458,9 +1458,9 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 拖放离开岛体（或拖放被取消）时由 <see cref="IslandDropTarget"/> 调用。
+        /// 拖放离开岛体（或拖放被取消）时由 IslandDropTarget 调用。
         ///
-        /// 为什么需要它：拖放期间鼠标被 OLE 的拖放循环接管，窗口<b>收不到 WM_MOUSELEAVE</b>，
+        /// 为什么需要它：拖放期间鼠标被 OLE 的拖放循环接管，窗口收不到 WM_MOUSELEAVE，
         /// 于是「鼠标离开岛体 → 挂延迟折叠」这条常规路径整个被跳过了。
         /// 不在这里补一刀，详情页就会一直停在「正在拖入」的样子 —— 高亮不灭、也不走折叠计时，
         /// 看起来就是「卡在拖入」。
@@ -2091,8 +2091,8 @@ namespace NotchPeninsula
         /// 展开指定组件（builtin.media 或插件组件 Id）的面板。
         /// 同一时刻只留一块：开这块之前先把另一块收掉。
         ///
-        /// 两个调用方：岛内左键/右键命中组件，以及<a>把文件拖到收起态组件上</a>时的自动展开
-        /// （见 <see cref="IslandDropTarget"/>，组件需声明 <c>IWidget.AcceptsFileDropWhenCollapsed</c>）。
+        /// 两个调用方：岛内左键/右键命中组件，以及把文件拖到收起态组件上时的自动展开
+        /// （见 IslandDropTarget，组件需声明 IWidget.AcceptsFileDropWhenCollapsed）。
         /// 后者同样要先把两个折叠计时取消掉，否则刚展开的面板可能立刻被挂上收起计时。
         /// </summary>
         internal static void ExpandPanel(string componentId)
@@ -2137,8 +2137,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 鼠标离开岛体：给两块面板各挂一个延迟折叠（媒体 <see cref="MediaCollapseDelayMs"/>、
-        /// 详情页 <see cref="DetailCollapseDelayMs"/>），由 <see cref="TickPanelCollapse"/> 到期才真的折叠；
+        /// 鼠标离开岛体：给两块面板各挂一个延迟折叠（媒体 MediaCollapseDelayMs、
+        /// 详情页 DetailCollapseDelayMs），由 TickPanelCollapse 到期才真的折叠；
         /// 期间鼠标回到岛上会取消。延迟的理由：面板展开后（详情页尺寸由插件决定，可能比原岛体更窄 / 更矮）
         /// 光标可能正好落在新矩形之外，立即收会变成「刚展开就自己没了」。
         /// </summary>
@@ -2174,7 +2174,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 结算挂起的延迟折叠：到点了才真的折叠，没到点什么都不做。
-        /// 每帧调一次（RenderLoop），代价只有两次 <see cref="DateTime"/> 比较。
+        /// 每帧调一次（RenderLoop），代价只有两次 DateTime 比较。
         /// </summary>
         private static void TickPanelCollapse()
         {
@@ -2204,7 +2204,7 @@ namespace NotchPeninsula
         /// <param name="forceCloseDetail">
         /// true = 连声明了「鼠标离开也不收起」的详情页也一并收掉。
         /// 这个值专供「岛内右键」——那是用户明确冲着面板来的关闭手势，
-        /// 若也尊重插件的不收起，插件选了这个档之后就<b>再也没有任何办法关掉它</b>了。
+        /// 若也尊重插件的不收起，插件选了这个档之后就再也没有任何办法关掉它了。
         ///
         /// 岛外点击传 false（默认）。不过注意：岛外左键现在在渲染循环那段轮询里就已经被拦掉了
         /// （详情页展开期间根本不会调到这里），这里保留这个判断是为了兜住将来可能新增的

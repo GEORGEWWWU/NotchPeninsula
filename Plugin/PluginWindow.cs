@@ -64,14 +64,13 @@ public sealed class PluginWindow : IPluginWindow
     private SKSurface? _surface;
 
     /// <summary>
-    /// 复用同一支圆角路径给「背景 / 内容裁剪 / 边框」三处用（<c>Rewind</c> 后重建）。
-    /// 与 <see cref="_surface"/> 同生命周期：<see cref="InitBuffer"/> 建、<see cref="CleanupBuffer"/> 毁。
+    /// 复用同一支圆角路径给「背景 / 内容裁剪 / 边框」三处用（Rewind 后重建）。
+    /// 与 _surface 同生命周期：InitBuffer 建、CleanupBuffer 毁。
+    ///
+    /// 为什么不直接 new SKRoundRect：它在 SkiaSharp 2.88.8 里是 SKObject 子类
+    /// （与 SKPaint 同级，维护「native 指针 → 托管对象」全局注册表），
+    /// 建了不 Dispose 就是永久泄漏；而 Redraw 由 WM_APP_REDRAW 驱动、插件动画期高频调用。
     /// </summary>
-    /// <remarks>
-    /// 为什么不直接 <c>new SKRoundRect</c>：它在 SkiaSharp 2.88.8 里是 <c>SKObject</c> 子类
-    /// （与 <c>SKPaint</c> 同级，维护「native 指针 → 托管对象」全局注册表），
-    /// 建了不 Dispose 就是永久泄漏；而 <see cref="Redraw"/> 由 WM_APP_REDRAW 驱动、插件动画期高频调用。
-    /// </remarks>
     private SKPath? _roundRectPath;
 
     private bool _closing;
@@ -91,7 +90,7 @@ public sealed class PluginWindow : IPluginWindow
     public PluginWindow(string title, int width, int height)
         : this(null, null, title, width, height) { }
 
-    /// <summary>带回属主的窗口：<paramref name="owner"/> 为宿主，<paramref name="ownerPluginId"/> 为打开它的插件。</summary>
+    /// <summary>带回属主的窗口： 为宿主， 为打开它的插件。</summary>
     internal PluginWindow(PluginHost? owner, string? ownerPluginId, string title, int width, int height)
     {
         _owner = owner;
@@ -391,11 +390,11 @@ public sealed class PluginWindow : IPluginWindow
     /// 同步销毁窗口（走与 WM_CLOSE 完全相同的清理路径：释放 DIB/SKSurface → DestroyWindow → 摘除登记表）。
     ///
     /// 为什么需要它：插件卸载时要立刻切断「窗口 → 插件方法委托 → 插件类型 → ALC」这条引用链，
-    /// 而 <see cref="Close"/> 只是 PostMessage，消息要等宿主回到消息循环才处理 ——
+    /// 而 Close 只是 PostMessage，消息要等宿主回到消息循环才处理 ——
     /// 卸载路径随后马上就做的那几轮同步 GC 会因此判定「加载上下文仍未被回收」。
     ///
     /// 只能在创建窗口的那个线程上调用（DestroyWindow 的硬性要求）。非同线程返回 false，
-    /// 由调用方回退到 <see cref="Close"/>。
+    /// 由调用方回退到 Close。
     /// </summary>
     internal bool TryDestroyNow()
     {
@@ -642,7 +641,7 @@ internal sealed class FileDropSource : Win32.IDropSource
 }
 
 /// <summary>
-/// 窗口的 OLE 拖入目标（IDropTarget）：把系统发来的四个拖放回调转给 <see cref="PluginWindow"/> 处理。
+/// 窗口的 OLE 拖入目标（IDropTarget）：把系统发来的四个拖放回调转给 PluginWindow 处理。
 ///
 /// 为什么单独拆一个类，不直接让 PluginWindow 实现：接口方法的实现必须是 public，
 /// 塞进 PluginWindow 会让它表面上看多出一堆拖放公开 API；而这个类是 internal，

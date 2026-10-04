@@ -10,14 +10,14 @@ namespace NotchPeninsula
         /// <summary>
         /// Toast 文本右边界与渐隐遮罩起点之间的兜底余量（逻辑像素）。
         ///
-        /// 宽度公式与 <c>Draw</c> 里的排版是两套独立计算：文字宽由 <c>BuildTextRuns</c> 分 run 累加，
+        /// 宽度公式与 Draw 里的排版是两套独立计算：文字宽由 BuildTextRuns 分 run 累加，
         /// 绘制时又按 run 逐段画（跨 run 的 kerning 会丢一点），再加上岛体宽度是弹簧动画、
         /// 可能稳定在目标值下方零点几像素 —— 余量取 0 时就会出现「刚好卡在遮罩边缘」：
         /// 文字既显示不全（末尾被渐隐吃掉），又因为缓存宽度认为放得下而不触发加宽。
         /// </summary>
         private const float TOAST_TEXT_MARGIN = 8f;
 
-        /// <summary>完整模式右上角「现在」的预留宽度，必须与 <c>Draw</c> 里 <c>toastMaxTextRight -= 36f</c> 一致。</summary>
+        /// <summary>完整模式右上角「现在」的预留宽度，必须与 Draw 里 toastMaxTextRight -= 36f 一致。</summary>
 
         private const float TOAST_FULL_MODE_RIGHT_RESERVE = 36f;
 

@@ -33,7 +33,7 @@ public sealed class PluginEntry
     public string Id { get; internal set; } = "";
     public string DisplayName { get; set; } = "";
     public string Version { get; internal set; } = "";
-    /// <summary>作者（插件没实现 <see cref="INotchPlugin.Author"/> 时退回程序集元数据，可能为空）。</summary>
+    /// <summary>作者（插件没实现 INotchPlugin.Author 时退回程序集元数据，可能为空）。</summary>
     public string Author { get; internal set; } = "";
     public PluginState State { get; internal set; } = PluginState.NotLoaded;
     public string? Error { get; internal set; }
@@ -57,7 +57,7 @@ public sealed class PluginEntry
 ///   1. 扫描 plugins 目录并维护可管理列表；
 ///   2. 用「影子拷贝 + 可回收 AssemblyLoadContext」加载 / 卸载 / 热重载 DLL；
 ///   3. 持久化每个插件的启用 / 禁用状态；
-///   4. 向 UI 暴露 <see cref="Changed"/> 事件。
+///   4. 向 UI 暴露 Changed 事件。
 ///
 /// 为什么用影子拷贝：直接加载用户目录里的 DLL 会被进程持有文件句柄，
 /// 覆盖升级或热更新时会出现“文件被占用”。先把 DLL（目录型含依赖）复制到临时目录再加载，
@@ -106,7 +106,7 @@ public sealed class PluginManager
     private IReadOnlyList<DisplayItem>? _displayItemsCache;
     private int _displayItemsVersion = -1;
 
-    /// <summary>注册表变更序号（单调递增，只在 <see cref="Changed"/> 触发前自增）。</summary>
+    /// <summary>注册表变更序号（单调递增，只在 Changed 触发前自增）。</summary>
     public int ChangeVersion => System.Threading.Volatile.Read(ref _changeVersion);
     public string PluginsRoot { get; }
     public IReadOnlyList<PluginEntry> Entries { get { lock (_lock) return _entries.ToArray(); } }
@@ -198,7 +198,7 @@ public sealed class PluginManager
     /// <summary>「显示内容」列表里的一行（显示设置页据此渲染复选框与左右移动按钮）。</summary>
     public sealed class DisplayItem
     {
-        /// <summary>顺序项标识：内置模块为 builtin.*，插件为 <see cref="PluginEntry.Key"/>。</summary>
+        /// <summary>顺序项标识：内置模块为 builtin.*，插件为 PluginEntry.Key。</summary>
         public string Key { get; init; } = "";
         public string Name { get; init; } = "";
         /// <summary>
@@ -217,7 +217,7 @@ public sealed class PluginManager
     /// 向下兼容：读的就是老版本那张顺序表（注册表 Plugins_Order），
     /// 内置模块与插件的 Key 混排在同一张表里，所以升级后用户此前调好的插件位置会原样带过来，
     /// 只是入口从「插件中心」搬到了「显示设置」。表里没有的内容（老版本从未排过序的插件）
-    /// 由 <see cref="EnsureOrder"/> 追加到末尾；老版本用 pluginId 写下的历史顺序也在那里迁移成 Key。
+    /// 由 EnsureOrder 追加到末尾；老版本用 pluginId 写下的历史顺序也在那里迁移成 Key。
     ///
     /// 未勾选的插件（禁用 / 加载失败）也在列表里（复选框空着），
     /// 用户才能在同一处把它重新勾回来；已经不在磁盘上的残留顺序项直接跳过。
@@ -558,8 +558,8 @@ public sealed class PluginManager
 
     /// <summary>
     /// 加载一个插件。返回是否成功。
-    /// <paramref name="dedupSameId"/> = 加载成功时顺带移除磁盘上同 Id 的其他副本（导入升级用，
-    /// 见 <see cref="RemoveSameIdDuplicates"/>）；启动时对既有插件的常规加载传 false。
+    ///  = 加载成功时顺带移除磁盘上同 Id 的其他副本（导入升级用，
+    /// 见 RemoveSameIdDuplicates）；启动时对既有插件的常规加载传 false。
     /// </summary>
     private bool Load(PluginEntry e, bool dedupSameId)
     {
@@ -659,7 +659,7 @@ public sealed class PluginManager
     }
 
     /// <summary>
-    /// 移除与 <paramref name="loaded"/> 同 Id 的其他副本（不同文件名的旧版本）：
+    /// 移除与  同 Id 的其他副本（不同文件名的旧版本）：
     /// 卸载 → 文件移入回收站 → 摘掉顺序项，并把旧版本在显示顺序表里的位置让给新版本
     /// （否则升级后插件会掉到列表末尾）。
     ///
@@ -667,7 +667,7 @@ public sealed class PluginManager
     /// 宿主按 pluginId 记账，同时注册会互相覆盖。启动时对磁盘上既有插件的常规加载不走这里，
     /// 避免程序自己悄悄搬走用户的文件。
     ///
-    /// 只认「加载过」的条目：<see cref="PluginEntry.Id"/> 是加载成功后才有的，
+    /// 只认「加载过」的条目：PluginEntry.Id 是加载成功后才有的，
     /// 从未加载成功的副本（禁用 / 加载失败）识别不出来，仍留在列表里由用户手动移除。
     /// </summary>
     private void RemoveSameIdDuplicates(PluginEntry loaded)
@@ -751,7 +751,7 @@ public sealed class PluginManager
     }
 
     /// <summary>
-    /// 完成插件的资源释放、宿主注销与 ALC 卸载，只把 <see cref="WeakReference"/> 交回调用方。
+    /// 完成插件的资源释放、宿主注销与 ALC 卸载，只把 WeakReference 交回调用方。
     ///
     /// 这是热重载最容易踩的坑：可回收 ALC 要求「卸载后没有任何强引用指向它」。
     /// 如果调用方（做 GC 的那个方法）的局部变量里还留着插件实例 / 加载上下文，
@@ -876,7 +876,7 @@ public sealed class PluginManager
     /// 把外部 DLL 复制进 plugins 目录并尝试加载。若不是合法插件则回滚删除。
     ///
     /// 同 Id 的插件视为「升级」，旧版本会被自动移除（卸载 + 文件移入 _recycle，可手动找回）：
-    /// 同名文件走时间戳改名，不同文件名/目录的副本由 <see cref="RemoveSameIdDuplicates"/> 在加载时清理，
+    /// 同名文件走时间戳改名，不同文件名/目录的副本由 RemoveSameIdDuplicates 在加载时清理，
     /// 旧版本的显示顺序位让给新版本。
     /// </summary>
     public (bool Ok, string Message) Import(string dllPath)
@@ -975,8 +975,8 @@ public sealed class PluginManager
     // ---- 内部工具 ----
 
     /// <summary>
-    /// 取插件作者：优先插件自己声明的 <see cref="INotchPlugin.Author"/>，
-    /// 为空（老插件没实现该成员）时退回程序集的 <c>AssemblyCompany</c> 元数据（csproj 的 Authors/Company）。
+    /// 取插件作者：优先插件自己声明的 INotchPlugin.Author，
+    /// 为空（老插件没实现该成员）时退回程序集的 AssemblyCompany 元数据（csproj 的 Authors/Company）。
     /// 取作者失败绝不能让插件加载失败，所以两条路径都各自兜住异常。
     /// </summary>
     private static string ReadAuthor(INotchPlugin plugin, Assembly asm)
