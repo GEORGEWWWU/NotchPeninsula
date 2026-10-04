@@ -179,6 +179,26 @@ namespace NotchPeninsula
                 return IsFocusAutoHideEffective;          // 无媒体会话 → 「焦点离开时自动隐藏」说了算
             }
         }
+
+        /// <summary>
+        /// 当前是否存在**任一展开态** —— 交互语义的单一真源。
+        ///
+        /// <para>
+        /// 三个来源，任一为真即视为「展开中」：
+        ///   · <c>_isManuallyExpanded</c>：点顶部细边 / 唤醒按钮手动展开的岛体；
+        ///   · <c>Renderer.IsMediaExpanded</c>：媒体控制面板；
+        ///   · <c>Renderer.HasActiveDetailPage</c>：插件组件详情页。
+        /// </para>
+        ///
+        /// <para>
+        /// 语义（用户 2026-10-04 明确）：<b>展开态一律不自动收起，只有外部点击或显式操作才折叠</b>。
+        /// 这条同时约束两处，且必须共用本属性，否则又会出现「一处记得排除、另一处忘了」：
+        ///   · 自动隐藏（上移出屏 / 完全隐藏）—— 展开中不藏；
+        ///   · 穿透模式的悬停淡出 —— 展开中不淡到 0%（淡掉等于面板看不见也点不到）。
+        /// </para>
+        /// </summary>
+        private bool HasAnyExpanded
+            => _isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage;
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
         // 📋 剪贴板链接监听（事件驱动，仅在复制时读一次剪贴板，稳态零占用）
         private readonly ClipboardMonitor _clipboardMonitor = new ClipboardMonitor();
@@ -962,9 +982,15 @@ namespace NotchPeninsula
                     //    此时若还按悬停淡出，用户一靠近细边它就变透明 —— 细边是唯一的唤回入口，淡掉就再也点不回来。
                     //    保持不透明同时也消掉了「手一靠近细边它就闪一下」的观感问题。用上一帧的 _currentY
                     //    判定即可（16ms 延迟无感），与唤回分支用的同一个闸门。
+                    // 🧩 第五个例外（用户 2026-10-04 明确）：**任一展开态存在时一律不淡出**。
+                    //    媒体面板 / 插件详情页 / 手动展开，三者都是「用户主动打开、需要持续看见并操作」的内容，
+                    //    鼠标一悬停就让它们淡到 0%，等于面板当场消失 —— 既看不见也点不到，还会因为全透明
+                    //    像素脱离 OLE 命中测试而连带影响拖放。展开态本来就不该自动收起（要收只走外部点击
+                    //    或显式操作），穿透淡出属于「自动隐藏」的一种，同一条规范覆盖。
+                    //    判据统一走 HasAnyExpanded（与 shouldHide 同源），别再各写一份三连判断。
                     float targetAlpha = 1.0f;
                     if (!_isPassthroughAwake && isOverNotch && _currentY >= -5f && !isClipboardActive && !isToastActive
-                        && !Renderer.FileDragInProgress) targetAlpha = 0.0f;
+                        && !Renderer.FileDragInProgress && !HasAnyExpanded) targetAlpha = 0.0f;
 
                     // 🛟 兜底自动复位：拖放源被杀 / 崩溃时 DragLeave、Drop 一个都不会来，
                     //    标志位若一直挂着，穿透淡出就永久失效（而且看不出是谁干的）。
@@ -1001,13 +1027,12 @@ namespace NotchPeninsula
                 //      （坐标换算与上面穿透模式那段完全同一套：减去显示器原点、减窗口 Y 偏移、再除 DPI）。
                 //    · 拖动中一律不收起 —— 拖时间轴时鼠标合法地待在岛外，此时收起会把面板从手里抽走；
                 //      松手若仍在岛外，由 WM_LBUTTONUP 补一次判定。
-                //    只在「确实有东西展开着」时才轮询，三个状态全 false 时这段直接跳过，稳态零开销。
+                //    只在「确实有东西展开着」时才轮询（HasAnyExpanded），全无展开时这段直接跳过，稳态零开销。
                 //    · `_suppressOutsideCollapse` 也纳入轮询条件：它的解除靠下面每帧观察按键是否松开
                 //      （不能只靠 WM_LBUTTONUP —— 岛体滑回后，光标所在的那条屏幕顶边在窗口里是**透明像素**，
                 //       分层窗口的透明区域不参与命中测试，up 消息很可能根本派发不到本窗口）。
                 if (!_media.IsDragging
-                    && (_isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage
-                        || _suppressOutsideCollapse))
+                    && (HasAnyExpanded || _suppressOutsideCollapse))
                 {
                     bool leftDown = (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0;
 
@@ -1063,9 +1088,10 @@ namespace NotchPeninsula
                 //    全屏场景同理：真在全屏里点了顶边唤回，就说明他想看，别立刻又藏回去。
                 // 同理 `!Renderer.IsMediaExpanded`：用户主动点开的媒体展开面板，不该被暂停 / 全屏抽走。
                 //    鼠标离开岛体时 RequestPanelCollapse() 会把它收掉，那时才轮到自动隐藏接手。
-                bool shouldHide = CanAutoHideNow && !_media.IsDragging
-                                  && !_isManuallyExpanded && !Renderer.IsMediaExpanded && !isToastActive
-                                  && !isClipboardActive && !Renderer.HasActiveDetailPage;
+                // 上面这三项（手动展开 / 媒体面板 / 详情页）现在统一由 HasAnyExpanded 表达 —— 单一真源，
+                // 与穿透淡出共用；将来再新增展开态（例如新的独立面板）只需改它一处。
+                bool shouldHide = CanAutoHideNow && !_media.IsDragging && !HasAnyExpanded && !isToastActive
+                                  && !isClipboardActive;
 
                 // Y 轴的位移量必须基于「岛体自身的高度」计算，不能写死某个折叠态高度：
                 // 媒体展开面板（130 / 158）会明显撑高岛体，若仍按折叠态高度算，
