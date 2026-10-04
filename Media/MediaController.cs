@@ -112,11 +112,21 @@ namespace NotchPeninsula
         private string _externalCoverAppId = "";
         private string _externalCoverTitle = "";
 
-        // 会话自带封面（SMTC 缩略图）两次尝试之间的最小间隔。
-        // 兜底重试挂在渲染循环上（60FPS 调用），而每次尝试都是一次 COM 调用 —— 必须节流。
-        // 2 秒足够让「刚接管会话、图还没就绪」的那一小段过去，又不会让封面迟迟不出现。
+        // 会话自带封面（SMTC 缩略图）的读取节奏。两个常量解决的是同一类问题：**别把上一首的图当成本曲目的**。
+        //
+        // settle：属性变化的通知到达时，会话的缩略图**往往还是上一首的** —— 网易云音乐与酷狗实测如此
+        //         （QQ 音乐是同批更新，所以没有这个现象）。当场读会把上一首的封面记到新曲目头上，
+        //         而记账一旦命中，选封面与网络封面两条路都会让位，之后**再也不会纠正** ——
+        //         表现就是「从第二首起，每首歌显示的都是上一首的封面」。所以读取要错开这一小段。
+        // retry ：同一曲目的兜底重试间隔。兜底重试挂在渲染循环上（60 FPS 调用），必须节流；
+        //         换歌是新事件，按曲目判定后不受它限制（见 UpdateCover 末尾）。
+        private static readonly TimeSpan SessionCoverSettleDelay = TimeSpan.FromMilliseconds(800);
         private static readonly TimeSpan SessionCoverRetryInterval = TimeSpan.FromSeconds(2);
+        // 最近一次**发起**读取的曲目与时刻。按曲目记账的原因：节流若只看时间，
+        // 连续切歌时后一首会被前一首的计时挡住，于是它连读都不读，封面直接停在上一首。
         private DateTime _lastSessionCoverAttempt = DateTime.MinValue;
+        private string _sessionCoverAttemptTitle = "";
+        private string _sessionCoverAttemptAppId = "";
 
         // 当前 Thumbnail 里放的到底是「哪个程序的应用图标」；为其他来源的封面时置空。
         // 少了它，视频模式下每次属性刷新都会新建一张 SKBitmap 再把旧的那张 Dispose 掉 ——
@@ -449,6 +459,8 @@ namespace NotchPeninsula
             _currentAppId = newSession?.SourceAppUserModelId ?? "";
 
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
+            // 哔哩哔哩的浏览器判定按**会话**重置（它依赖标题，见 RefreshPropertiesCore）：换会话必须清掉
+            _isBilibiliBrowserSession = false;
             // 浏览器标记只驱动网页标题清理（CleanBrowserTitle）。
             // 会不会出歌词跟它无关 —— 判据只有「SMTC 有没有给出歌手」这一条（见 IsVideoMode）。
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
@@ -710,8 +722,11 @@ namespace NotchPeninsula
                     string smtcArtist = props.Artist ?? "";
                     if (_isBrowserSession)
                     {
-                        // 平台名要在清理**之前**判：CleanBrowserTitle 会把 "_哔哩哔哩_bilibili" 这类后缀抹掉
-                        _isBilibiliBrowserSession = IsBilibiliTitle(smtcTitle);
+                        // 平台名要在清理**之前**判：CleanBrowserTitle 会把 "_哔哩哔哩_bilibili" 这类后缀抹掉。
+                        // **粘性**：一旦判出过哔哩哔哩，本会话内就一直算 —— 站内切集/切下一条时，
+                        // 标题会经历「旧标题 → 中间态 → 新标题」的过渡，中途那次刷新可能抓到一个
+                        // 不带平台名的标题；若就此翻回 false，封面会退回浏览器图标且之后未必再有刷新来纠正。
+                        if (IsBilibiliTitle(smtcTitle)) _isBilibiliBrowserSession = true;
                         smtcTitle = CleanBrowserTitle(smtcTitle, out smtcArtist);
                     }
                     else
@@ -828,11 +843,13 @@ namespace NotchPeninsula
         /// <list type="bullet">
         /// <item><b>会话自带封面</b>（<see cref="FetchSmtcCoverAsync"/>）：只给
         ///       <see cref="SmtcCoverPreferredIds"/> 里的平台用。由 <paramref name="allowSessionCover"/>
-        ///       放行 —— 属性刷新时传「本会话确实带了图」，兜底重试时传 true（未知，试一次，
-        ///       频率由 <see cref="SessionCoverRetryInterval"/> 节流）。它取到的就是正在播放的那张图，
-        ///       比曲库搜索更准；</item>
+        ///       放行 —— 属性刷新时传「本会话确实带了图」，兜底重试时传 true（未知，试一次）。
+        ///       它取到的就是正在播放的那张图，比曲库搜索更准；</item>
         /// <item><b>网络搜索封面</b>（<see cref="FetchCoverAsync"/>）：其余情况、以及上面那条取不到时的既有通路。</item>
         /// </list>
+        ///
+        /// <para><b>读取节奏</b>：每一首曲目至少发起一次；同一曲目的重试按
+        /// <see cref="SessionCoverRetryInterval"/> 节流（兜底重试每帧都会走到这里）。</para>
         ///
         /// <para>本曲目的外部封面一旦就位就**无条件保持** —— 判据里刻意不带「当前是不是视频模式」：
         /// 模式判定抖动或属性读取失败都不该把一张已经到手的专辑封面换成程序图标（换掉就再也回不来了）。</para>
@@ -845,17 +862,36 @@ namespace NotchPeninsula
                 && string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal))
                 return;
 
-            // 视频模式的唯一来源 / 音乐模式的兜底：该程序自己的应用图标
-            SetAppIcon();
-
             // 会话自带封面的两类来源（其余情况保持既有链路：网络搜索封面 → 应用图标）：
             //   ① 音乐模式 + SmtcCoverPreferredIds 里的播放器 —— 图就是当前这首歌的专辑封面；
             //   ② 浏览器 + 哔哩哔哩 —— **视频模式也走**：SMTC 给的是视频封面，比浏览器图标有信息量。
             bool preferSessionCover = _isMusicMode
                 ? IsSmtcCoverPreferredAppId(_currentAppId)
                 : (_isBrowserSession && _isBilibiliBrowserSession);
-            if (allowSessionCover && preferSessionCover)
-                _ = FetchSmtcCoverAsync(_trackTitle, _trackAppId);
+
+            // 应用图标只是**两条来源都还没有**时的占位：本会话不做「会话封面优先」，
+            // 或者它还没有过任何外部封面。
+            //
+            // ⚠️ 会话封面优先的会话里，已就位的外部封面不会被应用图标顶掉：站内切集 / 切下一条时，
+            //    会话未必重新给出缩略图，一旦换成浏览器图标就再也回不来了（新封面根本不会到达）。
+            //    此时保持上一张、继续重试：拿到新封面就换上，拿不到也只是短暂停在旧图上，
+            //    不会退化成「只剩一个图标」。
+            if (!preferSessionCover || _externalCoverTitle.Length == 0) SetAppIcon();
+
+            if (!allowSessionCover || !preferSessionCover) return;
+
+            // 节流**按曲目**判：换歌是新事件，必须立刻能再试一次 —— 只看时间的话，连续切歌时
+            // 后一首会被前一首的计时挡住，于是它连读都不读，封面直接停在上一首。
+            var now = DateTime.UtcNow;
+            bool sameTrack = string.Equals(_sessionCoverAttemptTitle, _trackTitle, StringComparison.Ordinal)
+                             && string.Equals(_sessionCoverAttemptAppId, _trackAppId, StringComparison.Ordinal);
+            if (sameTrack && now - _lastSessionCoverAttempt < SessionCoverRetryInterval) return;
+
+            _sessionCoverAttemptTitle = _trackTitle;
+            _sessionCoverAttemptAppId = _trackAppId;
+            _lastSessionCoverAttempt = now;
+
+            _ = FetchSmtcCoverAsync(_trackTitle, _trackAppId);
         }
 
         private static readonly string[] BrowserVideoSuffixes =
@@ -1370,37 +1406,45 @@ namespace NotchPeninsula
         /// 这些客户端会把自己正在播放的那张封面通过 SMTC 一并给出，比按歌名 + 歌手去曲库搜更准。
         ///
         /// <para>拿不到（会话没给缩略图 / 流读不出来 / 解码失败）就**什么都不做** ——
-        /// 由随后的 <see cref="FetchCoverAsync"/> 按原链路接管，所以失败不会让封面比改动前更差。</para>
+        /// 由随后的 <see cref="FetchCoverAsync"/> 按原链路接管，所以读取失败时封面仍由既有链路提供。</para>
         ///
         /// <para>成功时同样记入 <see cref="_externalCoverTitle"/> / <see cref="_externalCoverAppId"/>，
         /// 于是这首歌不会再发网络封面请求。</para>
         ///
-        /// <para><b>节流</b>：兜底重试（渲染循环，60FPS）也会走到这里，而每次尝试都是一次 COM 调用，
-        /// 所以两次尝试之间至少间隔 <see cref="SessionCoverRetryInterval"/>。</para>
+        /// <para><b>先等一小段再读</b>（<see cref="SessionCoverSettleDelay"/>）：属性变化的通知到达时，
+        /// 会话的缩略图往往还是**上一首的**（网易云音乐 / 酷狗实测如此，QQ 音乐同批更新所以没这个问题）。
+        /// 当场读会把上一首的封面记到新曲目头上，而记账一旦命中就再也不会纠正。</para>
+        ///
+        /// <para>成功时同样记入 <see cref="_externalCoverTitle"/> / <see cref="_externalCoverAppId"/>，
+        /// 于是这首歌不会再发网络封面请求。发起频率由调用方（<see cref="UpdateCover"/>）按曲目节流。</para>
         /// </summary>
         private async Task FetchSmtcCoverAsync(string title, string appId)
         {
-            var now = DateTime.UtcNow;
-            if (now - _lastSessionCoverAttempt < SessionCoverRetryInterval) return;
-            _lastSessionCoverAttempt = now;
+            // 等缩略图跟上本曲目 —— 原因见 SessionCoverSettleDelay 的注释
+            await Task.Delay(SessionCoverSettleDelay);
+
+            // 等待期间换了歌：直接放弃，新曲目会自己再触发一次
+            if (!IsSessionCoverOwner(title, appId)) return;
 
             var cover = await ReadSessionCoverAsync();
             if (cover == null) return;
 
-            // 读取期间可能已经换歌：当场丢掉，别把上一首的封面贴到新歌上。
-            // 判据与封面记账同源（_trackTitle / _trackAppId）—— 视频模式（浏览器放视频）没有歌词槽位，
-            // 用 IsLyricOwner 会把封面整批丢掉。
-            if (!string.Equals(_trackTitle, title, StringComparison.Ordinal)
-                || !string.Equals(_trackAppId, appId, StringComparison.Ordinal))
-            {
-                cover.Dispose();
-                return;
-            }
+            // 读流期间又换了歌：当场丢掉，别把上一首的封面贴到新歌上
+            if (!IsSessionCoverOwner(title, appId)) { cover.Dispose(); return; }
 
             _externalCoverTitle = title;
             _externalCoverAppId = appId;
             SetThumbnail(cover);
         }
+
+        /// <summary>
+        /// 这个「曲目 + 会话」是不是仍然值得为会话封面记账。判据与封面记账同源
+        /// （<see cref="_trackTitle"/> / <see cref="_trackAppId"/>）—— **不能**用 <see cref="IsLyricOwner"/>：
+        /// 视频模式（浏览器放视频）没有歌词槽位，那会让封面被整批丢掉。
+        /// </summary>
+        private bool IsSessionCoverOwner(string title, string appId)
+            => string.Equals(_trackTitle, title, StringComparison.Ordinal)
+               && string.Equals(_trackAppId, appId, StringComparison.Ordinal);
 
         /// <summary>
         /// 读当前会话的 SMTC 缩略图并解码。**没有缩略图 / 解码失败一律返回 null**，绝不抛给调用方 ——
@@ -1411,7 +1455,12 @@ namespace NotchPeninsula
             try
             {
                 var props = await _currentSession!.TryGetMediaPropertiesAsync();
-                if (props?.Thumbnail is not { } thumbRef) return null;
+                if (props?.Thumbnail is not { } thumbRef)
+                {
+                    // 有些客户端只在首次加载时给缩略图，站内换内容后就不再提供 —— 记一笔便于排查
+                    Logger.Debug("会话自带封面：本会话当前未提供缩略图");
+                    return null;
+                }
 
                 using var stream = await thumbRef.OpenReadAsync();
                 using var buffer = new MemoryStream();
@@ -2383,8 +2432,14 @@ namespace NotchPeninsula
             // 播放期间通常一次都不会再来。结果就是：播放时一直没有图标，一按暂停（播放状态变化
             // 触发一次属性刷新）反而冒出来了 —— 用户实测到的正是这个现象。
             // 所以借渲染循环这个稳定时钟补一次重试；真正的解析由 AppIconProvider 自带退避节流，
-            // 会话自带封面的读取由 SessionCoverRetryInterval 节流，未命中时这里只是一次字段比较。
-            if (Thumbnail == null) UpdateCover(true);
+            // 会话自带封面的读取由 UpdateCover 按曲目节流，未命中时这里只是几次字符串比较。
+            //
+            // 触发条件除了「没有任何封面」，还有「封面还挂在别的曲目上」—— 换歌到新封面到位之间
+            // 就是这种过渡态（会话自带封面优先的平台上必然出现），此时也需要继续把接力棒往下传。
+            if (Thumbnail == null
+                || !string.Equals(_externalCoverTitle, _trackTitle, StringComparison.Ordinal)
+                || !string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal))
+                UpdateCover(true);
 
             // 被切走的那首歌若还在后台播放，继续替它推算进度（内部按 1 秒节流，无挂起时立即返回）
             AdvanceSuspendedTimeline(now);
