@@ -646,6 +646,18 @@ namespace NotchPeninsula
         public string ProcessName { get; set; } = "";
 
         /// <summary>
+        /// 这条通知在岛上停留多久。默认 4 秒（系统通知走默认值）；
+        /// 插件提醒可用 ReminderData.Duration 覆盖（宿主已夹到 1~60 秒）。
+        /// </summary>
+        public TimeSpan Duration { get; set; } = TimeSpan.FromSeconds(4);
+
+        /// <summary>
+        /// 用户点击这条通知时的回调（只有插件提醒会带；系统通知为 null，点击行为与以前一致）。
+        /// null 时点通知什么都不做。宿主在 WM_LBUTTONDOWN 里调用，异常会被捕获记日志。
+        /// </summary>
+        public Action? OnClick { get; set; }
+
+        /// <summary>
         /// 把多行文本压成单行：控制字符（含 \r \n \t）与空白一律当分隔符，连续多个只留一个空格，
         /// 首尾空白直接丢掉。emoji 的代理对不受影响（逐 char 追加，顺序不变）。
         /// </summary>

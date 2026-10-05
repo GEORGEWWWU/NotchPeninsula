@@ -100,13 +100,59 @@ public interface IWidget
     /// <summary>右键回调。主机默认行为：若 DetailPage 非空则展开详情。</summary>
     void OnRightClick();
 
+    /// <summary>
+    /// 是否把岛内**右键单击**透传给本组件。默认 false —— 右键仍然是主机的默认行为
+    /// （有详情页就展开它，没有就打开设置窗口）。
+    ///
+    /// 置 true 后，命中本组件的右键**不再触发展开详情页 / 打开设置窗口**，只回调 OnRightClick()，
+    /// 这次右键完全由组件消费（自己弹菜单 / 自己调 IPluginHost.OpenDetailPage）。
+    /// ⚠️ 开了它就等于放弃了「右键展开详情页」这个默认入口，插件得自己给用户另留一条路（左键单击等）。
+    ///
+    /// 与 AcceptsDoubleClick 的分工：
+    ///   · 只开双击、不开单击 —— 主机用「第一下挂起、等一个系统双击窗口」的办法保住单击的默认行为
+    ///     （代价：单击响应晚约 500ms）；
+    ///   · 两个都开 —— 不需要等：单击直接回调 OnRightClick()，第二下到了再补一次 OnRightDoubleClick()。
+    ///
+    /// 带默认实现是刻意的：加抽象成员会让已编译的老插件加载失败。
+    /// </summary>
+    bool AcceptsRightClick => false;
+
+    /// <summary>
+    /// 是否注册接收「双击」通知（左键 / 右键各一条回调）。默认 false —— 双击完全走主机原有行为
+    /// （左键：媒体封面跳转 / 待机切换；右键：展开本组件详情页），与老插件的行为一模一样。
+    ///
+    /// 置 true 后，主机在**真的检测到双击**时才回调 OnLeftDoubleClick / OnRightDoubleClick；
+    /// 单击不会触发这两个回调，主机也不会「延迟单击等双击」——
+    /// 所以双击的第一下仍会照常走一次普通交互（左键：OnLeftClick；右键见下），插件要自己保证幂等。
+    ///
+    /// 右键的特殊处理：命中本组件的第一下右键**不会立即展开详情页**，而是先等一个系统双击判定窗口
+    /// （GetDoubleClickTime，默认 500ms）—— 窗口内来了第二下就回调插件（不展开详情页）；
+    /// 窗口过了还没来，才执行原来的「展开详情页 / 打开设置窗口」。
+    /// 也就是说：开了这个开关，右键单击的响应会晚约 500ms（换双击能被识别），单击仍然是原来的行为。
+    ///
+    /// 带默认实现是刻意的：组件由插件实现，加抽象成员会让已编译的老插件加载失败。
+    /// </summary>
+    bool AcceptsDoubleClick => false;
+
+    /// <summary>
+    /// 左键双击（仅在 <see cref="AcceptsDoubleClick"/> 为 true 时调用）。
+    /// x/y 是相对本组件矩形左上角的逻辑坐标，与 OnLeftClick 同一套口径。
+    /// </summary>
+    void OnLeftDoubleClick(float x, float y) { }
+
+    /// <summary>
+    /// 右键双击（仅在 <see cref="AcceptsDoubleClick"/> 为 true 时调用）。坐标口径同 OnLeftDoubleClick。
+    /// 这条只在「第一下右键之后又来了第二下」时触发；单击走的是主机原有行为，不会到这里。
+    /// </summary>
+    void OnRightDoubleClick(float x, float y) { }
+
     void OnActivate(IPluginHost host);
     void OnDeactivate();
 }
 
 /// <summary>
 /// 详情页（右键组件展开后显示）。
-/// 鼠标与拖放两组成员用默认接口实现（DIM）追加，是刻意的：详情页由插件实现，
+/// 鼠标、双击 / 右键透传、拖放三组成员用默认接口实现（DIM）追加，是刻意的：详情页由插件实现，
 /// 加抽象成员会让已编译的老插件在加载时抛 TypeLoadException。
 ///
 /// 鼠标事件与 HitTest / OnAction 的关系：后者是宿主代为命中检测、一次点击只有一个回调；
@@ -138,6 +184,63 @@ public interface IDetailPage
     /// OnMouseUp 不会触发，只有这条会到。
     /// </summary>
     void OnMouseLeave() { }
+
+    // ---- 双击 / 右键透传 ----
+    // 详情页展开时，岛内右键是主机的「关闭面板」手势（立即折叠）。插件想在面板里做右键交互，
+    // 就没法在这个手势里拿到坐标 —— 这一组就是给它留的口子，两档互相独立：
+    //   · AcceptsRightClick —— 右键**单击**也交回插件（面板不再折叠，最直接，也没有等待）；
+    //   · AcceptsDoubleClick —— 只把「双击」交回插件，单击照旧折叠（主机挂一个双击窗口来分辨）。
+
+    /// <summary>
+    /// 是否把岛内**右键单击**透传给本详情页。默认 false —— 右键单击立即折叠面板，与老插件行为完全一致。
+    ///
+    /// 置 true 后，详情页展开期间的岛内右键**不再折叠面板**：
+    ///   第一下 → 回调 <see cref="OnRightClick(float,float)"/>；
+    ///   第二下（双击）→ 在同时声明了 <see cref="AcceptsDoubleClick"/> 时再补一次 OnRightDoubleClick。
+    /// 这一档没有等待：单击当场就通知，双击只是「再来一次」。
+    ///
+    /// ⚠️ 它把宿主「右键关面板」的手势整个让给了你，所以务必自己留一个看得见的关闭出口
+    /// （面板里的 × 按钮，或自己调 IPluginHost.CloseDetailPage()）。
+    /// 否则面板只剩「鼠标移开自动收起」这一条路（若又设了 AutoCollapseDelay 为负数，那就彻底关不掉了）。
+    ///
+    /// 带默认实现是刻意的：详情页由插件实现，加抽象成员会让已编译的老插件加载失败。
+    /// </summary>
+    bool AcceptsRightClick => false;
+
+    /// <summary>
+    /// 右键单击（仅在 <see cref="AcceptsRightClick"/> 为 true 时调用）。
+    /// x/y 为详情页内的逻辑坐标，与 OnMouseDown / HitTest 同一套口径。
+    /// </summary>
+    void OnRightClick(float x, float y) { }
+
+    /// <summary>
+    /// 是否把岛内右键**双击**透传给本详情页。默认 false —— 右键单击立即折叠面板（老行为）。
+    ///
+    /// 置 true 后，右键第一下**不立即折叠**，而是先等一个系统双击判定窗口
+    /// （GetDoubleClickTime，默认 500ms）：
+    ///   · 窗口内来了第二下 → 回调 <see cref="OnRightDoubleClick"/>，**面板保持展开不折叠**；
+    ///   · 窗口过了还没来 → 按原行为折叠面板。
+    /// 即「只有检测到双击才通知插件」：单击不会触发任何回调，只是折叠晚约 500ms。
+    ///
+    /// 如果同时开了 <see cref="AcceptsRightClick"/>，这一档的等待就不需要了 —— 单击已经给了插件，
+    /// 双击只是随后再补一次；两者都开时主机走「不等待」那条路。
+    ///
+    /// 带默认实现是刻意的：详情页由插件实现，加抽象成员会让已编译的老插件加载失败。
+    /// </summary>
+    bool AcceptsDoubleClick => false;
+
+    /// <summary>
+    /// 左键双击（仅在 <see cref="AcceptsDoubleClick"/> 为 true 时调用）。
+    /// x/y 为详情页内的逻辑坐标，与 OnMouseDown / HitTest 同一套口径。
+    /// ⚠️ 双击的第一下仍会照常走一次 HitTest / OnAction 与 OnMouseDown / OnMouseUp，插件自己保证幂等。
+    /// </summary>
+    void OnLeftDoubleClick(float x, float y) { }
+
+    /// <summary>
+    /// 右键双击（仅在 <see cref="AcceptsDoubleClick"/> 为 true 时调用）—— 这就是「右键透传」的落地回调。
+    /// x/y 为详情页内的逻辑坐标。**只有真的检测到双击才会到**，单击不触发（单击只会折叠面板）。
+    /// </summary>
+    void OnRightDoubleClick(float x, float y) { }
 
     // ---- 文件拖放（岛体上的详情页也能拖入 / 拖出）----
 

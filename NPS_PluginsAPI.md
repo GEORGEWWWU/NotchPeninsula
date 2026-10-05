@@ -13,6 +13,7 @@
 - **组件**（Widget）：显示在灵动岛主区域里的一段内容，可点击。
 - **详情页**（DetailPage）：右键某个组件后展开的更详细内容页。它有完整的鼠标事件（按下 / 移动 / 抬起），也能接收文件的拖入与拖出。
   组件把 `AcceptsFileDropWhenCollapsed` 声明为 `true` 之后，**把文件直接拖到收起态的组件图标上也会自动展开它**（不用先点开）。
+  想在面板里做右键菜单或「双击打开」，就把 `AcceptsDoubleClick` 声明为 `true` —— 右键双击与左右键双击会交回给你的插件（见第八节第 4 条）。
 - **刷新定时器**（ScheduleRefresh）：程序按指定时间间隔在后台调用你的代码，比如每 30 秒更新一次数据。
 - **提醒**（PostReminder）：弹出灵动岛顶部那种几秒钟的提示消息。
 - **自定义窗口**（CreateWindow）：你自己独立于灵动岛的一个可绘制、可被鼠标和键盘操作的小窗口。它还支持**文件拖放**——把资源管理器里的文件拖进来（拖动过程中有悬停回调，可以高亮提示）、把窗口里的条目拖出去。
@@ -297,7 +298,7 @@ dotnet build HelloPlugin.csproj -c Debug
 
 ## 五、组件（IWidget）详解——把内容画到灵动岛上
 
-这是最常见也最核心的部分。组件负责一段显示内容，一共要实现五个方法，外加两个生命周期方法，每帧和每次点击都会用到它们。逐个解释：
+这是最常见也最核心的部分。组件负责一段显示内容，必需的是下面这几个方法，外加两个生命周期方法，每帧和每次点击都会用到它们。逐个解释：
 
 - **`DisplayName` / `DetailPage`**：显示名用于把组件区分开来；`DetailPage` 指向这个组件的详情页，没有就返回 `null`（右键点击程序会默认展开详情页，没有就不展开）。
 - **`AcceptsFileDropWhenCollapsed`**（默认 `false`）：要不要让「把文件拖到收起态的组件图标上」自动展开详情页并接收这次拖放。**组件本身就是文件入口**的插件应该打开它（文件中转站就是这么做的：用户从资源管理器把文件拖到岛上那个小图标上，面板自动打开、松手即加入，不必先点开面板）。前提是组件确实提供了 `DetailPage`。详见第八节。
@@ -306,7 +307,8 @@ dotnet build HelloPlugin.csproj -c Debug
 - **`Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`**：每一帧都调用，把你想要的内容画出来。`rect` 是程序分给你的一块区域，含上下左右（`rect.MidY` 是垂直中线）；`frame` 是这一帧的上下文，见下一条。
 - **`WidgetFrame`（渲染帧）**：包含 `Theme`（当前主题色，如 `frame.Theme.TextColor` 是文字颜色）、`Alpha`（透明度，0–255，跟随程序的淡入和叠化）、`TextOffsetY`（文字垂直偏移，用来和整体布局对齐）。绘制时用 `颜色.WithAlpha(frame.Alpha)` 就能让你的内容配合程序动画淡入淡出，看起来浑然一体。
 - **`HitTest(...)` / `OnLeftClick` / `OnRightClick`**：鼠标交互三步。先 `HitTest` 判断点没点中，点中了返回一个动作名（随便起，比如 `"toggle"`）；之后程序调用 `OnLeftClick` 并把动作名交给你。`WidgetHit.None` 表示没点中；`new WidgetHit("toggle")` 表示点中并携带动作名。
-- **`OnActivate(IPluginHost host)` / `OnDeactivate()`**：组件被启用和停止时各调用一次。`OnActivate` 是你读回持久化设置的好时机。
+- **`AcceptsDoubleClick`（默认 `false`）+ `OnLeftDoubleClick` / `OnRightDoubleClick`**：要不要接收**双击**。默认关，双击完全走程序原有行为（左键留给媒体封面跳转 / 待机切换，右键就是展开详情页）；置 `true` 后，程序在**真的检测到双击**时才回调你（单击不回调，程序也不做「延迟单击等双击」的排队）。右键那一档程序会等一个系统双击判定窗口（约 500ms）—— 细节和代价见第八节。
+- **`OnActivate(IPluginHost host)` / `OnDeactivate()`**：组件被启用和停止时各调用一次（2026-10-05 起宿主真的会调了，之前只有声明没有调用点）。`OnActivate` 是你读回持久化设置、拿到宿主引用做初始化（包括按当前字体算一次宽度）的好时机；`OnDeactivate` 是你归还自己持有的 native 资源（画笔等）的机会，**前提是你真的想主动释放**——留 `SKPaint` 给终结器也是安全的。详见第十节「生命周期」那条。
 
 绘制所用的 `skiaSharp` 画笔（`SKPaint`）有一个非常重要的约定：**在 `Draw` 方法里临时创建、画完就释放，绝不要把它们缓存成字段在多个线程之间复用**。原因见文末“踩坑”部分，这是你写插件必须遵守的安全规则。
 
@@ -419,7 +421,7 @@ private void OnFontChanged() => _host?.InvalidateWidgetLayout();   // 回调可�
 
 **定时刷新（ScheduleRefresh）**：`host.ScheduleRefresh(interval, 回调)` 让程序每隔一段时间在后台线程调用你的回调（最小间隔 100 毫秒）。回调里更新你自己的数据即可，渲染线程会自动读到最新值，无需手动触发重绘。它返回一个 `IDisposable`，`Dispose` 就停止刷新。适合做“每 5 分钟拉一次课表”“每 30 秒轮询一次状态”这类事情。注意回调在后台线程运行，更新数据时要保证渲染线程的安全读取（用 `volatile`、`Interlocked` 或 `lock`）。示例如第五节和示例代码里的 `_seconds`。
 
-**提醒（PostReminder）**：`host.PostReminder(new ReminderData { Title = ..., Body = ..., Duration = ... })` 弹出一条几秒钟的灵动岛顶部提示。`ReminderData` 里 `IconPath` 可以配图标（可选），`OnClick` 可以配点击后的回调（可选）。适合做“数据更新了”“事件已提醒”这类反馈。
+**提醒（PostReminder）**：`host.PostReminder(new ReminderData { Title = ..., Body = ..., Duration = ... })` 弹出一条灵动岛顶部提示，**默认停留 4 秒**（`Duration` 可覆盖，宿主会夹到 1~60 秒；传 0 / 负数退回默认 4 秒）。`ReminderData` 里 `IconPath` 可以配图标（可选），`OnClick` 可以配**点击这条提醒时的回调**（可选）—— 宿主在用户点中通知时调用它，会先把通知收起再回调，你可以在里面弹详情页、再发一条提醒或者干别的；回调里的异常由宿主捕获记日志，不会影响你的插件。适合做“数据更新了”“事件已提醒，点一下看详情”这类反馈。
 
 > `IconPath` 虽然叫 Path，实际接受四种写法，程序会按前缀自动识别：本地文件路径（`C:/icons/a.png`）、图片链接（`https://...`，下载后缓存）、内联图（`data:image/png;base64,...`）、内置别名（`"qq"` / `"windows"`）。
 > 想让某个 App 名也能当别名用，把 `wechat-icon.png` 这样的文件丢进程序目录的 `data/image/` 即可（`<别名>-icon.*` 或 `<别名>-logo.*`）。
@@ -536,9 +538,26 @@ window.SetMouse(
 
    这样动画期间内容随容器一起放大，展开完成后 `scale = 1`，与设计尺寸 1:1。
 
+4. **（可选）在面板里吃右键 / 双击**：详情页上有三档默认关闭的可选能力，互相独立，不开就跟老插件一模一样。
+
+   - **右键单击透传**（`bool AcceptsRightClick => true`）：详情页展开时，岛内右键本来是程序的「关闭面板」手势（**立即**折叠），插件在这个手势里拿不到任何坐标。声明之后，面板**不再折叠** —— 第一下右键当场回调 `OnRightClick(x, y)`；第二下（双击）在同时开了下面那档时再补一次 `OnRightDoubleClick(x, y)`。
+     这一档**没有等待**：单击立刻通知，双击只是「再来一次」。
+     ⚠️ 它把「右键关面板」的手势整个让给了你，所以**务必自己留一个看得见的关闭出口**（面板里的 × 按钮，或自己调 `CloseDetailPage()`），否则面板只剩「鼠标移开自动收起」这一条路 —— 若 `AutoCollapseDelay` 又设成负数，那就彻底关不掉了。
+   - **右键双击透传**（`bool AcceptsDoubleClick => true`，只开它不开上面那档时）：第一下右键**不立即折叠**，而是先等一个系统双击判定窗口（`GetDoubleClickTime`，默认 500ms）：
+       · 窗口内来了第二下 → 回调 `OnRightDoubleClick(x, y)`，**面板保持展开不折叠**；
+       · 窗口过了还没来 → 按原行为折叠面板。
+     也就是「**只有检测到双击才通知插件**」—— 单击不会触发任何回调，只是折叠晚约一个双击窗口。这一档保住了「右键单击关面板」这个逃生出口，代价是关面板的手感慢半拍。**两档都开时走的是上面那条（不等待）。**
+   - **左键双击**（同一个 `AcceptsDoubleClick` 开关）：左键双击时回调 `OnLeftDoubleClick(x, y)`。
+     ⚠️ 双击的第一下**仍会照常走一次单击**（`HitTest` / `OnAction` 与 `OnMouseDown` / `OnMouseUp` 都会来一遍），程序不做「延迟单击等双击」的排队 —— 插件要自己保证连点两次是幂等的（例如「打开这一项」这类动作，第二下重复执行也不会出错）。
+
+   三个回调的 (x, y) 都是详情页内的逻辑坐标，和 `HitTest` / `OnMouseDown` 完全同一套口径。
+   组件（收起态）上也有对应的 `AcceptsRightClick` / `AcceptsDoubleClick` / `OnLeftDoubleClick` / `OnRightDoubleClick`，语义一致；
+   区别只是组件那层的右键默认行为是「展开详情页 / 打开设置窗口」，而且组件的右键回调沿用原签名 `OnRightClick()`（不带坐标）。
+
 交互上还有几条约定，知道就行，不用你写代码：
 
 - **右键展开 / 收起**：右键组件展开详情页；详情页展开时再在岛内右键一次就收起（不会再弹设置窗口）。
+  （插件可以声明 `AcceptsDoubleClick` 把「右键双击」要回去，见上面第 4 条 —— 那时单击仍然收起，只是晚一个双击窗口。）
   注意岛内的右键是**分层消费**的，顺序为：收起详情页 → 广播给命中的组件 → 展开媒体面板 → 打开设置窗口。
   **原生媒体控制器区域（标题 / 歌词 / 频谱 / 播放按钮 / 空白）平时不消费右键** —— 那里的右键一律打开设置窗口
   （并按区域直达页签：媒体控制器 → 「媒体设置」，时间 / 日期、CPU / RAM → 「显示设置」），
@@ -603,6 +622,16 @@ window.SetMouse(
 
 14. **详情页拖出要用 `host.StartFileDrag`，而且要在 `OnMouseMove` 里按阈值发起。** 详情页画在灵动岛上、没有自己的窗口，所以 `IPluginWindow.StartDragFiles` 那套用不了，得走 `IPluginHost.StartFileDrag`。发起时机同理：放在 `OnMouseDown` 里会让用户每一次普通单击都进一次 OLE 拖放循环（观感是「点一下卡一下」）。
 
+15. **双击不是「单击的替代」，而是「单击之上再补一次」。** 宿主不做「延迟单击等双击」的排队（那会给每一次普通点击都加半个双击窗口的迟滞），
+    所以声明 `AcceptsDoubleClick` 之后，一次左键双击 = 先来一次普通单击（`OnLeftClick`，详情页则是 `HitTest` / `OnAction` + `OnMouseDown` / `OnMouseUp`）+ 再来一次双击回调。
+    「打开这一项」「提交」这类动作要么做成幂等，要么在双击回调里自己判断「是不是同一处的第二下」。
+    （右键双击没有这个问题：第一下被宿主挂起等窗口，第二下没来才会执行原来的右键行为。）
+
+16. **`OnDeactivate` 与 `Dispose` 的分工。** 宿主卸载插件时两个都会调：先 `插件.Dispose()`（一定会被调到），摘登记时再对每个组件调 `OnDeactivate()`。
+    想释放画笔，放哪边都行 —— 宿主在调 `OnDeactivate` 之前已经断掉了渲染侧对组件的引用（`InvalidatePluginSnapshot`），
+    不会出现「你刚 Dispose、宿主又画一帧」的 native 崩溃（这正是 rayburst 之前担心的那个窗口）。
+    两边都释放时记得写成幂等的（`try { x?.Dispose(); } catch { }`），因为卸载路径上它们会先后跑到。
+
 看完这些、再对照示例代码动手写一遍，你就能做出自己的灵动岛插件了。遇到问题可以从“插件中心”看每个插件的加载状态和错误信息，多数加载失败（缺依赖、框架不符、没实现入口类）都会在那里给出提示。
 
 ---
@@ -651,7 +680,20 @@ window.SetMouse(
   这是宿主侧行为，**对所有插件一视同仁**，插件不用做任何处理、也无法阻止。组合模式（`GetCompositeWidth`）走同一套预算规则，插件的显示与否同样只取决于「能不能完整放下」。
   **插件能做的**：拿 `host.GetPluginRowBudget()` 在取内容时就比一次，主动避开「抽了一条塞不进去的内容 → 被隐藏」这种情况（本插件 OneSaying 就是这么做的：内容太长就换一条短的）。
 - 命中与点击：`WidgetHit HitTest(float x, float y, SKRect rect)` / `void OnLeftClick(string? action, float x, float y)` / `void OnRightClick()`。
-- 生命周期：`void OnActivate(IPluginHost host)` / `void OnDeactivate()`。
+- 右键单击透传（已开放，**带默认实现**）：`bool AcceptsRightClick`（默认 `false`）。
+  置 `true` 后，命中本组件的右键**不再展开详情页 / 打开设置窗口**，只回调 `OnRightClick()` 并消费掉这次右键 ——
+  由插件自己决定做什么（弹菜单、自己调 `OpenDetailPage`）。⚠️ 等于主动放弃「右键展开详情页」这个默认入口。
+- 双击（已开放，**带默认实现**）：`bool AcceptsDoubleClick`（默认 `false`）+ `void OnLeftDoubleClick(float x, float y)` / `void OnRightDoubleClick(float x, float y)`。
+  置 `true` 后，宿主在**真的检测到双击**时才回调（单击不回调，宿主也不做「延迟单击等双击」的排队）。
+  在**没开** `AcceptsRightClick` 的前提下，组件上的右键双击会先等一个系统双击判定窗口（`GetDoubleClickTime`）再决定走到哪边 ——
+  窗口内有第二下就回调插件、一次都不执行默认行为；窗口过了才执行原来的「展开详情页 / 打开设置窗口」。
+  所以只开双击时，右键单击的响应会晚约 500ms（单击行为本身不变）；两档都开则不需要等。详见第八节第 4 条。
+- 生命周期：`void OnActivate(IPluginHost host)` / `void OnDeactivate()`，**均已接线**（2026-10-05 补上，此前只有接口声明、零调用点）：
+  组件注册进宿主时调一次 `OnActivate`（读回持久化设置、拿宿主引用做初始化的好时机），
+  插件卸载摘登记时调一次 `OnDeactivate`。
+  ⚠️ 宿主保证「**先**切断渲染侧对组件的引用（`InvalidatePluginSnapshot`），**再**回调 `OnDeactivate`」——
+  所以你可以放心在里面 `Dispose` 自己的画笔。反过来，如果你的插件在 `Dispose()` 里已经放过一遍，
+  `OnDeactivate` 里那几行必须是幂等的（`try { x?.Dispose(); } catch { }` 这种写法就够）。
 
 **副显示组件 `ISecondaryWidget`**（副显示区的只读信息）（暂未开放）
 - 只有 `Id` 和 `void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`。当前注册后不会在任何地方真正绘制。
@@ -671,6 +713,15 @@ window.SetMouse(
   **负数**（惯例写 `Timeout.InfiniteTimeSpan`）= **全局屏蔽自动收起**：鼠标离开不收、**点到岛外也不收**，面板一直开着。
   **需要用户离开面板去别处取东西**的详情页应当调长它 —— 最典型就是拖入文件：用户得把鼠标移到资源管理器挑文件，900ms 根本来不及，鼠标刚移开面板就收了、拖放目标当场消失。要翻目录找一阵子的话直接用「不收起」更省事。
   「不收起」时的关闭入口只剩两个：**岛内右键**（用户明确冲着面板来的手势，不受这一档影响）和插件自己调 `CloseDetailPage()`。
+- 右键 / 双击透传（已开放，**带默认实现**，两档独立）：
+  · `bool AcceptsRightClick`（默认 `false`）+ `void OnRightClick(float x, float y)` —— 右键**单击**也交回插件，面板不再折叠，当场通知、不需要等；
+    打开它等于放弃宿主的「右键关面板」手势，务必自己留关闭出口（面板里的 ×，或调 `CloseDetailPage()`）。
+  · `bool AcceptsDoubleClick`（默认 `false`）+ `void OnLeftDoubleClick(float x, float y)` / `void OnRightDoubleClick(float x, float y)` —— 左右键双击回调。
+    只开这一档（没开上一档）时，右键第一下会先等一个系统双击判定窗口（`GetDoubleClickTime`，默认 500ms）：
+    窗口内来了第二下就回调 `OnRightDoubleClick`（面板保持展开），窗口过了才折叠（单击仍然收起，只是晚约 500ms）。
+    两档都开时不需要等 —— 单击当场通知，双击随后再补一次。
+  · ⚠️ 左键双击的第一下仍会照常走一次单击（`HitTest` / `OnAction` 与 `OnMouseDown` / `OnMouseUp`），插件自己保证幂等。
+  坐标口径与 `HitTest` / `OnMouseDown` 完全一致。详见第八节第 4 条。
 - 尺寸由插件决定，宿主只把宽裁剪到 `180 ~ 1000`、高裁剪到 `48 ~ 480`；右键组件展开，鼠标离开岛体（默认约 0.9s 后，或插件通过 `AutoCollapseDelay` 指定的时长）/ 岛内再右键 / 点击岛外都会收起，`OpenDetailPage` / `CloseDetailPage` 也可用。细节见第八节。
 
 **自定义窗口 `IPluginWindow`**（`CreateWindow` 的返回值）
@@ -706,7 +757,7 @@ window.SetMouse(
 
 **命中模型 `WidgetHit`**——`readonly record struct WidgetHit(string? Action)`。`Action` 由组件自己定义（如 `"toggle"` / `"next"`），未命中用 `WidgetHit.None`，`IsHit` 判断是否命中。`OnLeftClick` 收到的动作名就是这里返回的。
 
-**提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标：本地路径 / 图片链接 / `data:image` base64 / 内置别名，见第七节）、`Duration`（时长，默认 4 秒）、`OnClick`（可选点击回调）。
+**提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标：本地路径 / 图片链接 / `data:image` base64 / 内置别名，见第七节）、`Duration`（停留时长，默认 4 秒，宿主夹到 1~60 秒，非正数退回默认值）、`OnClick`（可选：用户点中这条通知时的回调，**已接线** —— 宿主会先收起通知再回调，异常自吞）。
 
 **宿主公共设施（非冻结契约，插件可直接调用）**
 下面这几个是宿主的公共静态成员，**不在** `Plugin/PluginApi.cs` 里，也不属于「冻结的插件 API」。插件引用主程序后可以直接用，官方插件也都在用 —— 但**一律用 `try/catch` 包住并允许永久降级**（宿主将来把它们挪走时，只让对应的小优化失效，插件其余功能照常）。
@@ -715,4 +766,4 @@ window.SetMouse(
 - **`NotchPeninsula.NotchWindow.IsAutoHideEnabled`**（公开静态字段）/ **`IsAutoHideEffective`**（属性）—— 用户有没有开「自动隐藏」（无媒体 / 失焦时整条岛体滑出屏幕）。想知道「我此刻画在岛上的东西用户到底看不看得见」就问它；天气 / 一言用它决定拿到新数据后要不要主动弹详情页。
 - **`NotchPeninsula.MediaController.Instance`**（**可空**单例）—— 宿主当前的媒体状态与操作：`IsActive` / `IsPlaying` / `Title` / `Artist` / `Thumbnail` / `CurrentLyric` / 时间轴（`Duration` / `TimelineElapsed` / `TimelineProgress`），以及 `TogglePlayPause()` / `Next()` / `Previous()` / `OpenCurrentApp()`。nps-media-mixer 靠它读当前会话。⚠️ 它是宿主内部单例，`Instance` 可能为 `null`（尚未初始化）；`Thumbnail`、歌词这类属性会在换歌时被并发替换，读取要短、不要缓存位图、也不要在后台线程长时间持有。
 
-一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick`（右键则展开 `DetailPage`，详情页自己的 `HitTest` / `OnAction` 接管岛内左键）→ 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的是主显示组件、详情页、定时刷新、提醒、设置持久化和自定义窗口（含文件拖放）；副显示组件、设置页这两组接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。
+一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick`（右键则展开 `DetailPage`，详情页自己的 `HitTest` / `OnAction` 接管岛内左键）→ 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的是主显示组件、详情页、双击 / 右键透传、定时刷新、提醒（含 `Duration` / `OnClick`）、设置持久化和自定义窗口（含文件拖放）；副显示组件、设置页这两组接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。

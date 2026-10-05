@@ -27,6 +27,10 @@ namespace NotchPeninsula
         // 双击：只有窗口类带 CS_DBLCLKS 时系统才会派发它（同一位置的第二次按下由它取代普通
         // WM_LBUTTONDOWN）。岛体类已在 NotchWindow 里声明该样式，媒体控制的双击跳转靠它。
         public const int WM_LBUTTONDBLCLK = 0x0203;
+        // 右键双击同理（同一位置第二次按下取代普通 WM_RBUTTONDOWN）。
+        // 岛体用它实现「插件注册接收双击后的右键透传」：插件的详情页想在面板里吃右键，
+        // 就只能等这一条 —— 第一下 RBUTTONDOWN 先挂待定，这一条到了才通知插件（见 NotchWindow）。
+        public const int WM_RBUTTONDBLCLK = 0x0206;
 
         // 窗口类样式：注册时声明「本类窗口要收双击消息」，否则系统永不派发 WM_LBUTTONDBLCLK
         public const uint CS_DBLCLKS = 0x0008;

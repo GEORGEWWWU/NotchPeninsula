@@ -678,7 +678,9 @@ namespace NotchPeninsula
             try { Plugins.PluginDataBridge.PublishNotification(toast); } catch { }
 
             _currentToast = toast;
-            _toastEndTime = DateTime.Now.AddSeconds(4); // 消息展示4秒自动消失
+            // 展示时长：默认 4 秒（ToastData.Duration 的默认值）——
+            // 插件提醒可以用 ReminderData.Duration 覆盖它（宿主已夹到 1~60 秒）。
+            _toastEndTime = DateTime.Now.Add(toast.Duration);
             PlayToastSound();
         }
 
@@ -691,7 +693,7 @@ namespace NotchPeninsula
             if (!IsToastEnabled) return;
 
             _currentToast = toast;
-            _toastEndTime = DateTime.Now.AddSeconds(4);
+            _toastEndTime = DateTime.Now.Add(toast.Duration);   // 同上：插件提醒可自定义展示时长
             clicked_info = false;
             PlayToastSound();
         }
@@ -1004,6 +1006,8 @@ namespace NotchPeninsula
                 // 自动隐藏的「手动展开」刻意不跟，理由也写在 ClosePanelsNow / CollapseAllExpanded 上。
                 // · 到点由下面这行统一结算（每帧一次 DateTime 比较，可忽略）。
                 TickPanelCollapse();
+                // 右键双击待定同理：到期说明用户只按了一下右键 → 补执行原来的单击行为。
+                TickRightDoubleClickPending();
 
                 // 卸载插件时没关掉的窗口在这里逐帧重试（拖放进行中被禁用/重载的那类窗口）。
                 // 没有待办时只是一次 Count 判断，稳态零开销。
@@ -1857,6 +1861,26 @@ namespace NotchPeninsula
                         // 与 WM_LBUTTONDOWN 里 HitWakeButton 的优先级保持一致，不在这里触发跳转。
                         if ((Renderer.PassthroughModeEnabled && !_isPassthroughAwake) || Renderer.FullHideAlpha < 0.99f) break;
 
+                        // 插件双击（左键）：注册接收双击的详情页 / 组件优先拿走这次双击。
+                        // 排在媒体跳转与待机切换之前 —— 插件组件画在岛体插件行、媒体封面在左端，
+                        // 常态不重叠；组合模式下两者可能相邻，这里按「插件优先」定序（那块是插件自己画的，
+                        // 它主动声明要双击，语义比宿主的内置手势更明确）。
+                        // 没声明接收双击的插件一个字节都不受影响：两条分发都会立刻返回 false。
+                        {
+                            float dblTopY = 12f * _currentStyleProgress;
+                            if (_isHovered && _currentToast == null && !isClipboardActive)
+                            {
+                                if (Renderer.HasActiveDetailPage)
+                                {
+                                    if (Renderer.DispatchDetailPageDoubleClick(false, dx, dy - dblTopY)) return (IntPtr)0;
+                                }
+                                else if (Renderer.DispatchPluginDoubleClick(false, dx, dy - dblTopY))
+                                {
+                                    return (IntPtr)0;
+                                }
+                            }
+                        }
+
                         bool launchEnabled = MediaController.IsAppLaunchEnabled;
                         bool onCover = Renderer.HitMediaLaunchZone(dx, dy);
 
@@ -1950,6 +1974,25 @@ namespace NotchPeninsula
                             // 不屏蔽的话岛刚滑回来就会被上面那段兜底轮询收走 —— 「抽一下又回去」。
                             _suppressOutsideCollapse = true;
                             return (IntPtr)0;
+                        }
+
+                        // 通知（Toast）点击：岛体此刻整块被通知占着，把这一下交给通知自己的回调。
+                        // 只有插件提醒会带回调（ReminderData.OnClick）；系统通知的 OnClick 为 null，
+                        // 那种情况原样往下走 —— 点击行为与改动前完全一致（点了等于没点）。
+                        if (_isHovered && _currentToast != null
+                            && cy >= hitTopY && cy <= hitTopY + Renderer.TOAST_HEIGHT)
+                        {
+                            var toastClick = _currentToast.OnClick;
+                            if (toastClick != null)
+                            {
+                                // 先收起这条通知再回调：回调里多半要弹面板 / 再发一条提醒，留着会打架。
+                                // （与超时清理同一套收尾：摘掉当前通知，下一帧岛体自然回到正常内容。）
+                                _currentToast = null;
+                                _toastEndTime = default;
+                                try { toastClick(); }
+                                catch (Exception ex) { Logger.Error("[NotchWindow] 插件提醒点击回调异常", ex); }
+                                return (IntPtr)0;
+                            }
                         }
 
                         // 剪贴板链接面板：命中右侧「打开」按钮 → 默认浏览器打开链接
@@ -2057,82 +2100,239 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
-                        // 岛内右键的优先级：详情页收起 → 插件组件广播 → 媒体面板展开 → 设置窗口。
                         int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
                         int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
-                        float rtY = 12f * _currentStyleProgress;
-
-                        if (_currentToast == null)
-                        {
-                            // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
-                            // 传 true：这是显式要关它，即使插件声明了「鼠标离开也不收起」也照收 ——
-                            // 否则选了那一档的详情页就彻底没有关闭入口了。
-                            if (Renderer.HasActiveDetailPage)
-                            {
-                                ClosePanelsNow(forceCloseDetail: true);
-                                return (IntPtr)0;
-                            }
-
-                            string? detailWidget = Renderer.DispatchPluginRightClick(rx, ry - rtY);
-
-                            // 主机默认行为：命中的组件提供了详情页 → 在灵动岛展开该组件的详情页（消费这次右键，不弹设置窗口）
-                            if (detailWidget != null)
-                            {
-                                ExpandPanel(detailWidget);
-                                return (IntPtr)0;
-                            }
-                        }
-
-                        // 待机模式选「媒体控制」时岛上只剩媒体模块、没有空白：频谱那一带（右半边）的右键
-                        // 固定打开设置窗口的媒体页 —— 待机时不该再把岛展开成完整面板。
-                        // 判定与双击退出的 HitMediaSpectrumZone 同源。
-                        if (_currentToast == null && Renderer.StandbyActive && Renderer.StandbyScene == 3
-                            && Renderer.HitMediaSpectrumZone(rx))
-                        {
-                            ConsoleWindow.ShowTab(2);
-                            return (IntPtr)0;
-                        }
-
-                        // 折叠态媒体区右键 = 展开媒体面板（曾经定下展开入口在右键，
-                        // 后来细化为「入口跟着跳转开关走」）：
-                        // 「开启『双击封面跳转应用』就右键展开，否则正常左键点击展开」。
-                        // 三条判据缺一不可：① 消息提示音接管岛体时不抢（_currentToast == null，与上面同一道闸）；
-                        // ② Renderer.MediaExpandByRightClick —— 展开功能总闸（媒体交互方式）开着且跳转开着；
-                        // 总闸关掉或跳转关掉时都没有右键展开这一说，右键照旧直达设置页签
-                        // （跳转关掉时展开入口在左键单击，见 WM_LBUTTONDOWN）；
-                        // ③ 面板此刻确实还没展开（展开态右键归设置窗口，且面板已展开时再展开一次没有意义）。
-                        // 媒体没激活时绘制侧压根不登记媒体区间（HitMediaZone 恒 false），这里不必另判。
-                        if (_currentToast == null
-                            && Renderer.MediaExpandByRightClick
-                            && !Renderer.IsMediaExpanded
-                            && Renderer.HitMediaZone(rx))
-                        {
-                            ExpandPanel(Plugins.BuiltinWidgets.Media);
-                            // 与原先「左键展开」同一条理由：折叠态岛体可能比 320 的面板更宽，展开瞬间变窄，
-                            // 按下时还在岛内的坐标可能随即落到岛外，被兜底轮询判成「岛外点击」把面板当场收走。
-                            // 右键不产生 WM_LBUTTONUP，所以靠按下时置位、由每帧观察左键状态的那段逻辑清掉 ——
-                            // 右键场景下左键本来就是抬起的，下一帧即自动复位，只覆盖展开那一瞬间。
-                            _suppressOutsideCollapse = true;
-                            Logger.Info($"媒体展开：折叠态右键 ({rx},{ry}) 命中媒体区 → 已展开媒体面板"
-                                + "（跳转开启时的入口；展开态右键仍打开设置）");
-                            return (IntPtr)0;
-                        }
-
-                        // 按「右键落在哪块原生内容上」直达对应设置页签：
-                        // 媒体控制器 → 媒体设置；时间/日期、CPU/RAM → 显示设置；
-                        // 其他（空白待机 / 插件行 / 剪贴板面板…）→ 保持原行为，打开设置窗口的当前页签。
-                        // 命中区由渲染器本帧登记（Renderer.Layout.cs），所以通知 / 详情页接管岛体期间不会误命中。
-                        // 这里不消费媒体区的右键：整个媒体控制器的右键都照旧只打开设置窗口
-                        // （这是既定口径），上面那条分支只是「折叠态 + 跳转开启」这一种情况下的例外；
-                        // 跳转关掉时展开入口在左键单击（见 WM_LBUTTONDOWN），右键同样照旧直达媒体设置。
-                        int targetTab = Renderer.NativeRightClickTab(rx);
-                        if (targetTab >= 0) ConsoleWindow.ShowTab(targetTab);
-                        else ConsoleWindow.Toggle();
+                        HandleIslandRightClick(rx, ry, 12f * _currentStyleProgress, fromDoubleClickTimeout: false);
                     }
                     break;
+
+                case Win32.WM_RBUTTONDBLCLK:
+                    {
+                        // 第二下右键到了 → 把「待定中」的这次双击透传给注册接收双击的插件目标
+                        // （详情页 / 组件），同时撤销第一下本该执行的默认行为（折叠面板 / 展开详情页）。
+                        // 没有待定（目标没注册接收双击、或已经过期）时什么都不做，消息继续落到
+                        // DefWindowProc —— 与改动前完全一致，老插件与原生内容一个都不受影响。
+                        if (_isHovered)
+                        {
+                            int bx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
+                            int by = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                            float bTopY = 12f * _currentStyleProgress;
+                            if (ConsumeRightDoubleClick(bx, by - bTopY)) return (IntPtr)0;
+                            // 第一下已经当「右键单击」透传出去的目标（两档都开）在这里补一次双击 ——
+                            // 它们没挂待定，所以要走另一条路重新命中一次。
+                            if (Renderer.DispatchPassthroughRightDoubleClick(bx, by - bTopY)) return (IntPtr)0;
+                        }
+                        break;
+                    }
             }
 
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+        }
+
+        // ---- 右键双击待定（插件注册接收双击时的「等第二下」）----
+        // 命中「注册接收双击」的组件 / 详情页时，第一下右键**不立即执行**默认行为（展开详情页 / 折叠面板），
+        // 而是先挂一个与系统双击判定窗口同源的截止时间：
+        //   · 截止前收到 WM_RBUTTONDBLCLK → 撤销待定，把双击通知给插件，默认行为一次都不执行；
+        //   · 截止后什么都没来 → 说明用户只想单击 → 重放一次原来的右键处理（fromDoubleClickTimeout = true，
+        //     不会再挂待定），行为与没开这个开关时完全一致，只是晚了约一个双击窗口。
+        //
+        // 为什么必须「等」：Windows 的双击是「第二下按下时」才把消息升格成 WM_RBUTTONDBLCLK 的。
+        // 第一下按下时宿主无从知道后面还有没有第二下 —— 想同时保住「单击折叠」与「双击透传」，
+        // 只能等一个窗口。代价（单击慢半拍）只落在主动声明接收双击的插件身上，其它目标零变化。
+        private static DateTime _rightDblDeadline = DateTime.MinValue;
+        private static bool _rightDblOnDetail;
+        private static string? _rightDblWidgetId;
+        private static float _rightDblLx, _rightDblLy;
+        private static int _rightDblRx, _rightDblRy;
+        private static float _rightDblTopY;
+
+        /// <summary>
+        /// 挂一次右键双击待定。
+        /// 窗口 = 系统双击判定间隔（GetDoubleClickTime，默认 500ms）+ 30ms 余量：必须 ≥ 系统值，
+        /// 否则系统的第二下升格消息还没到、我们这边已经先执行默认行为了。
+        /// </summary>
+        private static void ScheduleRightDoubleClick(bool onDetail, int rx, int ry, float rtY,
+            string? widgetId, float lx, float ly)
+        {
+            _rightDblOnDetail = onDetail;
+            _rightDblWidgetId = widgetId;
+            _rightDblLx = lx;
+            _rightDblLy = ly;
+            _rightDblRx = rx;
+            _rightDblRy = ry;
+            _rightDblTopY = rtY;
+            _rightDblDeadline = DateTime.Now.AddMilliseconds(Win32.GetDoubleClickTime() + 30);
+        }
+
+        private static void ClearRightDoubleClickPending()
+        {
+            _rightDblDeadline = DateTime.MinValue;
+            _rightDblOnDetail = false;
+            _rightDblWidgetId = null;
+        }
+
+        /// <summary>
+        /// 收到 WM_RBUTTONDBLCLK：把待定中的双击透传给注册接收双击的插件目标。
+        /// 返回 true = 这次右键归属插件（宿主不执行折叠 / 展开）；false = 没有待定，按原样放行。
+        /// </summary>
+        private static bool ConsumeRightDoubleClick(float x, float y)
+        {
+            if (_rightDblDeadline == DateTime.MinValue) return false;
+
+            bool onDetail = _rightDblOnDetail;
+            string? widgetId = _rightDblWidgetId;
+            float lx = _rightDblLx, ly = _rightDblLy;
+            ClearRightDoubleClickPending();
+
+            if (onDetail)
+            {
+                Logger.Info($"[插件] 右键双击透传 → 详情页 ({x:F0},{y:F0})");
+                return Renderer.DispatchDetailPageDoubleClick(true, x, y);
+            }
+            if (widgetId != null)
+            {
+                // 组件用待定时算好的局部坐标：待定窗口期间布局可能已变，重新按矩形换算会错位。
+                Logger.Info($"[插件] 右键双击透传 → 组件 {widgetId}");
+                return Renderer.DispatchWidgetDoubleClick(true, widgetId, lx, ly);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 每帧结算右键双击待定。到期 = 用户只按了一下 → 补执行原来的单击行为。
+        /// 与 TickPanelCollapse 同一处调用，稳态下只有一次 DateTime 比较。
+        /// </summary>
+        private static void TickRightDoubleClickPending()
+        {
+            if (_rightDblDeadline == DateTime.MinValue || DateTime.Now < _rightDblDeadline) return;
+
+            bool onDetail = _rightDblOnDetail;
+            string? widgetId = _rightDblWidgetId;
+            int rx = _rightDblRx, ry = _rightDblRy;
+            float rtY = _rightDblTopY;
+            ClearRightDoubleClickPending();
+
+            if (onDetail)
+            {
+                // 详情页上右键单击 = 收起面板（与改动前的语义、以及 forceCloseDetail 的理由完全一致）
+                ClosePanelsNow(forceCloseDetail: true);
+                return;
+            }
+            if (widgetId == null) return;
+
+            // 重放一次完整右键处理：组件有详情页（展开）与没有详情页（打开设置窗口 / 直达页签）
+            // 两条默认路径都能原样走到，不必在这里各写一份。
+            _liveInstance?.HandleIslandRightClick(rx, ry, rtY, fromDoubleClickTimeout: true);
+        }
+
+        /// <summary>
+        /// 岛内右键的统一入口（原来的 WM_RBUTTONDOWN 函数体）。
+        ///
+        /// 优先级：详情页收起 → 插件组件广播 → 媒体面板展开 → 设置窗口。
+        ///
+        /// <paramref name="fromDoubleClickTimeout"/> = true 表示这是「右键双击待定到期后的重放」：
+        /// 跳过所有待定判定，老实执行单击的默认行为，避免再挂一次待定（自己递归自己）。
+        /// </summary>
+        private void HandleIslandRightClick(int rx, int ry, float rtY, bool fromDoubleClickTimeout)
+        {
+            if (_currentToast == null)
+            {
+                // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
+                // 传 true：这是显式要关它，即使插件声明了「鼠标离开也不收起」也照收 ——
+                // 否则选了那一档的详情页就彻底没有关闭入口了。
+                if (Renderer.HasActiveDetailPage)
+                {
+                    // ① 右键单击也透传（IDetailPage.AcceptsRightClick）：当场交给插件，面板不折叠、也不挂待定 ——
+                    //    第二下到了由下面的 WM_RBUTTONDBLCLK 补一次双击。
+                    if (!fromDoubleClickTimeout && Renderer.DetailPageAcceptsRightClick
+                        && Renderer.DispatchDetailPageRightClick(rx, ry - rtY))
+                        return;
+
+                    // ② 只开了双击（AcceptsDoubleClick）：第一下先挂待定 ——
+                    //    双击窗口内来了第二下 → WM_RBUTTONDBLCLK 里通知插件，面板不折叠；
+                    //    窗口过了没来 → 待定到期，重放本方法走下面的折叠。
+                    if (!fromDoubleClickTimeout && Renderer.DetailPageAcceptsDoubleClick)
+                    {
+                        ScheduleRightDoubleClick(onDetail: true, rx, ry, rtY, widgetId: null, lx: 0f, ly: 0f);
+                        return;
+                    }
+
+                    ClosePanelsNow(forceCloseDetail: true);
+                    return;
+                }
+
+                // 命中的组件注册了右键 / 双击能力（IWidget.AcceptsRightClick / AcceptsDoubleClick，两档独立）：
+                if (!fromDoubleClickTimeout
+                    && Renderer.TryHitRightClickWidget(rx, ry - rtY, out var rcWidgetId, out float rcLx, out float rcLy,
+                        out bool rcRight, out bool rcDouble))
+                {
+                    // ① 右键单击也透传：当场交给组件，既不展开详情页、也不打开设置窗口
+                    if (rcRight && Renderer.DispatchWidgetRightClick(rcWidgetId)) return;
+
+                    // ② 只开了双击：第一下挂待定 —— 否则第一下会先把详情页展开，
+                    //    第二下就落在那张新面板上了，插件永远收不到这次双击。
+                    if (rcDouble)
+                    {
+                        ScheduleRightDoubleClick(onDetail: false, rx, ry, rtY, rcWidgetId, rcLx, rcLy);
+                        return;
+                    }
+                }
+
+                string? detailWidget = Renderer.DispatchPluginRightClick(rx, ry - rtY);
+
+                // 主机默认行为：命中的组件提供了详情页 → 在灵动岛展开该组件的详情页（消费这次右键，不弹设置窗口）
+                if (detailWidget != null)
+                {
+                    ExpandPanel(detailWidget);
+                    return;
+                }
+            }
+
+            // 待机模式选「媒体控制」时岛上只剩媒体模块、没有空白：频谱那一带（右半边）的右键
+            // 固定打开设置窗口的媒体页 —— 待机时不该再把岛展开成完整面板。
+            // 判定与双击退出的 HitMediaSpectrumZone 同源。
+            if (_currentToast == null && Renderer.StandbyActive && Renderer.StandbyScene == 3
+                && Renderer.HitMediaSpectrumZone(rx))
+            {
+                ConsoleWindow.ShowTab(2);
+                return;
+            }
+
+            // 折叠态媒体区右键 = 展开媒体面板（曾经定下展开入口在右键，
+            // 后来细化为「入口跟着跳转开关走」）：
+            // 「开启『双击封面跳转应用』就右键展开，否则正常左键点击展开」。
+            // 三条判据缺一不可：① 消息提示音接管岛体时不抢（_currentToast == null，与上面同一道闸）；
+            // ② Renderer.MediaExpandByRightClick —— 展开功能总闸（媒体交互方式）开着且跳转开着；
+            // 总闸关掉或跳转关掉时都没有右键展开这一说，右键照旧直达设置页签
+            // （跳转关掉时展开入口在左键单击，见 WM_LBUTTONDOWN）；
+            // ③ 面板此刻确实还没展开（展开态右键归设置窗口，且面板已展开时再展开一次没有意义）。
+            // 媒体没激活时绘制侧压根不登记媒体区间（HitMediaZone 恒 false），这里不必另判。
+            if (_currentToast == null
+                && Renderer.MediaExpandByRightClick
+                && !Renderer.IsMediaExpanded
+                && Renderer.HitMediaZone(rx))
+            {
+                ExpandPanel(Plugins.BuiltinWidgets.Media);
+                // 与原先「左键展开」同一条理由：折叠态岛体可能比 320 的面板更宽，展开瞬间变窄，
+                // 按下时还在岛内的坐标可能随即落到岛外，被兜底轮询判成「岛外点击」把面板当场收走。
+                // 右键不产生 WM_LBUTTONUP，所以靠按下时置位、由每帧观察左键状态的那段逻辑清掉 ——
+                // 右键场景下左键本来就是抬起的，下一帧即自动复位，只覆盖展开那一瞬间。
+                _suppressOutsideCollapse = true;
+                Logger.Info($"媒体展开：折叠态右键 ({rx},{ry}) 命中媒体区 → 已展开媒体面板"
+                    + "（跳转开启时的入口；展开态右键仍打开设置）");
+                return;
+            }
+
+            // 按「右键落在哪块原生内容上」直达对应设置页签：
+            // 媒体控制器 → 媒体设置；时间/日期、CPU/RAM → 显示设置；
+            // 其他（空白待机 / 插件行 / 剪贴板面板…）→ 保持原行为，打开设置窗口的当前页签。
+            // 命中区由渲染器本帧登记（Renderer.Layout.cs），所以通知 / 详情页接管岛体期间不会误命中。
+            // 这里不消费媒体区的右键：整个媒体控制器的右键都照旧只打开设置窗口
+            // （这是既定口径），上面那条分支只是「折叠态 + 跳转开启」这一种情况下的例外；
+            // 跳转关掉时展开入口在左键单击（见 WM_LBUTTONDOWN），右键同样照旧直达媒体设置。
+            int targetTab = Renderer.NativeRightClickTab(rx);
+            if (targetTab >= 0) ConsoleWindow.ShowTab(targetTab);
+            else ConsoleWindow.Toggle();
         }
 
         /// <summary>

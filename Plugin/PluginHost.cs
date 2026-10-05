@@ -233,6 +233,16 @@ public sealed class PluginHost
             _widgetPluginMap[widget.Id] = pluginId;
             _widgetsVersion++;
         }
+
+        // 「组件被启用」通知（锁外调用）：插件可能在里面读回持久化设置、或申请重测宽度，
+        // 别持着宿主锁进插件代码。
+        //
+        // 这是 2026-10-05 补上的接线 —— 在此之前 IWidget.OnActivate / OnDeactivate 只有接口声明，
+        // 全程序零调用点（文档却写着「启用和停止时各调用一次」），
+        // 于是 nps-media-mixer 只能改成「构造时注入 host」，rayburst 干脆在注释里记下了这个坑。
+        // 补它是安全的：老插件早就实现了这两个方法（以前只是没人调），空实现的就是什么都不做。
+        try { widget.OnActivate(CreateScopedHost(pluginId)); }
+        catch (Exception ex) { Logger.Error($"[PluginHost] 组件 OnActivate 异常: {widget.Id}", ex); }
     }
 
     public string? GetWidgetPluginId(string widgetId)
@@ -336,6 +346,13 @@ public sealed class PluginHost
 
     public void PostReminder(ReminderData reminder)
     {
+        // 展示时长（可选）：夹到 1~60 秒，非正数退回默认 4 秒 ——
+        // 免得插件传 0 / 负数把通知变成一闪而过，或者传个巨大的值把岛体永久占住。
+        var duration = reminder.Duration;
+        if (duration <= TimeSpan.Zero) duration = TimeSpan.FromSeconds(4);
+        else if (duration < TimeSpan.FromSeconds(1)) duration = TimeSpan.FromSeconds(1);
+        else if (duration > TimeSpan.FromSeconds(60)) duration = TimeSpan.FromSeconds(60);
+
         var toast = new ToastData
         {
             AppName = "插件提醒",
@@ -343,7 +360,12 @@ public sealed class PluginHost
             Title = DetachString(reminder.Title),
             Body = DetachString(reminder.Body),
             ProcessName = "PluginReminder",
-            NotificationId = (uint)Environment.TickCount
+            NotificationId = (uint)Environment.TickCount,
+            Duration = duration,
+            // 点击回调（可选）：用户点这条通知时由 NotchWindow 调用（见 WM_LBUTTONDOWN）。
+            // 委托引用插件类型，所以它只在「这条通知还挂着」的几秒内被宿主持有；
+            // 通知一过就被替换 / 清空，不会长期钉住可回收 ALC。
+            OnClick = reminder.OnClick
         };
         // 图标（可选）：本地路径 / 图片链接 / data:image base64 / 内置别名，见 ToastIconProvider。
         // 同样走 DetachString 拷到宿主堆，避免长期持有插件 loader heap 上的字符串。
@@ -423,6 +445,7 @@ public sealed class PluginHost
     {
         List<IDisposable>? refreshes = null;
         List<IPluginWindow>? windows = null;
+        List<IWidget>? removedWidgets = null;
         bool detailInvalidated = false;
         lock (_lock)
         {
@@ -445,6 +468,7 @@ public sealed class PluginHost
             {
                 _widgets.Remove(w);
                 _widgetPluginMap.Remove(w.Id);
+                (removedWidgets ??= new List<IWidget>(1)).Add(w);   // 留到锁外做「组件被停用」回调
             }
             foreach (var w in _secondaryWidgets.Where(w => _secondaryWidgetPluginMap.TryGetValue(w.Id, out var p) && p == pluginId).ToArray())
             {
@@ -469,6 +493,28 @@ public sealed class PluginHost
             // 现在记账保留到窗口真的销毁（WM_DESTROY 里会回调 DetachWindow 摘掉），关不掉的进重试队列。
             if (_windows.TryGetValue(pluginId, out var winList))
                 windows = winList;
+        }
+
+        // 「组件被停用」通知 —— 必须在**切断渲染侧快照之后**才回调。
+        //
+        // 顺序不能反：插件在 OnDeactivate 里释放自己的画笔是常规做法（rayburst 就是把
+        // _barBackgroundPaint / _iconPaint / _textPaints 全 Dispose 掉的那一个），
+        // 而 SKPaint 一旦在「宿主还会再画一帧」的窗口里被释放，渲染线程拿到的就是悬垂 native 指针
+        // —— 直接 0xC0000005，不是能 catch 的异常。
+        // 这里先调 InvalidatePluginSnapshot 把 _pluginWidgets / _pluginDetailPage / 命中区全部置空，
+        // 渲染线程此后一帧都画不到这些组件，回调怎么释放都安全。
+        //
+        // 清的是全量快照（不是只清本插件）：Unload 路径本来紧接着就要调它（见 PluginManager.Unload），
+        // 这里只是提前到回调之前，总次数没变；代价是下一帧渲染线程重建一次快照（一次宽度重测）。
+        if (removedWidgets != null)
+        {
+            Renderer.InvalidatePluginSnapshot();
+
+            foreach (var w in removedWidgets)
+            {
+                try { w.OnDeactivate(); }
+                catch (Exception ex) { Logger.Error($"[PluginHost] 组件 OnDeactivate 异常: {w.Id}", ex); }
+            }
         }
 
         // 定时器在锁外释放，避免 Dispose 回调再次进入宿主造成死锁
