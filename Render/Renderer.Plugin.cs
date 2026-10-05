@@ -299,6 +299,230 @@ namespace NotchPeninsula
             return detailWidgetId;
         }
 
+        // ---- 双击 / 右键透传（插件注册后才回调）----
+        // 两档互相独立，都不注册就完全走宿主原有行为：
+        //   · AcceptsRightClick —— 右键**单击**也交回插件（面板不再折叠 / 组件不再展开详情页）；
+        //   · AcceptsDoubleClick —— 只把「双击」交回插件；若同时没开单击，宿主用「挂一个双击窗口」分辨单双击。
+        // 还有一条铁律：单击不触发双击回调，宿主也不做「延迟单击等双击」的排队
+        //（那会给每一次普通点击都加半个双击窗口的迟滞）。
+
+        /// <summary>
+        /// 命中「注册了右键相关能力」的组件：给出组件 Id、组件内局部坐标，以及它开的是哪两档。
+        ///
+        /// 调用方（NotchWindow）据此决定这次右键怎么走：
+        ///   · AcceptsRightClick → 单击当场交给插件，不展开详情页、不挂待定；
+        ///   · 只开 AcceptsDoubleClick → 第一下挂待定，等一个系统双击窗口（见 NotchWindow）；
+        ///   · 两者都没开 → 本方法不会命中它（返回 false），调用方走原来的默认行为。
+        /// 只认本帧真的画出来了的组件（_pluginSlots），与左键分发同一套命中区。
+        /// </summary>
+        public static bool TryHitRightClickWidget(float x, float y, out string widgetId,
+            out float lx, out float ly, out bool acceptsRightClick, out bool acceptsDoubleClick)
+        {
+            widgetId = "";
+            lx = ly = 0f;
+            acceptsRightClick = acceptsDoubleClick = false;
+            lock (_pluginSlotLock)
+            {
+                for (int i = 0; i < _pluginSlots.Count; i++)
+                {
+                    var slot = _pluginSlots[i];
+                    var r = slot.Rect;
+                    if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) continue;
+
+                    bool right, dbl;
+                    try { right = slot.Widget.AcceptsRightClick; dbl = slot.Widget.AcceptsDoubleClick; }
+                    catch (Exception ex) { Logger.Error("[Renderer] 读取组件右键 / 双击标记异常", ex); continue; }
+                    if (!right && !dbl) continue;   // 两档都没开：不归本方法管，让调用方走默认行为
+
+                    widgetId = slot.Widget.Id;
+                    lx = x - r.Left;
+                    ly = y - r.Top;
+                    acceptsRightClick = right;
+                    acceptsDoubleClick = dbl;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>按 Id 在渲染侧快照里找组件；找不到（或正处在卸载的窗口里）返回 null。</summary>
+        private static Plugins.IWidget? FindWidgetById(string widgetId)
+        {
+            if (string.IsNullOrEmpty(widgetId)) return null;
+            lock (_pluginSnapshotLock)
+            {
+                var widgets = _pluginWidgets;
+                if (widgets == null) return null;
+                for (int i = 0; i < widgets.Length; i++)
+                {
+                    if (string.Equals(widgets[i].Id, widgetId, StringComparison.OrdinalIgnoreCase)) return widgets[i];
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 把一次右键单击交给组件（按 Id 找，不依赖当前命中区 —— 待定窗口期间布局可能已经变了）。
+        /// 组件不存在、或它没开 AcceptsRightClick 时静默返回 false。
+        /// 组件的右键回调沿用既有签名 OnRightClick()（无坐标）。
+        /// </summary>
+        public static bool DispatchWidgetRightClick(string widgetId)
+        {
+            var target = FindWidgetById(widgetId);
+            if (target == null) return false;
+
+            try
+            {
+                if (!target.AcceptsRightClick) return false;
+                target.OnRightClick();
+            }
+            catch (Exception ex) { Logger.Error("[Renderer] 组件右键回调异常", ex); return false; }
+            return true;
+        }
+
+        /// <summary>
+        /// 把一次双击通知给组件（按 Id 找，不依赖当前命中区 —— 待定窗口期间布局可能已经变了，
+        /// 用户拖走的图标不该因此收不到这次双击）。组件不存在、或它没开双击时静默返回 false。
+        /// </summary>
+        public static bool DispatchWidgetDoubleClick(bool isRight, string widgetId, float lx, float ly)
+        {
+            var target = FindWidgetById(widgetId);
+            if (target == null) return false;
+
+            try
+            {
+                if (!target.AcceptsDoubleClick) return false;
+                if (isRight) target.OnRightDoubleClick(lx, ly);
+                else target.OnLeftDoubleClick(lx, ly);
+            }
+            catch (Exception ex) { Logger.Error("[Renderer] 组件双击回调异常", ex); return false; }
+            return true;
+        }
+
+        /// <summary>按命中区分发一次双击给组件；命中并通知成功返回 true。</summary>
+        public static bool DispatchPluginDoubleClick(bool isRight, float x, float y)
+        {
+            if (!TryHitRightClickWidget(x, y, out var id, out float lx, out float ly, out _, out bool dbl) || !dbl)
+                return false;
+            return DispatchWidgetDoubleClick(isRight, id, lx, ly);
+        }
+
+        /// <summary>
+        /// 当前详情页是否把右键**单击**透传给插件（IDetailPage.AcceptsRightClick）。
+        /// 未展开 / 已熔断 / 读取抛异常时一律 false —— 返回 false 就是「维持老行为（折叠面板）」，
+        /// 绝不能让一个读标记的异常把折叠之类的既有逻辑带崩。
+        /// </summary>
+        public static bool DetailPageAcceptsRightClick
+        {
+            get
+            {
+                lock (_pluginSlotLock)
+                {
+                    var page = _detailPage;
+                    if (page == null || _detailBroken) return false;
+                    try { return page.AcceptsRightClick; }
+                    catch (Exception ex) { Logger.Error("[Renderer] 读取详情页「右键单击透传」标记异常", ex); return false; }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 当前详情页是否注册接收双击（IDetailPage.AcceptsDoubleClick）。
+        /// 未展开 / 已熔断 / 读取抛异常时一律 false —— 返回 false 就是「维持老行为」，
+        /// 绝不能让一个读标记的异常把面板折叠之类的既有逻辑带崩。
+        /// </summary>
+        public static bool DetailPageAcceptsDoubleClick
+        {
+            get
+            {
+                lock (_pluginSlotLock)
+                {
+                    var page = _detailPage;
+                    if (page == null || _detailBroken) return false;
+                    try { return page.AcceptsDoubleClick; }
+                    catch (Exception ex) { Logger.Error("[Renderer] 读取详情页「接收双击」标记异常", ex); return false; }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 把一次双击通知给当前详情页（落点必须在详情页矩形内）。
+        /// 详情页没注册接收双击时返回 false —— 调用方据此知道「这次双击没人要」。
+        /// 左键双击与右键双击共用；坐标口径与 DispatchDetailPageClick 完全一致。
+        /// </summary>
+        public static bool DispatchDetailPageDoubleClick(bool isRight, float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                if (!TryDetailLocalLocked(x, y, out var page, out float lx, out float ly)) return false;
+                try
+                {
+                    if (!page!.AcceptsDoubleClick) return false;
+                    if (isRight) page.OnRightDoubleClick(lx, ly);
+                    else page.OnLeftDoubleClick(lx, ly);
+                }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页双击回调异常", ex); return false; }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 把一次右键**单击**交给当前详情页（落点必须在详情页矩形内）。
+        /// 详情页没开 AcceptsRightClick 时返回 false —— 调用方据此走原来的「折叠面板」。
+        /// </summary>
+        public static bool DispatchDetailPageRightClick(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                if (!TryDetailLocalLocked(x, y, out var page, out float lx, out float ly)) return false;
+                try
+                {
+                    if (!page!.AcceptsRightClick) return false;
+                    page.OnRightClick(lx, ly);
+                }
+                catch (Exception ex) { Logger.Error("[Renderer] 详情页右键回调异常", ex); return false; }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 第二下右键（WM_RBUTTONDBLCLK）：给「右键单击已经透传出去」的目标补一次双击。
+        ///
+        /// 只处理「两档都开」的目标 —— 它们的第一下已经当场当单击交给插件了（没有挂待定），
+        /// 所以这里要按当前落点重新找一遍目标。只开双击的目标走的是待定路径
+        /// （见 NotchWindow.ConsumeRightDoubleClick），不会进到这里。
+        /// </summary>
+        public static bool DispatchPassthroughRightDoubleClick(float x, float y)
+        {
+            lock (_pluginSlotLock)
+            {
+                var page = _detailHitPage;
+                if (page != null && !_detailBroken)
+                {
+                    var r = _detailHitRect;
+                    if (x >= r.Left && x <= r.Right && y >= r.Top && y <= r.Bottom)
+                    {
+                        try
+                        {
+                            if (page.AcceptsRightClick && page.AcceptsDoubleClick)
+                            {
+                                page.OnRightDoubleClick(x - r.Left, y - r.Top);
+                                return true;
+                            }
+                        }
+                        catch (Exception ex) { Logger.Error("[Renderer] 详情页右键双击回调异常", ex); }
+                        return false;   // 详情页接管着岛体：不满足条件就是「没人要」，不再往下找组件
+                    }
+                }
+            }
+
+            if (TryHitRightClickWidget(x, y, out var id, out float lx, out float ly, out bool right, out bool dbl)
+                && right && dbl)
+                return DispatchWidgetDoubleClick(true, id, lx, ly);
+
+            return false;
+        }
+
         /// <summary>
         /// 找出「把文件拖到它身上就该自动展开详情页」的那个收起态组件；没有则返回 null。
         ///
