@@ -89,6 +89,7 @@ namespace NotchPeninsula
             }
 
             int newHoveredStyleIndex = -1;
+            int newHoveredDisplayModeIndex = -1;  // 显示模式：0 = 待机模式 / 1 = 普通模式
             int newHoveredStandbySceneIndex = -1; // 待机模式：三个场景选项（1 / 2 / 3）
             bool newStandbyToggleHovered = false; // 待机模式：「双击空白切换」开关
             bool newPageScrollbarHovered = false; // 显示设置：整页滚动条
@@ -238,7 +239,21 @@ namespace NotchPeninsula
                 if (x >= 220 && x <= 370 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 0;
                 if (x >= 390 && x <= 540 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 1;
 
-                // 待机模式：三个场景选项 + 「双击空白切换」开关
+                // 显示模式：两个选项 + 「双击空白切换」开关（开关已从「待机模式」卡移到这张卡）
+                float modeOptY = TITLE_BAR_HEIGHT + MODE_OPT_Y + page;
+                for (int i = 0; i < 2; i++)
+                {
+                    float optX = MODE_OPT_X + i * (MODE_OPT_W + MODE_OPT_GAP);
+                    if (x >= optX && x <= optX + MODE_OPT_W && y >= modeOptY && y <= modeOptY + MODE_OPT_H)
+                        newHoveredDisplayModeIndex = i;
+                }
+
+                float modeToggleCy = TITLE_BAR_HEIGHT + MODE_TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
+                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
+                    newStandbyToggleHovered = true;
+
+                // 待机模式：三个场景选项
                 float standbyOptY = TITLE_BAR_HEIGHT + STANDBY_OPT_Y + page;
                 for (int i = 0; i < 3; i++)
                 {
@@ -247,11 +262,6 @@ namespace NotchPeninsula
                         && y >= standbyOptY && y <= standbyOptY + STANDBY_OPT_H)
                         newHoveredStandbySceneIndex = i + 1;
                 }
-
-                float standbyToggleCy = TITLE_BAR_HEIGHT + STANDBY_TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
-                if (x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= standbyToggleCy - TOGGLE_TRACK_H / 2f && y <= standbyToggleCy + TOGGLE_TRACK_H / 2f)
-                    newStandbyToggleHovered = true;
 
                 // 目标显示器卡片
                 float mdY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + 14 + page;
@@ -480,6 +490,7 @@ namespace NotchPeninsula
                 newHoveredAppIndex != _hoveredAppIndex ||
                 newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
                 newHoveredStyleIndex != _hoveredStyleIndex ||
+                newHoveredDisplayModeIndex != _hoveredDisplayModeIndex ||
                 newHoveredStandbySceneIndex != _hoveredStandbySceneIndex ||
                 newStandbyToggleHovered != _standbyToggleHovered ||
                 newPageScrollbarHovered != _pageScrollbarHovered ||
@@ -529,6 +540,7 @@ namespace NotchPeninsula
                 _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
                 _hoveredStyleIndex = newHoveredStyleIndex;
+                _hoveredDisplayModeIndex = newHoveredDisplayModeIndex;
                 _hoveredStandbySceneIndex = newHoveredStandbySceneIndex;
                 _standbyToggleHovered = newStandbyToggleHovered;
                 _pageScrollbarHovered = newPageScrollbarHovered;

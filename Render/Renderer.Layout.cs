@@ -463,7 +463,11 @@ namespace NotchPeninsula
             if (HitMediaLaunchZone(x, y)) return false;
             if (HitMediaSpectrumZone(x)) return false;
             if (HitTimeline(x, y)) return false;
-            if (HitExpandedButton(x, y, currentHeight) >= 0) return false;
+            // 展开面板的播放按钮只在面板真的展开时占位：面板没展开（含待机态）时这三颗按钮的圆心
+            // 仍按 currentHeight 算在岛体正中（圆心 x = WINDOW_WIDTH/2，与岛体同一中线；半径 20、间距 54），
+            // 不判掉就会把待机胶囊的中央一大片误判成「非空白」——
+            // 表现就是「双击岛体中央没反应，只有边缘那一小条能退出」。
+            if (IsMediaPanelShowing(MediaController.Instance) && HitExpandedButton(x, y, currentHeight) >= 0) return false;
             return true;
         }
 
