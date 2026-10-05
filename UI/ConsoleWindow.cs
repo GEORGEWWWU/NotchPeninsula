@@ -145,7 +145,12 @@ namespace NotchPeninsula
         /// <summary>「显示模式」卡（待机 / 普通切换 + 双击开关）顶部相对标题栏的偏移。</summary>
         private const float MODE_CARD_Y = MONITOR_CARD_Y + MONITOR_CARD_H + 12f;
 
-        private const float MODE_CARD_H = 242f;
+        /// <summary>
+        /// 「显示模式」卡高度 = 开关行行首（MODE_TOGGLE_ROW_Y）+ 该行两行文字块高（约 48）+ 底部留白 16。
+        /// 留白只给一个卡片内边距的量（同页目标显示器卡 13、待机模式卡 20），
+        /// 不能让开关行下面拖出半行空档。开关行位置变动时这里自动跟随。
+        /// </summary>
+        private const float MODE_CARD_H = MODE_TOGGLE_ROW_Y - MODE_CARD_Y + 64f;
 
         /// <summary>两个显示模式选项的顶部与尺寸（相对标题栏；与「显示形态」选项同款 150×90）。</summary>
         private const float MODE_OPT_Y = MODE_CARD_Y + 56f;
