@@ -100,6 +100,61 @@ namespace NotchPeninsula
         private string _lastFetchedTitle = "";
         private string _lastFetchedArtist = "";
 
+        // ---- 取词失败的重试记账 ----
+        //
+        // 为什么必须有：歌词槽位是在发起取词**之前**就绑定的（见 FetchMediaAsync），
+        // 所以同一首歌再进来时 IsLyricOwner 判为已归属、直接返回；而 RefreshPropertiesCore
+        // 那边又只在「标题/歌手变了」时才触发取词 —— 取词失败并不会改变标题。
+        // 两处叠起来的结果就是：**一次失败 = 这首歌永久没有歌词**，用户只能手动切歌重来。
+        //
+        // 重试由渲染循环驱动（与封面兜底同一个时钟，见 UpdateLyrics）：RefreshProperties 只在
+        // 元数据 / 播放状态变化时才跑，播放中一次都不会来，靠它自己重试是不可能的。
+        // 节流 2 秒、最多 3 次：足够覆盖「SMTC 时长还没跟上」「网络偶发失败」「被反爬拦一次」
+        // 这几类瞬时原因，又不会在真的没有歌词源时无限刷请求。
+        private const int LyricRetryMax = 3;
+        private static readonly TimeSpan LyricRetryInterval = TimeSpan.FromSeconds(2);
+        private int _lyricRetryCount;
+        private DateTime _lastLyricRetryAt = DateTime.MinValue;
+
+        /// <summary>
+        /// 申请一次取词重试额度。返回 false 表示不满足条件（次数用尽 / 距上次太近）。
+        /// 额度在**申请时**就扣掉，避免渲染循环每帧都来问一次。
+        /// </summary>
+        private bool TryBeginLyricRetry()
+        {
+            if (_lyricRetryCount >= LyricRetryMax) return false;
+
+            var now = DateTime.UtcNow;
+            if (now - _lastLyricRetryAt < LyricRetryInterval) return false;
+
+            _lyricRetryCount++;
+            _lastLyricRetryAt = now;
+            return true;
+        }
+
+        /// <summary>
+        /// 当前会话的总时长（秒），给取词链当「同名不同版本」的筛选依据。
+        ///
+        /// 兜底顺序与 UpdateLyrics 的采样点保持一致：EndTime → MaxSeekTime → 0。
+        /// 两家播放器「把总长填在哪一栏」并不统一，少数只填可 seek 上界（EndTime 恒 0）。
+        /// 返回 0 表示这一拍没拿到 —— 取词链对 0 是放行的（不校验时长），不会误杀。
+        /// </summary>
+        private long CurrentTimelineSeconds()
+        {
+            try
+            {
+                if (_currentSession?.GetTimelineProperties() is { } t)
+                {
+                    var end = t.EndTime > TimeSpan.Zero ? t.EndTime
+                        : t.MaxSeekTime > TimeSpan.Zero ? t.MaxSeekTime
+                        : TimeSpan.Zero;
+                    return (long)end.TotalSeconds;
+                }
+            }
+            catch { }
+            return 0;
+        }
+
         // 「本曲目的封面已经由外部来源就位」的记账（会话 + 标题）。命中时属性刷新一律不再碰封面。
         //
         // 外部来源有两种：网络搜索到的专辑图（FetchCoverAsync）与会话自带封面（FetchSmtcCoverAsync，
@@ -1152,6 +1207,11 @@ namespace NotchPeninsula
 
             _lyricSlot = newSlot;
             _forceResync = true;
+            // 新曲目：清空上一首的重试记账，并把「下次可重试时刻」推到此刻之后 ——
+            // 否则首次取词还在路上（槽位已绑定、_lyrics 尚空）时，渲染循环会立刻判定
+            // 「没歌词」而并排再打一次同样的请求。
+            _lyricRetryCount = 0;
+            _lastLyricRetryAt = DateTime.UtcNow;
             _lyrics = Array.Empty<(TimeSpan, string, string)>();
             _lyricWordTimings = null;
             _lyricsHasTranslation = false;
@@ -1161,8 +1221,70 @@ namespace NotchPeninsula
             CurrentLyricProgress = 0f;
 
             // ---- 取词 → 取封面：两条链各自成一个函数，各自排队、各自校验归属 ----
-            string coverUrl = await FetchLyricsAsync(title, artist, durationSec);
-            await FetchCoverAsync(title, artist, coverUrl);
+            try
+            {
+                string coverUrl = await FetchLyricsAsync(title, artist, durationSec);
+                await FetchCoverAsync(title, artist, coverUrl);
+            }
+            catch (Exception ex)
+            {
+                // 必须自己兜住：本方法是 fire-and-forget 调用的（见 RefreshPropertiesCore），
+                // 异常逃逸后只会被全局钩子记成一条没有曲目信息的「未观察的 Task 异常」——
+                // 本项目曾据此排查很久却无法定位（真正的原因藏在取词链深处）。
+                // 落在这里至少带上了歌名 / 歌手，下一次一眼就能对上。
+                Logger.Error($"取词/封面链异常（{title} / {artist}）", ex);
+            }
+        }
+
+        /// <summary>
+        /// 渲染循环里的取词补偿，每帧调用（真正的判定很轻：几个字符串比较 + 一次时间差）。
+        ///
+        /// 触发条件：当前歌已归属槽位、却一条歌词都没有。此时才申请重试额度，并**重新读一次
+        /// SMTC 总长**再取词 —— 这一条同时治两种病：首次取词时时长还是上一首的（被候选的
+        /// 时长门槛整条挡掉），以及纯粹的网络偶发失败。重试间隔 2 秒，那时 timeline 早已跟上。
+        ///
+        /// 刻意不重置时间轴：重试只是往已经在走的那条时间轴上补文本，位置必须保持连续。
+        /// </summary>
+        private void RetryLyricsIfNeeded()
+        {
+            // 视频模式（无歌手）本来就不取歌词，重试没有意义
+            if (IsNonLyricSession) return;
+            if (_lyrics.Length > 0) return;
+
+            // 槽位是异步线程写的 volatile：先快照到局部再判定，否则「判 <0」与「拿来索引」
+            // 之间可能被换成 -1，那一瞬就是 IndexOutOfRangeException（渲染线程上等于崩进程）。
+            int slot = _lyricSlot;
+            if (slot < 0 || slot >= RecentSongSlots) return;
+
+            // 暂停时不刷网络请求，等真正播放起来再说
+            if (!_isPlaying) return;
+
+            var owner = _recentSongs[slot];
+            // 无标题 / 无歌手的槽位没有可搜的对象（视频模式兜底；槽位元组默认值是 null）
+            if (string.IsNullOrEmpty(owner.Title) || string.IsNullOrEmpty(owner.Artist)) return;
+            // 屏上已经不是这首歌了（槽位还没被改写，但会话已切走）
+            if (!string.Equals(owner.Title, _trackTitle, StringComparison.Ordinal)) return;
+
+            if (!TryBeginLyricRetry()) return;
+
+            Logger.Debug($"取词失败，第 {_lyricRetryCount} 次重试（{owner.Title} / {owner.Artist}）");
+            _ = RetryFetchAsync(owner.Title, owner.Artist);
+        }
+
+        /// <summary>重试取词链：只补歌词与封面，不碰时间轴、不重绑槽位。</summary>
+        private async Task RetryFetchAsync(string title, string artist)
+        {
+            try
+            {
+                string coverUrl = await FetchLyricsAsync(title, artist, CurrentTimelineSeconds());
+                await FetchCoverAsync(title, artist, coverUrl);
+            }
+            catch (Exception ex)
+            {
+                // 自行兜住并落日志：这两条链是 fire-and-forget 调用的，异常一旦逃出去就只剩
+                // 全局钩子那条「未观察的 Task 异常」—— 没有曲目信息、定位极难（本项目踩过）。
+                Logger.Error($"取词重试链异常（{title} / {artist}）", ex);
+            }
         }
 
         /// <summary>
@@ -1261,7 +1383,8 @@ namespace NotchPeninsula
                             lrcText = neteaseOfficialFirst.Lrc;
                         if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseOfficialFirst.Trans))
                             transText = neteaseOfficialFirst.Trans;
-                        if (coverUrl.Length == 0) coverUrl = neteaseOfficialFirst.Cover;
+                        if (coverUrl.Length == 0 && !string.IsNullOrEmpty(neteaseOfficialFirst.Cover))
+                            coverUrl = neteaseOfficialFirst.Cover;
                     }
                 }
 
@@ -1432,8 +1555,13 @@ namespace NotchPeninsula
                     if (!string.IsNullOrEmpty(neteaseOfficial.Lrc)) lrcText = neteaseOfficial.Lrc;
                     if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseOfficial.Trans))
                         transText = neteaseOfficial.Trans;
-                    // 封面兜底第二档：落月（引擎 1）没给过封面时才用网易云这张
-                    if (coverUrl.Length == 0) coverUrl = neteaseOfficial.Cover;
+                    // 封面兜底第二档：落月（引擎 1）没给过封面时才用网易云这张。
+                    // 必须判空：NeteaseOfficialResult 各字段是 string，这一档失败时若返回 default，
+                    // 取出来的就是 null 而不是空串 —— 直接赋值会把 coverUrl 变成 null，
+                    // 下面「coverUrl.Length == 0」那次封面兜底判定立刻抛 NullReferenceException，
+                    // 整个取词任务以异常收场（既没有歌词也没有封面，日志里只剩一条未观察的 Task 异常）。
+                    if (coverUrl.Length == 0 && !string.IsNullOrEmpty(neteaseOfficial.Cover))
+                        coverUrl = neteaseOfficial.Cover;
                 }
 
                 // ---- 引擎 5：LRCLIB ----
@@ -1509,12 +1637,12 @@ namespace NotchPeninsula
                 // 落月的搜索一旦没匹配上，songmid 与封面会一起拿不到（封面地址同样出自那次搜索），
                 // 而封面恰恰是最显眼的一项 —— 这里给出一个完全不依赖落月的来源。
                 // 视频模式不取网络封面（FetchCoverAsync 会直接返回），所以这里也不白花请求。
-                if (coverUrl.Length == 0 && !IsVideoMode)
+                if (string.IsNullOrEmpty(coverUrl) && !IsVideoMode)
                     coverUrl = await FetchQqCoverAsync(title, artist);
 
                 // 统一归一成小尺寸变体（QQ 替换尺寸段 + 网易云补 ?param=）：无论封面最终来自哪一档，
                 // 下载量与解码内存都降到约 1/5，把 4 秒超时预算留给真正慢的网络。
-                if (coverUrl.Length > 0) coverUrl = NormalizeCoverUrl(coverUrl);
+                if (!string.IsNullOrEmpty(coverUrl)) coverUrl = NormalizeCoverUrl(coverUrl);
 
                 return coverUrl;
             }
@@ -1863,6 +1991,16 @@ namespace NotchPeninsula
         private readonly record struct NeteaseOfficialResult(string Lrc, string Trans, string Cover);
 
         /// <summary>
+        /// 「这一档什么都没拿到」的空结果。
+        ///
+        /// 刻意不用 `default`：record struct 的 default 会绕过字段初值，三个字段全是 null。
+        /// 调用方存在 `coverUrl = xxx.Cover` 这类直赋写法，null 会顺着传染给 coverUrl，
+        /// 之后任何一次 `coverUrl.Length` 都是 NullReferenceException —— 一次网易云搜索失败
+        /// 就能把整个取词任务炸掉（连带封面链路一起断）。所有失败出口一律返回这个显式空值。
+        /// </summary>
+        private static readonly NeteaseOfficialResult EmptyNeteaseOfficial = new("", "", "");
+
+        /// <summary>
         /// 网易云官方接口：搜索 → 取词（原文 + 译文）→ 可选取封面。
         ///
         /// 为什么单独抽成一个方法：它在链上有两个调用位置 ——
@@ -1907,35 +2045,14 @@ namespace NotchPeninsula
                     && result.TryGetProperty("songs", out var songs)
                     && songs.ValueKind == JsonValueKind.Array)
                 {
-                    foreach (var song in songs.EnumerateArray())
-                    {
-                        // 一律 TryGetProperty + 先验 ValueKind：这些字段在真实响应里会缺、
-                        //    甚至类型不对（实测到过 album 是字符串）。裸 GetProperty 或在非对象元素上
-                        //    调 TryGetProperty 都会抛异常，而异常会被外层 catch 吞成一行 WARN ——
-                        //    代价却是整个网易云引擎中断，歌词与封面一起没了。
-                        if (song.ValueKind != JsonValueKind.Object) continue;
-
-                        string name = song.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                        string singer = "";
-                        if (song.TryGetProperty("artists", out var artists)
-                            && artists.ValueKind == JsonValueKind.Array && artists.GetArrayLength() > 0
-                            && artists[0].ValueKind == JsonValueKind.Object
-                            && artists[0].TryGetProperty("name", out var singerEl))
-                            singer = singerEl.GetString() ?? "";
-
-                        // 精度优化：匹配歌名+歌手，并引入时长校验（误差4秒内）屏蔽 Live/伴奏 版
-                        if ((name.Contains(title, StringComparison.OrdinalIgnoreCase) || title.Contains(name, StringComparison.OrdinalIgnoreCase)) &&
-                            (string.IsNullOrEmpty(artist) || singer.Contains(artist, StringComparison.OrdinalIgnoreCase) || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            // 时长缺失（0）时不做校验：宁可取回搜索结果里的第一条，也别因为缺字段整首歌没歌词
-                            long durationMs = song.TryGetProperty("duration", out var durEl) && durEl.TryGetInt64(out long d) ? d : 0;
-                            if (durationMs <= 0 || durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4)
-                            {
-                                if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out songId)) continue;
-                                break;
-                            }
-                        }
-                    }
+                    // 与落月那档完全同一套两级匹配（理由见 MatchSong 的注释）：时长门槛依赖
+                    // 「传入的 durationSec 确实属于这首歌」，而它来自与媒体属性同一次刷新的
+                    // SMTC timeline —— 换歌那一拍往往是上一首的时长，会把正确候选整条列表全挡。
+                    // 第一遍按时长严格筛；一条都没过（且确实给过时长）时忽略时长再筛一遍，
+                    // 但这一遍要求歌名归一化后全等，把「互相包含」的同名不同版本继续挡住。
+                    songId = PickNeteaseSongId(songs, title, artist, durationSec, exactNameOnly: false);
+                    if (songId <= 0 && durationSec > 0)
+                        songId = PickNeteaseSongId(songs, title, artist, 0, exactNameOnly: true);
                 }
 
                 if (songId <= 0)
@@ -1944,7 +2061,7 @@ namespace NotchPeninsula
                     Logger.Debug(resultIsObject
                         ? "网易云官方搜索没有匹配到候选，本档放弃"
                         : "网易云官方搜索被反爬拦截（result 返回的是加密串），本档放弃");
-                    return default;
+                    return EmptyNeteaseOfficial;
                 }
 
                 string lrc = "", trans = "";
@@ -1970,8 +2087,63 @@ namespace NotchPeninsula
             catch (Exception ex)
             {
                 Logger.Warn($"网易云引擎失败: {ex.Message}");
-                return default;
+                return EmptyNeteaseOfficial;
             }
+        }
+
+        /// <summary>
+        /// 在网易云官方搜索的 songs 数组里挑一条，返回它的 id；没有合格的返回 0。
+        ///
+        /// 分两级由调用方驱动（与 MatchSong 同构，理由也同）：
+        ///   exactNameOnly = false —— 原行为：歌名互相包含即可，但时长要卡在 ±4 秒（屏蔽 Live / 伴奏版）；
+        ///   exactNameOnly = true  —— 放宽时长后的一遍：歌名归一化后必须全等，
+        ///                            这样《海屿你》不会被《海屿你2.0》顶掉（后者只是包含前者）。
+        ///
+        /// 字段一律 TryGetProperty + 先验 ValueKind：这些字段在真实响应里会缺、甚至类型不对
+        /// （实测到过 album 是字符串）。裸 GetProperty 或在非对象元素上调 TryGetProperty 都会抛，
+        /// 而异常会被外层 catch 吞成一行 WARN —— 代价却是整个网易云引擎中断，歌词与封面一起没了。
+        /// </summary>
+        private static long PickNeteaseSongId(JsonElement songs, string title, string artist, long durationSec, bool exactNameOnly)
+        {
+            string wantTitle = exactNameOnly ? NormalizeToken(title) : "";
+            if (exactNameOnly && wantTitle.Length == 0) return 0;
+
+            foreach (var song in songs.EnumerateArray())
+            {
+                if (song.ValueKind != JsonValueKind.Object) continue;
+
+                string name = song.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                string singer = "";
+                if (song.TryGetProperty("artists", out var artists)
+                    && artists.ValueKind == JsonValueKind.Array && artists.GetArrayLength() > 0
+                    && artists[0].ValueKind == JsonValueKind.Object
+                    && artists[0].TryGetProperty("name", out var singerEl))
+                    singer = singerEl.GetString() ?? "";
+
+                // 歌名：严格一遍按「互相包含」，放宽一遍按「归一化全等」
+                bool titleOk = exactNameOnly
+                    ? NormalizeToken(name) == wantTitle
+                    : name.Contains(title, StringComparison.OrdinalIgnoreCase)
+                      || title.Contains(name, StringComparison.OrdinalIgnoreCase);
+                if (!titleOk) continue;
+
+                // 歌手：两遍同一口径（任一侧为空则不因此淘汰，与落月那档一致）
+                if (!(string.IsNullOrEmpty(artist)
+                      || singer.Contains(artist, StringComparison.OrdinalIgnoreCase)
+                      || artist.Contains(singer, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                if (!exactNameOnly)
+                {
+                    // 时长缺失（0）时不做校验：宁可取回搜索结果里的第一条，也别因为缺字段整首歌没歌词
+                    long durationMs = song.TryGetProperty("duration", out var durEl) && durEl.TryGetInt64(out long d) ? d : 0;
+                    if (!(durationMs <= 0 || durationSec <= 0 || Math.Abs(durationMs / 1000 - durationSec) <= 4))
+                        continue;
+                }
+
+                if (song.TryGetProperty("id", out var idEl) && idEl.TryGetInt64(out long id)) return id;
+            }
+            return 0;
         }
 
         /// <summary>
@@ -1994,6 +2166,12 @@ namespace NotchPeninsula
         /// 花がらwitheredflower 与 花がら枯花 互不包含，全字匹配必然落空；
         /// 换更短的搜索词也没用（实测三种搜索词返回的候选完全相同），卡点在打分。
         /// 歌手校验在任何档位都不放宽。
+        ///
+        /// 两级匹配（见方法内注释）：时长门槛只是**第一级**。一条都没过、且这次确实拿到了时长
+        /// （durationSec &gt; 0）时，会忽略时长再筛一遍，但那一遍只接受标题归一化后**全等**的候选 ——
+        /// 时长门槛原本要防的「互相包含」型同名不同版本（《海屿你》vs《海屿你2.0》）因此仍被挡住。
+        /// 之所以必须有第二级：durationSec 来自与媒体属性同一次刷新的 SMTC timeline，
+        /// 而 timeline 更新滞后，换歌那一拍往往是上一首的时长，会把正确候选整条列表全挡。
         /// </summary>
         private static long MatchSong(JsonElement list, string title, string artist, long durationSec, bool allowLooseTitle, out string? cover, out string? mid)
         {
@@ -2004,35 +2182,66 @@ namespace NotchPeninsula
             if (wantTitle.Length == 0) return 0;
             var wantArtists = SplitArtists(artist);
 
-            long bestId = 0;
-            int bestScore = 0;
+            // ---- 两级匹配：时长门槛会误杀，必须有退路 ----
+            //
+            // 时长门槛要防的是「同名不同版本」（见上），但它依赖一个前提 —— 传入的 durationSec
+            // 确实属于这首歌。而调用链里它是与媒体属性同一次刷新读出来的 SMTC timeline：
+            // timeline 的更新**滞后于** media properties，换歌那一拍拿到的往往是上一首的时长。
+            // 一旦如此，本曲目的正确候选会被整条列表全挡（实测《STAY》141s 与《LOVE SCENARIO》
+            // 209s 互相套用对方时长时，10/10 条全被挡、零命中），日志只留一行「没有匹配到候选」，
+            // 而在外面用同样的搜索词一搜就中 —— 这就是「换歌后必没歌词」的根源。
+            //
+            // 所以分两级：先按时长严格筛；一条都没过（且确实给过时长）时，忽略时长再筛一遍。
+            // 第二级只接受**标题归一化后全等**的候选（score 的 2 分档），把「互相包含」的
+            // 同名不同版本（《海屿你》vs《海屿你2.0》，titleScore 只有 1）继续挡在外面 ——
+            // 那正是时长门槛原本要防的一类，放开时长后由标题全等接手，保护不丢。
+            string? foundCover = null, foundMid = null;
+            long resultId = 0;
 
-            foreach (var song in list.EnumerateArray())
+            void PickBest(bool strictDuration)
             {
-                if (song.ValueKind != JsonValueKind.Object) continue; // 数组里混进非对象元素：跳过而不是抛
+                resultId = 0;
+                foundCover = null;
+                foundMid = null;
+                long id0 = 0;
+                int best = 0;
 
-                // 时长门槛：候选的 interval（"4分49秒"）与播放器上报的时长比对（±4 秒）。
-                // 歌名有包含关系不等于同一版本 —— 《海屿你》会被《海屿你2.0》顶掉（后者歌名与歌手都包含前者），
-                // 而两者时长相差 118 秒；这一关把它挡在外面，宁可不命中也不要取错版本的歌词。
-                // 拿不到播放器时长、或候选没给 interval 时不校验：宁可宽松，也不因缺字段误杀。
-                if (!DurationMatches(song, durationSec)) continue;
+                foreach (var song in list.EnumerateArray())
+                {
+                    if (song.ValueKind != JsonValueKind.Object) continue; // 数组里混进非对象元素：跳过而不是抛
 
-                string name = song.TryGetProperty("song", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                string singer = song.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
+                    // 时长门槛：候选的 interval（"4分49秒"）与播放器上报的时长比对（±4 秒）。
+                    // 歌名有包含关系不等于同一版本 —— 《海屿你》会被《海屿你2.0》顶掉（后者歌名与歌手都包含前者），
+                    // 而两者时长相差 118 秒；这一关把它挡在外面，宁可不命中也不要取错版本的歌词。
+                    // 拿不到播放器时长、或候选没给 interval 时不校验：宁可宽松，也不因缺字段误杀。
+                    if (strictDuration && !DurationMatches(song, durationSec)) continue;
 
-                int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer), allowLooseTitle);
-                if (score <= bestScore) continue;
-                if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out long id)) continue;
+                    string name = song.TryGetProperty("song", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                    string singer = song.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
 
-                bestScore = score;
-                bestId = id;
-                cover = song.TryGetProperty("cover", out var coverEl) && coverEl.GetString() is { Length: > 0 } c
-                    ? NormalizeCoverUrl(c) : null;
-                mid = song.TryGetProperty("mid", out var midEl) && midEl.GetString() is { Length: > 0 } m ? m : null;
+                    int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer), allowLooseTitle);
+                    // 放宽时长这一遍要求标题全等：ScoreCandidate 里只有「归一化后完全相等」才给
+                    // titleScore = 2（score ≥ 20）。歌手校验（+1 / +2）与「一侧没给歌手不淘汰」照旧。
+                    if (!strictDuration && score < 20) continue;
+                    if (score <= best) continue;
+                    if (!song.TryGetProperty("id", out var idEl) || !idEl.TryGetInt64(out long id)) continue;
+
+                    best = score;
+                    id0 = id;
+                    foundCover = song.TryGetProperty("cover", out var coverEl) && coverEl.GetString() is { Length: > 0 } c
+                        ? NormalizeCoverUrl(c) : null;
+                    foundMid = song.TryGetProperty("mid", out var midEl) && midEl.GetString() is { Length: > 0 } m ? m : null;
+                }
+                resultId = id0;
             }
 
-            if (bestId <= 0) { cover = null; mid = null; }
-            return bestId;
+            PickBest(strictDuration: true);
+            if (resultId <= 0 && durationSec > 0)
+                PickBest(strictDuration: false);
+
+            if (resultId <= 0) { cover = null; mid = null; }
+            else { cover = foundCover; mid = foundMid; }
+            return resultId;
         }
 
         // 时长门槛的容差（秒）—— 与网易云官方档那处时长校验同一口径。
@@ -2787,6 +2996,11 @@ namespace NotchPeninsula
                 || !string.Equals(_externalCoverTitle, _trackTitle, StringComparison.Ordinal)
                 || !string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal))
                 UpdateCover(true);
+
+            // 取词失败的补偿重试（与上面封面兜底共用渲染循环这个稳定时钟）。
+            // 为什么非挂这里不可：RefreshPropertiesCore 只在「标题/歌手变了」时触发取词，
+            // 取词失败不会改变标题 —— 没有这条补偿，一次失败就是这首歌永久没歌词。
+            RetryLyricsIfNeeded();
 
             // 被切走的那首歌若还在后台播放，继续替它推算进度（内部按 1 秒节流，无挂起时立即返回）
             AdvanceSuspendedTimeline(now);
