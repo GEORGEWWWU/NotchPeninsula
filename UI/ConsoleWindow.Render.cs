@@ -1270,7 +1270,11 @@ namespace NotchPeninsula
             // 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
             //    插件中心只负责启用 / 禁用，不再提供任何排序入口（已移除）。
 
-            const int maxRows = 7;
+            // 可视行数与可滚范围走布局真源（与命中 / 滚轮共用 GetPluginListLayout）；
+            // 条目变少时把滚动位置钳回可滚范围，避免停在一片空白上
+            GetPluginListLayout(out int visibleRows, out int maxFirstRow);
+            _pluginScroll = Math.Clamp(_pluginScroll, 0, maxFirstRow);
+
             // 上行：名称独占整行，可延展至卡片右边界外侧
             // 下行：信息（左）+ 操作按钮（右，从左到右：重载 | 移除 | 开关）
             float nameTextMax = (WIDTH - 36) - 216;                // 名称几乎全宽
@@ -1279,13 +1283,15 @@ namespace NotchPeninsula
             if (_pluginView.Count == 0)
                 canvas.DrawText("暂无插件，点击「导入 DLL」或前往插件市场下载安装", 216, listY + 66, _subTextPaint);
 
-            for (int i = 0; i < Math.Min(_pluginView.Count, maxRows); i++)
+            // slot = 可视槽位（0 = 当前首行），i = 绝对条目下标（悬停 / 点击侧用的也是绝对下标）
+            for (int slot = 0; slot < visibleRows; slot++)
             {
+                int i = _pluginScroll + slot;
                 var entry = _pluginView[i];
                 // 行高 56：上行名称独占，下行按钮全部一行排列。
                 // 行起点必须与 OnMouseMove 的 tab 6 段严格一致（删掉「顺序一览」后整体上移了 20px）
-                float rowY = listY + 44 + i * 56;
-                if (i > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
+                float rowY = listY + 44 + slot * 56;
+                if (slot > 0) canvas.DrawLine(216, rowY - 6, WIDTH - 36, rowY - 6, _separatorPaint);
 
                 // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
                 canvas.DrawText(TruncateText(entry.FriendlyName, _uiTextPaint, nameTextMax), 216, rowY + 18, _uiTextPaint);
@@ -1351,8 +1357,19 @@ namespace NotchPeninsula
                 }
             }
 
-            if (_pluginView.Count > maxRows)
-                canvas.DrawText($"还有 {_pluginView.Count - maxRows} 个插件未显示，可在“打开目录”中管理", 216, HEIGHT - 32, _subTextPaint);
+            // 超出可视区时在卡片右侧画一条滚动条指示（与「显示内容」列表同款），
+            // 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
+            if (maxFirstRow > 0 && visibleRows > 0)
+            {
+                float trackTop = listY + 44 - 2f;
+                float trackH = visibleRows * 56f - 8f;
+                float thumbH = Math.Max(18f, trackH * visibleRows / _pluginView.Count);
+                float thumbY = trackTop + (trackH - thumbH) * _pluginScroll / maxFirstRow;
+                _dynamicFillPaint.Color = Overlay(30);
+                canvas.DrawRoundRect(new SKRect(WIDTH - 34, trackTop, WIDTH - 31, trackTop + trackH), 1.5f, 1.5f, _dynamicFillPaint);
+                _dynamicFillPaint.Color = Overlay(140);
+                canvas.DrawRoundRect(new SKRect(WIDTH - 34, thumbY, WIDTH - 31, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+            }
 
             // ── 拖入 DLL 的蓝色反馈（光标落在右侧内容区时整体亮起，见 ConsoleWindow.PluginDrop.cs）──
             // 静态高亮：亮 / 灭直接切换，没有淡入淡出与呼吸，也没有定时器 ——

@@ -431,15 +431,19 @@ namespace NotchPeninsula
                 // 列表行内按钮（全部在下行：重载 | 移除 | 开关）
                 // 上行（名称）无交互目标，仅下行按钮可点击
                 float listY = topY + 110;
-                int rows = Math.Min(_pluginView.Count, 7);
+                // 可视行数走布局真源（与渲染 / 滚轮共用）；slot 是可视槽位，
+                // 命中结果换算成绝对条目下标（slot + _pluginScroll）—— 渲染与点击两侧都用绝对下标比对
+                GetPluginListLayout(out int rows, out int pluginMaxFirst);
+                _pluginScroll = Math.Clamp(_pluginScroll, 0, pluginMaxFirst);
                 // 这里的行起点必须与 Render() 里的 `listY + 44` 严格一致。
                 //    （删掉卡片顶部那行「顺序：…」后，整块列表上移了 20px）
                 if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
                 {
-                    int idx = (int)((y - (listY + 44)) / 56);
-                    if (idx >= 0 && idx < rows)
+                    int slot = (int)((y - (listY + 44)) / 56);
+                    int idx = slot + _pluginScroll;
+                    if (slot >= 0 && slot < rows && idx >= 0 && idx < _pluginView.Count)
                     {
-                        float rowY = listY + 44 + idx * 56;
+                        float rowY = listY + 44 + slot * 56;
                         // 下行按钮区（rowY+22 .. rowY+48）
                         if (y >= rowY + 22 && y <= rowY + 48)
                         {

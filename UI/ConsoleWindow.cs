@@ -1317,6 +1317,27 @@ namespace NotchPeninsula
                         }
                         return IntPtr.Zero;
                     }
+
+                    // 插件中心：已安装插件列表可滚（_pluginScroll = 滚动首行），
+                    //    可滚范围与绘制 / 命中共用 GetPluginListLayout。
+                    if (_selectedTab == 6)
+                    {
+                        GetPluginListLayout(out _, out int pluginMaxFirst);
+                        if (pluginMaxFirst > 0)
+                        {
+                            int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                            int target = Math.Clamp(_pluginScroll - delta / 120 * 3, 0, pluginMaxFirst);
+                            if (target != _pluginScroll)
+                            {
+                                _pluginScroll = target;
+                                // 滚轮不产生 WM_MOUSEMOVE：滚动后光标下的行号变了、hover 却还停在旧行上，
+                                // 紧接着点下去就会操作错插件。这里按当前光标位置补一次命中。
+                                SyncHoverFromCursor();
+                                Render();
+                            }
+                        }
+                        return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
+                    }
                     break;
 
                 case Win32.WM_PAINT:
