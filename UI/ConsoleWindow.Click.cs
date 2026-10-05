@@ -80,8 +80,8 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1 && _pageScrollbarHovered)
             {
-                // 与整页滚动条交互：之后的滚轮优先滚整页，并把页面跳到点击处
-                _wheelPriorityList = false;
+                // 拖动整页滚动条把页面跳到点击处（滚轮优先层不用管：那条由光标位置决定，
+                // 见 OnMouseMove 的 tab 1 段 —— 点滚动条时 OnMouseMove 已把优先级刷成整页）
                 float pageMax = GetDisplayPageMaxScroll();
                 GetPageScrollbarLayout(out float top, out float trackH);
                 float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f;
@@ -94,8 +94,7 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1 && _listScrollbarHovered)
             {
-                // 与「显示内容」列表滚动条交互：之后的滚轮优先滚列表，并把列表跳到点击处
-                _wheelPriorityList = true;
+                // 拖动「显示内容」列表滚动条把列表跳到点击处（滚轮优先层见 OnMouseMove 的 tab 1 段）
                 GetDisplayListLayout(out int visibleRows, out int maxFirstRow);
                 if (maxFirstRow > 0 && visibleRows > 0)
                 {

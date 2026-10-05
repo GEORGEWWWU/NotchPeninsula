@@ -305,6 +305,25 @@ namespace NotchPeninsula
                 if (listBarH > 0f && x >= WIDTH - 40 && x <= WIDTH - 26
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
+
+                // 「显示内容」卡片本体（含上下各留一点余量）：指针进卡片 → 滚轮先滚列表，出卡片 → 滚整页。
+                // 这里只需要判「光标在不在卡里」—— 列表顶到边界后要不要接力给整页，
+                // 由 WM_MOUSEWHEEL 那条分支的累计阈值决定，与命中判定无关。
+                // 保留的覆盖规则：点过某条滚动条后，该层优先（_listScrollbarHovered 让列表优先
+                // 即便光标在卡外；_pageScrollbarHovered 反之）—— 滚动条是显式的层选择操作。
+                var displayCardHit = new SKRect(200, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page,
+                    WIDTH - 20, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page);
+                bool inDisplayCard = x >= displayCardHit.Left && x <= displayCardHit.Right
+                    && y >= displayCardHit.Top && y <= displayCardHit.Bottom;
+
+                bool newWheelPriorityList = inDisplayCard
+                    ? true
+                    : (!newPageScrollbarHovered && !newListScrollbarHovered ? false : _wheelPriorityList);
+
+                // 换层就清掉「继续滚」的累计：那是上一层的动量，跨层继承会让用户
+                // 在卡片里攒的格数在出卡片后突然把整页顶走一段。
+                if (newWheelPriorityList != _wheelPriorityList) _displayWheelCarry = 0;
+                _wheelPriorityList = newWheelPriorityList;
             }
             else if (_selectedTab == 2) // 媒体设置
             {

@@ -46,20 +46,26 @@ namespace NotchPeninsula
                 ? new SKColor(0, 0, 0, alpha)
                 : new SKColor(255, 255, 255, alpha);
 
-        /// <summary>系统「应用模式」是不是浅色。读不到（键不存在 / 权限）就按深色 —— 与历史外观一致。</summary>
+        /// <summary>系统「应用模式」是不是浅色。走进程级缓存（Renderer.SystemIsLightTheme）——
+        /// 系统主题变更 / 用户改「主题模式」时缓存会被作废，这里不承担失效职责。</summary>
         private static bool IsSystemLightAppearance()
         {
-            try
-            {
-                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-                return key?.GetValue("AppsUseLightTheme") is int val && val == 1;
-            }
-            catch
-            {
-                return false;
-            }
+            return Renderer.SystemIsLightTheme;
         }
+
+        /// <summary>
+        /// 「显示设置」页里那些胶囊示意图（显示形态 / 显示模式 / 待机场景）该用白底还是黑底。
+        /// 
+        /// 唯一的真源。这三处以前各自抄了一遍「ThemeMode==1 则白、==2 则读注册表」的逻辑，
+        /// 等于每次渲染显示设置页要踩 8 次注册表（每帧），滚轮翻页时就是每秒几十次。
+        /// 现在统一收口到这里，「跟随系统」读 <see cref="Renderer.SystemIsLightTheme"/> 缓存。
+        /// 
+        /// 注意：它看的是 ThemeMode（用户在「主题设置」页选的岛体主题），
+        /// 而不是 _isLightAppearance（系统「应用模式」，管的是设置窗口自身的底色）——
+        /// 两者在 ThemeMode 取 0 / 1（手动黑 / 手动白）时会不一致，别合并。
+        /// </summary>
+        private static bool IsLightPreviewCapsule()
+            => Renderer.ThemeMode == 2 ? Renderer.SystemIsLightTheme : Renderer.ThemeMode == 1;
 
         // 极致内存优化：全局复用画笔缓存
         private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(32, 32, 32), IsAntialias = true };

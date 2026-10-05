@@ -241,7 +241,7 @@ namespace NotchPeninsula
                 var src = ToastSoundConfig.ResolveCurrentSource();
                 if (!src.IsValid)
                 {
-                    // 只有「用户明确点了试听」才值得提示；切到「无」时静默即可。
+                    // 只有「显式点了试听」才值得提示；切到「无」时静默即可。
                     // 原因必须按当前选中的那一项去问：内置项要看内置音本身（磁盘上的文件
                     //    或 exe 内嵌资源），不能拿 CustomPath 去套 —— 那样内置音缺失时会糊上
                     //    「尚未选择音频文件」这种完全对不上的文案（见 DescribeUnavailable）。

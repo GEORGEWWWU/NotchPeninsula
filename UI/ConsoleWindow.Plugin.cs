@@ -24,6 +24,10 @@ namespace NotchPeninsula
         // 原来是在 Render 里对每一行每帧拼一遍（含 $-插值），现在跟着列表一起只在变更时重建。
         private readonly List<string> _pluginSubTexts = new();
 
+        // 逐行「是否禁用」标记（与 _pluginView / _pluginSubTexts 同序）：
+        // 渲染侧据此把副标题开头的状态词（「已禁用」）染成强调蓝，其余部分保持常规灰。
+        private readonly List<bool> _pluginSubDisabled = new();
+
         // 缓存判据：PluginManager 的变更序号
         private int _pluginViewVersion = -1;
 
@@ -35,27 +39,25 @@ namespace NotchPeninsula
             _pluginViewVersion = version;
 
             var mgr = PluginManager.Instance;
+            // 插件中心把所有已发现的插件都列出来（含禁用 / 加载失败的），用户才能在原地重新启用它们。
+            //    「不参与排序、不要显示」那条规矩只针对「显示设置 → 显示内容」那张排序列表
+            //    （见 PluginManager.DisplayItems），插件中心照常列全。
             _pluginView = mgr.Entries.ToList();
 
             // 副标题（状态 / 版本 / 作者）随插件状态变化，所以在这里跟列表一起重建，渲染路径只负责取用。
             // 不再带「#N/M」位置序号 —— 位置改由「显示设置 → 显示内容」统一展示与调整（2026-09-25）。
             _pluginSubTexts.Clear();
+            _pluginSubDisabled.Clear();
             for (int i = 0; i < _pluginView.Count; i++)
             {
                 var entry = _pluginView[i];
-                string sub;
-                if (entry.State == PluginState.Failed)
-                    sub = "加载失败：" + (entry.Error ?? "未知错误");
-                else if (entry.State == PluginState.Loaded)
-                {
-                    // 运行中 · v1.0.0 · 作者（作者缺失时只留前两段，免得出现一个孤零零的分隔点）
-                    sub = string.IsNullOrEmpty(entry.Version) ? "运行中" : $"运行中 · v{entry.Version}";
-                    if (!string.IsNullOrEmpty(entry.Author)) sub += $" · {entry.Author}";
-                }
-                else
-                    sub = "已禁用 · " + entry.Key;
-
-                _pluginSubTexts.Add(sub);
+                // 禁用：「运行中」换成「已禁用」，其余（版本号 / 作者）保留；
+                // 渲染侧会把「已禁用」这一小段染成强调蓝，后面照旧常规灰。
+                bool disabled = entry.State == PluginState.NotLoaded;
+                string tail = string.IsNullOrEmpty(entry.Version) ? "" : $" · v{entry.Version}";
+                if (!string.IsNullOrEmpty(entry.Author)) tail += $" · {entry.Author}";
+                _pluginSubDisabled.Add(disabled);
+                _pluginSubTexts.Add((disabled ? "已禁用" : "运行中") + tail);
             }
         }
 
@@ -147,17 +149,43 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>按像素宽度截断文本并追加省略号（零 GC 不敏感，交互时才调用）。</summary>
+        /// <summary>
+        /// 按像素宽度截断文本并追加省略号。
+        ///
+        /// 这是渲染热路径（设置窗口每帧、每个下拉项 / 插件行 / 卡片副标题都要过一遍），
+        /// 所以刻意用二分定位截断点，而不是原来那种从末尾逐个字符往回试的线性扫。
+        /// 线性扫的最坏情况是「整串都放不下」——比如超长的插件副标题撞上 140px 的信息区，
+        /// 每个字符都要一次 MeasureText，一次渲染里几个地方叠起来就是上百次字形度量。
+        /// 二分把次数压到 log2(n)（40 个字符 ≈ 6 次），而且每轮只在候选串上量一次。
+        ///
+        /// 判据「量出来的宽度 ≤ maxWidth」关于长度单调 —— 前缀越长越宽，所以二分成立。
+        /// 省略号本身占宽，必须把它算进候选串再量（不能量前缀、再单独比 ellipsis），
+        /// 否则边界上会出现「截完还是超宽」。
+        ///
+        /// 本方法不做跨帧缓存：调用点传入的 text / paint / maxWidth 组合很杂，
+        /// 缓存键的构造成本比省下的度量还高。真正的大头在别处（见 UpdateLayeredContentWindow）。
+        /// </summary>
         private static string TruncateText(string? text, SKPaint paint, float maxWidth)
         {
             if (string.IsNullOrEmpty(text)) return "";
-            if (paint.MeasureText(text) <= maxWidth) return text;
-            for (int len = text.Length - 1; len > 0; len--)
+            if (paint.MeasureText(text) <= maxWidth) return text;   // 快路径：整串放得下（绝大多数情况）
+
+            // 连一个字符加省略号都放不下 —— 直接退化成省略号，省掉整段二分。
+            if (maxWidth <= paint.MeasureText("…")) return "…";
+
+            // 二分找「最长的、量出来仍 ≤ maxWidth 的前缀」。
+            //   lo 恒为「已知放得下的长度」，hi 恒为「已知放不下的长度」。
+            //   终态 hi == lo + 1，答案就是 lo。
+            int lo = 0, hi = text.Length - 1;
+            while (hi - lo > 1)
             {
-                var candidate = text[..len] + "…";
-                if (paint.MeasureText(candidate) <= maxWidth) return candidate;
+                int mid = (lo + hi) >> 1;
+                if (paint.MeasureText(string.Concat(text.AsSpan(0, mid), "…")) <= maxWidth) lo = mid;
+                else hi = mid;
             }
-            return "…";
+
+            // lo == 0 时退化成纯省略号（与上面那个提前返回语义一致）。
+            return lo == 0 ? "…" : string.Concat(text.AsSpan(0, lo), "…");
         }
 
         /// <summary>

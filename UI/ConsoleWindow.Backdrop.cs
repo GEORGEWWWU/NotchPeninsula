@@ -96,6 +96,9 @@ namespace NotchPeninsula
         //    DWMWA_USE_IMMERSIVE_DARK_MODE 与亚克力 tint。
         private void ApplyAppearance()
         {
+            // 先作废系统主题缓存再读：本方法就是「系统主题变更」那条路径的入口
+            //    （WM_SETTINGCHANGE → ApplyAppearance），不作废的话拿到的是旧值。
+            Renderer.InvalidateSystemThemeCache();
             _isLightAppearance = IsSystemLightAppearance();
 
             _fgColor = Neutral(255);   // 深色 = 白，浅色 = 纯黑
@@ -111,6 +114,14 @@ namespace NotchPeninsula
             _tabBgHovered.Color = Overlay(8);
             _separatorPaint.Color = Overlay(20);
             _hoverMinPaint.Color = Overlay(20);
+
+            // 「显示内容」列表的排序箭头（三支静态画笔，见 Render.cs 的 DrawSortArrow）。
+            // 这三支的颜色必须在这里重绑：它们在字段初始化时写的是深色外观下的值
+            // （210 灰 / 白 / 130 灰），浅色外观下会变成「浅灰画在浅底上」几乎看不见。
+            // 写成 Neutral() 而不是硬编码，才能跟着 _isLightAppearance 一起翻面。
+            _sortArrowStroke.Color = Neutral(210);
+            _sortArrowHoverStroke.Color = _fgColor;
+            _sortArrowDisabledStroke.Color = Neutral(130);
         }
 
         private void ApplyBackdropPalette()

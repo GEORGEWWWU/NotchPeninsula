@@ -55,7 +55,88 @@ namespace NotchPeninsula
 
         public static float NOTCH_BOTTOM_RADIUS { get => _notchBottomRadius; set => _notchBottomRadius = value; }
 
-        public static int ThemeMode { get; set; } = 0; // 0=黑, 1=白, 2=跟随系统
+        private static int _themeMode = 0; // 0=黑, 1=白, 2=跟随系统
+
+        /// <summary>
+        /// 主题模式（0=黑 / 1=白 / 2=跟随系统）。
+        /// 
+        /// 必须走属性而不是自动属性：主题一改，「跟随系统」下真实生效的明暗可能翻面，
+        /// 缓存（<see cref="SystemIsLightTheme"/>）必须当场作废，否则设置窗口 / 岛体
+        /// 会拿旧值画一整段时间，直到下一次 WM_SETTINGCHANGE 才纠正。
+        /// 写入点见 UI/ConsoleWindow.Click.cs（主题选项）与 Core/Program.cs（启动读配置）。
+        /// </summary>
+        public static int ThemeMode
+        {
+            get => _themeMode;
+            set
+            {
+                if (_themeMode == value) return;
+                _themeMode = value;
+                InvalidateSystemThemeCache();
+            }
+        }
+
+        // ---- 系统「应用模式」（浅色 / 深色）读取缓存 ----
+        //
+        // 为什么要缓存：ThemeMode == 2（跟随系统）时，主题色要用
+        // HKCU\...\Themes\Personalize\AppsUseLightTheme。而这个值过去是在
+        // ▶ 渲染热路径 ◀ 上现读的 —— 设置窗口「显示设置」页里每个胶囊示意图
+        // （显示形态 2 个、显示模式 2 个、待机场景 4 个）各读一次，等于每帧 8 次
+        // CreateKey + RegQueryValueEx + RegCloseKey。滚轮翻页时每滚一格重绘一次，
+        // 就是一秒几十次无谓的内核往返。岛体那边的 Renderer.ApplyThemeColors()
+        // 虽然只在主题变更时调用，但同样白读。
+        //
+        // 缓存失效点（只有这三种，够了）：
+        //   1. 系统广播 WM_SETTINGCHANGE → ConsoleWindow 调 ApplyAppearance()；
+        //   2. SystemEvents.UserPreferenceChanged → Program.OnUserPreferenceChanged；
+        //   3. 用户改「主题模式」本身（setter 里）—— 因为「跟随系统」的实时值
+        //      必须现读一次，从 1/0 切回 2 时不能沿用更早的缓存。
+        //
+        // 这是进程级静态字段：两个读写方（ConsoleWindow / Renderer.ApplyThemeColors）
+        // 靠它对齐明暗。失效必须由上面三个入口集中调 InvalidateSystemThemeCache()，
+        // 别在别处直接写 _systemIsLightTheme（会漏掉「已缓存」标志的复位）。
+        private static bool _systemIsLightTheme;
+
+        /// <summary>系统「应用模式」是否已读过（false 时下一次读取会真的访问注册表）。</summary>
+        private static bool _systemThemeCached;
+
+        /// <summary>
+        /// 取系统「应用模式」是否为浅色。首次（或失效后）读注册表，之后走缓存。
+        /// 读不到（键不存在 / 权限不足）按深色 —— 与历史外观一致。
+        /// </summary>
+        public static bool SystemIsLightTheme
+        {
+            get
+            {
+                if (_systemThemeCached) return _systemIsLightTheme;
+
+                bool light = false;
+                try
+                {
+                    using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                    light = key?.GetValue("AppsUseLightTheme") is int val && val == 1;
+                }
+                catch
+                {
+                    // 读不到就按深色，并且**照样标成已缓存** —— 否则每个绘制调用
+                    // 都会去踩一次必然失败的注册表访问（异常是慢路径，更不能进渲染循环）。
+                }
+
+                _systemIsLightTheme = light;
+                _systemThemeCached = true;
+                return light;
+            }
+        }
+
+        /// <summary>
+        /// 作废系统主题缓存。系统主题变更、或「主题模式」被改写时调用；
+        /// 下一次读 <see cref="SystemIsLightTheme"/> 会重新落地到注册表。
+        /// </summary>
+        public static void InvalidateSystemThemeCache()
+        {
+            _systemThemeCached = false;
+        }
 
         public static int NotchStyle { get; set; } = 0; // 0=经典刘海, 1=灵动岛
 
@@ -71,8 +152,26 @@ namespace NotchPeninsula
         /// <summary>
         /// 当前是否处于待机模式。进入 / 退出由「双击空白」（<see cref="StandbyToggleByDoubleClick"/> 打开时）
         /// 或设置页手动切换驱动；这是运行时状态，不持久化 —— 重启后回到默认显示。
+        ///
+        /// 写入会触发 <see cref="StandbyActiveChanged"/>：设置窗口打开时并不参与这层交互
+        /// （双击发生在岛体上），它靠这个事件把「显示模式」卡片的高亮刷过来。
+        /// 直接改字段（绕过属性）就不会通知 UI，别这么写。
         /// </summary>
-        public static bool StandbyActive { get; set; } = false;
+        public static bool StandbyActive
+        {
+            get => _standbyActive;
+            set
+            {
+                if (_standbyActive == value) return;
+                _standbyActive = value;
+                try { StandbyActiveChanged?.Invoke(); }
+                catch (Exception ex) { Logger.Error("[Renderer] StandbyActiveChanged 事件处理异常", ex); }
+            }
+        }
+        private static bool _standbyActive;
+
+        /// <summary>待机态变化（进入 / 退出）时触发。岛体双击切换后，设置窗口据此重绘。</summary>
+        public static event Action? StandbyActiveChanged;
 
         /// <summary>开关：双击岛上的「空白」处进入 / 退出待机模式（默认关闭）。</summary>
         public static bool StandbyToggleByDoubleClick { get; set; } = false;
@@ -81,7 +180,7 @@ namespace NotchPeninsula
 
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
 
-        // 组合模式已常开（2026-09-25 用户要求移除总开关）：灵动岛显示什么、按什么次序，
+        // 组合模式已常开（2026-09-25 移除总开关）：灵动岛显示什么、按什么次序，
         //    完全由「显示设置 → 显示内容」那张复选框 + 上下排序列表决定 —— 只勾一个就等于旧的
         //    「待机显示内容」，勾多个就是多模块并排。
         //    之所以还留着这个「恒为 true」的属性，是因为渲染 / 布局 / 宽度计算里到处都在问
@@ -151,8 +250,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 岛体总长度上限：Toast / 剪贴板面板的自适应宽度、组合模式总宽、以及插件行的取舍都以它封顶。
         ///
-        /// 2026-09-20 由 800 放开到 1920（用户要求）：用户原话「必须放开最大长度，灵动岛本体哪怕
-        /// 宽度 max=1920 都无所谓，宁愿灵动岛超长溢出屏幕都不要被裁切」。
+        /// 2026-09-20 由 800 放开到 1920：宁愿灵动岛超长溢出屏幕，也不要被裁切。
         /// 旧的 800 是「怕挤压到右边的插件」而设的，但实际效果是长歌词被裁切，
         /// 而且插件行预算（= 本值 − 原生内容宽度）被长歌词吃光后，插件会直接整帧不显示
         /// （不是被压缩，是彻底消失），体验很差 —— 这个顾虑被证明完全没必要。
@@ -164,7 +262,7 @@ namespace NotchPeninsula
         /// </summary>
         public const float MAX_ISLAND_WIDTH = 1920f;
 
-        // 2026-09-20 用户明确要求「媒体控制器的长度也放开，多长都无所谓」，因此删掉了两个上限常量：
+        // 2026-09-20 媒体控制器的长度完全放开，因此删掉了两个上限常量：
         //    · MEDIA_TEXT_MAX_WIDTH（默认 480 ≈ 27 个汉字）—— 非组合模式的媒体文本区上限
         //    · CompositeMediaMaxWidth（默认 460 ≈ 21 个汉字）—— 组合模式媒体模块的占宽上限
         //    这两个才是「歌词一长就被裁切」的真正元凶（它们都比 MAX_ISLAND_WIDTH 小得多，长歌词先撞到它们），
@@ -180,7 +278,7 @@ namespace NotchPeninsula
         //    岛体是水平居中画的（islandLeft = (WINDOW_WIDTH - currentWidth) / 2），
         //    只要 currentWidth > WINDOW_WIDTH，islandLeft 就变成负数，超出窗口的那部分会被窗口边缘硬裁，
         //    等于又绕回「被裁切」。所以这里把 MAX_ISLAND_WIDTH 也纳入下限。
-        //    窗口比屏幕宽是允许的（岛体可以溢出屏幕，用户明确接受）；透明像素照常鼠标穿透，
+        //    窗口比屏幕宽是允许的（岛体可以溢出屏幕）；透明像素照常鼠标穿透，
         //    位置换算（logX / ptDst.x）都已经带上了「窗口居中于显示器」的偏移量，无需另行处理。
         public static float WINDOW_WIDTH => Math.Max(1200f,
             Math.Max(MAX_ISLAND_WIDTH,
