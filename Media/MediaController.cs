@@ -347,9 +347,12 @@ namespace NotchPeninsula
         private int _musicModeMisses;
         private const int MusicModeMissGrace = 3;
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
-        // 浏览器会话下，原始标题里带「哔哩哔哩 / bilibili」。
-        // 必须在 CleanBrowserTitle 之前判定：清理会抹掉 "_哔哩哔哩_bilibili" 这类后缀，
-        //    清完标题里就再也找不到平台名了。用途是把封面切到会话自带的那张（视频封面）。
+        // 「当前展示会话的原始标题里带 B 站网页后缀」—— 判据是 "_哔哩哔哩_bilibili"。
+        // 必须在 CleanBrowserTitle 之前判定：清理会把这个后缀抹掉，清完标题里就再也找不到它。
+        // 用途：封面改用该会话自带的那张（视频封面），而不是应用 / 浏览器图标。
+        //    它优先于「无歌手就只显示应用 logo」这条通用规则（见 UpdateCover 的 preferSessionCover）。
+        // 按会话存续：会话切换时重置（见 UpdateSession），同一会话内一旦判出就不再翻回
+        //    （见 RefreshPropertiesCore，站内切集时标题会经过不带后缀的中间态）。
         private bool _isBilibiliBrowserSession;
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
@@ -510,8 +513,6 @@ namespace NotchPeninsula
             _currentAppId = newSession?.SourceAppUserModelId ?? "";
 
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
-            // 哔哩哔哩的浏览器判定按会话重置（它依赖标题，见 RefreshPropertiesCore）：换会话必须清掉
-            _isBilibiliBrowserSession = false;
             // 浏览器标记只驱动网页标题清理（CleanBrowserTitle）。
             // 会不会出歌词跟它无关 —— 判据只有「SMTC 有没有给出歌手」这一条（见 IsVideoMode）。
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
@@ -563,10 +564,14 @@ namespace NotchPeninsula
             }
             else
             {
+                // 只有会话真的没了（系统里再没有可接管的会话）才清这本会话自己的标记与封面位图。
+                // 刻意不在「切到别的会话」时清：切走只是不再展示，歌词与封面缓存都留着，
+                //    切回来能立刻复用 —— 宁可多占一点内存，也不要在切换途中把已经拿到的东西丢掉。
                 _isActive = false;
                 Title = "No Media";
                 Artist = "";
                 _isPlaying = false;
+                _isBilibiliBrowserSession = false;
                 _externalCoverAppId = "";
                 _externalCoverTitle = "";
                 SetThumbnail(null);
@@ -768,19 +773,21 @@ namespace NotchPeninsula
                     // 唯一的预处理是浏览器：网页标题里的「正在播放: 歌名 - 歌手」要拆成歌名 + 歌手。
                     string smtcTitle = props.Title ?? "";
                     string smtcArtist = props.Artist ?? "";
+                    // 平台后缀必须在清理之前判：CleanBrowserTitle 会把 "_哔哩哔哩_bilibili" 抹掉，
+                    //    清完之后标题里就再也找不到它了。
+                    // 粘性：一旦判出过就保持为 true，不再翻回 —— 站内切集 / 切下一条时标题会经历
+                    //    「旧标题 → 中间态 → 新标题」，中途那一拍可能不带后缀；若就此翻回 false，
+                    //    封面会退回应用图标，而且之后未必再有刷新来纠正。
+                    // 只在会话真的消失时才重置（见 UpdateSession 的 else 分支）。
+                    if (IsBilibiliTitle(smtcTitle)) _isBilibiliBrowserSession = true;
+
                     if (_isBrowserSession)
                     {
-                        // 平台名要在清理之前判：CleanBrowserTitle 会把 "_哔哩哔哩_bilibili" 这类后缀抹掉。
-                        // 粘性：一旦判出过哔哩哔哩，本会话内就一直算 —— 站内切集/切下一条时，
-                        // 标题会经历「旧标题 → 中间态 → 新标题」的过渡，中途那次刷新可能抓到一个
-                        // 不带平台名的标题；若就此翻回 false，封面会退回浏览器图标且之后未必再有刷新来纠正。
-                        if (IsBilibiliTitle(smtcTitle)) _isBilibiliBrowserSession = true;
                         smtcTitle = CleanBrowserTitle(smtcTitle, out smtcArtist);
                     }
-                    else
+                    else if (_isBilibiliSession)
                     {
-                        _isBilibiliBrowserSession = false;
-                        if (_isBilibiliSession) smtcArtist = ""; // 网页不提供歌手，别让标题尾部被当成歌手
+                        smtcArtist = ""; // 网页不提供歌手，别让标题尾部被当成歌手
                     }
 
                     UpdateMediaMode(smtcTitle, smtcArtist);
@@ -852,6 +859,11 @@ namespace NotchPeninsula
                 _trackTitle = smtcTitle;
                 _trackArtist = smtcArtist;
                 _musicModeMisses = 0;
+                // 换会话是模式判定里最强的一次事件：当场定模式，不走宽限。
+                //    否则从「有歌手的会话」切到「没歌手的会话」时，_isMusicMode 会挂着旧值继续为 true，
+                //    宽限那几拍里歌词不清空、封面不重选 —— 屏上就会出现
+                //    「上一个会话的歌词 + 这个会话的图标」这种错配。
+                _isMusicMode = _trackTitle.Length > 0 && _trackArtist.Length > 0;
             }
             else if (titleChanged)
             {
@@ -894,32 +906,37 @@ namespace NotchPeninsula
         /// 读取节奏：每一首曲目至少发起一次；同一曲目的重试按 SessionCoverRetryInterval 节流
         /// （兜底重试每帧都会走到这里）。
         ///
-        /// 本曲目的外部封面一旦就位就无条件保持 —— 判据里刻意不带「当前是不是视频模式」：
-        /// 模式判定抖动或属性读取失败都不该把一张已经到手的专辑封面换成程序图标（换掉就再也回不来了）。
+        /// 本曲目的外部封面一旦就位就保持（「就位」的完整判据见 coverInPlace）—— 判据里刻意不带
+        /// 「当前是不是视频模式」：模式判定抖动或属性读取失败都不该把一张已经到手的专辑封面
+        /// 换成程序图标（换掉就再也回不来了）。
         ///
         /// 不再引用 data\image 下的平台站标（资源保留，只是不再被任何代码路径读到）。
         /// </summary>
         private void UpdateCover(bool allowSessionCover)
         {
-            if (string.Equals(_externalCoverTitle, _trackTitle, StringComparison.Ordinal)
-                && string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal))
-                return;
+            // 「屏上这张封面确实是本曲目从外部取到的那张」的完整判据：
+            //   记账命中（曲目标题 + 会话一致）且当前不是应用图标（_appIconKey 非空即说明屏上放的是图标）。
+            //
+            // 为什么必须带上「不是图标」这一条：记账是按曲目写的，切到无歌手的会话时封面会被换成
+            //   应用图标，而记账还停在上一曲。切回该曲目时若不再选一次，记账恰好命中就永远不换 ——
+            //   屏上于是留下「这个会话的歌词 + 上一个会话的封面 / 图标」这种错配。
+            bool coverInPlace = _appIconKey.Length == 0
+                && string.Equals(_externalCoverTitle, _trackTitle, StringComparison.Ordinal)
+                && string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal);
+            if (coverInPlace) return;
 
             // 会话自带封面的两类来源（其余情况保持既有链路：网络搜索封面 → 应用图标）：
             //   ① 音乐模式 + SmtcCoverPreferredIds 里的播放器 —— 图就是当前这首歌的专辑封面；
-            //   ② 浏览器 + 哔哩哔哩 —— 视频模式也走：SMTC 给的是视频封面，比浏览器图标有信息量。
+            //   ② 原标题带 "_哔哩哔哩_bilibili" 的网页视频 —— 视频模式也走：SMTC 给的是视频封面，
+            //      比浏览器图标有信息量。这一条优先于「无歌手只显示应用 logo」的通用规则。
             bool preferSessionCover = _isMusicMode
                 ? IsSmtcCoverPreferredAppId(_currentAppId)
-                : (_isBrowserSession && _isBilibiliBrowserSession);
+                : _isBilibiliBrowserSession;
 
-            // 应用图标只是两条来源都还没有时的占位：本会话不做「会话封面优先」，
-            // 或者它还没有过任何外部封面。
-            //
-            // 会话封面优先的会话里，已就位的外部封面不会被应用图标顶掉：站内切集 / 切下一条时，
-            //    会话未必重新给出缩略图，一旦换成浏览器图标就再也回不来了（新封面根本不会到达）。
-            //    此时保持上一张、继续重试：拿到新封面就换上，拿不到也只是短暂停在旧图上，
-            //    不会退化成「只剩一个图标」。
-            if (!preferSessionCover || _externalCoverTitle.Length == 0) SetAppIcon();
+            // 外部封面还没就位（首次刷新，或屏上还挂着上一个会话的封面）：先用当前会话的应用图标顶住。
+            //    这一步同时保证「切会话时不会把上一个会话的封面留在屏上」——
+            //    会话封面优先的会话随后会把真正的封面换上来，拿不到也只是停在图标，不会留着别人的图。
+            SetAppIcon();
 
             if (!allowSessionCover || !preferSessionCover) return;
 
@@ -2331,13 +2348,14 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 浏览器原始标题里是否带哔哩哔哩的平台名（用于把封面切到会话自带的那张）。
-        /// 必须在 CleanBrowserTitle 之前调用 —— 清理会把 _哔哩哔哩_bilibili
-        /// 这类后缀去掉，清完之后标题里就再也找不到平台名了。
+        /// 当前展示会话的原始标题里是否带 B 站网页标题后缀（用于把封面切到会话自带的那张）。
+        ///
+        /// 判据刻意收成这一个精确串（而不是原来的「含哔哩哔哩 / bilibili」）：后者太宽，
+        /// B站客户端、以及歌名里恰好带这几个字的曲目都会被误判成网页视频。
+        /// 必须在 CleanBrowserTitle 之前调用 —— 清理会把这个后缀抹掉，清完之后标题里就再也找不到它了。
         /// </summary>
         private static bool IsBilibiliTitle(string title)
-            => title.Contains("哔哩哔哩", StringComparison.Ordinal)
-               || title.Contains("bilibili", StringComparison.OrdinalIgnoreCase);
+            => title.Contains("_哔哩哔哩_bilibili", StringComparison.Ordinal);
 
         /// <summary>
         /// 把封面地址归一成小尺寸变体：岛上最大只画 50px，下原图纯属浪费带宽与解码内存
@@ -2760,7 +2778,12 @@ namespace NotchPeninsula
             //
             // 触发条件除了「没有任何封面」，还有「封面还挂在别的曲目上」—— 换歌到新封面到位之间
             // 就是这种过渡态（会话自带封面优先的平台上必然出现），此时也需要继续把接力棒往下传。
+            // 触发条件除了「没有任何封面」，还有两条：
+            //   · 封面还挂在别的曲目上 —— 换歌到新封面到位之间就是这种过渡态，要把接力棒往下传；
+            //   · 屏上当前是应用图标（_appIconKey 非空）—— 例如切到无歌手的会话时被顶成了图标，
+            //     切回来要把本会话的外部封面重新接力回来，否则记账命中就永远停在图标上了。
             if (Thumbnail == null
+                || _appIconKey.Length > 0
                 || !string.Equals(_externalCoverTitle, _trackTitle, StringComparison.Ordinal)
                 || !string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal))
                 UpdateCover(true);
