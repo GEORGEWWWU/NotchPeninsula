@@ -307,7 +307,6 @@ namespace NotchPeninsula
             }
         }
 
-        // ─────────────────────────────────────────────────────────────────────────
         // Windows 10 专用：激活 / 从任务栏还原之后「整窗重建材质窗」。
         //
         // 背景：Win11（build 22000+）上 ReapplyBackdropMaterial() 重贴一次 accent 就能恢复；
@@ -318,7 +317,6 @@ namespace NotchPeninsula
         //
         // 内容窗（Skia 前景）不动，所以看不到 UI 闪断；重建后立刻 SyncBackdropToContent() 把新窗
         // 压回内容窗正下方（新建窗口默认在 Z 序顶部，不压回去会盖住前景）。
-        // ─────────────────────────────────────────────────────────────────────────
 
         private void RebuildBackdropWindow()
         {

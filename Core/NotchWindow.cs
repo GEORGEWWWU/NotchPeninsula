@@ -66,7 +66,7 @@ namespace NotchPeninsula
         // 通知轮询定时器：刻意用线程池定时器（System.Timers.Timer），不要换回 DispatcherTimer。
         // DispatcherTimer 依赖 WPF Dispatcher 的队列被"泵"，而本程序的主循环是纯 Win32 的 Run()
         // （GetMessage/DispatchMessage，没有 Dispatcher.Run/PushFrame）。实测它在启动后只跳几次就静默停摆：
-        // 2026-09-25 部署了带心跳的版本，2 分半内 0 条心跳（心跳在每次调用开头就打），而同一时刻 dispatcher
+        // 曾部署过一版带心跳的构建，2 分半内 0 条心跳（心跳在每次调用开头就打），而同一时刻 dispatcher
         // 明明是活的（HTTP 探针触发的 _dispatcher.Invoke 顺利回到 UI 线程并返回 200）——
         // 这就是"重启后能收几条、随后彻底收不到且日志全空"的根因。渲染循环与音量看门狗一直用
         // System.Timers.Timer，从未出现此问题。取快照这一步允许在 MTA 线程调用
@@ -258,7 +258,7 @@ namespace NotchPeninsula
 
         /// <summary>媒体控制面板的延迟折叠时长。</summary>
         private const int MediaCollapseDelayMs = 3000;
-        /// <summary>插件详情页的延迟折叠时长（用户 2026-09-19 要求 0.8~1s）。</summary>
+        /// <summary>插件详情页的延迟折叠时长（取 0.8~1s 这个区间的手感）。</summary>
         private const int DetailCollapseDelayMs = 900;
 
         /// <summary>一块展开面板的延迟折叠计时：只管「什么时候收」，展开状态由各自的宿主持有。</summary>
@@ -595,7 +595,7 @@ namespace NotchPeninsula
         ///
         /// 只看一件事：轮询还有没有在发起调用。判据用"发起时刻"而不是"取到数据的时刻"——
         /// 取不到数据（超时、权限失效、快照冻结）由轮询自己的诊断负责，这里专治"轮询压根没在跑"
-        /// 这一类静默故障：2026-09-25 就是 DispatcherTimer 在本程序的主循环下跳几次就不动了，
+        /// 这一类静默故障：DispatcherTimer 在本程序的主循环下跳几次就不动了，
         /// 而它自己的诊断日志也随之消失，从外部完全无痕。发现停摆就重启定时器并留下日志。
         /// </summary>
         private void TickPollingWatchdog()
@@ -875,7 +875,7 @@ namespace NotchPeninsula
             try
             {
                 // 轮询看门狗：借用渲染循环这个最可靠的时钟（16ms 线程池定时器）去盯"通知轮询还在不在跑"。
-                // 2026-09-25 的教训就是：自检不能放在被检对象自己身上 —— DispatcherTimer 停摆后，
+                // 教训就是：自检不能放在被检对象自己身上 —— DispatcherTimer 停摆后，
                 // 它自己的诊断日志也一起哑了，从外部完全看不出原因。
                 TickPollingWatchdog();
 
@@ -970,7 +970,7 @@ namespace NotchPeninsula
                     // 此时若还按悬停淡出，用户一靠近细边它就变透明 —— 细边是唯一的唤回入口，淡掉就再也点不回来。
                     // 保持不透明同时也消掉了「手一靠近细边它就闪一下」的观感问题。用上一帧的 _currentY
                     // 判定即可（16ms 延迟无感），与唤回分支用的同一个闸门。
-                    // 第五个例外（用户 2026-10-04 明确）：任一展开态存在时一律不淡出。
+                    // 第五个例外：任一展开态存在时一律不淡出。
                     // 媒体面板 / 插件详情页 / 手动展开，三者都是「用户主动打开、需要持续看见并操作」的内容，
                     // 鼠标一悬停就让它们淡到 0%，等于面板当场消失 —— 既看不见也点不到，还会因为全透明
                     // 像素脱离 OLE 命中测试而连带影响拖放。展开态本来就不该自动收起（要收只走外部点击
@@ -1083,7 +1083,7 @@ namespace NotchPeninsula
 
                 // Y 轴的位移量必须基于「岛体自身的高度」计算，不能写死某个折叠态高度：
                 // 媒体展开面板（130 / 158）会明显撑高岛体，若仍按折叠态高度算，
-                // 就会多露出「面板高 − 折叠高」的尾巴，全屏看视频时正好挡视野。（用户 2026-09-20 反馈）
+                // 就会多露出「面板高 − 折叠高」的尾巴，全屏看视频时正好挡视野。
                 // 取 `Math.Min(_currentHeight, _targetHeight)` =「尺寸动画结束后岛体的高度」：
                 // · 岛体正在长高（媒体刚接管）时取当前值 → 露出尾巴恒为 4px；
                 // · 岛体正在收缩（收起 320×130 的媒体展开面板 / 关闭插件详情页）时取目标值，
@@ -1135,9 +1135,7 @@ namespace NotchPeninsula
                 if (Renderer.FullHideAlpha < 0.01f) Renderer.FullHideAlpha = 0f;
                 if (Renderer.FullHideAlpha > 0.99f) Renderer.FullHideAlpha = 1f;
 
-                // ----  ----
                 // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
-                // ----  ----
                 bool currentActive = _media.IsActive;
 
                 // 状态叠化透明度计算 (0.3s 平滑过渡，将媒体展开与折叠拆分为独立状态触发叠化)
@@ -1176,7 +1174,7 @@ namespace NotchPeninsula
                     if (Renderer.IsTranslationLineVisible(_media))
                         textWidth = Math.Max(textWidth, Renderer.MeasureLyricTranslationWidth(_media.CurrentLyricTranslation));
 
-                    // 文本区长度不再单独封顶（2026-09-20 起媒体控制器长度完全放开，多长都无所谓）。
+                    // 文本区长度不再单独封顶（媒体控制器长度完全放开，多长都无所谓）。
                     // 原先这里夹了一个 MEDIA_TEXT_MAX_WIDTH（480 ≈ 27 个汉字），长歌词先撞到它 →
                     // 超出部分被文字渐隐遮罩截断，而且原生内容宽度被钉在 595，
                     // 插件行预算 = 800 − 595 = 205 被吃光 → 装不下的插件整帧不显示
@@ -1195,7 +1193,7 @@ namespace NotchPeninsula
                 // 原生内容（尤其是开着媒体控制 + 长歌词自适应）一样照常显示，岛体也不会被撑过上限。
                 // 例外：媒体控制面板展开（IsMediaExpanded）时插件行整体不显示 —— 那是块独立面板，
                 // 插件贴上去只会把面板和岛体一起撑宽，见下面的分支。
-                // 该例外对组合模式同样生效（2026-09-25）：组合模式现在也能展开媒体面板，
+                // 该例外对组合模式同样生效：组合模式现在也能展开媒体面板，
                 // 展开期间岛体只剩面板，插件行与其它原生模块本帧都不参与。
                 bool mediaPanel = currentActive && Renderer.IsMediaExpanded;
 
@@ -1260,7 +1258,7 @@ namespace NotchPeninsula
                 // 那个做法（曾用 Renderer.IslandTargetWidth + GetScaledPluginReserve）会在
                 // 媒体控制器长度变化时把预留瞬间缩小：换歌词 / 换标题 → 目标宽度变大 →
                 // 缩放系数从 1 掉下来 → 插件行与原生内容边界整体挪一下再挪回去，
-                // 表现就是「插件闪现回原位又闪回来」。用户 2026-09-20 反馈，已整套删除。
+                // 表现就是「插件闪现回原位又闪回来」。这套做法曾经引发该现象，已整套删除。
                 // 现在预留一律用未缩放值，边界只跟着岛体边缘平滑移动。
 
                 // 形态(刘海/灵动岛) 弹簧物理插值引擎
@@ -1358,7 +1356,7 @@ namespace NotchPeninsula
 
             // 存档矩阵状态，避免缩放无限叠加
             //
-            // Save / Restore 必须自己兜住异常（2026-10-02 修）：`Renderer.Draw` 内部还有三级
+            // Save / Restore 必须自己兜住异常：`Renderer.Draw` 内部还有三级
             // Save（含一次 `SaveLayer` 整窗离屏层 ≈2MB，高 DPI 下更大），全靠它自己的出口配平。
             // 一旦某个媒体属性抛异常（`Thumbnail` 被并发 Dispose 后访问、COM 对象已断开……）穿过
             // Draw 冒到这里，本帧的 save 就永久留在画布栈上：离屏层被栈钉住不释放，
@@ -1418,7 +1416,7 @@ namespace NotchPeninsula
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
             if (screenDc == IntPtr.Zero) return;
 
-            // 从取到 DC 到归还之间不许有裸异常路径（2026-10-02 修）：
+            // 从取到 DC 到归还之间不许有裸异常路径：
             // 中间那句 UpdateMonitorBounds() 会走 Screen.AllScreens（多屏热插拔时可能抛），
             // 一旦它抛出，这一帧的 screen DC 就再也回不去 —— 每帧一次，句柄很快见底。
             // 包成 try/finally 后，无论中间发生什么，DC 一定归还。
@@ -2028,11 +2026,11 @@ namespace NotchPeninsula
                             }
                             else if (Renderer.MediaExpandByLeftClick && Renderer.HitMediaZone(cx))
                             {
-                                // 折叠态左键单击展开（2026-10-03 用户定的口径）：入口跟着
+                                // 折叠态左键单击展开：入口跟着
                                 // 「双击封面跳转应用」走 —— 跳转关掉时左键空闲（双击不再跳转），
                                 // 所以恢复成「点媒体区就展开」这个最顺手的入口；跳转开着时走上面那条
                                 // 右键分支（左键整块留给双击跳转）。
-                                // 这里不需要2026-10-02 之前那套「等系统双击判定窗口再展开」的排队逻辑：
+                                // 这里不需要之前那套「等系统双击判定窗口再展开」的排队逻辑：
                                 // 排队是为了把同一坐标上的「单击展开」与「双击跳转」分开，而现在跳转是关的，
                                 // 第二下不会触发任何事，直接展开即可（也就没有那 500ms 的迟滞）。
                                 ExpandPanel(Plugins.BuiltinWidgets.Media);
@@ -2045,8 +2043,8 @@ namespace NotchPeninsula
                                 return (IntPtr)0;
                             }
 
-                            // 折叠态的展开入口不再是固定的右键（2026-10-02 定的是右键，2026-10-03
-                            // 用户细化为「跳转开着才走右键，否则左键单击展开」）：跳转开着时左键只剩
+                            // 折叠态的展开入口不再是固定的右键（曾经定的是右键，后来细化为
+                            // 「跳转开着才走右键，否则左键单击展开」）：跳转开着时左键只剩
                             // 「双击封面跳转应用」一件事（在 WM_LBUTTONDBLCLK 里），单击天然什么都不做；
                             // 跳转关掉时由上面那条分支展开。
                             //
@@ -2095,8 +2093,8 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
-                        // 折叠态媒体区右键 = 展开媒体面板（2026-10-02 定下展开入口在右键，
-                        // 2026-10-03 用户细化为「入口跟着跳转开关走」）：
+                        // 折叠态媒体区右键 = 展开媒体面板（曾经定下展开入口在右键，
+                        // 后来细化为「入口跟着跳转开关走」）：
                         // 「开启『双击封面跳转应用』就右键展开，否则正常左键点击展开」。
                         // 三条判据缺一不可：① 消息提示音接管岛体时不抢（_currentToast == null，与上面同一道闸）；
                         // ② Renderer.MediaExpandByRightClick —— 展开功能总闸（媒体交互方式）开着且跳转开着；
@@ -2120,12 +2118,12 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
-                        // 按「右键落在哪块原生内容上」直达对应设置页签（用户 2026-09-23 建议）：
+                        // 按「右键落在哪块原生内容上」直达对应设置页签：
                         // 媒体控制器 → 媒体设置；时间/日期、CPU/RAM → 显示设置；
                         // 其他（空白待机 / 插件行 / 剪贴板面板…）→ 保持原行为，打开设置窗口的当前页签。
                         // 命中区由渲染器本帧登记（Renderer.Layout.cs），所以通知 / 详情页接管岛体期间不会误命中。
                         // 这里不消费媒体区的右键：整个媒体控制器的右键都照旧只打开设置窗口
-                        // （用户 2026-09-19 定的），上面那条分支只是「折叠态 + 跳转开启」这一种情况下的例外；
+                        // （这是既定口径），上面那条分支只是「折叠态 + 跳转开启」这一种情况下的例外；
                         // 跳转关掉时展开入口在左键单击（见 WM_LBUTTONDOWN），右键同样照旧直达媒体设置。
                         int targetTab = Renderer.NativeRightClickTab(rx);
                         if (targetTab >= 0) ConsoleWindow.ShowTab(targetTab);

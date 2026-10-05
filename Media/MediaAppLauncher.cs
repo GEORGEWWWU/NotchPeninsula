@@ -160,7 +160,7 @@ namespace NotchPeninsula
                 return;
             }
 
-            // ---------- 第 1 步：已采集到的窗口 ----------
+            // 第 1 步：已采集到的窗口
             IntPtr hwnd = IntPtr.Zero;
             uint pid = 0;
             lock (s_lock)
@@ -198,7 +198,7 @@ namespace NotchPeninsula
                 }
             }
 
-            // ---------- 第 2 步：按可执行文件名精确找窗口 ----------
+            // 第 2 步：按可执行文件名精确找窗口
             // AUMID 里的文件名就是进程名（QQMusic.exe → QQMusic），按全等取进程，不做模糊匹配。
             string exeName = ExeNameOf(appId);
             if (TryFindAppWindow(exeName, out IntPtr found, out uint foundPid))
@@ -211,8 +211,8 @@ namespace NotchPeninsula
                 Logger.Warn($"媒体跳转：「{appId}」定位到的窗口激活被系统拒绝");
             }
 
-            // ---------- 第 3 步：把应用本体拉起来 ----------
-            // 2026-09-30 深夜改：上一版在这里加了「AUMID 未注册就不交给 Shell」的闸门，
+            // 第 3 步：把应用本体拉起来
+            // 上一版在这里加了「AUMID 未注册就不交给 Shell」的闸门，
             // 结果把唯一还能用的那条路也堵死了 —— Just Solo 这类应用只在开始菜单注册了带 AUMID 的快捷方式
             // （`shell:AppsFolder\{AUMID}` 正是靠它解析的，实测 `Just Solo.lnk` 就带着这个 AUMID），
             // 注册表里查不到 → 判定「未注册」→ 一旦应用已经关闭（进程没了，读不到 exe 路径）就彻底没反应。

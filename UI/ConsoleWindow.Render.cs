@@ -327,7 +327,7 @@ namespace NotchPeninsula
             //    提示音是通知的附属设置，所以和通知同卡不同行 —— 拆成两张独立卡会让层级关系丢失。
             //       「消息通知内容」与「消息提示音」都是「系统消息通知」的子项，只是前者管内容、后者管声音。
             //    纵向对齐的唯一口径是行内锚点，绝不要拿「标签 vs 框内文字」当口径 ——
-            //       框内文字本身在框里偏下，跟着它走会连带把标签拖偏（2026-09-22 返工三轮的根因）。
+            //       框内文字本身在框里偏下，跟着它走会连带把标签拖偏（返工三轮的根因）。
             //    卡片下沿必须贴合内容：行 4 控件底 388，卡片底 404，留 16px。
             //    改这里的数值时必须同步改 WM_MOUSEMOVE 的 tab 0 段与 RenderDropdowns 的浮层锚点。
             var notifyCardRect = new SKRect(200, TITLE_BAR_HEIGHT + TOAST_ROW1_Y, WIDTH - 20, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
@@ -407,7 +407,7 @@ namespace NotchPeninsula
             // 但它是实现细节，不该出现在设置界面上打扰用户 —— 超限的音频在选中时
             // 会通过开关行的红色副标题给出具体原因（见 _soundHint）。
 
-            // 剪贴板链接检测（2026-09-20 从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
+            // 剪贴板链接检测（从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
             // 行首由 CLIPBOARD_CARD_Y 派生 = 通知卡底 + 10，通知卡长高时自动跟着走
             DrawToggleCard(canvas, CLIPBOARD_CARD_Y, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
 
@@ -601,13 +601,6 @@ namespace NotchPeninsula
             DrawToggleRow(canvas, MODE_TOGGLE_ROW_Y + page,
                 "双击空白切换待机模式", "打开后双击岛上空白处即可进入 / 退出待机",
                 Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
-
-            // 场景 = 媒体控制时补一行说明：那时岛内被媒体模块占满、没有空白可双击，退出改走频谱。
-            if (Renderer.StandbyScene == 3)
-            {
-                canvas.DrawText("待机控制设置为媒体控制的情况下，请双击频谱完成切换模式操作",
-                    216, TITLE_BAR_HEIGHT + MODE_HINT_BASELINE_Y + page, _subTextPaint);
-            }
 
             // ── 待机模式卡片 ──
             // 三个场景决定进入待机后岛上显示什么（只显示时间 / 空白 / 折叠媒体控制），
@@ -986,27 +979,27 @@ namespace NotchPeninsula
                 !isModeDisabled && _fsHideToggleHovered,
                 isModeDisabled);
 
-            // 媒体交互方式 = 展开功能总闸（2026-10-03 起口径）：组合模式同样可展开媒体面板
-            //    （2026-09-25 起），因此不再置灰。总闸开着时，折叠态的展开入口由下一张卡片
+            // 媒体交互方式 = 展开功能总闸：组合模式同样可展开媒体面板，
+            //    因此不再置灰。总闸开着时，折叠态的展开入口由下一张卡片
             //    「双击封面跳转应用」决定 —— 跳转开着走右键（左键留给双击跳转），跳转关掉走左键单击。
             //    副标题必须与命中侧同口径（见 Renderer.MediaExpandByRightClick / MediaExpandByLeftClick
             //       与 NotchWindow 的 WM_LBUTTONDOWN / WM_RBUTTONDOWN）：写成「点击展开」会让用户去左键点，
-            //       点完发现没反应 —— 2026-10-02 用户改口径、2026-10-03 细化时都明确要求同步文案。
+            //       点完发现没反应 —— 后来改口径、细化时都明确要求同步文案。
             DrawToggleCard(canvas, 270, "媒体交互方式",
                 Renderer.MediaInteractionMode == 1
                     ? "展开功能已开启：入口见下方「双击封面跳转应用」"
                     : "展开功能已关闭：折叠态右键直达媒体设置",
                 Renderer.MediaInteractionMode == 1, _mediaExpToggleHovered);
 
-            // 双击封面跳转应用（2026-09-27 新增，2026-09-30 把「双击哪里」统一到封面）：
+            // 双击封面跳转应用（「双击哪里」已统一到封面）：
             //    双击封面把正在放媒体的那个应用切回前台 —— 折叠态双击媒体模块左半边（整条高度都算，
             //    不是只有缩略图那一小块）、展开态双击封面，两种形态同一块热区。
-            //    它同时也是折叠态展开入口的开关（2026-10-03）：开着时左键被双击跳转占用，展开走右键；
+            //    它同时也是折叠态展开入口的开关：开着时左键被双击跳转占用，展开走右键；
             //    关掉后左键空闲，恢复左键单击展开。
             //    副标题必须与命中侧（Renderer.MediaExpandByRightClick / MediaExpandByLeftClick、
             //      Renderer.HitMediaLaunchZone）同口径：折叠态是「左半边」而不是「左上角」——
             //      命中判定完全不看 y（折叠态整条都在封面这一行里），写成左上角会让用户
-            //      只敢往缩略图上点，恰好复现 2026-10-01 那次「按十次有两三次落在边上、感觉要点两下」。
+            //      只敢往缩略图上点，恰好复现那次「按十次有两三次落在边上、感觉要点两下」。
             //      四档文案分别对应两个开关的四种组合，把「现在到底怎么展开」写清楚，不多写。
             //      副标题（x=216 起、12px、开关左缘 522）宽度上限约 298px ≈ 24 个汉字，再长会压到开关上。
             string appLaunchSub = Renderer.MediaInteractionMode == 0
@@ -1275,7 +1268,7 @@ namespace NotchPeninsula
                 _subTextPaint.Color = Neutral(170);
             }
             // 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
-            //    插件中心只负责启用 / 禁用，不再提供任何排序入口（2026-09-25 移除）。
+            //    插件中心只负责启用 / 禁用，不再提供任何排序入口（已移除）。
 
             const int maxRows = 7;
             // 上行：名称独占整行，可延展至卡片右边界外侧
@@ -1324,7 +1317,7 @@ namespace NotchPeninsula
                 const float btnTop = 25f, btnH = 20f;       // 操作按钮矩形（上移 2px，远离底部分割线）
 
                 // 操作按钮（重载 / 移除）+ 开关
-                // 排序小三角已于 2026-09-25 移除：位置调整统一走「显示设置 → 显示内容」，
+                // 排序小三角已移除：位置调整统一走「显示设置 → 显示内容」，
                 //    这里不再有 CanMoveOrder / MoveOrder 的入口。
                 void DrawRowButton(float bx, bool hovered, string label, bool danger)
                 {
@@ -1452,7 +1445,7 @@ namespace NotchPeninsula
                 // 滑块只能走「轨道高 - 滑块高」这段行程。
                 //    曾经写成 `trackH * first / maxFirst`：当滑块本身很长（可视行数接近总行数）时，
                 //    thumbY + thumbH 会一路超过轨道底边，滑块整条滑出下拉菜单往下掉 ——
-                //    用户点名的「下拉滑轨溢出菜单主体」。改这里必须保证
+                //    这就是「下拉滑轨溢出菜单主体」那个现象。改这里必须保证
                 //    `thumbY + thumbH <= dY + 4 + trackH`。
                 float thumbY = dY + 4 + (trackH - thumbH) * first / Math.Max(1, maxFirst);
                 _dynamicFillPaint.Color = Overlay(30);
