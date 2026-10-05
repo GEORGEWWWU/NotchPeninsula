@@ -23,6 +23,15 @@ namespace NotchPeninsula
 
         private const int TITLE_BAR_HEIGHT = 32;
 
+        // ---- 内容区横向边界（窗口右侧那一列）----
+        // 卡片、文字、命中区全部由这四个常量推导，不要再手写 186 / 202 / WIDTH-12 / WIDTH-28：
+        // 想整体加宽或收窄内容区，只改这里一处即可（此前是散落各处的 200 / 216 / WIDTH-20 / WIDTH-36，
+        // 想各挪十几像素得改上百处）。
+        private const float CONTENT_L = 186f;          // 卡片左边界（与侧栏之间留一点缝）
+        private const float CONTENT_TEXT_X = 202f;     // 卡片内文字左缩进（= CONTENT_L + 16）
+        private const float CONTENT_RM = 12f;          // 卡片右边界距窗口右边
+        private const float CONTENT_TEXT_RM = 28f;     // 卡片内文字右缩进（距窗口右边）
+
         // ---- 持久化渲染缓冲（与 Core/NotchWindow 同一套做法）----
         //
         // 为什么必须有：设置窗口的 Render() 由交互驱动，悬停 / 滚轮 / 拖滑块每动一下就是
@@ -210,11 +219,11 @@ namespace NotchPeninsula
         //     卡片下沿必须贴合内容（现距内容底 374 留 30px），别撑高。
         //     行 4 是全页唯一「4 控件并排」的行，控件加间隙正好占满整个内容区；
         //        因此左侧标签须单独预留空间（SOUND_CTRL_X 由标签宽度派生），且该行不放描述文字。
-        //     所有控件右边界一律 `WIDTH - 36`（卡片内右侧留白），横向绝不铺满整卡。
+        //     所有控件右边界一律 `WIDTH - CONTENT_TEXT_RM`（卡片内右侧留白），横向绝不铺满整卡。
         //     改这里的数值时必须同步改 OnMouseMove 的 tab 0 段与 RenderDropdowns 的浮层锚点。
 
         /// <summary>卡片内右侧内边距：所有右对齐控件的右边界都锚到这里。</summary>
-        private const float CARD_PAD_RIGHT = 36f;
+        private const float CARD_PAD_RIGHT = CONTENT_TEXT_RM;   // 卡片内右对齐控件的基准（与文字右边界同源）
 
         // ---- ① 系统消息通知卡（三行 + 一行附属设置）----
         //
@@ -395,7 +404,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 提示音行「从右往左」排版时用的横向间隙。整行必须刚好塞进卡片内容区
-        /// （216 .. WIDTH-36，共 348px），所以每个宽度都是按实测文本宽度抠出来的：
+        /// （CONTENT_TEXT_X .. WIDTH-CONTENT_TEXT_RM，共 370px），所以每个宽度都是按实测文本宽度抠出来的：
         /// 最长选项「手表提示（watchOS）」132.9px + 左右内边距与箭头 ≈ 156。
         /// 改任一宽度都要重算总和，加起来超过 348 就会像上一版那样怼出卡片左边界。
         /// </summary>
@@ -421,7 +430,7 @@ namespace NotchPeninsula
         private const float SOUND_VOL_X = SOUND_PREVIEW_X - SOUND_ROW_GAP - SOUND_VOL_W;
 
         /// <summary>行 4 左侧标签「提示音」的起始 x（与其它行一致，锚卡片左内边距）。</summary>
-        private const float SOUND_LABEL_X = 216f;
+        private const float SOUND_LABEL_X = CONTENT_TEXT_X;
 
         /// <summary>标签与「提示音」下拉之间的间隙。</summary>
         private const float SOUND_LABEL_GAP = 8f;
@@ -430,8 +439,9 @@ namespace NotchPeninsula
         /// 「提示音」下拉左边界。
         ///
         /// 这一行是全页唯一 4 个控件并排的行（下拉 + 音量 + 试听 + 重置，共 340px），
-        ///    而内容区只有 348px（216..564）。所以它不能像其它行那样从 216 起排 ——
-        ///    那样会把左侧标签区挤成负数（216 - 8 = 208，小于 216），文字直接叠到下拉框上。
+        ///    而内容区只有 370px（CONTENT_TEXT_X..WIDTH-CONTENT_TEXT_RM）。所以它不能像其它行那样从
+        ///    CONTENT_TEXT_X 起排 —— 那样会把左侧标签区挤成负数（CONTENT_TEXT_X - 8 小于 CONTENT_TEXT_X），
+        ///    文字直接叠到下拉框上。
         ///    这里给标签留出实测宽度（「提示音」3 字 13.5px ≈ 39px）+ 8px 间隙。
         ///    改这里要同步 `SOUND_CTRL_W`，并确认 `SOUND_LABEL_X + 标签宽 + GAP == SOUND_CTRL_X`。
         /// </summary>
@@ -461,7 +471,7 @@ namespace NotchPeninsula
 
         private const float FONT_PICK_W = 78f;         // [选择字体] 按钮宽度
 
-        private const float FONT_RESET_X = WIDTH - 36 - FONT_RESET_W;
+        private const float FONT_RESET_X = WIDTH - CONTENT_TEXT_RM - FONT_RESET_W;
 
         private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
 
@@ -1202,6 +1212,16 @@ namespace NotchPeninsula
                         if (!TickDisplayHoverAnim()) StopDisplayHoverAnim(hwnd);
                         return IntPtr.Zero;
                     }
+                    // 市场提示自动消失（安装 / 卸载 / 评分结果 4 秒后清掉，跑完自己停表）
+                    if (TickMarketHint(wParam)) return IntPtr.Zero;
+                    break;
+
+                // 输入法：搜索框要能打中文，必须把 IME 的三条消息接进来
+                //  （未处理的一律放行给 DefWindowProc，IME 自己还要画组字串与候选窗）
+                case Win32.WM_IME_STARTCOMPOSITION:
+                case Win32.WM_IME_COMPOSITION:
+                case Win32.WM_IME_ENDCOMPOSITION:
+                    if (HandleMarketIme((int)msg, lParam)) return IntPtr.Zero;
                     break;
 
                 // 系统「应用模式」（浅色 / 深色）切换时系统会广播 WM_SETTINGCHANGE。
@@ -1318,23 +1338,36 @@ namespace NotchPeninsula
                         return IntPtr.Zero;
                     }
 
-                    // 插件中心：已安装插件列表可滚（_pluginScroll = 滚动首行），
-                    //    可滚范围与绘制 / 命中共用 GetPluginListLayout。
-                    if (_selectedTab == 6)
+                    // 我的插件（tab 6）/ 插件市场（tab 7）：各自一张可滚长列表，
+                    //    可滚范围与绘制 / 命中共用 GetPluginListLayout / GetMarketListLayout。
+                    if (_selectedTab == 6 || _selectedTab == 7)
                     {
-                        GetPluginListLayout(out _, out int pluginMaxFirst);
-                        if (pluginMaxFirst > 0)
+                        if (_marketDialog != MarketDialog.None) return IntPtr.Zero;   // 弹窗打开：吞掉滚轮
+
+                        int wheelDelta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                        int steps = wheelDelta / 120 * 3;
+                        bool moved;
+
+                        if (_selectedTab == 7)
                         {
-                            int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
-                            int target = Math.Clamp(_pluginScroll - delta / 120 * 3, 0, pluginMaxFirst);
-                            if (target != _pluginScroll)
-                            {
-                                _pluginScroll = target;
-                                // 滚轮不产生 WM_MOUSEMOVE：滚动后光标下的行号变了、hover 却还停在旧行上，
-                                // 紧接着点下去就会操作错插件。这里按当前光标位置补一次命中。
-                                SyncHoverFromCursor();
-                                Render();
-                            }
+                            GetMarketListLayout(out _, out int marketMaxFirst);
+                            int mTarget = Math.Clamp(_marketScroll - steps, 0, marketMaxFirst);
+                            moved = mTarget != _marketScroll;
+                            _marketScroll = mTarget;
+                        }
+                        else
+                        {
+                            GetPluginListLayout(out _, out int pluginMaxFirst);
+                            int pTarget = Math.Clamp(_pluginScroll - steps, 0, pluginMaxFirst);
+                            moved = pTarget != _pluginScroll;
+                            _pluginScroll = pTarget;
+                        }
+
+                        if (moved)
+                        {
+                            // 滚动后光标下的行号变了，补一次悬停命中，避免紧接着的点击落错行
+                            SyncHoverFromCursor();
+                            Render();
                         }
                         return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
                     }
@@ -1343,6 +1376,14 @@ namespace NotchPeninsula
                 case Win32.WM_PAINT:
                     return IntPtr.Zero;
 
+                // 插件市场搜索框的键盘输入：只有市场页且搜索框聚焦时才吃掉按键，其余一律放行。
+                case Win32.WM_CHAR:
+                    if (HandleMarketSearchKey(-1, (char)(wParam.ToInt64() & 0xFFFF))) return IntPtr.Zero;
+                    break;
+
+                case Win32.WM_KEYDOWN:
+                    if (HandleMarketSearchKey(wParam.ToInt32(), '\0')) return IntPtr.Zero;
+                    break;
                 // 后台任务（显示器枚举等）完成后请求的一次重绘 —— 在这里（UI 线程）执行，
                 // 而不是在投递它的线程池线程里直接 Render（见构造函数里 Task.Run 的说明）。
                 case WM_ASYNC_RERENDER:
@@ -1364,6 +1405,7 @@ namespace NotchPeninsula
                     // 定时器本身随窗口一起消失，只是把这个标志归位：
                     // 否则万一在动画途中销毁窗口，标志会一直停在 true，下次开表会被自己挡掉。
                     _displayHoverTimerOn = false;
+                    _marketHintTimerOn = false;   // 同上：市场提示的自动消失表也要归位
                     // 静态事件必须跟着窗口退订：不退的话窗口关掉后 _instance 虽为 null，
                     // 但订阅列表里还挂着这个方法，下次打开会重复订阅（静态事件是进程级的）。
                     Renderer.StandbyActiveChanged -= OnStandbyActiveChanged;
@@ -1447,6 +1489,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 4) RenderTabAbout(canvas);
             else if (_selectedTab == 5) RenderTabPersonalize(canvas);
             else if (_selectedTab == 6) RenderTabPlugins(canvas);
+            else if (_selectedTab == 7) RenderTabMarket(canvas);
 
             canvas.Restore();
 

@@ -11,7 +11,7 @@
 ![C#](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp&logoColor=white)
 ![NAudio](https://img.shields.io/badge/NAudio-2.2-5C2D91)
 ![SkiaSharp](https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2)
-![Version](https://img.shields.io/badge/version-1.9.0-blue)
+![Version](https://img.shields.io/badge/version-1.9.5-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
 
 <p>
@@ -93,14 +93,15 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 
 右键托盘图标：**打开设置 / 唤回灵动岛 / 开机自启 / 退出**。
 
-设置窗口按左侧导航分为 7 个页签：
+设置窗口按左侧导航分为 8 个页签：
 
 - **个性化中心** —— 主题、背景不透明度、刘海样式与圆角、全局折叠态高度、通知尺寸、DPI 缩放
 - **通用设置** —— 开机自启、窗口置顶、系统消息通知与提示音、剪贴板链接检测、灵动岛字体
 - **显示设置** —— 显示形态、目标显示器、显示模式（待机 / 普通 + 双击空白切换）、待机模式（待机后显示时间 / 空白 / 媒体控制）、**显示内容**（勾选显示项并调整先后次序）
 - **媒体设置** —— 媒体控制、目标媒体平台、歌词与译文、逐字歌词、歌词延迟
 - **交互设置** —— 自动隐藏、媒体交互方式、双击封面跳转应用、鼠标穿透
-- **插件中心** —— 导入 / 启用 / 禁用 / 热重载 / 移除插件、打开插件目录、插件市场
+- **我的插件** —— 导入 / 启用 / 禁用 / 热重载 / 移除插件、打开插件目录、拖入 DLL 直接安装
+- **插件市场** —— 按分类（全部 / 主题外观 / 媒体增强 / 效率工具 / 开发者）浏览、搜索、下载 / 更新 / 重装、卸载、查看详情
 - **关于软件** —— 版本信息与相关链接
 
 > 「媒体交互方式」是折叠态媒体区的**展开功能总闸**，同时决定展开入口：
@@ -156,8 +157,9 @@ NotchPeninsula/
 │   ├── ConsoleWindow.WndProc.cs      # 设置窗口悬停命中（整窗热区）
 │   ├── ConsoleWindow.Click.cs        # 设置窗口点击分派（顺序敏感的 if/else 链）
 │   ├── ConsoleWindow.Backdrop.cs     # 亚克力/云母材质与窗口壳（材质窗、圆角、最小化）
-│   ├── ConsoleWindow.Plugin.cs       # 插件中心与设置项辅助逻辑
-│   ├── ConsoleWindow.PluginDrop.cs   # 插件中心：把 DLL 直接拖进来即导入
+│   ├── ConsoleWindow.Plugin.cs       # 我的插件页与设置项辅助逻辑
+│   ├── ConsoleWindow.PluginDrop.cs   # 我的插件页：把 DLL 直接拖进来即导入
+│   ├── ConsoleWindow.Market.cs       # 插件市场：API 拉取、分类/搜索过滤、下载安装、详情
 │   ├── ConsoleWindow.Settings.cs     # 尺寸/通知内容/字体等设置项的读写
 │   ├── ConsoleWindow.Paint.cs        # 设置窗口画笔池
 │   └── TrayMenuWindow.cs             # 托盘菜单

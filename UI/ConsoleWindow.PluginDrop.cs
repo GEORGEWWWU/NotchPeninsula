@@ -32,12 +32,12 @@ namespace NotchPeninsula
         private bool _pluginHintIsError;
 
         /// <summary>
-        /// 右侧拖放区（DIP 坐标）= 插件页两张卡片的整体范围。
+        /// 右侧拖放区（DIP 坐标）= 「我的插件」页签右侧内容区整体。
         /// 左侧 0..200 是页签栏，不属于「右边区域」，不参与拖放。
         /// 渲染高亮与命中判定共用本方法，改一处即两处同时生效。
         /// </summary>
         private static SKRect GetPluginDropZone()
-            => new SKRect(200f, TITLE_BAR_HEIGHT + 12f, WIDTH - 20f, HEIGHT - 20f);
+            => new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + 12f, WIDTH - CONTENT_RM, HEIGHT - 20f);
 
         // 登记 / 注销
 

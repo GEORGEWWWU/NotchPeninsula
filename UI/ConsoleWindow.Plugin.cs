@@ -39,18 +39,17 @@ namespace NotchPeninsula
         private int _pluginScroll = 0;
 
         /// <summary>
-        /// 插件中心列表的唯一布局真源：可视行数 / 最大首行。
+        /// 「我的插件」列表的唯一布局真源：可视行数 / 最大首行。
         /// 绘制（RenderTabPlugins）、悬停命中（OnMouseMove 的 tab 6 段）、
         /// 滚轮（WM_MOUSEWHEEL）三处共用 —— 与「显示内容」列表的 GetDisplayListLayout 同一套约定，
         /// 避免卡片高度或行高一改就出现「滚不动 / 滚过头」。
         /// </summary>
         private void GetPluginListLayout(out int visibleRows, out int maxFirstRow)
         {
-            // 与 RenderTabPlugins 的布局严格同源：topY = TITLE_BAR_HEIGHT + 12，listY = topY + 110，
-            // 行起点 listY + 44，行高 56；卡片底边是 HEIGHT - 20，底部再留 8px 呼吸。
-            float listY = TITLE_BAR_HEIGHT + 12 + 110;
-            const float FirstRowY = 44f, RowH = 56f;
-            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + FirstRowY) - 8) / RowH));
+            // 与 RenderTabPlugins 的布局严格同源：顶卡 96 高，列表卡 listY = TITLE_BAR_HEIGHT+122，
+            // 底边到窗底（HEIGHT-20）；行起点 listY + 44，行高 PluginListRowH（50）；底部再留 8px 呼吸。
+            GetPluginListCardTop(out float listY);
+            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + 44) - 8) / PluginListRowH));
             int total = _pluginView.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
@@ -101,6 +100,13 @@ namespace NotchPeninsula
             _hoveredPluginToggle = -1;
             _hoveredPluginReload = -1;
             _hoveredPluginRemove = -1;
+            _hoveredMarketInstall = -1;
+            _hoveredMarketUninstall = -1;
+            _hoveredMarketDetail = -1;
+            _hoveredDialogClose = false;
+            _hoveredDialogButton = -1;
+            _rateStars = 0;
+            _hoveredMarketChk = false;
         }
 
         /// <summary>

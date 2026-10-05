@@ -29,8 +29,9 @@ namespace NotchPeninsula
             else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 1; // 3. 显示设置
             else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 2; // 4. 媒体设置
             else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 180 && y <= TITLE_BAR_HEIGHT + 216) newHoveredTab = 3; // 5. 交互设置
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 6; // 6. 插件中心
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 280 && y <= TITLE_BAR_HEIGHT + 316) newHoveredTab = 4; // 7. 关于软件
+            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 6; // 6. 我的插件
+            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 270 && y <= TITLE_BAR_HEIGHT + 306) newHoveredTab = 7; // 7. 插件市场
+            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 320 && y <= TITLE_BAR_HEIGHT + 356) newHoveredTab = 4; // 8. 关于软件
 
             int newHoveredTheme = -1;
             int newHoveredOpacityIndex = -1;
@@ -38,7 +39,7 @@ namespace NotchPeninsula
             if (_selectedTab == 5)
             {
                 // 避免和下面的 rightX 冲突，改名为 themeRightX
-                float themeRightX = WIDTH - 36;
+                float themeRightX = WIDTH - CONTENT_TEXT_RM;
                 float themeY = GetBtnY(-1);
 
                 // 主题按钮的三个胶囊热区
@@ -48,8 +49,8 @@ namespace NotchPeninsula
 
                 // 透明度滑块热区判定与拖拽滑动逻辑
                 float sliderY = TITLE_BAR_HEIGHT + 95;
-                float sliderX = 216;
-                float sliderW = WIDTH - 40 - 216;
+                float sliderX = CONTENT_TEXT_X;
+                float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
 
                 if (!Renderer.PassthroughModeEnabled)
                 {
@@ -81,7 +82,7 @@ namespace NotchPeninsula
                     if (i == 0 || i == 1 || i == 2 || i == 4) continue;
 
                     float btnY = GetBtnY(i);
-                    float rightX = WIDTH - 36; // 保持原有变量不动
+                    float rightX = WIDTH - CONTENT_TEXT_RM; // 保持原有变量不动
                     if (x >= rightX - 175 && x <= rightX - 145 && y >= btnY && y <= btnY + 24) newHoverMinus = i;
                     if (x >= rightX - 80 && x <= rightX - 50 && y >= btnY && y <= btnY + 24) newHoverPlus = i;
                     if (x >= rightX - 40 && x <= rightX && y >= btnY && y <= btnY + 24) newHoverReset = i;
@@ -130,6 +131,15 @@ namespace NotchPeninsula
             int newHoveredPluginToggle = -1;
             int newHoveredPluginReload = -1;
             int newHoveredPluginRemove = -1;
+            int newHoveredMarketInstall = -1;
+            int newHoveredMarketUninstall = -1;
+            int newHoveredMarketDetail = -1;
+            int newHoveredMarketCategoryIndex = -1;
+            bool newHoveredDialogClose = false;
+            int newHoveredDialogButton = -1;
+            double newRateStars = 0;
+            bool newHoveredMarketChk = false;
+            bool newMarketSearchHovered = false;
             bool newFontPickHovered = false;
             bool newFontResetHovered = false;
 
@@ -284,7 +294,7 @@ namespace NotchPeninsula
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
                 float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
-                if (x >= 216 && x <= WIDTH - 36 && y >= displayRowTop && y <= displayRowBottom)
+                if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
                     if (rowIdx < _displayScroll + displayVisibleRows)
@@ -298,11 +308,11 @@ namespace NotchPeninsula
 
                 // 两条滚动条：点它们决定滚轮优先滚哪一层（命中区比 3px 的视觉宽度放宽，否则细得点不中）
                 GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
-                if (x >= WIDTH - 22 && x <= WIDTH - 8 && y >= pageBarTop && y <= pageBarTop + pageBarH)
+                if (x >= WIDTH - 14 && x <= WIDTH && y >= pageBarTop && y <= pageBarTop + pageBarH)
                     newPageScrollbarHovered = true;
 
                 GetListScrollbarLayout(out float listBarTop, out float listBarH);
-                if (listBarH > 0f && x >= WIDTH - 40 && x <= WIDTH - 26
+                if (listBarH > 0f && x >= WIDTH - 32 && x <= WIDTH - 18
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
 
@@ -311,8 +321,8 @@ namespace NotchPeninsula
                 // 由 WM_MOUSEWHEEL 那条分支的累计阈值决定，与命中判定无关。
                 // 保留的覆盖规则：点过某条滚动条后，该层优先（_listScrollbarHovered 让列表优先
                 // 即便光标在卡外；_pageScrollbarHovered 反之）—— 滚动条是显式的层选择操作。
-                var displayCardHit = new SKRect(200, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page,
-                    WIDTH - 20, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page);
+                var displayCardHit = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page,
+                    WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page);
                 bool inDisplayCard = x >= displayCardHit.Left && x <= displayCardHit.Right
                     && y >= displayCardHit.Top && y <= displayCardHit.Bottom;
 
@@ -374,7 +384,7 @@ namespace NotchPeninsula
 
                 // 延迟补偿按钮整行排在最后（歌词卡片里第四行）
                 float btnY = lyricY + 147;
-                float cardRightX = WIDTH - 36;
+                float cardRightX = WIDTH - CONTENT_TEXT_RM;
                 bool newLyricMinusHovered = !anyPopupOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
                 bool newLyricPlusHovered = !anyPopupOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
                 bool newLyricResetHovered = !anyPopupOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
@@ -417,38 +427,132 @@ namespace NotchPeninsula
                 // 使用局部变量，防止状态死锁
                 newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 434 && y <= TITLE_BAR_HEIGHT + 454;
             }
-            else if (_selectedTab == 6) // 插件中心
+            else if (_selectedTab == 7) // 插件市场
             {
-                float topY = TITLE_BAR_HEIGHT + 12;
-                // 三个操作按钮
-                if (y >= topY + 60 && y <= topY + 84)
+                // 顶栏控件（分类下拉 + 搜索框）——弹窗 / 下拉展开时不吃悬停
+                if (_marketDialogIndex == -1)
                 {
-                    if (x >= 216 && x <= 312) newHoveredPluginAction = 0;       // 导入 DLL
-                    else if (x >= 320 && x <= 416) newHoveredPluginAction = 1;  // 打开目录
-                    else if (x >= 424 && x <= 520) newHoveredPluginAction = 2;  // 插件市场
+                    newMarketSearchHovered = x >= MarketSearchX && x <= MarketSearchX + MarketSearchW
+                        && y >= MarketControlsY && y <= MarketControlsY + MarketControlH;
+
+                    // 「只看已安装」复选框：位于**状态行**（不是顶栏），命中区含方框与标签、并稍微放宽
+                    newHoveredMarketChk = x >= MarketChkX - 4f
+                        && x <= MarketChkLabelX + 64f
+                        && y >= MarketStatusBaseline - 19f && y <= MarketStatusBaseline + 6f;
+
+                    bool overCatBtn = x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + MarketCatBtnW
+                        && y >= MarketControlsY && y <= MarketControlsY + MarketControlH;
+
+                    if (_marketCategoryOpen)
+                    {
+                        const float rowH = 26f;
+                        float mY = MarketControlsY + MarketControlH + 4;
+                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + MarketCatBtnW && y >= mY && y < mY + MarketCategories.Length * rowH)
+                            newHoveredMarketCategoryIndex = (int)((y - mY) / rowH);
+                    }
+                    // 分类按钮悬停用 -2 表示（不是菜单项），与菜单项索引区分
+                    if (overCatBtn && newHoveredMarketCategoryIndex == -1 && !_marketCategoryOpen)
+                        newHoveredMarketCategoryIndex = -2;
                 }
 
-                // 列表行内按钮（全部在下行：重载 | 移除 | 开关）
-                // 上行（名称）无交互目标，仅下行按钮可点击
-                float listY = topY + 110;
+                if (_marketDialogIndex != -1)
+                {
+                    // 弹窗打开：只算 ❌（命中框外扩 4px）与弹窗内按钮/星星，底下列表完全不吃悬停
+                    var mp = GetMarketAt(_marketDialogIndex);
+                    var rect = GetCurrentDialogRect();
+                    if (mp != null && rect.Width > 0)
+                    {
+                        var close = GetMarketDialogCloseRect(rect);
+                        close.Inflate(4f, 4f);
+                        newHoveredDialogClose = close.Contains(x, y);
+
+                        if (_marketDialog == MarketDialog.ConfirmUninstall)
+                        {
+                            for (int b = 0; b < 2; b++)
+                                if (GetMarketDialogButtonRect(rect, b).Contains(x, y)) newHoveredDialogButton = b;
+                        }
+                        else if (_marketDialog == MarketDialog.Rate && _rateMine <= 0 && !_rateLoading)
+                        {
+                            // 星星悬停 → 实时预览分值（半星粒度）。
+                            // ⚠️ 右半边必须 +1.0 而不是 +0.5：写成 floor(rel)+0.5 时，
+                            //    第 5 颗星里 floor 最大只能取到 4，结果上限永远是 4.5 —— 这就是「评不到 5.0」的根因。
+                            //    正确语义：落在第 N 颗星的左半边 = N-0.5 分，右半边 = N 分。
+                            var sr = GetRateStarsRect(rect);
+                            if (sr.Contains(x, y))
+                            {
+                                float slot = sr.Width / 5f;
+                                float rel = (x - sr.Left) / slot;
+                                float intPart = MathF.Floor(rel);
+                                double stars = intPart + ((rel - intPart) >= 0.5f ? 1.0 : 0.5);
+                                newRateStars = Math.Clamp(stars, 0.5, 5.0);
+                            }
+                        }
+                    }
+                }
+                // 分类菜单展开时不算列表悬停（菜单画在列表之上）；但绝不能 return ——
+                //    那会跳过本方法末尾的「提交新悬停值 + Render()」，菜单项高亮就永远不更新。
+                else if (!_marketCategoryOpen)
+                {
+                    // ── 市场行内按钮（下行：下载/更新/重装 | 卸载 | 详情）──
+                    GetMarketListLayout(out int mRows, out int mMaxFirst);
+                    _marketScroll = Math.Clamp(_marketScroll, 0, mMaxFirst);
+                    float marketRowsTop = MarketRowsTop;   // 与 RenderTabMarket / GetMarketListLayout 严格同源
+                    if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= marketRowsTop)
+                    {
+                        int slot = (int)((y - marketRowsTop) / PluginListRowH);
+                        int idx = slot + _marketScroll;
+                        // 同上：idx 边界由 GetMarketListLayout 的不变量保证，只需判 slot 是否落在可视行内
+                        if (slot >= 0 && slot < mRows)
+                        {
+                            float rowY = marketRowsTop + slot * PluginListRowH;
+                            if (y >= rowY + 18 && y <= rowY + 44)
+                            {
+                                var mp = _marketView[idx];
+                                bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
+                                var local = MatchLocalPlugin(mp);
+                                // 不可用的按钮置灰：命中侧直接不放行（渲染侧也没有悬停反馈）
+                                if (x >= MarketBtn1X && x <= MarketBtn1X + MarketBtnW)
+                                { if (!busy) newHoveredMarketInstall = idx; }
+                                else if (x >= MarketBtn2X && x <= MarketBtn2X + MarketBtnW)
+                                { if (local != null && !busy) newHoveredMarketUninstall = idx; }
+                                else if (x >= MarketBtn3X && x <= MarketBtn3X + MarketBtnW)
+                                    newHoveredMarketDetail = idx;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (_selectedTab == 6) // 我的插件
+            {
+                float topY = TITLE_BAR_HEIGHT + 12;
+                // 顶部操作按钮：导入 DLL | 打开目录
+                if (y >= topY + 60 && y <= topY + 84)
+                {
+                    if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入 DLL
+                    else if (x >= CONTENT_TEXT_X + 104 && x <= CONTENT_TEXT_X + 200) newHoveredPluginAction = 1;  // 打开目录
+                }
+
+                // ── 已安装列表：行内按钮（下行：重载 | 移除 | 开关）──
+                GetPluginListCardTop(out float listY);
                 // 可视行数走布局真源（与渲染 / 滚轮共用）；slot 是可视槽位，
                 // 命中结果换算成绝对条目下标（slot + _pluginScroll）—— 渲染与点击两侧都用绝对下标比对
                 GetPluginListLayout(out int rows, out int pluginMaxFirst);
                 _pluginScroll = Math.Clamp(_pluginScroll, 0, pluginMaxFirst);
                 // 这里的行起点必须与 Render() 里的 `listY + 44` 严格一致。
-                //    （删掉卡片顶部那行「顺序：…」后，整块列表上移了 20px）
-                if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
+                if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= listY + 44)
                 {
-                    int slot = (int)((y - (listY + 44)) / 56);
+                    int slot = (int)((y - (listY + 44)) / PluginListRowH);
                     int idx = slot + _pluginScroll;
-                    if (slot >= 0 && slot < rows && idx >= 0 && idx < _pluginView.Count)
+                    // 只判 slot 就够：rows / _pluginScroll 都刚由布局真源算过，
+                    // 满足 idx ∈ [0, _pluginView.Count) —— 见 GetPluginListLayout 的不变量。
+                    // slot < rows 不能省：y 可能远在列表底部之下，那时 slot 会超出可视行数。
+                    if (slot >= 0 && slot < rows)
                     {
-                        float rowY = listY + 44 + slot * 56;
-                        // 下行按钮区（rowY+22 .. rowY+48）
-                        if (y >= rowY + 22 && y <= rowY + 48)
+                        float rowY = listY + 44 + slot * PluginListRowH;
+                        // 下行按钮区（rowY+18 .. rowY+44，与行高 50 配套）
+                        if (y >= rowY + 18 && y <= rowY + 44)
                         {
                             // 从左到右：重载 | 移除 | 开关
-                            // （排序已移到「显示设置 → 显示内容」）
                             if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
                             else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
                             else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
@@ -478,7 +582,7 @@ namespace NotchPeninsula
             //    自动隐藏卡片加高后，「媒体交互方式」卡片跟着往下挪，这里没跟着改，
             //    禁止区域就压在了别的开关那一行上 —— 导致不管该开关是否被禁用，
             //    hover 上去都是禁止指针。卡片现在的高度是四行 248px（12..260））。
-            if (x >= 200 && x <= WIDTH - 20)
+            if (x >= 200 && x <= WIDTH - CONTENT_RM)
             {
                 // 注：tab 1 已没有置灰区域 —— 「待机显示内容」卡片与「启用组合模式」开关都在
                 //     已被「显示内容」列表取代，那张列表整行可点、没有禁用项。
@@ -542,6 +646,15 @@ namespace NotchPeninsula
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
                 newHoveredPluginRemove != _hoveredPluginRemove ||
+                newHoveredMarketInstall != _hoveredMarketInstall ||
+                newHoveredMarketUninstall != _hoveredMarketUninstall ||
+                newHoveredMarketDetail != _hoveredMarketDetail ||
+                newHoveredDialogClose != _hoveredDialogClose ||
+                newHoveredDialogButton != _hoveredDialogButton ||
+                newRateStars != _rateStars ||
+                newHoveredMarketChk != _hoveredMarketChk ||
+                newHoveredMarketCategoryIndex != _hoveredMarketCategoryIndex ||
+                newMarketSearchHovered != _marketSearchHovered ||
                 newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered
                 )
             {
@@ -593,6 +706,15 @@ namespace NotchPeninsula
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;
                 _hoveredPluginRemove = newHoveredPluginRemove;
+                _hoveredMarketInstall = newHoveredMarketInstall;
+                _hoveredMarketUninstall = newHoveredMarketUninstall;
+                _hoveredMarketDetail = newHoveredMarketDetail;
+                _hoveredDialogClose = newHoveredDialogClose;
+                _hoveredDialogButton = newHoveredDialogButton;
+                if (newRateStars != _rateStars) _rateStars = newRateStars;
+                _hoveredMarketChk = newHoveredMarketChk;
+                _hoveredMarketCategoryIndex = newHoveredMarketCategoryIndex;
+                _marketSearchHovered = newMarketSearchHovered;
                 _fontPickHovered = newFontPickHovered;
                 _fontResetHovered = newFontResetHovered;
 
