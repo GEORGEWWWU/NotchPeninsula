@@ -1732,7 +1732,9 @@ namespace NotchPeninsula
                         {
                             _isCursorOverIcon = true;
                         }
-                        else if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive)
+                        else if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive
+                            && !(Renderer.StandbyActive && Renderer.StandbyScene == 3
+                                 && !Renderer.IsMediaExpanded && Renderer.HitMediaSpectrumZone(mx)))
                         {
                             if (Renderer.IsMediaExpanded)
                             {
@@ -1881,9 +1883,16 @@ namespace NotchPeninsula
                             && _currentToast == null && !isClipboardActive
                             && !Renderer.HasActiveDetailPage)
                         {
+                            // 进入 / 退出的命中区：
+                            //   · 非待机态：双击空白进入；
+                            //   · 待机态 + 场景 = 媒体控制：岛内被媒体模块占满、没有空白，退出认频谱那一块；
+                            //     而当前没有媒体播放时岛上退化成空白（媒体模块压根没画、频谱区不存在），
+                            //     这时改认空白 —— 两条合起来保证任何情况下都退得出来；
+                            //   · 待机态 + 场景 = 时间 / 空白：双击空白退出。
+                            bool onBlank = Renderer.IsBlankAt(dx, dy, _currentHeight);
                             bool hitsToggleZone = Renderer.StandbyActive && Renderer.StandbyScene == 3
-                                ? Renderer.HitMediaSpectrumZone(dx)
-                                : Renderer.IsBlankAt(dx, dy, _currentHeight);
+                                ? Renderer.HitMediaSpectrumZone(dx) || onBlank
+                                : onBlank;
 
                             if (hitsToggleZone)
                             {
@@ -1971,6 +1980,13 @@ namespace NotchPeninsula
 
                         if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive)
                         {
+                            // 待机模式选「媒体控制」时，频谱那一带（右半边）的左键单击不做事 ——
+                            // 它唯一的左键用途是双击退出待机（见 WM_LBUTTONDBLCLK）。必须显式消费，
+                            // 否则跳转关闭时下面的 MediaExpandByLeftClick 会在第一下就展开面板，双击被吃掉。
+                            if (Renderer.StandbyActive && Renderer.StandbyScene == 3
+                                && Renderer.HitMediaSpectrumZone(cx))
+                                return (IntPtr)0;
+
                             // 命中时间轴：进入拖动并锁住鼠标，同时消费这次点击
                             // （不能落到下面「点媒体区就展开」的那条分支）
                             if (Renderer.IsMediaExpanded && Renderer.HitTimeline(cx, cy - hitTopY)
@@ -2067,6 +2083,16 @@ namespace NotchPeninsula
                                 ExpandPanel(detailWidget);
                                 return (IntPtr)0;
                             }
+                        }
+
+                        // 待机模式选「媒体控制」时岛上只剩媒体模块、没有空白：频谱那一带（右半边）的右键
+                        // 固定打开设置窗口的媒体页 —— 待机时不该再把岛展开成完整面板。
+                        // 判定与双击退出的 HitMediaSpectrumZone 同源。
+                        if (_currentToast == null && Renderer.StandbyActive && Renderer.StandbyScene == 3
+                            && Renderer.HitMediaSpectrumZone(rx))
+                        {
+                            ConsoleWindow.ShowTab(2);
+                            return (IntPtr)0;
                         }
 
                         // 折叠态媒体区右键 = 展开媒体面板（2026-10-02 定下展开入口在右键，

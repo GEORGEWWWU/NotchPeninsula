@@ -482,10 +482,93 @@ namespace NotchPeninsula
             DrawStyleOption(0, "经典刘海", 220, TITLE_BAR_HEIGHT + 50 + page);
             DrawStyleOption(1, "悬浮灵动岛", 390, TITLE_BAR_HEIGHT + 50 + page);
 
+            // ── 显示模式卡片 ──
+            // 两个选项与「显示形态」同款（150×90、胶囊示意 + Radio）：高亮的是当前真实状态，
+            // 点「待机模式」岛上立刻收拢、点「普通模式」立刻展开（Renderer.StandbyActive，
+            // 运行时状态、不写注册表 —— 待机是否持续由用户当时的选择决定，不跨启动保留）。
+            // 下方开关决定「双击空白」能否在两种模式间来回切；场景选「媒体控制」时岛内没有空白可双击，
+            // 退出改走双击频谱，卡片底部那行蓝色提示就是为此补的说明。
+            float modeCardY = TITLE_BAR_HEIGHT + MODE_CARD_Y + page;
+            var modeCardRect = new SKRect(200, modeCardY, WIDTH - 20, modeCardY + MODE_CARD_H);
+            canvas.DrawRoundRect(modeCardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(modeCardRect, 6, 6, _cardBorder);
+            canvas.DrawText("显示模式", 216, modeCardY + 26, _uiTextPaint);
+            canvas.DrawText("选择岛上现在显示待机内容还是完整内容", 216, modeCardY + 46, _subTextPaint);
+
+            void DrawModeOption(int index, string name, float x, float y)
+            {
+                bool isSelected = index == 0 ? Renderer.StandbyActive : !Renderer.StandbyActive;
+                bool isHovered = _hoveredDisplayModeIndex == index;
+
+                var optRect = new SKRect(x, y, x + MODE_OPT_W, y + MODE_OPT_H);
+                _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? Overlay(15) : Overlay(8));
+                canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
+                _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : Neutral(80);
+                canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
+
+                float cx = x + MODE_OPT_W / 2f;
+                float cy = y + 35;
+                // 胶囊示意：底色与真实主题一致（跟随系统时读注册表）
+                bool isLight = Renderer.ThemeMode == 1;
+                if (Renderer.ThemeMode == 2)
+                {
+                    using var themeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                    isLight = themeKey?.GetValue("AppsUseLightTheme") is int val && val == 1;
+                }
+
+                // 待机模式 = 收拢后的小胶囊 + 一条内容条；普通模式 = 完整宽度胶囊 + 缩略图与两条内容条
+                _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
+                var capsule = index == 0
+                    ? new SKRect(cx - 30, cy - 10, cx + 30, cy + 10)
+                    : new SKRect(cx - 52, cy - 10, cx + 52, cy + 10);
+                canvas.DrawRoundRect(capsule, 10, 10, _dynamicFillPaint);
+
+                _dynamicFillPaint.Color = Neutral(150);
+                if (index == 0)
+                {
+                    canvas.DrawRoundRect(new SKRect(cx - 16, cy - 3, cx + 16, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
+                }
+                else
+                {
+                    canvas.DrawRoundRect(new SKRect(cx - 40, cy - 4, cx - 30, cy + 4), 2, 2, _dynamicFillPaint);
+                    canvas.DrawRoundRect(new SKRect(cx - 26, cy - 3, cx - 4, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
+                    canvas.DrawRoundRect(new SKRect(cx + 2, cy - 3, cx + 38, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
+                }
+                _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
+
+                // 单选 Radio 与文本：与「显示形态」选项同一套版式
+                float radioY = y + 72;
+                canvas.DrawCircle(cx - 30, radioY - 4, 6, _dynamicStrokePaint);
+                if (isSelected)
+                {
+                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                    canvas.DrawCircle(cx - 30, radioY - 4, 3, _dynamicFillPaint);
+                }
+                _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : _fgColor;
+                canvas.DrawText(name, cx - 15, radioY + 1, _dynamicTextPaint);
+            }
+
+            DrawModeOption(0, "待机模式", MODE_OPT_X, TITLE_BAR_HEIGHT + MODE_OPT_Y + page);
+            DrawModeOption(1, "普通模式", MODE_OPT_X + MODE_OPT_W + MODE_OPT_GAP, TITLE_BAR_HEIGHT + MODE_OPT_Y + page);
+
+            DrawToggleRow(canvas, MODE_TOGGLE_ROW_Y + page,
+                "双击空白切换待机模式", "打开后双击岛上空白处即可进入 / 退出待机",
+                Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
+
+            // 场景 = 媒体控制时补一行蓝字：那时岛内被媒体模块占满、没有空白可双击，退出改走频谱。
+            if (Renderer.StandbyScene == 3)
+            {
+                _subTextPaint.Color = new SKColor(0, 140, 240);
+                canvas.DrawText("待机控制设置为媒体控制的情况下，请双击频谱完成切换模式操作",
+                    216, TITLE_BAR_HEIGHT + MODE_HINT_BASELINE_Y + page, _subTextPaint);
+                _subTextPaint.Color = Neutral(170);
+            }
+
             // ── 待机模式卡片 ──
             // 三个场景决定进入待机后岛上显示什么（只显示时间 / 空白 / 折叠媒体控制），
             // 复用现成的时钟模块与折叠媒体模块（见 Renderer.StandbyScene）。
-            // 同一个卡片里的开关决定「双击岛上空白处」能否在默认显示与待机模式之间来回切。
+            // 进入 / 退出的入口在上一张「显示模式」卡（切换控件 + 双击开关）。
             float standbyCardY = TITLE_BAR_HEIGHT + STANDBY_CARD_Y + page;
             var standbyCardRect = new SKRect(200, standbyCardY, WIDTH - 20, standbyCardY + STANDBY_CARD_H);
             canvas.DrawRoundRect(standbyCardRect, 6, 6, _cardBg);
@@ -551,10 +634,6 @@ namespace NotchPeninsula
                     STANDBY_OPT_X + i * (STANDBY_OPT_W + STANDBY_OPT_GAP),
                     TITLE_BAR_HEIGHT + STANDBY_OPT_Y + page);
             }
-
-            DrawToggleRow(canvas, STANDBY_TOGGLE_ROW_Y + page,
-                "双击空白切换待机模式", "打开后双击岛上空白处即可进入 / 退出待机",
-                Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
 
             // 目标显示器卡片
             float monitorCardY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + page;

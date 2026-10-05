@@ -42,8 +42,8 @@ namespace NotchPeninsula
 
         private const float DISPLAY_FIRST_ROW_Y = 56f;    // 首行顶部相对卡片顶部的偏移
 
-        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源）。</summary>
-        private const float DISPLAY_CARD_Y = 482f;
+        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源；紧随目标显示器卡之后）。</summary>
+        private const float DISPLAY_CARD_Y = MONITOR_CARD_Y + 74f;
 
         /// <summary>
         /// 「显示内容」卡片高度（固定值）：页面整体可滚动，卡片高度与窗口高无关，
@@ -54,15 +54,42 @@ namespace NotchPeninsula
         /// <summary>滚轮一格（120）滚动几行。</summary>
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
 
-        // ---- 显示设置页整页滚动 + 「待机模式」卡片（渲染与鼠标命中必须同源）----
+        // ---- 显示设置页整页滚动 + 「显示模式」/「待机模式」卡片（渲染与鼠标命中必须同源）----
+        //    卡片自上而下：显示形态(12) → 显示模式(172) → 待机模式(426) → 目标显示器(606) → 显示内容(680)，
+        //    相邻卡之间留 12px；页面内容高于窗口，靠 _displayPageScroll 整页滚动查看。
 
         /// <summary>整页滚轮一格（120）滚动的像素。</summary>
         private const float DISPLAY_PAGE_WHEEL_STEP = 48f;
 
-        /// <summary>「待机模式」卡顶部相对标题栏的偏移。</summary>
-        private const float STANDBY_CARD_Y = 172f;
+        /// <summary>「显示模式」卡（待机 / 普通切换 + 双击开关）顶部相对标题栏的偏移。</summary>
+        private const float MODE_CARD_Y = 172f;
 
-        private const float STANDBY_CARD_H = 224f;
+        private const float MODE_CARD_H = 242f;
+
+        /// <summary>两个显示模式选项的顶部与尺寸（相对标题栏；与「显示形态」选项同款 150×90）。</summary>
+        private const float MODE_OPT_Y = MODE_CARD_Y + 56f;
+
+        private const float MODE_OPT_W = 150f;
+
+        private const float MODE_OPT_H = 90f;
+
+        private const float MODE_OPT_GAP = 20f;
+
+        private const float MODE_OPT_X = 220f;
+
+        /// <summary>「双击空白切换待机模式」开关行的 yOffset（喂给 DrawToggleRow）。</summary>
+        private const float MODE_TOGGLE_ROW_Y = MODE_CARD_Y + 154f;
+
+        /// <summary>
+        /// 开关行下方那行蓝色提示的基线（相对标题栏）：画在开关副标题（行首 + 45.5）之下 20px，
+        /// 仅场景 = 媒体控制时绘制 —— 那时岛内没有空白可双击，退出改走双击频谱。
+        /// </summary>
+        private const float MODE_HINT_BASELINE_Y = MODE_TOGGLE_ROW_Y + 65.5f;
+
+        /// <summary>「待机模式」卡（三个场景选项）顶部相对标题栏的偏移。</summary>
+        private const float STANDBY_CARD_Y = MODE_CARD_Y + MODE_CARD_H + 12f;
+
+        private const float STANDBY_CARD_H = 168f;
 
         /// <summary>三个待机场景选项的顶部与尺寸（相对标题栏，横向排列）。</summary>
         private const float STANDBY_OPT_Y = STANDBY_CARD_Y + 56f;
@@ -75,11 +102,8 @@ namespace NotchPeninsula
 
         private const float STANDBY_OPT_X = 208f;
 
-        /// <summary>「双击空白切换待机模式」开关行的 yOffset（喂给 DrawToggleRow）。</summary>
-        private const float STANDBY_TOGGLE_ROW_Y = STANDBY_CARD_Y + 148f;
-
         /// <summary>目标显示器卡顶部相对标题栏的偏移。</summary>
-        private const float MONITOR_CARD_Y = 408f;
+        private const float MONITOR_CARD_Y = STANDBY_CARD_Y + STANDBY_CARD_H + 12f;
 
         private const float DISPLAY_MOVE_UP_X = 486f;     // ∧ 槽左边界（槽宽 = SORT_TRI_W）
 
@@ -694,6 +718,9 @@ namespace NotchPeninsula
         private bool _pageScrollbarHovered;
 
         private bool _listScrollbarHovered;
+
+        /// <summary>「显示模式」两个选项（0 = 待机模式 / 1 = 普通模式）的悬停下标（-1 = 无）。</summary>
+        private int _hoveredDisplayModeIndex = -1;
 
         /// <summary>「待机模式」三个场景选项的悬停下标（-1 = 无）。</summary>
         private int _hoveredStandbySceneIndex = -1;
