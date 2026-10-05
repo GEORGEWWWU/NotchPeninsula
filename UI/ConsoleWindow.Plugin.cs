@@ -31,6 +31,30 @@ namespace NotchPeninsula
         // 缓存判据：PluginManager 的变更序号
         private int _pluginViewVersion = -1;
 
+        /// <summary>
+        /// 插件中心列表的滚动首行（绝对条目下标）。插件数超过卡片能放下的行数时，
+        /// 超出的部分靠这个偏移滚动查看；滚轮是唯一的改动入口（WM_MOUSEWHEEL 的 tab 6 分支）。
+        /// 渲染、命中、滚轮三处都通过 GetPluginListLayout 取可滚范围。
+        /// </summary>
+        private int _pluginScroll = 0;
+
+        /// <summary>
+        /// 「我的插件」列表的唯一布局真源：可视行数 / 最大首行。
+        /// 绘制（RenderTabPlugins）、悬停命中（OnMouseMove 的 tab 6 段）、
+        /// 滚轮（WM_MOUSEWHEEL）三处共用 —— 与「显示内容」列表的 GetDisplayListLayout 同一套约定，
+        /// 避免卡片高度或行高一改就出现「滚不动 / 滚过头」。
+        /// </summary>
+        private void GetPluginListLayout(out int visibleRows, out int maxFirstRow)
+        {
+            // 与 RenderTabPlugins 的布局严格同源：顶卡 96 高，列表卡 listY = TITLE_BAR_HEIGHT+122，
+            // 底边到窗底（HEIGHT-20）；行起点 listY + 44，行高 PluginListRowH（50）；底部再留 8px 呼吸。
+            GetPluginListCardTop(out float listY);
+            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + 44) - 8) / PluginListRowH));
+            int total = _pluginView.Count;
+            visibleRows = Math.Min(total, maxRows);
+            maxFirstRow = Math.Max(0, total - visibleRows);
+        }
+
         // ---- 插件中心辅助逻辑 ----
         private void RefreshPluginView()
         {
@@ -59,6 +83,12 @@ namespace NotchPeninsula
                 _pluginSubDisabled.Add(disabled);
                 _pluginSubTexts.Add((disabled ? "已禁用" : "运行中") + tail);
             }
+
+            // 列表内容变了：滚动位置钳回可滚范围（插件被移除后别停在一片空白上），
+            // 行内悬停索引一并清空，避免指向错行。
+            GetPluginListLayout(out _, out int maxFirst);
+            _pluginScroll = Math.Clamp(_pluginScroll, 0, maxFirst);
+            ResetPluginHover();
         }
 
         private PluginEntry? GetPluginAt(int index)
@@ -70,6 +100,13 @@ namespace NotchPeninsula
             _hoveredPluginToggle = -1;
             _hoveredPluginReload = -1;
             _hoveredPluginRemove = -1;
+            _hoveredMarketInstall = -1;
+            _hoveredMarketUninstall = -1;
+            _hoveredMarketDetail = -1;
+            _hoveredDialogClose = false;
+            _hoveredDialogButton = -1;
+            _rateStars = 0;
+            _hoveredMarketChk = false;
         }
 
         /// <summary>

@@ -76,7 +76,22 @@ namespace NotchPeninsula
         public const int WM_MOUSEHOVER = 0x02A1;
         public const int WM_CAPTURECHANGED = 0x0215;  // 鼠标捕获被抢占/释放
         public const int WM_KEYDOWN = 0x0100;
+        public const int WM_CHAR = 0x0102;            // 插件市场搜索框的字符输入
+        public const int VK_BACK = 0x08;
+        public const int VK_RETURN = 0x0D;
         public const int VK_ESCAPE = 0x1B;
+
+        // ---- 输入法（IMM32）：搜索框要能打中文，必须接这几条 ----
+        public const int WM_IME_STARTCOMPOSITION = 0x010D;
+        public const int WM_IME_ENDCOMPOSITION = 0x010E;
+        public const int WM_IME_COMPOSITION = 0x010F;
+        public const int WM_IME_SETCONTEXT = 0x0281;
+        public const int GCS_COMPSTR = 0x0008;
+        public const int GCS_RESULTSTR = 0x0800;
+        // IMM 的候选窗位置：CFS_POINT（相对窗口客户区）/ CFS_EXCLUDE
+        public const int CFS_POINT = 0x0002;
+        public const int CFS_CANDIDATEPOS = 0x0040;
+        public const int CFS_EXCLUDE = 0x0080;
         public const int VK_LBUTTON = 0x01;
         public const int VK_RBUTTON = 0x02;
         public const int VK_MBUTTON = 0x04;
@@ -386,6 +401,10 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+        /// <summary>把键盘焦点交给指定窗口（插件市场搜索框点击时用，保证 WM_CHAR 能到达）。</summary>
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetFocus(IntPtr hWnd);
+
         // ---- 窗口查询（媒体会话 → 应用窗口 的定位 / 前台激活） ----
         // 媒体侧的「双击封面跳转对应应用」要用它们：
         //   · GetForegroundWindow 在「会话刚被接管」那一刻顺手抓住应用的主窗口句柄；
@@ -458,6 +477,43 @@ namespace NotchPeninsula
 
         [DllImport("dwmapi.dll")]
         public static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS pMarInset);
+
+        // ---- 输入法（imm32）----
+        // 插件市场搜索框要支持系统输入法：窗口客户区里没有原生编辑框，WM_CHAR 只能拿到
+        // 「非 IME 的」按键；中文靠下面这几条取「已上屏的结果串 / 正在组字的串」。
+        [DllImport("imm32.dll")]
+        public static extern IntPtr ImmGetContext(IntPtr hwnd);
+
+        [DllImport("imm32.dll")]
+        public static extern bool ImmReleaseContext(IntPtr hwnd, IntPtr himc);
+
+        /// <summary>取组字串 / 结果串；返回字节数（UTF-16 时需 /2）。</summary>
+        [DllImport("imm32.dll", CharSet = CharSet.Unicode, EntryPoint = "ImmGetCompositionStringW")]
+        public static extern int ImmGetCompositionStringW(IntPtr himc, int dwIndex, byte[]? lpBuf, int dwBufLen);
+
+        /// <summary>把候选窗/组字窗钉到搜索框附近，否则 IME 默认弹在窗口左上角。</summary>
+        [DllImport("imm32.dll")]
+        public static extern bool ImmSetCompositionWindow(IntPtr himc, ref COMPOSITIONFORM lpCompForm);
+
+        [DllImport("imm32.dll")]
+        public static extern bool ImmSetCandidateWindow(IntPtr himc, ref CANDIDATEFORM lpCandidate);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct COMPOSITIONFORM
+        {
+            public int dwStyle;
+            public POINT ptCurrentPos;
+            public RECT rcArea;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CANDIDATEFORM
+        {
+            public int dwIndex;
+            public int dwStyle;
+            public POINT ptCurrentPos;
+            public RECT rcArea;
+        }
 
         [DllImport("user32.dll")]
         public static extern uint GetDpiForWindow(IntPtr hwnd);

@@ -224,6 +224,19 @@ public sealed class PluginManager
         lock (_lock) return _entries.FirstOrDefault(e => string.Equals(e.Key, key, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// 该插件是否处于**禁用**状态（在禁用清单里）。
+    ///
+    /// 「禁用」与「未安装」是两回事：禁用的插件文件仍留在 plugins 目录里，只是不加载运行 ——
+    /// 所以它的 Version / Author / DisplayName 都读不到（只有名字有缓存），状态一律是 NotLoaded。
+    /// 市场页据此把「已安装但被禁用」的那一行置灰，与「本机根本没有」区分开。
+    /// </summary>
+    public bool IsDisabled(PluginEntry? e)
+    {
+        if (e == null || string.IsNullOrEmpty(e.Key)) return false;
+        lock (_lock) return _disabled.Contains(e.Key);
+    }
+
     // ---- 插件显示顺序（决定插件内容在灵动岛上的排列位置） ----
 
     /// <summary>「显示内容」列表里的一行（显示设置页据此渲染复选框与左右移动按钮）。</summary>

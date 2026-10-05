@@ -108,13 +108,27 @@ namespace NotchPeninsula
                 SyncHoverFromCursor();
                 Render();
             }
-            else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 6 && _selectedTab != 6) { _selectedTab = 6; _dropdownOpen = false; RefreshPluginView(); Render(); }
+            else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
+            else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
+            else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
+            else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
+            else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
+            else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
+            else if (_hoveredTab == 6 && _selectedTab != 6)
+            {
+                _selectedTab = 6; _dropdownOpen = false; CloseMarketDialog();
+                _marketCategoryOpen = false; _marketSearchFocused = false;
+                RefreshPluginView();
+                Render();
+            }
+            else if (_hoveredTab == 7 && _selectedTab != 7)
+            {
+                _selectedTab = 7; _dropdownOpen = false; CloseMarketDialog();
+                _marketCategoryOpen = false; _marketSearchFocused = false;
+                if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
+                EnsureMarketData();
+                Render();
+            }
             else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
             else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
             {
@@ -466,30 +480,137 @@ namespace NotchPeninsula
 
                 Render();
             }
-            // ---- 插件中心交互 ----
-            else if (_selectedTab == 6 && _hoveredPluginAction != -1)
+            // ---- 我的插件交互（tab 6）----
+            else if (_selectedTab == 6)
             {
-                switch (_hoveredPluginAction)
+                if (_hoveredPluginAction != -1)
                 {
-                    case 0: ImportPluginDll(); break;
-                    case 1: PluginManager.Instance.OpenPluginsFolder(); break;
-                    case 2: PluginManager.Instance.OpenMarketplace(); break;
+                    switch (_hoveredPluginAction)
+                    {
+                        case 0: ImportPluginDll(); break;
+                        case 1: PluginManager.Instance.OpenPluginsFolder(); break;
+                    }
+                }
+                else if (_hoveredPluginToggle != -1)
+                {
+                    var pe = GetPluginAt(_hoveredPluginToggle);
+                    if (pe != null) { PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled); ResetPluginHover(); RefreshPluginView(); Render(); }
+                }
+                else if (_hoveredPluginReload != -1)
+                {
+                    var pe = GetPluginAt(_hoveredPluginReload);
+                    if (pe != null) { PluginManager.Instance.Reload(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                }
+                else if (_hoveredPluginRemove != -1)
+                {
+                    var pe = GetPluginAt(_hoveredPluginRemove);
+                    if (pe != null) { PluginManager.Instance.Remove(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
                 }
             }
-            else if (_selectedTab == 6 && _hoveredPluginToggle != -1)
+            // ---- 插件市场交互（tab 7）----
+            else if (_selectedTab == 7)
             {
-                var pe = GetPluginAt(_hoveredPluginToggle);
-                if (pe != null) { PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled); ResetPluginHover(); RefreshPluginView(); Render(); }
-            }
-            else if (_selectedTab == 6 && _hoveredPluginReload != -1)
-            {
-                var pe = GetPluginAt(_hoveredPluginReload);
-                if (pe != null) { PluginManager.Instance.Reload(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
-            }
-            else if (_selectedTab == 6 && _hoveredPluginRemove != -1)
-            {
-                var pe = GetPluginAt(_hoveredPluginRemove);
-                if (pe != null) { PluginManager.Instance.Remove(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                if (_marketDialogIndex != -1)
+                {
+                    // 弹窗打开：❌ / 弹窗外 → 关闭；卸载确认的按钮 → 执行或取消；
+                    //   评分弹窗的星星 → 提交评分。弹窗内部其它区域不响应。
+                    var mp = GetMarketAt(_marketDialogIndex);
+                    if (mp == null) { CloseMarketDialog(true); }
+                    else if (_hoveredDialogClose)
+                    {
+                        CloseMarketDialog(true);
+                    }
+                    else if (_marketDialog == MarketDialog.ConfirmUninstall && _hoveredDialogButton == 0)
+                    {
+                        UninstallMarketPlugin(mp);      // 内部会 SetMarketHint + Render
+                        CloseMarketDialog(true);
+                    }
+                    else if (_marketDialog == MarketDialog.ConfirmUninstall && _hoveredDialogButton == 1)
+                    {
+                        CloseMarketDialog(true);
+                    }
+                    else if (_marketDialog == MarketDialog.Rate
+                             && _rateMine <= 0 && !_rateLoading && _rateStars > 0)
+                    {
+                        SubmitRating(mp, _rateStars);
+                    }
+                    else
+                    {
+                        // 点弹窗内其它位置：不关。点弹窗外：关。
+                        bool inside = TryGetCursorClientPos(out int px, out int py)
+                            && GetCurrentDialogRect().Contains(px, py);
+                        if (!inside) CloseMarketDialog(true);
+                    }
+                }
+                else if (_marketCategoryOpen)
+                {
+                    // 分类菜单展开：选中项 → 应用筛选；其余任意点击 → 收起
+                    if (_hoveredMarketCategoryIndex >= 0 && _hoveredMarketCategoryIndex < MarketCategories.Length)
+                    {
+                        string key = MarketCategories[_hoveredMarketCategoryIndex].Key;
+                        _marketCategoryOpen = false;
+                        if (!string.Equals(key, _marketCategoryKey, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _marketCategoryKey = key;
+                            RefreshMarketFilter();
+                        }
+                    }
+                    else
+                    {
+                        _marketCategoryOpen = false;
+                    }
+                    Render();
+                }
+                else if (_hoveredMarketCategoryIndex == -2)   // 分类按钮
+                {
+                    _marketCategoryOpen = true;
+                    _marketSearchFocused = false;
+                    Render();
+                }
+                else if (_hoveredMarketChk)                   // 「只看已安装」复选框
+                {
+                    _marketOnlyInstalled = !_marketOnlyInstalled;
+                    RefreshMarketFilter();
+                    Render();
+                }
+                else if (IsInMarketSearchBox())               // 搜索框：聚焦，交给 WM_CHAR / IME 输入
+                {
+                    // 保险：把键盘焦点收进本窗口，否则窗口没焦点时 WM_CHAR 根本不会派发过来，
+                    //    用户能看到光标却打不出字。
+                    if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
+                    if (!_marketSearchFocused) { _marketSearchFocused = true; Render(); }
+                }
+                else if (_hoveredMarketInstall != -1)
+                {
+                    if (_marketSearchFocused) { _marketSearchFocused = false; Render(); }
+                    var mp = GetMarketAt(_hoveredMarketInstall);
+                    if (mp != null) StartMarketInstall(mp);
+                }
+                else if (_hoveredMarketUninstall != -1)
+                {
+                    // 卸载是破坏性操作，先弹确认窗（同一个模板弹窗，内容自定义）
+                    if (_marketSearchFocused) { _marketSearchFocused = false; }
+                    var mp = GetMarketAt(_hoveredMarketUninstall);
+                    if (mp != null)
+                    {
+                        _marketDialog = MarketDialog.ConfirmUninstall;
+                        _marketDialogIndex = _hoveredMarketUninstall;
+                        _hoveredDialogButton = -1;
+                        Render();
+                    }
+                }
+                else if (_hoveredMarketDetail != -1)
+                {
+                    if (_marketSearchFocused) { _marketSearchFocused = false; Render(); }
+                    _marketDialog = MarketDialog.Detail;
+                    _marketDialogIndex = _hoveredMarketDetail;
+                    Render();
+                }
+                else
+                {
+                    // 点空白：退出搜索聚焦
+                    if (_marketSearchFocused) { _marketSearchFocused = false; Render(); }
+                }
             }
             // 注：插件位置的 ← / → 已移除，排序统一走「显示设置 → 显示内容」。
         }
