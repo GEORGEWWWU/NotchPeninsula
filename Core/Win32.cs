@@ -168,7 +168,7 @@ namespace NotchPeninsula
         // 字段顺序必须与 Win32 的 WNDCLASS 完全一致 —— 这是纯内存布局的结构体，
         //    少一个字段后面全体错位（历史坑：以前缺 `style`，于是 cbWndExtra 实际落在 cbClsExtra 的位置上，
         //    类的样式也永远为 0，系统因此从不派发 WM_LBUTTONDBLCLK）。
-        //    `style` 自 2026-09-27 补上，岛体类借此声明 CS_DBLCLKS 以接收双击消息。
+        //    `style` 后来补上，岛体类借此声明 CS_DBLCLKS 以接收双击消息。
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct WNDCLASS
         {
@@ -389,7 +389,7 @@ namespace NotchPeninsula
         //     （同时也是排除本程序自己窗口的手段 —— 岛体 / 设置窗 / 通知窗都同属本进程）；
         //   · ShowWindow / IsIconic / SetForegroundWindow / AttachThreadInput 负责把窗口还原并切到前台。
         //
-        // 注：这里以前还有 EnumWindows + EnumWindowsProc（用来按进程号枚举窗口），2026-09-30 删除过一次；
+        // 注：这里以前还有 EnumWindows + EnumWindowsProc（用来按进程号枚举窗口），曾经删除过一次；
         //     兜底路径不再无条件相信 shell:AppsFolder（它解析不出来时会打开资源管理器，
         //     表现就是「跳转跳到了文件资源管理器」），改成「先在已知进程里精确找窗口，找不到才考虑 Shell 激活」。
         //     这里的枚举是精确按进程号挑窗口，不是按进程名猜应用，和当初被放弃的模糊匹配不是一回事。
@@ -545,7 +545,6 @@ namespace NotchPeninsula
         [DllImport("kernel32.dll")]
         public static extern bool GlobalUnlock(IntPtr hMem);
 
-        // ----  ----
         // 传统打开文件对话框（comdlg32）
         //
         // 为什么不用 System.Windows.Forms.OpenFileDialog：
@@ -554,7 +553,6 @@ namespace NotchPeninsula
         //   + 图标/缩略图缓存。这些是进程级 DLL 与缓存，第一次打开就常驻 20~30MB，
         //   并且 Dispose 对话框、关闭资源管理器都不会归还（Windows 不会卸载已加载的外壳组件）。
         //   传统对话框只是 comdlg32 的一个普通模态窗口，完全不碰 ExplorerBrowser。
-        // ----  ----
 
         public const uint OFN_HIDEREADONLY = 0x00000004;
         public const uint OFN_NOCHANGEDIR = 0x00000008;
@@ -625,7 +623,6 @@ namespace NotchPeninsula
         public const int QUNS_QUIET_TIME = 6;              // 新用户首次登录 / 升级后的静默期
         public const int QUNS_APP = 7;                     // Windows 应用商店应用运行中（与全屏无关）
 
-        // ----  ----
         // 插件窗口的拖放：拖入（WM_DROPFILES）与拖出（DoDragDrop）
         //
         // 拖入：DragAcceptFiles(hwnd, true) 会同时给窗口加上 WS_EX_ACCEPTFILES 扩展样式，
@@ -633,7 +630,6 @@ namespace NotchPeninsula
         //       wParam 就是 HDROP —— 用 DragQueryFile 逐条取路径，最后必须 DragFinish 归还。
         // 拖出：DoDragDrop 发起系统拖放，需要一个 IDataObject（装在 STGMEDIUM 里的 CF_HDROP）
         //       和一个 IDropSource（回答「继续 / 放下 / 取消」）—— 后者就是下面的 IDropSource 接口。
-        // ----  ----
 
         public const int WM_DROPFILES = 0x0233;
 
@@ -732,7 +728,6 @@ namespace NotchPeninsula
             [PreserveSig] int GiveFeedback(uint dwEffect);
         }
 
-        // ----  ----
         // OLE 拖入目标（IDropTarget）
         //
         // 为什么要有它：WM_DROPFILES 只在用户松手那一刻投递一次消息，拖动过程中窗口完全收不到通知，
@@ -744,7 +739,6 @@ namespace NotchPeninsula
         //
         // 注意：一个窗口同时挂了 IDropTarget 和 WS_EX_ACCEPTFILES 时，OLE 拖放会走 IDropTarget，
         //       WM_DROPFILES 不再投递 —— 所以两者不能并存当两条路径用，只能二选一（见 PluginWindow）。
-        // ----  ----
 
         public const uint DROPEFFECT_NONE = 0;
         public const uint CF_HDROP = 15;

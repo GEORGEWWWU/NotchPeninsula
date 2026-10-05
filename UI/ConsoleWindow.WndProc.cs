@@ -433,7 +433,7 @@ namespace NotchPeninsula
                 float listY = topY + 110;
                 int rows = Math.Min(_pluginView.Count, 7);
                 // 这里的行起点必须与 Render() 里的 `listY + 44` 严格一致。
-                //    （2026-09-25 删掉卡片顶部那行「顺序：…」后，整块列表上移了 20px）
+                //    （删掉卡片顶部那行「顺序：…」后，整块列表上移了 20px）
                 if (x >= 216 && x <= WIDTH - 36 && y >= listY + 44)
                 {
                     int idx = (int)((y - (listY + 44)) / 56);
@@ -444,7 +444,7 @@ namespace NotchPeninsula
                         if (y >= rowY + 22 && y <= rowY + 48)
                         {
                             // 从左到右：重载 | 移除 | 开关
-                            // （排序已于 2026-09-25 移到「显示设置 → 显示内容」）
+                            // （排序已移到「显示设置 → 显示内容」）
                             if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
                             else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
                             else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
@@ -473,11 +473,11 @@ namespace NotchPeninsula
             // 这些 y 区间是手写的，卡片一挪动就必须同步改（踩过一次：
             //    自动隐藏卡片加高后，「媒体交互方式」卡片跟着往下挪，这里没跟着改，
             //    禁止区域就压在了别的开关那一行上 —— 导致不管该开关是否被禁用，
-            //    hover 上去都是禁止指针。卡片高度自 2026-09-26 起是四行 248px（12..260））。
+            //    hover 上去都是禁止指针。卡片现在的高度是四行 248px（12..260））。
             if (x >= 200 && x <= WIDTH - 20)
             {
                 // 注：tab 1 已没有置灰区域 —— 「待机显示内容」卡片与「启用组合模式」开关都在
-                //     2026-09-25 被「显示内容」列表取代，那张列表整行可点、没有禁用项。
+                //     已被「显示内容」列表取代，那张列表整行可点、没有禁用项。
                 if (_selectedTab == 0 && !ToastSoundConfig.IsRowEnabled
                     && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                 {
@@ -489,7 +489,7 @@ namespace NotchPeninsula
                 // 注：tab 3（交互设置）已无置灰区域 —— 穿透模式不再让「自动隐藏」卡片禁用。
                 //     该页签「行 2~4 在总开关关掉时置灰」沿用历史口径：那种置灰由点击侧的
                 //     总开关条件拦下（点不动），这里不给禁止指针。
-                //     注：「媒体交互方式」卡片自 2026-09-25 起也不再因组合模式禁用（组合模式同样能展开媒体面板），
+                //     注：「媒体交互方式」卡片也不再因组合模式禁用（组合模式同样能展开媒体面板），
                 //     所以这里同样没有它对应的禁止指针区间。
             }
 

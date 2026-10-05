@@ -39,7 +39,7 @@ namespace NotchPeninsula
         private static SKRect GetPluginDropZone()
             => new SKRect(200f, TITLE_BAR_HEIGHT + 12f, WIDTH - 20f, HEIGHT - 20f);
 
-        // ---------------- 登记 / 注销 ----------------
+        // 登记 / 注销
 
         /// <summary>
         /// 把设置窗口登记成 OLE 拖入目标。只登记一次；失败也只是「插件中心不能拖入」，
@@ -83,7 +83,7 @@ namespace NotchPeninsula
             try { Win32.RevokeDragDrop(_hwnd); } catch { /* 窗口已销毁 */ }
         }
 
-        // ---------------- 拖放回调（由 ConsoleDropTarget 转发） ----------------
+        // 拖放回调（由 ConsoleDropTarget 转发）
 
         /// <summary>
         /// 拖入项第一次进入窗口。只认「带文件系统路径的 *.dll」—— 其它内容（网页文字、位图流、
@@ -140,7 +140,7 @@ namespace NotchPeninsula
             return true;
         }
 
-        // ---------------- 悬停判定与动画 ----------------
+        // 悬停判定与动画
 
         /// <summary>把拖放的屏幕物理坐标换算成窗口客户区 DIP 坐标（与鼠标点击同一套口径）。</summary>
         private bool TryScreenToClientDips(Win32.POINT screenPt, out float x, out float y)
@@ -171,7 +171,7 @@ namespace NotchPeninsula
             Render();   // 静态反馈：状态一变就立刻重绘，没有动画、也不需要定时器
         }
 
-        // ---------------- 导入 ----------------
+        // 导入
 
         /// <summary>把拖入的 DLL 逐个交给 PluginManager.Import()，并把结果记成列表卡右上角的提示。</summary>
         private void ImportPluginDlls(List<string> dlls)

@@ -491,7 +491,7 @@ namespace NotchPeninsula
                 var pe = GetPluginAt(_hoveredPluginRemove);
                 if (pe != null) { PluginManager.Instance.Remove(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
             }
-            // 注：插件位置的 ← / → 已于 2026-09-25 移除，排序统一走「显示设置 → 显示内容」。
+            // 注：插件位置的 ← / → 已移除，排序统一走「显示设置 → 显示内容」。
         }
     }
 }

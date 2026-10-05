@@ -45,7 +45,7 @@ namespace NotchPeninsula
             _pluginView = mgr.Entries.ToList();
 
             // 副标题（状态 / 版本 / 作者）随插件状态变化，所以在这里跟列表一起重建，渲染路径只负责取用。
-            // 不再带「#N/M」位置序号 —— 位置改由「显示设置 → 显示内容」统一展示与调整（2026-09-25）。
+            // 不再带「#N/M」位置序号 —— 位置改由「显示设置 → 显示内容」统一展示与调整。
             _pluginSubTexts.Clear();
             _pluginSubDisabled.Clear();
             for (int i = 0; i < _pluginView.Count; i++)

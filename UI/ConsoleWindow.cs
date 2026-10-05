@@ -25,7 +25,7 @@ namespace NotchPeninsula
 
         // ---- 持久化渲染缓冲（与 Core/NotchWindow 同一套做法）----
         //
-        // 为什么必须有：设置窗口的 Render() 由 **交互驱动**，悬停 / 滚轮 / 拖滑块每动一下就是
+        // 为什么必须有：设置窗口的 Render() 由交互驱动，悬停 / 滚轮 / 拖滑块每动一下就是
         // 一帧（OnMouseMove 里那一整串 newXxx != _xxx 比对通过就 Render()，见 WndProc），
         // 而滚动条拖拽 + 16ms 悬停动画期间就是 60fps 连续刷。
         //
@@ -37,7 +37,7 @@ namespace NotchPeninsula
         //
         // 现在改成：DIB / memDC / SKSurface 全部按 _scaledWidth × _scaledHeight 建一次并常驻，
         // 每帧只做「Skia 画进常驻 surface → 拷进 DIB → 一次 UpdateLayeredWindow」。
-        // _scaledWidth / _scaledHeight 是**编译期常量派生**（WIDTH/HEIGHT × 创建时的 DPI），
+        // _scaledWidth / _scaledHeight 是编译期常量派生（WIDTH/HEIGHT × 创建时的 DPI），
         // 且 _hwnd 是 readonly、窗口不重建 —— 所以这份缓冲的生命周期就是窗口本身，无需重建逻辑。
         //
         // 释放顺序必须严格照抄 Core/NotchWindow.DisposeRenderBuffer 的注释：
@@ -51,7 +51,7 @@ namespace NotchPeninsula
 
         // 渲染互斥锁：Render() 会被两个线程调 —— UI 线程（WndProc 里的鼠标事件、定时器、
         // 窗口初始化）和线程池线程（构造函数末尾 Task.Run 里那次异步刷新）。SkiaSharp 的
-        // SKCanvas / SKSurface **不是线程安全的**，两个线程同时进去会把 native 侧的内部状态踩坏，
+        // SKCanvas / SKSurface 不是线程安全的，两个线程同时进去会把 native 侧的内部状态踩坏，
         // 表现为随机的访问冲突（0xc0000005）：崩溃栈每次都不一样（reset_matrix / draw_round_rect /
         // draw_text_blob 都见过），调用点却都是 ConsoleWindow.Render()。
         //
@@ -61,7 +61,7 @@ namespace NotchPeninsula
 
         // 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
         //    名称独占上行，按钮全在下行：从左到右 [重载] [移除] [开关]
-        //    排序小三角（← / →）已于 2026-09-25 移除 —— 显示与排序统一收敛到
+        //    排序小三角（← / →）已移除 —— 显示与排序统一收敛到
         //       「显示设置 → 显示内容」那一张列表，插件中心只留启用/禁用这一件事。
 
         private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
@@ -101,7 +101,7 @@ namespace NotchPeninsula
         // ---- 显示设置页整页滚动 + 「显示模式」/「待机模式」卡片（渲染与鼠标命中必须同源）----
         //    卡片自上而下：显示形态(12) → 目标显示器(172) → 显示模式(246) → 待机模式(500) → 显示内容(754)，
         //    相邻卡之间留 12px；页面内容高于窗口，靠 _displayPageScroll 整页滚动查看。
-        //    「目标显示器」2026-10-05 从最底一张（待机模式之后）提到「显示形态」正下方：
+        //    「目标显示器」从最底一张（待机模式之后）提到「显示形态」正下方：
         //      它决定整块岛画在哪块屏上，属于「先选屏幕、再谈样式/模式」的前置项。
 
         /// <summary>整页滚轮一格（120）滚动的像素。</summary>
@@ -161,12 +161,6 @@ namespace NotchPeninsula
         /// <summary>「双击空白切换待机模式」开关行的 yOffset（喂给 DrawToggleRow）。</summary>
         private const float MODE_TOGGLE_ROW_Y = MODE_CARD_Y + 154f;
 
-        /// <summary>
-        /// 开关行下方那行蓝色提示的基线（相对标题栏）：画在开关副标题（行首 + 45.5）之下 20px，
-        /// 仅场景 = 媒体控制时绘制 —— 那时岛内没有空白可双击，退出改走双击频谱。
-        /// </summary>
-        private const float MODE_HINT_BASELINE_Y = MODE_TOGGLE_ROW_Y + 65.5f;
-
         /// <summary>「待机模式」卡（三个场景选项）顶部相对标题栏的偏移。</summary>
         private const float STANDBY_CARD_Y = MODE_CARD_Y + MODE_CARD_H + 12f;
 
@@ -199,7 +193,7 @@ namespace NotchPeninsula
         private static readonly IntPtr DISPLAY_HOVER_TIMER_ID = new IntPtr(0x4E51); // "NQ"
 
         // 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
-        // 通用设置页卡片顺序（2026-09-22 提示音并入通知卡之后）：
+        // 通用设置页卡片顺序（提示音并入通知卡之后）：
         //    开机自启 12 | 窗口置顶 84 | 系统消息通知卡 156..390（三行）| 剪贴板链接检测 400 | 切换灵动岛字体 474
         //
         //  系统消息通知卡 = 一张三行卡 + 一行提示音设置，把通知本体与它的两个附属设置放在一起：
@@ -241,27 +235,26 @@ namespace NotchPeninsula
         /// <summary>行 1 与行 2 之间的分隔线（= 行 2 行首 + 4，落在行 1 内容底 202 与行 2 控件顶 230 之间）。</summary>
         private const float TOAST_SEP_Y = TOAST_ROW2_Y + 4f;
 
-        // ----  ----
-        // 行内纵向锚点（全页唯一真源，2026-09-22 第五次返工后定稿）
+        // 行内纵向锚点（全页唯一真源，第五次返工后定稿）
         //
         //  目标：「左侧文字块」与「右侧控件」同心对齐 —— 文字块的光学中心
         //        和右排控件（开关轨道 / 下拉框 / 按钮）的中心落在同一条水平线上。
         //
-        //  ── 返工史（前四轮都错在「拿什么当对齐参照」）────────────────
+        //  ── 返工史（前四轮都错在「拿什么当对齐参照」）
         //    第 1 轮：四行各写各的基线偏移 —— +26 / +33 / +26 / +21。
         //    第 2 轮：改成「标签基线 = 框顶 + h/2 + 5」，即跟着框内文字走。
         // 错：框内文字在框里本身偏下，把行外标签也拖下去了。
         //    第 3 轮：改成「所有行统一基线 = 行首 + 26」。
         // 错：26 是两行行（标题+副标题）的标题基线，
-        //                单行行（行 4「提示音」）拿它当基线就飘到下拉框上面去了 —— 用户「现在太靠上了」。
+        //                单行行（行 4「提示音」）拿它当基线就飘到下拉框上面去了 —— 「现在太靠上了」。
         //    第 4 轮：改成「单行墨迹中线 == 控件中心」，偏移 = 30 + 5.5 = 35.5。
         // 错：35.5 只对单行行成立。两行行照抄之后，整个文字块
-        //                （标题墨迹顶 → 副标题墨迹底）比控件中心低了 10px —— 用户
+        //                （标题墨迹顶 → 副标题墨迹底）比控件中心低了 10px —— 就是
         //                「开机自启、窗口置顶、系统消息通知、剪贴板链接检测的文字全部向下偏移」。
         //    第 5 轮（本版）：按「本行有几行文字」分别反解，两个偏移都让
         //                「文字块的光学中心」落在同一个锚点上（见下面两个常量）。
         //
-        //  ── 为什么锚点能同时适配「20px 轨道」和「32px 框」────────────────
+        //  ── 为什么锚点能同时适配「20px 轨道」和「32px 框」
         //    因为 ROW_DROPDOWN_TOP 已经取 14，使框中心（14+16）恰好等于
         //    开关轨道中心（20+10），两者都 = 行首 + 30 = ROW_ANCHOR_Y。
         //    所以「控件中心」这个参照在两类行里是同一个数，文字只需要按行数选偏移。
@@ -269,7 +262,6 @@ namespace NotchPeninsula
         //  直接把 `ROW_ANCHOR_Y`(30) 当基线是错的 —— 基线与墨迹中线差 5.5px。
         //  单行行与两行行必须用不同的基线常量，这是第 3/4 轮反复翻车的根因。
         //  改字号 / 改字体族必须重新标定 TEXT_INK_MID_OFFSET 与 TEXT_INK_ASCENT。
-        // ----  ----
 
         /// <summary>行内纵向锚点：每行「右侧控件中心 / 左侧文字块光学中心」的相对偏移。</summary>
         private const float ROW_ANCHOR_Y = 30f;
@@ -304,7 +296,7 @@ namespace NotchPeninsula
         /// → 标题基线 = 行首 + 30 + 5.5 - 20 / 2 = 行首 + 25.5，副标题 = 行首 + 45.5。
         ///
         /// 曾经把它和单行行合并成 35.5：那是拿「标题那一行的墨迹中线」去对控件中心，
-        ///    整个两行文字块因此整体下移 10px（用户 2026-09-22 点名的「文字全部向下偏移」）。
+        ///    整个两行文字块因此整体下移 10px（就是「文字全部向下偏移」那个现象）。
         /// 也别写成 `ROW_ANCHOR_Y - 4`（= 26）：那是把「基线」当「视觉中心」，
         ///    虽然只差 0.5px 看着没事，但语义是错的，下次改字号就会崩。
         /// </summary>
@@ -320,7 +312,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 下拉行「框内文字」相对框顶的基线偏移 = `DrawDropdownBox` 的 `h/2 + 5`。
         /// 这是框自己内部的排版参数，只用于把框内文字摆正在框里，
-        ///     绝不可拿它当「框外标签的对齐口径」（2026-09-22 就是这么治错的）。
+        ///     绝不可拿它当「框外标签的对齐口径」（曾经就是这么治错的）。
         /// </summary>
         private const float DROPDOWN_TEXT_BASELINE = 21f;
 
@@ -379,7 +371,7 @@ namespace NotchPeninsula
         ///
         /// 不要再把框顶直接写成 `SOUND_ROW_Y`（行首本身）：那会让框中心落在行首 + 16，
         ///    比同一行的标签墨迹中心（行首 + 30）高 14px，视觉上就是「提示音三个字和右边按钮不齐」。
-        ///    2026-09-22 用户点名的「子卡片顶部再加 5px padding」本质就是要把这一段往下压。
+        ///    曾经点名的「子卡片顶部再加 5px padding」本质就是要把这一段往下压。
         /// 所有「框/按钮的顶」都走本常量，「行首」只用来说明行从哪儿起（命中判定、浮层锚点用行首）。
         /// </summary>
         private const float SOUND_BOX_Y = SOUND_ROW_Y + ROW_DROPDOWN_TOP;
@@ -447,7 +439,7 @@ namespace NotchPeninsula
 
         /// <summary>剪贴板链接检测卡行首 = 通知卡底 + 10。
         /// 必须由 TOAST_CARD_BOTTOM 派生：通知卡高度一改（本页改过三次），这里跟着自动走。
-        ///    2026-09-22 就是因为剪贴板卡写死 400，而通知卡底从 390 长到 404，两卡直接叠在一起。</summary>
+        ///    曾经就是因为剪贴板卡写死 400，而通知卡底从 390 长到 404，两卡直接叠在一起。</summary>
         private const float CLIPBOARD_CARD_Y = TOAST_CARD_BOTTOM + 10f;
 
         // ---- ③ 切换灵动岛字体（剪贴板卡之后，间隙 12）----
@@ -469,7 +461,7 @@ namespace NotchPeninsula
         private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
 
         // 媒体设置页「目标媒体平台 + 匹配方式」合并卡片（渲染与鼠标命中必须使用同一组坐标）
-        // 媒体设置页卡片顺序（2026-09-20 合并后）：
+        // 媒体设置页卡片顺序（合并后）：
         //    媒体控制 12..74 | 合并卡片（两行）84..208 | 歌词设置 222..398
         //    合并卡片：第 1 行「目标媒体平台」行首 84、分隔线 142、第 2 行「匹配方式」行首 146（行距 62）
         // 第 1 行下拉框 +96..+128 的命中判定写在 WM_MOUSEMOVE 的 tab 2 段里（+98..+128），
@@ -1068,7 +1060,7 @@ namespace NotchPeninsula
             }
 
             // 显示器列表的枚举（Screen.AllScreens）走后台线程算，避免开窗时卡一下；
-            // 但**更新完必须回到 UI 线程再渲染** —— 这不是可有可无的讲究：
+            // 但更新完必须回到 UI 线程再渲染 —— 这不是可有可无的讲究：
             //   · UpdateLayeredWindow / Skia canvas 都应当由持有窗口的线程驱动；
             //   · 原来那句 `_instance.Render()` 直接写在 Task.Run 的 lambda 里，
             //     那个 lambda 就跑在线程池线程上，于是它和构造函数末尾的 Render() 并发执行，
@@ -1118,7 +1110,7 @@ namespace NotchPeninsula
             //
             // 为什么不能只判 `hwnd == _backdropHwnd`：RebuildBackdropWindow 是先 `_backdropHwnd = Zero`
             // 再 `DestroyWindow(old)`（那是有意为之 —— 销毁期间回来的消息不该再被当成材质窗），
-            // 但 DestroyWindow 会**同步**投递 WM_DESTROY / WM_NCDESTROY。这几条消息到达时
+            // 但 DestroyWindow 会同步投递 WM_DESTROY / WM_NCDESTROY。这几条消息到达时
             // `_backdropHwnd` 已经是 0，若只按句柄比对就会落进「内容窗」分支，把旧材质窗的销毁
             // 当成内容窗自己在销毁：误摘拖放目标、释放内容窗还在用的渲染缓冲、把 _instance 置空，
             // 之后重建流程继续用这个实例、下一帧又去访问已释放的缓冲 —— 直接访问冲突（0xc0000005）。
@@ -1526,7 +1518,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 把常驻 DIB 提交给分层窗口。缓冲已常驻，所以这里**没有**任何 Create / Delete ——
+        /// 把常驻 DIB 提交给分层窗口。缓冲已常驻，所以这里没有任何 Create / Delete ——
         /// 只剩一次 UpdateLayeredWindow。像素早已在 Render 里由 Skia 直接画进 pBits。
         /// </summary>
         private void UpdateLayeredContentWindow()
