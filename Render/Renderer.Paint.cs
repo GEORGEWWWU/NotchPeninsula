@@ -86,12 +86,10 @@ namespace NotchPeninsula
             bool isLight = ThemeMode == 1;
             if (ThemeMode == 2) // 跟随系统
             {
-                try
-                {
-                    using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-                    if (key != null && key.GetValue("AppsUseLightTheme") is int val) isLight = val == 1;
-                }
-                catch { }
+                // 走进程级缓存（Renderer.SystemIsLightTheme）：系统主题变更时由
+                //    ConsoleWindow.ApplyAppearance() / Program.OnUserPreferenceChanged()
+                //    调 InvalidateSystemThemeCache() 作废，这里不再次次踩注册表。
+                isLight = SystemIsLightTheme;
             }
 
             // 预计算颜色，避免在渲染树中生成新对象

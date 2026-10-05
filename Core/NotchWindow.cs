@@ -185,7 +185,7 @@ namespace NotchPeninsula
         /// 手动展开的岛体（_isManuallyExpanded）、媒体面板（Renderer.IsMediaExpanded）、
         /// 插件详情页（Renderer.HasActiveDetailPage）。
         ///
-        /// 语义（用户明确）：展开态一律不自动收起，只有外部点击或显式操作才折叠。这条同时约束
+        /// 语义：展开态一律不自动收起，只有外部点击或显式操作才折叠。这条同时约束
         /// 自动隐藏与穿透悬停淡出两处 —— 必须共用本属性，否则又会出现「一处记得排除、另一处忘了」。
         /// </summary>
         private bool HasAnyExpanded
@@ -1176,12 +1176,12 @@ namespace NotchPeninsula
                     if (Renderer.IsTranslationLineVisible(_media))
                         textWidth = Math.Max(textWidth, Renderer.MeasureLyricTranslationWidth(_media.CurrentLyricTranslation));
 
-                    // 文本区长度不再单独封顶（2026-09-20 用户要求「媒体控制器的长度放开，多长都无所谓」）。
+                    // 文本区长度不再单独封顶（2026-09-20 起媒体控制器长度完全放开，多长都无所谓）。
                     // 原先这里夹了一个 MEDIA_TEXT_MAX_WIDTH（480 ≈ 27 个汉字），长歌词先撞到它 →
                     // 超出部分被文字渐隐遮罩截断，而且原生内容宽度被钉在 595，
                     // 插件行预算 = 800 − 595 = 205 被吃光 → 装不下的插件整帧不显示
-                    // （用户反馈：「多的插件在灵动岛上就直接不显示了」「这个长度只显示这个插件，
-                    // 另一个长度只显示另一个插件」）。
+                    // （表现为「多出来的插件在灵动岛上就直接不显示」、
+                    // 「这个长度只显示这个插件，另一个长度只显示另一个插件」）。
                     // 现在只受下面的 MAX_ISLAND_WIDTH（已放宽到 1920）约束，真实歌词行远达不到。
                     nativeWidth = Math.Max(nativeWidth, textWidth + 115f);
                 }
@@ -2067,7 +2067,7 @@ namespace NotchPeninsula
                         if (_currentToast == null)
                         {
                             // 详情页已展开：岛内右键直接收起详情页（此时插件行未绘制，无需再广播）
-                            // 传 true：这是用户明确要关它，即使插件声明了「鼠标离开也不收起」也照收 ——
+                            // 传 true：这是显式要关它，即使插件声明了「鼠标离开也不收起」也照收 ——
                             // 否则选了那一档的详情页就彻底没有关闭入口了。
                             if (Renderer.HasActiveDetailPage)
                             {
@@ -2250,10 +2250,10 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>立即折叠全部展开面板（岛外点击这种明确的用户动作，不延迟）。</summary>
+        /// <summary>立即折叠全部展开面板（岛外点击这种明确的外部动作，不延迟）。</summary>
         /// <param name="forceCloseDetail">
         /// true = 连声明了「鼠标离开也不收起」的详情页也一并收掉。
-        /// 这个值专供「岛内右键」——那是用户明确冲着面板来的关闭手势，
+        /// 这个值专供「岛内右键」——那是明确冲着面板来的关闭手势，
         /// 若也尊重插件的不收起，插件选了这个档之后就再也没有任何办法关掉它了。
         ///
         /// 岛外点击传 false（默认）。不过注意：岛外左键现在在渲染循环那段轮询里就已经被拦掉了

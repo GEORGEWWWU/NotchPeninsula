@@ -199,40 +199,97 @@ namespace NotchPeninsula
         /// 只是方向朝上下）。
         ///  是 16px 点击槽的左边界（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
         ///  是它所在行的垂直中心； 为 false 时画朝下的三角。
+        ///
+        /// 这是每行调两次的热路径（一屏最多 8 行 = 16 次/帧，还叠着 16ms 悬停动画）。
+        /// 原实现每次都 `new SKPaint` + `new SKPath` —— 每帧 32 个 Skia 原生对象（见项目约定：
+        /// SKPaint/SKPath 都是 SKObject，构建即注册，必须 Dispose 才注销）。
+        /// 现在改成「进程级复用的两支画笔 + 按中心坐标原地改点的静态三角路径」：
+        /// 唯一会变的是颜色，而颜色只是改属性，零分配。
+        ///
+        /// 两种状态各一支画笔（静止 / 悬停），`enabled` 走第三支置灰色 ——
+        /// 三支都是 static readonly，与 ConsoleWindow.Paint.cs 里其它共享画笔同一套所有权约定。
         /// </summary>
         private void DrawSortArrow(SKCanvas canvas, float slotX, float centerY, bool hovered, bool enabled, bool up)
         {
-            using var stroke = new SKPaint
-            {
-                Color = !enabled ? Neutral(130)
-                    : hovered ? _fgColor
-                    : Neutral(210),
-                Style = SKPaintStyle.Stroke,
-                StrokeWidth = 1.6f,
-                StrokeCap = SKStrokeCap.Round,
-                StrokeJoin = SKStrokeJoin.Round,
-                IsAntialias = true
-            };
+            var stroke = !enabled ? _sortArrowDisabledStroke
+                : hovered ? _sortArrowHoverStroke
+                : _sortArrowStroke;
 
             // 尺寸是原左右箭头（半宽 3 / 半高 5）转 90° 后的结果：两个半轴对调 → 10×6 的扁三角。
             //    照搬 6×10 直接改方向会得到一个又细又尖的竖三角，和原来那对完全不搭（踩过）。
+            //    顶点值不在这里算，见 CreateSortTriangle（路径按「中心在原点」预置）。
             float cx = slotX + SORT_TRI_W / 2f;   // 水平居中于 16px 槽
+
+            // 路径只存「以 (0,0) 为中心的三角」，实际绘制时用平移矩阵搬过去 ——
+            // 这样同一条静态路径能服务所有行，不必按 centerY 重建。
+            var path = up ? SortTriangleUpPath : SortTriangleDownPath;
+            canvas.Save();
+            canvas.Translate(cx, centerY);
+            canvas.DrawPath(path, stroke);
+            canvas.Restore();
+        }
+
+        // 上下三角的静态路径：顶点按「中心在原点」预置（半宽 5、半高 3）。
+        // 静态只读 —— 与 WindowClipPath 同级的进程级复用，不 Dispose（进程存活期都在用）。
+        private static readonly SKPath SortTriangleUpPath = CreateSortTriangle(up: true);
+
+        private static readonly SKPath SortTriangleDownPath = CreateSortTriangle(up: false);
+
+        private static SKPath CreateSortTriangle(bool up)
+        {
             const float halfW = 5f, halfH = 3f;
-            using var path = new SKPath();
+            var path = new SKPath();
             if (up)
             {
-                path.MoveTo(cx - halfW, centerY + halfH);
-                path.LineTo(cx, centerY - halfH);
-                path.LineTo(cx + halfW, centerY + halfH);
+                path.MoveTo(-halfW, halfH);
+                path.LineTo(0, -halfH);
+                path.LineTo(halfW, halfH);
             }
             else
             {
-                path.MoveTo(cx - halfW, centerY - halfH);
-                path.LineTo(cx, centerY + halfH);
-                path.LineTo(cx + halfW, centerY - halfH);
+                path.MoveTo(-halfW, -halfH);
+                path.LineTo(0, halfH);
+                path.LineTo(halfW, -halfH);
             }
-            canvas.DrawPath(path, stroke);
+            return path;
         }
+
+        // 三支箭头描边（静止 / 悬停 / 置灰）。颜色由调用方按状态挑，画完不用还原 ——
+        // 它们只在这里被画，且每支的颜色是固定的，不存在「临时改色忘了复位」的风险
+        //（这一点与本项目其它共享画笔不同：那些是「同一支画笔被切色复用」，必须复位）。
+        //
+        // 这里的初值只是深色外观下的兜底色 —— 真正的颜色在 ApplyAppearance() 里
+        // 用 Neutral() / _fgColor 按明暗重绑（那是全窗口唯一的画笔重绑点）。
+        // 别删那三行，否则浅色外观下箭头会变成浅灰画在浅底上。
+        private static readonly SKPaint _sortArrowStroke = new()
+        {
+            Color = new SKColor(210, 210, 210),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.6f,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round,
+            IsAntialias = true
+        };
+
+        private static readonly SKPaint _sortArrowHoverStroke = new()
+        {
+            Color = SKColors.White,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.6f,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round,
+            IsAntialias = true
+        };
+
+        private static readonly SKPaint _sortArrowDisabledStroke = new()
+        {
+            Color = new SKColor(130, 130, 130),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.6f,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round,
+            IsAntialias = true
+        };
 
         // 侧边栏重排与分割线绘制
         private void RenderSidebar(SKCanvas canvas)
@@ -435,16 +492,11 @@ namespace NotchPeninsula
                 // 绘制纯血 Skia 伪 PNG 视觉特效图
                 float cx = x + 75; float cy = y + 35;
 
-                // 颜色直接同步真实的明暗逻辑，并完美兼容“跟随系统”模式
-                // 注意：OpenSubKey 返回的 RegistryKey 持有原生句柄，必须 using 掉 ——
-                // 本方法每次渲染显示设置页都会执行，漏掉就是每帧泄漏一个注册表句柄（靠终结器回收）。
-                bool isLight = Renderer.ThemeMode == 1;
-                if (Renderer.ThemeMode == 2)
-                {
-                    using var themeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-                    isLight = themeKey?.GetValue("AppsUseLightTheme") is int val && val == 1;
-                }
-                _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
+                // 颜色直接同步真实的明暗逻辑，并完美兼容“跟随系统”模式。
+                // 「跟随系统」走进程级缓存（见 Renderer.SystemIsLightTheme）——
+                // 本方法每次渲染显示设置页都会执行，且页面上每个胶囊示意图各调一次
+                //（显示形态 2 + 显示模式 2 + 待机场景 4 = 每帧 8 次），绝不能在这里现读注册表。
+                _dynamicFillPaint.Color = IsLightPreviewCapsule() ? SKColors.White : SKColors.Black;
 
                 if (index == 0) // 调整经典刘海的矢量绘图比例，使其视觉高度和灵动岛保持一致
                 {
@@ -508,14 +560,8 @@ namespace NotchPeninsula
 
                 float cx = x + MODE_OPT_W / 2f;
                 float cy = y + 35;
-                // 胶囊示意：底色与真实主题一致（跟随系统时读注册表）
-                bool isLight = Renderer.ThemeMode == 1;
-                if (Renderer.ThemeMode == 2)
-                {
-                    using var themeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                        @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-                    isLight = themeKey?.GetValue("AppsUseLightTheme") is int val && val == 1;
-                }
+                // 胶囊示意：底色与真实主题一致；「跟随系统」走缓存，不现读注册表
+                bool isLight = IsLightPreviewCapsule();
 
                 // 待机模式 = 收拢后的小胶囊 + 一条内容条；普通模式 = 完整宽度胶囊 + 缩略图与两条内容条
                 _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
@@ -556,13 +602,11 @@ namespace NotchPeninsula
                 "双击空白切换待机模式", "打开后双击岛上空白处即可进入 / 退出待机",
                 Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
 
-            // 场景 = 媒体控制时补一行蓝字：那时岛内被媒体模块占满、没有空白可双击，退出改走频谱。
+            // 场景 = 媒体控制时补一行说明：那时岛内被媒体模块占满、没有空白可双击，退出改走频谱。
             if (Renderer.StandbyScene == 3)
             {
-                _subTextPaint.Color = new SKColor(0, 140, 240);
                 canvas.DrawText("待机控制设置为媒体控制的情况下，请双击频谱完成切换模式操作",
                     216, TITLE_BAR_HEIGHT + MODE_HINT_BASELINE_Y + page, _subTextPaint);
-                _subTextPaint.Color = Neutral(170);
             }
 
             // ── 待机模式卡片 ──
@@ -587,16 +631,10 @@ namespace NotchPeninsula
                 _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : Neutral(80);
                 canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
 
-                // 胶囊示意：底色与真实主题一致（跟随系统时读注册表），再按场景画上对应内容
+                // 胶囊示意：底色与真实主题一致；「跟随系统」走缓存，不现读注册表
                 float cx = x + STANDBY_OPT_W / 2f;
                 float cy = y + 32;
-                bool isLight = Renderer.ThemeMode == 1;
-                if (Renderer.ThemeMode == 2)
-                {
-                    using var themeKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                        @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-                    isLight = themeKey?.GetValue("AppsUseLightTheme") is int val && val == 1;
-                }
+                bool isLight = IsLightPreviewCapsule();
                 var capsule = new SKRect(cx - 38, cy - 10, cx + 38, cy + 10);
                 _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
                 canvas.DrawRoundRect(capsule, 10, 10, _dynamicFillPaint);
@@ -637,7 +675,7 @@ namespace NotchPeninsula
 
             // 目标显示器卡片
             float monitorCardY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + page;
-            var mCardRect = new SKRect(200, monitorCardY, WIDTH - 20, monitorCardY + 62);
+            var mCardRect = new SKRect(200, monitorCardY, WIDTH - 20, monitorCardY + MONITOR_CARD_H);
             canvas.DrawRoundRect(mCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(mCardRect, 6, 6, _cardBorder);
             canvas.DrawText("目标显示器", 216, monitorCardY + 26, _uiTextPaint);
@@ -718,7 +756,6 @@ namespace NotchPeninsula
 
             // 超出可视区时在卡片右侧画一条滚动条指示（与下拉浮层同款），避免用户以为「列表就这么长」。
             // 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
-            // 滑块在「滚轮当前优先滚这一层」时更亮 —— 两条滚动条谁在接管滚轮一眼可见。
             if (maxFirstRow > 0 && visibleRows > 0)
             {
                 GetListScrollbarLayout(out float listTrackTop, out float listTrackH);
@@ -726,12 +763,11 @@ namespace NotchPeninsula
                 float thumbY = listTrackTop + (listTrackH - thumbH) * _displayScroll / maxFirstRow;
                 _dynamicFillPaint.Color = Overlay(30);
                 canvas.DrawRoundRect(new SKRect(WIDTH - 34, listTrackTop, WIDTH - 31, listTrackTop + listTrackH), 1.5f, 1.5f, _dynamicFillPaint);
-                _dynamicFillPaint.Color = Overlay((byte)(_wheelPriorityList ? 160 : 110));
+                _dynamicFillPaint.Color = Overlay(140);
                 canvas.DrawRoundRect(new SKRect(WIDTH - 34, thumbY, WIDTH - 31, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
             }
 
             // 整页滚动条：页面高于窗口时画在窗口最右侧（比上面那条更靠外）。
-            // 两条滚动条都可以点 —— 点哪条，之后的滚轮就优先滚哪一层（见 WM_MOUSEWHEEL）。
             float pageMaxScroll = GetDisplayPageMaxScroll();
             if (pageMaxScroll > 0f)
             {
@@ -741,13 +777,9 @@ namespace NotchPeninsula
                 float pThumbY = pageTrackTop + (pageTrackH - pThumbH) * _displayPageScroll / pageMaxScroll;
                 _dynamicFillPaint.Color = Overlay(30);
                 canvas.DrawRoundRect(new SKRect(WIDTH - 16, pageTrackTop, WIDTH - 13, pageTrackTop + pageTrackH), 1.5f, 1.5f, _dynamicFillPaint);
-                _dynamicFillPaint.Color = Overlay((byte)(_wheelPriorityList ? 110 : 160));
+                _dynamicFillPaint.Color = Overlay(140);
                 canvas.DrawRoundRect(new SKRect(WIDTH - 16, pThumbY, WIDTH - 13, pThumbY + pThumbH), 1.5f, 1.5f, _dynamicFillPaint);
             }
-
-            // 行数不够时的提示：现在可以滚轮滚动查看，文案不再是「未列出」
-            if (maxFirstRow > 0)
-                canvas.DrawText($"滚轮可滚动查看其余 {maxFirstRow} 项", 216, contentCardY + DISPLAY_CARD_H - 14, _subTextPaint);
         }
 
         // 页签：媒体设置
@@ -1243,7 +1275,7 @@ namespace NotchPeninsula
                 _subTextPaint.Color = Neutral(170);
             }
             // 这里没有「顺序一览」——显示与排序已统一收敛到「显示设置 → 显示内容」，
-            //    插件中心只负责启用 / 禁用，不再提供任何排序入口（2026-09-25 用户要求）。
+            //    插件中心只负责启用 / 禁用，不再提供任何排序入口（2026-09-25 移除）。
 
             const int maxRows = 7;
             // 上行：名称独占整行，可延展至卡片右边界外侧
@@ -1267,15 +1299,26 @@ namespace NotchPeninsula
 
                 // ═══ 下行：信息 + 全部操作按钮（同一行从左到右排列） ═══
                 // 副标题文本已按「插件变更序号」在 RefreshPluginView 里预算好（见 ConsoleWindow.Plugin.cs），
-                // 渲染路径只取用；颜色按状态现算（SKColor 是值类型，不产生堆分配）。
+                // 渲染路径只取用。禁用 / 加载失败的插件也列在这里（列全才能原地重新启用）；
+                // 禁用态把开头的「已禁用」画成强调蓝，其余（版本 / 作者）照旧常规灰。
                 string sub = i < _pluginSubTexts.Count ? _pluginSubTexts[i] : "";
-                SKColor subColor = entry.State == PluginState.Failed
-                    ? new SKColor(232, 100, 100)
-                    : Neutral(170);
-                _subTextPaint.Color = subColor;
+                bool subDisabled = i < _pluginSubDisabled.Count && _pluginSubDisabled[i];
                 float infoBaseline = rowY + 40;
-                canvas.DrawText(TruncateText(sub, _subTextPaint, infoTextMax), 216, infoBaseline, _subTextPaint);
-                _subTextPaint.Color = Neutral(170);
+                // 截断一律按整串的宽度算，再分段上色 —— 否则两段各截一半会出现两处省略号
+                string shownSub = TruncateText(sub, _subTextPaint, infoTextMax);
+                if (subDisabled && shownSub.StartsWith("已禁用", StringComparison.Ordinal))
+                {
+                    const string tag = "已禁用";
+                    _subTextPaint.Color = new SKColor(0, 140, 240);
+                    canvas.DrawText(tag, 216, infoBaseline, _subTextPaint);
+                    _subTextPaint.Color = Neutral(170);
+                    canvas.DrawText(shownSub[tag.Length..], 216 + _subTextPaint.MeasureText(tag), infoBaseline, _subTextPaint);
+                }
+                else
+                {
+                    _subTextPaint.Color = Neutral(170);
+                    canvas.DrawText(shownSub, 216, infoBaseline, _subTextPaint);
+                }
 
                 // ── 下行按钮（全部在同一行，y 中心 ≈ rowY+38） ──
                 const float btnTop = 25f, btnH = 20f;       // 操作按钮矩形（上移 2px，远离底部分割线）

@@ -341,12 +341,14 @@ namespace NotchPeninsula
                 _krSlot = !_krSlot;
             }
 
-            // 扫光总闸（MediaController.IsLyricScanEnabled）关掉时短路画实体文字，瞬间返回，0 性能开销。
+            // 非扫光场景（歌名 / 译文，isLyric=false）或扫光总闸关闭时短路画实体文字，瞬间返回，0 性能开销。
             //
-            // 扫光内部是一条链：逐字优先（每个字按自己的时值推进）→ 逐字不可用时自动回退整行均匀推进。
-            // 那一步已由 MediaController.ComputeScanProgress 完成，到这里仍然只是一个 0~1 的 progress，
-            // 所以这里既不需要区分驱动方式，也不需要关心这首歌有没有逐字数据。
-            if (!isLyric || progress <= 0f || !MediaController.IsLyricScanEnabled)
+            // 注意这里**不能**再加「progress <= 0」这一条。progress == 0 有两种含义：
+            //   · 非扫光场景：由 isLyric=false 覆盖，不需要它；
+            //   · 本行刚唱到开头（真实进度就是 0）：这一条会把它误判成「不扫光」而画成全体高亮，
+            //     等进度涨过 0 再切回扫光分支 —— 表现就是「切换一句时先整句全亮一下，然后又从头扫」。
+            // 所以 progress == 0 应当照常走扫光分支：底板是暗的、高亮宽度为 0，只显示暗色整句。
+            if (!isLyric || !MediaController.IsLyricScanEnabled)
             {
                 foreach (var run in runs)
                 {
@@ -434,7 +436,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 媒体模块在组合模式下的占宽（缩略图 + 文本 + 间距 + 频谱）。
         ///
-        /// 不封顶（2026-09-20 删掉了原先的 CompositeMediaMaxWidth）：用户要求媒体控制器长度全放开，
+        /// 不封顶（2026-09-20 删掉了原先的 CompositeMediaMaxWidth）：媒体控制器长度全放开，
         /// 文本按真实内容计宽，超出部分只受 MAX_ISLAND_WIDTH 约束（而它已放宽到 1920）。
         /// 组合模式总宽仍由 GetCompositeWidth 收口，且插件行预算是「总长上限 − 原生总宽」，
         /// 所以本值变大只会让岛体变长、不会把插件挤没（前提是原生总宽还没吃满总长上限）。

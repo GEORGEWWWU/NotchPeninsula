@@ -114,6 +114,23 @@ namespace NotchPeninsula
         private bool _dismissRequested;
         private bool _trackingMouse;
 
+        // ---- 持久化渲染缓冲（与 ConsoleWindow / Core.NotchWindow 同一套做法）----
+        //
+        // 一次弹出菜单会渲染很多帧：鼠标划过每一项都 RequestRender()，还有 16ms 的
+        // 出菜单动画定时器在连续刷。原实现每帧 CreateCompatibleDC + CreateDIBSection +
+        // Buffer.MemoryCopy + DeleteObject + DeleteDC，全是固定开销。
+        //
+        // 这里比 ConsoleWindow 更简单也更需要注意：_pixelWidth / _pixelHeight 由
+        // LayoutItems() 在构造函数里算一次（菜单项是构造时定死的），
+        // 菜单实例是一次性的（Show 里 new 出来，关掉就整只丢弃），
+        // 所以缓冲在第一次 Render 时按当时的尺寸建、并在 Dispose 里释放即可，
+        // 不需要（也不该有）任何重建逻辑。若哪天改成菜单项可变，必须补上尺寸比对 + 重建。
+        private IntPtr _memDc = IntPtr.Zero;
+        private IntPtr _hBitmap = IntPtr.Zero;
+        private IntPtr _oldBitmap = IntPtr.Zero;
+        private IntPtr _pBits = IntPtr.Zero;
+        private SKSurface? _surface;
+
         private readonly int _anchorX;            // 菜单左上角屏幕坐标（物理像素）
         private readonly int _anchorY;
 
@@ -414,6 +431,11 @@ namespace NotchPeninsula
 
             _tearingDown = false;
             _trackingMouse = false;
+
+            // 常驻渲染缓冲（memDC + DIB + SKSurface）不归 GC 管，必须在这里显式释放 ——
+            // 菜单每次弹出都 new 一个新实例，漏掉就是"每开关一次菜单泄漏一对内核对象 + 一块 DIB"。
+            // 放在窗口销毁之后：此时已不再需要提交任何一帧。
+            DisposeRenderBuffer();
 
             // 逐个 Dispose 再置 null：SKPaint / SKTypeface 持有 Skia 原生资源，
             // 只把字段置 null 不会释放原生句柄（要等 GC 终结器），而 CreateResources() 用的是 `??=`，
@@ -735,11 +757,16 @@ namespace NotchPeninsula
         {
             if (_hwnd == IntPtr.Zero || _pixelWidth <= 0 || _pixelHeight <= 0) return;
 
-            var info = new SKImageInfo(_pixelWidth, _pixelHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
-            using var surface = SKSurface.Create(info);
-            if (surface == null) return;
+            // 常驻 surface 按菜单尺寸建一次（见字段声明处的说明）。
+            var surface = _surface;
+            if (surface == null)
+            {
+                if (!EnsureRenderBuffer()) return;
+                surface = _surface!;
+            }
 
             var canvas = surface.Canvas;
+            canvas.ResetMatrix();          // surface 复用：清掉上一帧的矩阵/裁剪状态
             canvas.Clear(SKColors.Transparent);
             canvas.Scale(_dpiScale);
 
@@ -747,14 +774,90 @@ namespace NotchPeninsula
             float h = _logicalHeight;
             float radius = CORNER_RADIUS;
 
-            // 纯色底 + 1px 描边。刻意不叠任何材质/模糊，用户明确要"简单的纯色"。
+            // 纯色底 + 1px 描边。刻意不叠任何材质/模糊，只要简单的纯色。
             var full = new SKRect(0.5f, 0.5f, w - 0.5f, h - 0.5f);
             canvas.DrawRoundRect(full, radius, radius, _bgPaint);
             canvas.DrawRoundRect(full, radius, radius, _borderPaint);
 
             DrawItems(canvas);
 
-            UpdateLayeredContent(surface.PeekPixels());
+            // Skia 延迟光栅化：不 Flush 就读 pBits 会拿到半成品（现在 Skia 直接画进 DIB 内存）
+            canvas.Flush();
+            UpdateLayeredContent();
+        }
+
+        /// <summary>建常驻渲染缓冲（memDC + DIB + 绑在 pBits 上的 SKSurface）。失败返回 false。</summary>
+        private bool EnsureRenderBuffer()
+        {
+            IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
+            if (screenDc == IntPtr.Zero) return false;
+
+            try
+            {
+                _memDc = Win32.CreateCompatibleDC(screenDc);
+                if (_memDc == IntPtr.Zero) return false;
+
+                var bmi = new Win32.BITMAPINFO
+                {
+                    bmiHeader = new Win32.BITMAPINFOHEADER
+                    {
+                        biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(),
+                        biWidth = _pixelWidth,
+                        biHeight = -_pixelHeight, // 负数 = 自上而下，和 Skia 的内存布局一致
+                        biPlanes = 1,
+                        biBitCount = 32,
+                        biCompression = 0
+                    }
+                };
+
+                _hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out _pBits, IntPtr.Zero, 0);
+                if (_hBitmap == IntPtr.Zero || _pBits == IntPtr.Zero)
+                {
+                    if (_hBitmap != IntPtr.Zero) { Win32.DeleteObject(_hBitmap); _hBitmap = IntPtr.Zero; }
+                    Win32.DeleteDC(_memDc);
+                    _memDc = IntPtr.Zero;
+                    return false;
+                }
+
+                _oldBitmap = Win32.SelectObject(_memDc, _hBitmap);
+
+                var info = new SKImageInfo(_pixelWidth, _pixelHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+                _surface = SKSurface.Create(info, _pBits, _pixelWidth * 4);
+                if (_surface == null)
+                {
+                    Win32.SelectObject(_memDc, _oldBitmap);
+                    Win32.DeleteObject(_hBitmap);
+                    Win32.DeleteDC(_memDc);
+                    _hBitmap = IntPtr.Zero; _memDc = IntPtr.Zero; _oldBitmap = IntPtr.Zero; _pBits = IntPtr.Zero;
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Error("创建托盘菜单渲染缓冲失败", ex);
+                return false;
+            }
+            finally
+            {
+                _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
+            }
+        }
+
+        /// <summary>释放常驻渲染缓冲。顺序不能改：先选回旧位图解锁，再删 hBitmap、surface、memDC。</summary>
+        private void DisposeRenderBuffer()
+        {
+            _surface?.Dispose();
+            _surface = null;
+
+            if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero)
+                Win32.SelectObject(_memDc, _oldBitmap);
+
+            if (_hBitmap != IntPtr.Zero) { Win32.DeleteObject(_hBitmap); _hBitmap = IntPtr.Zero; }
+            if (_memDc != IntPtr.Zero) { Win32.DeleteDC(_memDc); _memDc = IntPtr.Zero; }
+            _oldBitmap = IntPtr.Zero;
+            _pBits = IntPtr.Zero;
         }
 
         private void DrawItems(SKCanvas canvas)
@@ -799,71 +902,36 @@ namespace NotchPeninsula
             }
         }
 
-        private unsafe void UpdateLayeredContent(SKPixmap pixmap)
+        /// <summary>
+        /// 把常驻 DIB 提交给分层窗口。缓冲已常驻，所以这里没有 Create / Delete，
+        /// 也没有整缓冲拷贝（Skia 直接画在 pBits 上）——只剩一次 UpdateLayeredWindow。
+        /// </summary>
+        private void UpdateLayeredContent()
         {
+            if (_memDc == IntPtr.Zero) return;
+
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
             if (screenDc == IntPtr.Zero) return;
 
-            IntPtr memDc = Win32.CreateCompatibleDC(screenDc);
-            if (memDc == IntPtr.Zero)
-            {
-                _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
-                return;
-            }
-
             try
             {
-                var bmi = new Win32.BITMAPINFO
+                Win32.GetWindowRect(_hwnd, out var rect);
+
+                var ptSrc = new Win32.POINT(0, 0);
+                var ptDst = new Win32.POINT(rect.Left, rect.Top);
+                var size = new Win32.SIZE(_pixelWidth, _pixelHeight);
+                var blend = new Win32.BLENDFUNCTION
                 {
-                    bmiHeader = new Win32.BITMAPINFOHEADER
-                    {
-                        biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(),
-                        biWidth = _pixelWidth,
-                        biHeight = -_pixelHeight, // 负数 = 自上而下，和 Skia 的内存布局一致
-                        biPlanes = 1,
-                        biBitCount = 32,
-                        biCompression = 0
-                    }
+                    BlendOp = Win32.AC_SRC_OVER,
+                    BlendFlags = 0,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = Win32.AC_SRC_ALPHA
                 };
 
-                IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
-                if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
-                {
-                    // 同上：位图已建、指针未取到时也要删掉，不然这块 DIB 就漏了（外层 finally 只管 DC）。
-                    if (hBitmap != IntPtr.Zero) Win32.DeleteObject(hBitmap);
-                    return;
-                }
-
-                IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
-                try
-                {
-                    long bytes = (long)_pixelWidth * _pixelHeight * 4;
-                    Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
-
-                    Win32.GetWindowRect(_hwnd, out var rect);
-
-                    var ptSrc = new Win32.POINT(0, 0);
-                    var ptDst = new Win32.POINT(rect.Left, rect.Top);
-                    var size = new Win32.SIZE(_pixelWidth, _pixelHeight);
-                    var blend = new Win32.BLENDFUNCTION
-                    {
-                        BlendOp = Win32.AC_SRC_OVER,
-                        BlendFlags = 0,
-                        SourceConstantAlpha = 255,
-                        AlphaFormat = Win32.AC_SRC_ALPHA
-                    };
-
-                    Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
-                }
-                finally
-                {
-                    Win32.SelectObject(memDc, hOldBitmap);
-                    Win32.DeleteObject(hBitmap);
-                }
+                Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
             }
             finally
             {
-                Win32.DeleteDC(memDc);
                 _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
             }
         }

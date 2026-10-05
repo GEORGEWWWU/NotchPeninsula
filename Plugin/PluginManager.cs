@@ -38,16 +38,31 @@ public sealed class PluginEntry
     public PluginState State { get; internal set; } = PluginState.NotLoaded;
     public string? Error { get; internal set; }
 
+    /// <summary>
+    /// 上一次成功加载时读到的显示名（由 PluginManager 从名字缓存里填）。
+    /// 禁用 / 加载失败时 DisplayName 是空的，靠它兜住 —— 否则列表只能显示 DLL 文件名。
+    /// </summary>
+    internal string CachedName { get; set; } = "";
+
     public bool IsEnabled => State == PluginState.Loaded;
 
     internal INotchPlugin? Instance;
     internal PluginLoadContext? Context;
     internal string? ShadowDir;
 
-    /// <summary>未加载时用于列表展示的友好名称。</summary>
-    public string FriendlyName => string.IsNullOrWhiteSpace(DisplayName)
-        ? Path.GetFileNameWithoutExtension(DllPath)
-        : DisplayName;
+    /// <summary>
+    /// 列表展示用的名称：加载中 → 插件声明的 DisplayName；未加载 → 上次缓存的名字；
+    /// 都没有（从没成功加载过）→ 退回 DLL 文件名（去掉扩展名）。
+    /// </summary>
+    public string FriendlyName
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(DisplayName)) return DisplayName;
+            if (!string.IsNullOrWhiteSpace(CachedName)) return CachedName;
+            return Path.GetFileNameWithoutExtension(DllPath);
+        }
+    }
 }
 
 /// <summary>
@@ -72,6 +87,7 @@ public sealed class PluginManager
     private const string DisabledListValue = "Plugins_Disabled";
     private const string OrderListValue = "Plugins_Order";
     private const string HiddenListValue = "Plugins_Hidden";
+    private const string NameCacheValue = "Plugins_Names";
     private const string NoPluginError = "DLL 中未找到 INotchPlugin 的实现";
 
     private static readonly Lazy<PluginManager> _lazy = new(() => new PluginManager());
@@ -93,6 +109,14 @@ public sealed class PluginManager
     private readonly List<string> _rawOrder = new();
     private bool _orderMigrated;
     private readonly object _lock = new();
+
+    // 插件显示名缓存（Key → DisplayName），持久化在注册表。
+    //
+    // 为什么必须缓存：DisplayName 只有「真正加载插件」时才知道（要实例化 INotchPlugin 才读得到），
+    // 而禁用 / 加载失败的插件是不会加载的 —— 于是插件中心只能退回 DLL 文件名，
+    // 显示成「NpsMediaMixer_20261001133637」这种，用户根本认不出是哪个插件。
+    // 缓存最后一次成功加载时读到的名字，禁用后照常显示「媒体混音器」。
+    private readonly Dictionary<string, string> _nameCache = new(StringComparer.OrdinalIgnoreCase);
 
     public PluginHost Host => _host;
 
@@ -123,6 +147,7 @@ public sealed class PluginManager
         LoadDisabledList();
         LoadHiddenList();
         LoadOrderList();
+        LoadNameCache();
     }
 
     // ---- 生命周期 ----
@@ -185,6 +210,12 @@ public sealed class PluginManager
             }
             _entries.Clear();
             _entries.AddRange(fresh);
+
+            // 缓存名统一回填：新发现的条目、以及早于本次缓存建立的老条目都在这里补上。
+            // 拿不到缓存（从没成功加载过）就保持空，FriendlyName 会退回 DLL 文件名。
+            foreach (var e in _entries)
+                if (string.IsNullOrEmpty(e.CachedName) && _nameCache.TryGetValue(e.Key, out var cached))
+                    e.CachedName = cached;
         }
     }
 
@@ -219,8 +250,9 @@ public sealed class PluginManager
     /// 只是入口从「插件中心」搬到了「显示设置」。表里没有的内容（老版本从未排过序的插件）
     /// 由 EnsureOrder 追加到末尾；老版本用 pluginId 写下的历史顺序也在那里迁移成 Key。
     ///
-    /// 未勾选的插件（禁用 / 加载失败）也在列表里（复选框空着），
-    /// 用户才能在同一处把它重新勾回来；已经不在磁盘上的残留顺序项直接跳过。
+    /// 未勾选的插件（跑着但被用户取消显示）也在列表里（复选框空着），用户才能在同一处把它勾回来。
+    /// 已经不在磁盘上的残留顺序项、以及禁用 / 加载失败的插件都直接跳过 —— 后者没有可显示的内容，
+    /// 也不该占用排序落点（重新启用后按它在顺序表里的原位置回到列表）。
     /// </summary>
     public IReadOnlyList<DisplayItem> DisplayItems
     {
@@ -249,12 +281,16 @@ public sealed class PluginManager
                     }
 
                     var e = FindEntryByKeyOrId(key);
-                    if (e == null || string.IsNullOrEmpty(e.Key)) continue; // 顺序表里的失效残留
+                    // 失效残留（插件已从磁盘移除）与「禁用 / 加载失败」的插件都不进这张列表：
+                    // 后者在插件中心已经被藏起来，只在显示设置里留一行空复选框没有意义，
+                    // 还会让用户在排序时碰上"点一下没动"的落点。重新启用后自动回到原位。
+                    if (e == null || string.IsNullOrEmpty(e.Key)) continue;
+                    if (e.State != PluginState.Loaded) continue;
                     list.Add(new DisplayItem
                     {
                         Key = e.Key,
                         Name = e.FriendlyName,
-                        IsShown = e.State == PluginState.Loaded && !_hidden.Contains(e.Key)
+                        IsShown = !_hidden.Contains(e.Key)
                     });
                 }
 
@@ -391,9 +427,22 @@ public sealed class PluginManager
         return -1;
     }
 
-    /// <summary>该顺序项会不会出现在「显示内容」列表里（内置模块或磁盘上还在的插件）。调用方需持有 _lock。</summary>
+    /// <summary>该顺序项会不会出现在「显示内容」列表里。调用方需持有 _lock。</summary>
     private bool IsListedLocked(string key)
-        => BuiltinWidgets.IsBuiltin(key) || FindEntryByKeyOrId(key) != null;
+        => BuiltinWidgets.IsBuiltin(key) || IsListedPluginLocked(key);
+
+    /// <summary>
+    /// 插件是否出现在「显示内容」列表里 —— 要求它当前真的在运行（已加载）。
+    /// 禁用 / 加载失败的插件既不出现在列表里，也不参与排序：它们在列表里本来就没有行，
+    /// 若仍当作「可落点」，用户点箭头时看起来「点了一下什么都没动」。
+    /// 顺序位本身在 _order 里保留，重新启用后回到原位。
+    /// 调用方需持有 _lock。
+    /// </summary>
+    private bool IsListedPluginLocked(string key)
+    {
+        var e = FindEntryByKeyOrId(key);
+        return e != null && e.State == PluginState.Loaded;
+    }
 
     /// <summary>原生模块当前是否勾选显示（与显示设置页的复选框、渲染器的绘制门控同源）。</summary>
     private static bool IsBuiltinDisplayed(string id)
@@ -612,6 +661,10 @@ public sealed class PluginManager
             e.DisplayName = PluginHost.DetachString(plugin.DisplayName);
             e.Version = PluginHost.DetachString(plugin.Version);
             e.Author = PluginHost.DetachString(ReadAuthor(plugin, asm));
+
+            // 记下显示名（持久化）：插件被禁用 / 卸载后 DisplayName 就会被清掉，
+            // 这份缓存让插件中心仍能显示「媒体混音器」而不是「NpsMediaMixer_20261001133637」。
+            CacheName(e);
 
         // 同 Id 的旧版本在这里就被移除，必须早于下面的 _host.RegisterPlugin：宿主按 pluginId
         // 记账，两份同 Id 同时注册会互相覆盖；而且卸载旧版本时的 UnregisterPlugin(id)
@@ -1069,6 +1122,57 @@ public sealed class PluginManager
             key?.SetValue(DisabledListValue, string.Join(";", _disabled));
         }
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件禁用清单失败", ex); }
+    }
+
+    // ---- 显示名缓存（Key → DisplayName）：禁用 / 加载失败的插件靠它显示真名而不是文件名 ----
+    //
+    // 存储格式：每条一行 "Key\tDisplayName"，行内分隔用 Tab —— 插件名里可能有空格 / 括号，
+    // 用空格或逗号都会截错；Tab 是唯一几乎不会出现在插件名里的字符。
+
+    private void LoadNameCache()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RegistryBase);
+            var raw = key?.GetValue(NameCacheValue) as string;
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            foreach (var line in raw.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                int tab = line.IndexOf('\t');
+                if (tab <= 0) continue;
+                string k = line[..tab].Trim();
+                string v = line[(tab + 1)..].Trim();
+                if (k.Length > 0 && v.Length > 0) _nameCache[k] = v;
+            }
+        }
+        catch (Exception ex) { Logger.Error("[PluginManager] 读取插件显示名缓存失败", ex); }
+    }
+
+    private void SaveNameCache()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RegistryBase);
+            var sb = new System.Text.StringBuilder();
+            foreach (var kv in _nameCache)
+                sb.Append(kv.Key).Append('\t').Append(kv.Value).Append('\n');
+            key?.SetValue(NameCacheValue, sb.ToString());
+        }
+        catch (Exception ex) { Logger.Error("[PluginManager] 保存插件显示名缓存失败", ex); }
+    }
+
+    /// <summary>把刚加载出来的插件显示名记进缓存（变了才写注册表）。调用方需在 _lock 外或已持有均可。</summary>
+    private void CacheName(PluginEntry e)
+    {
+        if (string.IsNullOrEmpty(e.Key) || string.IsNullOrWhiteSpace(e.DisplayName)) return;
+        e.CachedName = e.DisplayName;
+        lock (_lock)
+        {
+            if (_nameCache.TryGetValue(e.Key, out var old) && string.Equals(old, e.DisplayName, StringComparison.Ordinal))
+                return; // 名字没变，不写注册表
+            _nameCache[e.Key] = e.DisplayName;
+        }
+        SaveNameCache();
     }
 
     // ---- 显示状态持久化（隐藏清单：插件照常运行，只是不出现在岛上） ----

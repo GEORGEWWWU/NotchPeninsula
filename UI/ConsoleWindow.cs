@@ -23,6 +23,42 @@ namespace NotchPeninsula
 
         private const int TITLE_BAR_HEIGHT = 32;
 
+        // ---- 持久化渲染缓冲（与 Core/NotchWindow 同一套做法）----
+        //
+        // 为什么必须有：设置窗口的 Render() 由 **交互驱动**，悬停 / 滚轮 / 拖滑块每动一下就是
+        // 一帧（OnMouseMove 里那一整串 newXxx != _xxx 比对通过就 Render()，见 WndProc），
+        // 而滚动条拖拽 + 16ms 悬停动画期间就是 60fps 连续刷。
+        //
+        // 原实现（UpdateLayeredContentWindow）每一帧都：
+        //   SKSurface.Create(整窗) → CreateCompatibleDC → CreateDIBSection →
+        //   Buffer.MemoryCopy(约 2MB @150% DPI) → SelectObject → UpdateLayeredWindow →
+        //   DeleteObject → DeleteDC
+        // 一次性位图 + 一次整缓冲拷贝 + 一对内核对象创建/销毁，全是每帧的固定开销。
+        //
+        // 现在改成：DIB / memDC / SKSurface 全部按 _scaledWidth × _scaledHeight 建一次并常驻，
+        // 每帧只做「Skia 画进常驻 surface → 拷进 DIB → 一次 UpdateLayeredWindow」。
+        // _scaledWidth / _scaledHeight 是**编译期常量派生**（WIDTH/HEIGHT × 创建时的 DPI），
+        // 且 _hwnd 是 readonly、窗口不重建 —— 所以这份缓冲的生命周期就是窗口本身，无需重建逻辑。
+        //
+        // 释放顺序必须严格照抄 Core/NotchWindow.DisposeRenderBuffer 的注释：
+        // SelectObject 把旧位图选回去 → DeleteObject → DeleteDC。SKSurface 绑在 pBits 上，
+        // 也要先于 hBitmap 释放。
+        private IntPtr _memDc = IntPtr.Zero;
+        private IntPtr _hBitmap = IntPtr.Zero;
+        private IntPtr _oldBitmap = IntPtr.Zero;
+        private IntPtr _pBits = IntPtr.Zero;
+        private SKSurface? _renderSurface;
+
+        // 渲染互斥锁：Render() 会被两个线程调 —— UI 线程（WndProc 里的鼠标事件、定时器、
+        // 窗口初始化）和线程池线程（构造函数末尾 Task.Run 里那次异步刷新）。SkiaSharp 的
+        // SKCanvas / SKSurface **不是线程安全的**，两个线程同时进去会把 native 侧的内部状态踩坏，
+        // 表现为随机的访问冲突（0xc0000005）：崩溃栈每次都不一样（reset_matrix / draw_round_rect /
+        // draw_text_blob 都见过），调用点却都是 ConsoleWindow.Render()。
+        //
+        // 光靠「把调用点都搬到 UI 线程」不够稳：这个类将来任何新增的异步刷新都会重新引入同一个坑。
+        // 所以渲染入口统一加锁，让「并发渲染」在结构上不可能发生 —— 后到的一方等前一方画完再画。
+        private readonly object _renderLock = new object();
+
         // 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
         //    名称独占上行，按钮全在下行：从左到右 [重载] [移除] [开关]
         //    排序小三角（← / →）已于 2026-09-25 移除 —— 显示与排序统一收敛到
@@ -42,27 +78,72 @@ namespace NotchPeninsula
 
         private const float DISPLAY_FIRST_ROW_Y = 56f;    // 首行顶部相对卡片顶部的偏移
 
-        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源；紧随目标显示器卡之后）。</summary>
-        private const float DISPLAY_CARD_Y = MONITOR_CARD_Y + 74f;
+        /// <summary>
+        /// 「显示内容」列表最多显示几行 —— 列表高度、可视行数、可滚范围的唯一真源。
+        /// 条目多于这个数就走列表自己的滚动（滚轮 / 拖右侧滚动条），卡片高度不再跟着条目数变。
+        /// 卡片正好卡在最后一行底部，不留提示余量：溢出与否由右侧那条滚动条表达，
+        /// 不再另写一行「滚轮可滚动查看其余 N 项」。
+        /// </summary>
+        private const int DISPLAY_MAX_ROWS = 8;
+
+        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源；紧随待机模式卡之后）。</summary>
+        private const float DISPLAY_CARD_Y = STANDBY_CARD_Y + STANDBY_CARD_H + 12f;
 
         /// <summary>
-        /// 「显示内容」卡片高度（固定值）：页面整体可滚动，卡片高度与窗口高无关，
-        /// 列表超出可视行数的部分靠它自身的滚动查看。
+        /// 「显示内容」卡片高度：由 DISPLAY_MAX_ROWS 反推，正好放下约定的行数，底部不留空。
+        /// 固定高度（不随条目数变），条目更多时由列表自身滚动查看。
         /// </summary>
-        private const float DISPLAY_CARD_H = 360f;
+        private const float DISPLAY_CARD_H = DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H;
 
         /// <summary>滚轮一格（120）滚动几行。</summary>
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
 
         // ---- 显示设置页整页滚动 + 「显示模式」/「待机模式」卡片（渲染与鼠标命中必须同源）----
-        //    卡片自上而下：显示形态(12) → 显示模式(172) → 待机模式(426) → 目标显示器(606) → 显示内容(680)，
+        //    卡片自上而下：显示形态(12) → 目标显示器(172) → 显示模式(246) → 待机模式(500) → 显示内容(754)，
         //    相邻卡之间留 12px；页面内容高于窗口，靠 _displayPageScroll 整页滚动查看。
+        //    「目标显示器」2026-10-05 从最底一张（待机模式之后）提到「显示形态」正下方：
+        //      它决定整块岛画在哪块屏上，属于「先选屏幕、再谈样式/模式」的前置项。
 
         /// <summary>整页滚轮一格（120）滚动的像素。</summary>
         private const float DISPLAY_PAGE_WHEEL_STEP = 48f;
 
+        // 「列表滚到头之后接力滚整页」的触发阈值，单位是滚轮格数（一格 = 120）。
+        // 语义：光标在「显示内容」卡片里、列表已经顶到上 / 下边界，用户还继续朝同一方向滚 ——
+        //   累计满 2 格之后，这一层才把滚轮让给整页，页面接管继续滚。
+        // 为什么要这个阈值：滚到边界就立刻把滚动传出（曾经的行为）在触控板 / 高分辨率滚轮下
+        //   几乎必然误触发 —— 列表刚好停在最后一格时，手指多蹭一点，整页就跟着跳一大截。
+        //   给两格缓冲，边界区变成一个「必须明显继续滚」的动作，误触基本消失。
+        // 阈值以「格」而不是像素为单位，是为了与触控板的小步长滚动解耦（小步长会累积）。
+        private const int DISPLAY_WHEEL_CARRY_STEPS = 2;
+
+        /// <summary>
+        /// 列表顶到边界后，朝同一方向继续滚动所累积的格数。
+        /// 达到 DISPLAY_WHEEL_CARRY_STEPS 就转去滚整页，并清零。
+        /// 方向反转、滚轮去了别的层、或列表本身又滚动了，都要清零（见 WM_MOUSEWHEEL 分支）。
+        /// </summary>
+        private int _displayWheelCarry;
+
+        /// <summary>整页滚动一程（沿整页滚动轴移动 px 像素）。返回是否真的动了。</summary>
+        private bool ScrollDisplayPage(float pageMax, float px)
+        {
+            if (pageMax <= 0f) return false;
+            float target = Math.Clamp(_displayPageScroll - px, 0f, pageMax);
+            if (Math.Abs(target - _displayPageScroll) <= 0.5f) return false;
+            _displayPageScroll = target;
+            return true;
+        }
+
+        /// <summary>取符号（-1 / 0 / 1）。累计量只是用来比方向，用不着真值。</summary>
+        private static int Sign(int v) => v > 0 ? 1 : v < 0 ? -1 : 0;
+
+        /// <summary>目标显示器卡顶部相对标题栏的偏移（紧接「显示形态」卡之后）。</summary>
+        private const float MONITOR_CARD_Y = 172f;
+
+        /// <summary>目标显示器卡高度（标题 + 副标题 + 右侧下拉框）。</summary>
+        private const float MONITOR_CARD_H = 62f;
+
         /// <summary>「显示模式」卡（待机 / 普通切换 + 双击开关）顶部相对标题栏的偏移。</summary>
-        private const float MODE_CARD_Y = 172f;
+        private const float MODE_CARD_Y = MONITOR_CARD_Y + MONITOR_CARD_H + 12f;
 
         private const float MODE_CARD_H = 242f;
 
@@ -101,9 +182,6 @@ namespace NotchPeninsula
         private const float STANDBY_OPT_GAP = 8f;
 
         private const float STANDBY_OPT_X = 208f;
-
-        /// <summary>目标显示器卡顶部相对标题栏的偏移。</summary>
-        private const float MONITOR_CARD_Y = STANDBY_CARD_Y + STANDBY_CARD_H + 12f;
 
         private const float DISPLAY_MOVE_UP_X = 486f;     // ∧ 槽左边界（槽宽 = SORT_TRI_W）
 
@@ -583,7 +661,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 按当前光标位置重算一次悬停态。滚轮不产生 WM_MOUSEMOVE ——
         /// 滚动后光标下的行号变了，但 hover 索引还停在「滚动前」那一项，
-        /// 紧接着的点击就会选错音源（用户说的「断触」）。滚动完必须补这一下。
+        /// 紧接着的点击就会选错音源（表现就是「断触」）。滚动完必须补这一下。
         /// </summary>
         private void SyncHoverFromCursor()
         {
@@ -661,9 +739,9 @@ namespace NotchPeninsula
         /// </summary>
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
         {
-            // 卡片能放下几行：卡片高度固定（DISPLAY_CARD_H），底部留 20px
-            int maxRows = Math.Max(1,
-                (int)((DISPLAY_CARD_H - DISPLAY_FIRST_ROW_Y - 20f) / DISPLAY_ROW_H));
+            // 可视行数直接取 DISPLAY_MAX_ROWS（卡片高度就是按它反推的，别再自己算一遍 ——
+            // 以前用 (卡片高 - 首行偏移 - 20) / 行高 反推，改了常量容易和卡片高度不同步）
+            int maxRows = Math.Max(1, DISPLAY_MAX_ROWS);
             int total = PluginManager.Instance.DisplayItems.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
@@ -709,8 +787,11 @@ namespace NotchPeninsula
         private float _displayPageScroll;
 
         /// <summary>
-        /// 滚轮优先滚哪一层：false = 整页（默认），true = 「显示内容」列表。
-        /// 由用户最后点击的是哪条滚动条决定；滚到边界后自动接力滚另一层。
+        /// 滚轮先滚哪一层：false = 整页，true = 「显示内容」列表。
+        /// 不由「点击滚动条」决定 —— 光标在「显示内容」卡片里就先滚列表、在卡片外就滚整页
+        /// （每次 WM_MOUSEMOVE 按光标位置刷新，见 OnMouseMove 的 tab 1 段）。
+        /// 列表滚到边界后，继续朝同方向滚满 DISPLAY_WHEEL_CARRY_STEPS 格才接力给整页
+        /// （见 _displayWheelCarry 的说明）；不是一碰边界就传出去。
         /// </summary>
         private bool _wheelPriorityList;
 
@@ -847,6 +928,9 @@ namespace NotchPeninsula
             // 如果此时 StaticWndProc 还看不到实例，初次打开就只会看到“空的模糊底板”。
             _instance = this;
             _isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
+            // 岛体双击空白切换待机态时刷新本窗口的「显示模式」卡片（见 OnStandbyActiveChanged）。
+            // 生命周期跟窗口走：WM_DESTROY 里退订。
+            Renderer.StandbyActiveChanged += OnStandbyActiveChanged;
             _customValues[0] = Renderer.STANDBY_WIDTH;
             // index 1「垂直高度」已随「全局折叠态高度」合并删除：height 现在统一是 index 3
             _customValues[2] = Renderer.MEDIA_WIDTH;
@@ -983,6 +1067,13 @@ namespace NotchPeninsula
                 UpdateValueString(i);
             }
 
+            // 显示器列表的枚举（Screen.AllScreens）走后台线程算，避免开窗时卡一下；
+            // 但**更新完必须回到 UI 线程再渲染** —— 这不是可有可无的讲究：
+            //   · UpdateLayeredWindow / Skia canvas 都应当由持有窗口的线程驱动；
+            //   · 原来那句 `_instance.Render()` 直接写在 Task.Run 的 lambda 里，
+            //     那个 lambda 就跑在线程池线程上，于是它和构造函数末尾的 Render() 并发执行，
+            //     两个线程同时进 SKCanvas（非线程安全）→ native 侧访问冲突、进程闪退。
+            // 现在把「算数据」留在后台，「画一帧」用 PostMessage 请 UI 线程做。
             System.Threading.Tasks.Task.Run(() => {
                 var screens = Screen.AllScreens;
                 string[] opts = new string[screens.Length];
@@ -991,22 +1082,30 @@ namespace NotchPeninsula
                 _monitorOptions = opts;
                 if (Renderer.TargetMonitorIndex >= screens.Length) Renderer.TargetMonitorIndex = 0;
 
-                // 异步加载完成后，主线程安全触发一次UI重绘
-                if (_instance != null)
-                {
-                    _instance.Render();
-                }
+                // 回到 UI 线程重绘：窗口还在就投一条自定义消息，由 WndProc 在主线程里 Render。
+                var inst = _instance;
+                if (inst != null && inst._hwnd != IntPtr.Zero)
+                    Win32.PostMessage(inst._hwnd, WM_ASYNC_RERENDER, IntPtr.Zero, IntPtr.Zero);
             });
 
             Render();
         }
+
+        // 后台任务完成后请 UI 线程重绘的自定义消息（避免跨线程直接碰渲染缓冲）。
+        // 必须用 const：下面 switch 里要拿它做 case 标签（case 只接受编译期常量）。
+        // 0x8000 之后是 WM_APP 起点的自定义区间，不会撞系统消息；偏移取 0x52 避开托盘菜单的 0x8101。
+        private const int WM_ASYNC_RERENDER = 0x8000 + 0x52;
 
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             if (_instance != null)
             {
                 bool initializingContent = _instance._hwnd == IntPtr.Zero;
-                if (initializingContent || hwnd == _instance._hwnd || hwnd == _instance._backdropHwnd)
+                // 重建材质窗期间（_backdropRebuilding）旧材质窗的句柄已被摘掉，但它的销毁消息
+                // 还会同步回来 —— 这里一并发给 InstanceWndProc，由它按「非内容窗」处理（见那里的说明）。
+                bool rebuildingBackdrop = _instance._backdropRebuilding && hwnd != _instance._hwnd;
+                if (initializingContent || rebuildingBackdrop
+                    || hwnd == _instance._hwnd || hwnd == _instance._backdropHwnd)
                     return _instance.InstanceWndProc(hwnd, msg, wParam, lParam);
             }
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
@@ -1014,7 +1113,21 @@ namespace NotchPeninsula
 
         private IntPtr InstanceWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
-            bool isBackdropWindow = hwnd == _backdropHwnd && _backdropHwnd != IntPtr.Zero;
+            // 窗口归属判定：只有内容窗才会进入下面那套消息逻辑，材质窗与「正在被重建掉的旧材质窗」
+            // 一律走材质窗分支。
+            //
+            // 为什么不能只判 `hwnd == _backdropHwnd`：RebuildBackdropWindow 是先 `_backdropHwnd = Zero`
+            // 再 `DestroyWindow(old)`（那是有意为之 —— 销毁期间回来的消息不该再被当成材质窗），
+            // 但 DestroyWindow 会**同步**投递 WM_DESTROY / WM_NCDESTROY。这几条消息到达时
+            // `_backdropHwnd` 已经是 0，若只按句柄比对就会落进「内容窗」分支，把旧材质窗的销毁
+            // 当成内容窗自己在销毁：误摘拖放目标、释放内容窗还在用的渲染缓冲、把 _instance 置空，
+            // 之后重建流程继续用这个实例、下一帧又去访问已释放的缓冲 —— 直接访问冲突（0xc0000005）。
+            //
+            // 所以判据取两个句柄的并集，且重建期间只认内容窗：
+            // 凡 `hwnd != _hwnd` 的消息，只要处于重建流程中，就不是内容窗的消息。
+            bool isBackdropWindow =
+                (hwnd == _backdropHwnd && _backdropHwnd != IntPtr.Zero)
+                || (_backdropRebuilding && hwnd != _hwnd);
             if (isBackdropWindow)
             {
                 switch (msg)
@@ -1143,9 +1256,11 @@ namespace NotchPeninsula
                         return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
                     }
 
-                    // 显示设置页滚轮分两层：整页平移与「显示内容」列表内滚动。两层可能同时存在，
-                    // 所以按「用户最后点击过的滚动条」决定先滚哪一层，滚到边界后自动接力滚另一层
-                    // （默认优先整页；点过列表滚动条改为优先列表，再点整页滚动条又切回来）。
+                    // 显示设置页滚轮分两层：整页平移与「显示内容」列表内滚动。
+                    // 光标在「显示内容」卡片里 → 先滚列表；列表顶到边界后继续朝同一方向滚，
+                    //   累计满 DISPLAY_WHEEL_CARRY_STEPS 格就交给整页（带阈值的接力）。
+                    // 光标在卡片外 → 只滚整页。
+                    // 判据来自 _wheelPriorityList（每次 WM_MOUSEMOVE 刷新）。
                     if (_selectedTab == 1)
                     {
                         float pageMax = GetDisplayPageMaxScroll();
@@ -1153,29 +1268,49 @@ namespace NotchPeninsula
                         GetDisplayListLayout(out _, out int displayMaxFirst);
 
                         int wheelDelta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
-                        int rows = wheelDelta / 120 * DISPLAY_WHEEL_STEP_ROWS;
-                        float px = wheelDelta / 120 * DISPLAY_PAGE_WHEEL_STEP;
+                        int steps = wheelDelta / 120;            // 本格滚轮的方向与格数（向上为正）
+                        int rows = steps * DISPLAY_WHEEL_STEP_ROWS;
+                        float px = steps * DISPLAY_PAGE_WHEEL_STEP;
 
-                        bool TryList()
+                        bool moved;
+
+                        // 卡片里且列表还能滚：列表优先。滚得动就清掉接力累计。
+                        if (_wheelPriorityList && displayMaxFirst > 0 && steps != 0)
                         {
-                            if (displayMaxFirst <= 0) return false;
                             int target = Math.Clamp(_displayScroll - rows, 0, displayMaxFirst);
-                            if (target == _displayScroll) return false;
-                            _displayScroll = target;
-                            return true;
-                        }
+                            if (target != _displayScroll)
+                            {
+                                _displayScroll = target;
+                                _displayWheelCarry = 0;          // 列表自己动了，累计从头开始
+                                moved = true;
+                            }
+                            else
+                            {
+                                // 列表已经顶到边界：朝同方向继续滚才累计。反向滚动一律清零
+                                //（用户改主意往下看了，重新从头计）。
+                                _displayWheelCarry = Sign(_displayWheelCarry) == Math.Sign(steps)
+                                    ? _displayWheelCarry + steps
+                                    : steps;
 
-                        bool TryPage()
+                                if (Math.Abs(_displayWheelCarry) >= DISPLAY_WHEEL_CARRY_STEPS)
+                                {
+                                    // 越过阈值：接力给整页，并把这次滚轮的动量整个用掉。
+                                    _displayWheelCarry = 0;
+                                    moved = ScrollDisplayPage(pageMax, px);
+                                }
+                                else
+                                {
+                                    moved = false;           // 还在缓冲区内：什么都不动
+                                }
+                            }
+                        }
+                        else
                         {
-                            if (pageMax <= 0f) return false;
-                            float target = Math.Clamp(_displayPageScroll - px, 0f, pageMax);
-                            if (Math.Abs(target - _displayPageScroll) <= 0.5f) return false;
-                            _displayPageScroll = target;
-                            return true;
+                            // 卡片外（或列表本来就不需要滚）：只动整页。接力累计清零。
+                            _displayWheelCarry = 0;
+                            moved = ScrollDisplayPage(pageMax, px);
                         }
 
-                        // || 短路：优先的那层滚动成功就不再动另一层 —— 到边界时自然接力
-                        bool moved = _wheelPriorityList ? (TryList() || TryPage()) : (TryPage() || TryList());
                         if (moved)
                         {
                             // 滚动后光标下的行号与控件位置都变了，必须重算悬停，
@@ -1190,6 +1325,12 @@ namespace NotchPeninsula
                 case Win32.WM_PAINT:
                     return IntPtr.Zero;
 
+                // 后台任务（显示器枚举等）完成后请求的一次重绘 —— 在这里（UI 线程）执行，
+                // 而不是在投递它的线程池线程里直接 Render（见构造函数里 Task.Run 的说明）。
+                case WM_ASYNC_RERENDER:
+                    Render();
+                    return IntPtr.Zero;
+
                 case Win32.WM_DESTROY:
                     // 拖放目标必须在下层窗口销毁前摘掉，否则 OLE 还捏着一个指向已死窗口的接口。
                     RevokePluginDropTarget();
@@ -1199,9 +1340,15 @@ namespace NotchPeninsula
                         _backdropHwnd = IntPtr.Zero;
                         Win32.DestroyWindow(backdrop);
                     }
+                    // 常驻渲染缓冲（memDC + DIB + SKSurface）不归 GC 管，必须在这里显式释放。
+                    // 放在 _instance = null 之前：之后就没入口能拿到这份缓冲了。
+                    DisposeRenderBuffer();
                     // 定时器本身随窗口一起消失，只是把这个标志归位：
                     // 否则万一在动画途中销毁窗口，标志会一直停在 true，下次开表会被自己挡掉。
                     _displayHoverTimerOn = false;
+                    // 静态事件必须跟着窗口退订：不退的话窗口关掉后 _instance 虽为 null，
+                    // 但订阅列表里还挂着这个方法，下次打开会重复订阅（静态事件是进程级的）。
+                    Renderer.StandbyActiveChanged -= OnStandbyActiveChanged;
                     _instance = null;
                     break;
 
@@ -1216,12 +1363,29 @@ namespace NotchPeninsula
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
         }
 
-        private unsafe void Render()
+        private void Render()
         {
-            var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
-            using var surface = SKSurface.Create(info);
-            var canvas = surface.Canvas;
+            // 并发渲染会让 SkiaSharp native 侧踩空（见 _renderLock 的说明）。
+            // 锁包住整个「画 + 提交」过程：中间任何一步被另一个线程插进来都是坏状态。
+            lock (_renderLock)
+            {
+                RenderCore();
+            }
+        }
 
+        private unsafe void RenderCore()
+        {
+            // 常驻缓冲按窗口尺寸建一次（见字段声明处的说明）。首次渲染时 _scaledWidth/Height
+            // 已在构造函数里由 DPI 算好，所以这里第一次进来就会建出来。
+            var surface = _renderSurface;
+            if (surface == null)
+            {
+                if (!EnsureRenderBuffer()) return;
+                surface = _renderSurface!;
+            }
+
+            var canvas = surface.Canvas;
+            canvas.ResetMatrix();          // surface 是复用的：必须把上一帧的矩阵 / 裁剪状态清干净
             canvas.Scale(_dpiScale);
             canvas.Clear(SKColors.Transparent);
             float cornerRadius = 8f;
@@ -1271,30 +1435,34 @@ namespace NotchPeninsula
             RenderDropdowns(canvas);
 
             canvas.DrawRoundRect(new SKRect(0.5f, 0.5f, WIDTH - 0.5f, HEIGHT - 0.5f), cornerRadius, cornerRadius, _globalBorderPaint);
-            UpdateLayeredContentWindow(surface.PeekPixels());
+
+            // 把常驻 surface 的像素拷进常驻 DIB，再把 DIB 提交给分层窗口。
+            // Flush 不能省：Skia 的绘制是延迟光栅化的，这里不 Flush 就读 pBits 会拿到半成品。
+            canvas.Flush();
+            UpdateLayeredContentWindow();
         }
 
-        private unsafe void UpdateLayeredContentWindow(SKPixmap pixmap)
+        /// <summary>
+        /// 建常驻渲染缓冲（DIB + 兼容 DC + 绑在 pBits 上的 SKSurface）。失败返回 false。
+        /// 顺序：先取 screen DC → 建 memDC → 建 DIB → 选入 memDC → 拿 pBits → 最后建 surface 绑上去。
+        /// </summary>
+        private bool EnsureRenderBuffer()
         {
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
-            if (screenDc == IntPtr.Zero)
-                return;
-
-            IntPtr memDc = Win32.CreateCompatibleDC(screenDc);
-            if (memDc == IntPtr.Zero)
-            {
-                _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
-                return;
-            }
+            if (screenDc == IntPtr.Zero) return false;
 
             try
             {
+                _memDc = Win32.CreateCompatibleDC(screenDc);
+                if (_memDc == IntPtr.Zero) return false;
+
                 var bmi = new Win32.BITMAPINFO
                 {
                     bmiHeader = new Win32.BITMAPINFOHEADER
                     {
                         biSize = (uint)Marshal.SizeOf<Win32.BITMAPINFOHEADER>(),
                         biWidth = _scaledWidth,
+                        // 负高度 = 自上而下的 DIB，与 Skia 的像素行序一致（省掉一次翻转）
                         biHeight = -_scaledHeight,
                         biPlanes = 1,
                         biBitCount = 32,
@@ -1302,47 +1470,93 @@ namespace NotchPeninsula
                     }
                 };
 
-                IntPtr hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
-                if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
+                _hBitmap = Win32.CreateDIBSection(screenDc, ref bmi, Win32.DIB_RGB_COLORS, out _pBits, IntPtr.Zero, 0);
+                if (_hBitmap == IntPtr.Zero || _pBits == IntPtr.Zero)
                 {
-                    // 极端情况：位图建出来了但像素指针取不到 —— 必须把已建的 hBitmap 删掉再走，
-                    // 否则这一支会永久漏掉一块 DIB（外层 finally 只负责 DC）。
-                    if (hBitmap != IntPtr.Zero) Win32.DeleteObject(hBitmap);
-                    return;
+                    // 建了一半：把已建的对象逐个回滚，别留给下一次重试重复创建。
+                    if (_hBitmap != IntPtr.Zero) { Win32.DeleteObject(_hBitmap); _hBitmap = IntPtr.Zero; }
+                    Win32.DeleteDC(_memDc);
+                    _memDc = IntPtr.Zero;
+                    return false;
                 }
 
-                IntPtr hOldBitmap = Win32.SelectObject(memDc, hBitmap);
-                try
+                _oldBitmap = Win32.SelectObject(_memDc, _hBitmap);
+
+                var info = new SKImageInfo(_scaledWidth, _scaledHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+                _renderSurface = SKSurface.Create(info, _pBits, _scaledWidth * 4);
+                if (_renderSurface == null)
                 {
-                    long bytes = (long)_scaledWidth * _scaledHeight * 4;
-                    Buffer.MemoryCopy(pixmap.GetPixels().ToPointer(), pBits.ToPointer(), bytes, bytes);
-
-                    var ptSrc = new Win32.POINT(0, 0);
-                    var ptDst = new Win32.POINT(0, 0);
-                    Win32.GetWindowRect(_hwnd, out var rect);
-                    ptDst.x = rect.Left;
-                    ptDst.y = rect.Top;
-
-                    var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
-                    var blend = new Win32.BLENDFUNCTION
-                    {
-                        BlendOp = Win32.AC_SRC_OVER,
-                        BlendFlags = 0,
-                        SourceConstantAlpha = 255,
-                        AlphaFormat = Win32.AC_SRC_ALPHA
-                    };
-
-                    Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
+                    // DIB 有了但 surface 建不出来（内存不足）：同样整体回滚。
+                    Win32.SelectObject(_memDc, _oldBitmap);
+                    Win32.DeleteObject(_hBitmap);
+                    Win32.DeleteDC(_memDc);
+                    _hBitmap = IntPtr.Zero; _memDc = IntPtr.Zero; _oldBitmap = IntPtr.Zero; _pBits = IntPtr.Zero;
+                    return false;
                 }
-                finally
-                {
-                    Win32.SelectObject(memDc, hOldBitmap);
-                    Win32.DeleteObject(hBitmap);
-                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("[ConsoleWindow] 创建渲染缓冲失败", ex);
+                return false;
             }
             finally
             {
-                Win32.DeleteDC(memDc);
+                _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
+            }
+        }
+
+        /// <summary>
+        /// 释放常驻渲染缓冲。顺序不能改（见字段声明处）：
+        /// 先把旧位图选回 DC 解锁，再删 hBitmap（memDC 正选着它时删不掉），然后 surface、最后 memDC。
+        /// </summary>
+        private void DisposeRenderBuffer()
+        {
+            _renderSurface?.Dispose();
+            _renderSurface = null;
+
+            if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero)
+                Win32.SelectObject(_memDc, _oldBitmap);
+
+            if (_hBitmap != IntPtr.Zero) { Win32.DeleteObject(_hBitmap); _hBitmap = IntPtr.Zero; }
+            if (_memDc != IntPtr.Zero) { Win32.DeleteDC(_memDc); _memDc = IntPtr.Zero; }
+            _oldBitmap = IntPtr.Zero;
+            _pBits = IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// 把常驻 DIB 提交给分层窗口。缓冲已常驻，所以这里**没有**任何 Create / Delete ——
+        /// 只剩一次 UpdateLayeredWindow。像素早已在 Render 里由 Skia 直接画进 pBits。
+        /// </summary>
+        private void UpdateLayeredContentWindow()
+        {
+            if (_memDc == IntPtr.Zero) return;
+
+            IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
+            if (screenDc == IntPtr.Zero) return;
+
+            try
+            {
+                var ptSrc = new Win32.POINT(0, 0);
+                var ptDst = new Win32.POINT(0, 0);
+                Win32.GetWindowRect(_hwnd, out var rect);
+                ptDst.x = rect.Left;
+                ptDst.y = rect.Top;
+
+                var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
+                var blend = new Win32.BLENDFUNCTION
+                {
+                    BlendOp = Win32.AC_SRC_OVER,
+                    BlendFlags = 0,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = Win32.AC_SRC_ALPHA
+                };
+
+                Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
+            }
+            finally
+            {
                 _ = Win32.ReleaseDC(IntPtr.Zero, screenDc);
             }
         }
@@ -1354,6 +1568,18 @@ namespace NotchPeninsula
                 _instance._isAutoStartEnabled = enable;
                 _instance.Render();
             }
+        }
+
+        /// <summary>
+        /// 待机态在别处（岛体双击空白 / 频谱）被切换后，把设置窗口的「显示模式」卡片刷新过来。
+        /// 设置窗口不参与那层交互，靠 Renderer.StandbyActiveChanged 事件回调到这里。
+        /// 只在「显示模式」那张卡真的可见时重绘，避免开在别的页签也白刷一帧。
+        /// </summary>
+        private static void OnStandbyActiveChanged()
+        {
+            if (_instance == null || _instance._hwnd == IntPtr.Zero) return;
+            if (_instance._selectedTab != 1) return;
+            _instance.Render();
         }
     }
 }

@@ -24,11 +24,11 @@ namespace NotchPeninsula
         // 关掉后双击完全不消费、不做事，折叠态媒体区的展开入口同时变成左键单击
         // （见 Renderer.MediaExpandByLeftClick / MediaExpandByRightClick）。
         //
-        // 默认关闭（2026-10-03 用户要求）：这是「跳回媒体软件」这种会抢走前台焦点的动作，
-        //    不该在老用户升级后不告而开 —— 注册表里没有 MediaAppLaunchEnabled 这个键时一律按关闭处理
-        //    （见 Program.LoadSettings）。顺带的好处是：升级用户默认拿到的就是他们熟悉的
-        //    「左键单击展开媒体面板」（2026-10-02 之前的老口径），而双击跳转变成显式开启的功能。
-        //    用户手动开过 / 关过的，注册表里的值照旧优先，不会被这次改默认值影响。
+        // 默认关闭（2026-10-03）：这是「跳回媒体软件」这种会抢走前台焦点的动作，
+        // 不该在老用户升级后不告而开 —— 注册表里没有 MediaAppLaunchEnabled 这个键时一律按关闭处理
+        // （见 Program.LoadSettings）。顺带的好处是：升级用户默认拿到的就是他们熟悉的
+        // 「左键单击展开媒体面板」（2026-10-02 之前的老口径），而双击跳转变成显式开启的功能。
+        // 注册表里有值的照旧优先，不会被这次改默认值影响。
         internal static bool IsAppLaunchEnabled = false;
 
         internal static bool IsLyricsEnabled = true;
@@ -147,7 +147,10 @@ namespace NotchPeninsula
             = new (string, string, TimeSpan, DateTime, string)[RecentSongSlots];
         private const double FreshSlotSeconds = 3.0; // 后台会话每秒采样一次，留足调度抖动余量
         private int _recentCursor;
-        private int _lyricSlot = -1;      // 当前歌词与时间轴归属的槽位，-1 表示尚未接管
+        // 当前歌词与时间轴归属的槽位，-1 表示尚未接管。
+        // 跨线程：由 FetchLyricsAsync（线程池线程）写入，UpdateLyrics（渲染线程）每帧读取 ——
+        // 用 volatile 保证换槽位后渲染线程立刻看到，否则会短暂读到旧槽位的残留进度。
+        private volatile int _lyricSlot = -1;
 
         // 「退到后台但仍在播放」的会话，按槽位登记。
         // 用数组而不是单个变量：音乐↔音乐来回切时会有两首歌同时需要后台推算，
@@ -159,11 +162,20 @@ namespace NotchPeninsula
 
         // 接管新歌后，等下一帧拿到 SMTC 时间轴就强制对齐一次。
         // 不能靠「位置跳变 > 1.5 秒」来兜底：新歌位置往往也是 0，差值判不出来，旧进度就会残留。
-        private bool _forceResync;
+        //
+        // 跨线程：写入方是 UpdateSession（线程池线程），读取/消费方是 UpdateLyrics（渲染线程）。
+        // 必须 volatile —— 否则渲染线程可能看不到这次置位，换歌后的补采被推迟到下一个 200ms 周期，
+        // 新歌的进度条与歌词最多慢 200ms 才开始对齐。
+        private volatile bool _forceResync;
 
         // 当前会话 AppID 的镜像。渲染线程每帧都要做一次「歌词归属校验」，
         // 直接读 SourceAppUserModelId 会打 COM 调用，这里由 UpdateSession 同步写一份供它零成本比对。
-        private string _currentAppId = "";
+        //
+        // volatile：写方是线程池线程（UpdateSession 开头），读方是渲染线程（每帧的归属校验）。
+        // 它必须比 Title / Artist 更早对渲染线程可见 —— UpdateSession 里先写 _currentAppId、
+        // 之后才走 RefreshProperties 更新 Title / Artist，volatile 的写屏障保证了同线程后续的
+        // Title / Artist 写入不会重排到它前面，渲染线程见到新 AppId 时看到的一定不是上一首的标题。
+        private volatile string _currentAppId = "";
 
         /// <summary>
         /// 当前接管会话的 AUMID（没有会话时为空串）。供渲染线程零成本比对，
@@ -172,7 +184,9 @@ namespace NotchPeninsula
         public string CurrentAppId => _currentAppId;
 
         // ---- 歌曲时间轴 ----
-        // 仅当 SMTC 会话提供完整时间轴（EndTime > 0）时启用，不区分平台。
+        // HasTimeline = 「SMTC 给出了曲目总长」（进度条据此决定画不画），不区分平台。
+        // 它不是时间轴是否有值的判据：只给位置不给总长的会话照样走真实 SMTC 位置，
+        // 「已播放 mm:ss」显示真实值，只是没有进度条。
         // 位置唯一真源是 _timelinePos：歌词槽位与进度条都写它、读它，所以拖动后两者必然精确同步。
         public bool HasTimeline { get; private set; }
         public TimeSpan Duration { get; private set; }
@@ -193,13 +207,52 @@ namespace NotchPeninsula
         private TimeSpan _smtcPos = TimeSpan.Zero;
         private TimeSpan _smtcDuration = TimeSpan.Zero;
 
+        // ---- 真实 SMTC 时间轴（Position + LastUpdatedTime 外推） ----
+        //
+        // 关键事实（Microsoft 文档原文）：TimelineProperties.Position 是
+        // 「current as of LastUpdatedTime」—— 它是一份冻结在过去的快照，不是实时值。
+        // LastUpdatedTime（DateTimeOffset，UTC）才是这份快照的采样时刻。
+        //
+        // 也就是说 SMTC 给的是「(时刻 T, 位置 P)」，实时位置要自己外推：
+        //     实时位置 = P + (now - T)     （播放中）
+        //     实时位置 = P                 （暂停中，位置不会走）
+        //
+        // 老实现忽略了 LastUpdatedTime，把 P 当成实时值去纠偏，中间那段空隙靠
+        // 「自由跑表 + 纠偏」糊过去 —— 表现就是「进度对不上真实 SMTC」，
+        // 而且播放器刷新越稀疏、滞后越明显（网易云这类几秒才更新一次的尤其明显）。
+        //
+        // 现在改为：只要 LastUpdatedTime 可用，就用外推出来的真实 SMTC 位置
+        // （见 TryGetSmtcLivePosition）；只有它不可用（默认值 / 播放器不上报）才回退到
+        // 自由跑表的虚拟时间轴。
+        private bool _smtcHasLastUpdated;   // 本份快照的 LastUpdatedTime 是否可信
+        private DateTime _smtcLastUpdatedUtc; // 上一份快照的 LastUpdatedTime（UTC）
+
         public float TimelineProgress => Duration > TimeSpan.Zero
             ? Math.Clamp((float)(_timelinePos.TotalSeconds / Duration.TotalSeconds), 0f, 1f) : 0f;
 
         public string Title { get; private set; } = "Notch Peninsula";
         public string Artist { get; private set; } = "Waiting for media...";
-        public bool IsPlaying { get; private set; } = false;
-        public bool IsActive { get; private set; } = false;
+
+        // ---- 跨线程共享的标量一律走 volatile 后备字段 ----
+        //
+        // 本类的写入方与读取方跑在不同线程上：
+        //   · 写入方：UpdateSession / RefreshPropertiesCore —— 由 SMTC 事件与 async 续体驱动，
+        //     落在线程池线程上；
+        //   · 读取方：UpdateLyrics —— 由宿主渲染循环每 16ms 调用，跑在渲染线程上。
+        //
+        // 普通字段在这里会出「可见性延迟」：渲染线程可能因 CPU 缓存 / 缺少内存屏障，
+        // 在异步线程改写后**几十到几百毫秒**才看到新值。时间轴上这会直接表现为偏差：
+        //   · IsPlaying 读成旧值 → 已经暂停了还在按「播放中」外推（位置虚涨），
+        //     或已经播起来了却按「暂停」冻结（进度不动），要等下一次属性刷新才纠正；
+        //   · _forceResync 读成旧值 → 换歌后那次「立刻补采 SMTC」被推迟到下一个 200ms 周期，
+        //     新歌的进度条/歌词最多慢 200ms 才开始对齐。
+        // 这些都正是「时间轴因为线程问题出现延迟」的来源，所以用 volatile 保证写后立刻可见。
+        private volatile bool _isPlaying;
+        public bool IsPlaying => _isPlaying;
+
+        private volatile bool _isActive;
+        public bool IsActive => _isActive;
+
         public SKBitmap? Thumbnail { get; private set; }
 
         // 封面位图的唯一写入口。三条互不等待的路径都会换图（属性刷新 / 网络封面下载完成 / 会话清空），
@@ -477,7 +530,7 @@ namespace NotchPeninsula
             if (_currentSession != null && newSession != null && _currentSession.SourceAppUserModelId == newSession.SourceAppUserModelId)
             {
                 await RefreshProperties();
-                IsActive = true;
+                _isActive = true;
                 return;
             }
 
@@ -506,14 +559,14 @@ namespace NotchPeninsula
                 _currentSession.MediaPropertiesChanged += OnMediaPropertiesChanged;
 
                 await RefreshProperties();
-                IsActive = true;
+                _isActive = true;
             }
             else
             {
-                IsActive = false;
+                _isActive = false;
                 Title = "No Media";
                 Artist = "";
-                IsPlaying = false;
+                _isPlaying = false;
                 _externalCoverAppId = "";
                 _externalCoverTitle = "";
                 SetThumbnail(null);
@@ -748,11 +801,11 @@ namespace NotchPeninsula
             try
             {
                 var playbackInfo = _currentSession!.GetPlaybackInfo();
-                IsPlaying = playbackInfo != null && playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+                _isPlaying = playbackInfo != null && playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
             }
             catch
             {
-                IsPlaying = false;
+                _isPlaying = false;
             }
 
             long durationSec = 0;
@@ -1061,11 +1114,22 @@ namespace NotchPeninsula
                 // 进度续用判定：只有「退到后台、仍在播放」的那首歌才允许续用进度。
                 // 其余一律归零 —— 缓冲里翻出来的陈年快照、以及同 App 换歌后又切回来的那首歌，
                 // 都已经从 0 重新开始，续用就会让歌词从上一首的进度继续播。
-                bool resumable = _recentSongs[newSlot].AppId == appId
+                //
+                // 整槽先快照再整槽写回，不逐字段读改写：本方法跑在线程池线程，
+                // 而渲染线程可能正在读写同一槽位（AdvanceTimeline / AdvanceSuspendedTimeline）。
+                // 逐字段写虽然落在不相交的内存范围上，但「读旧槽 → 算 resumable → 写回」
+                // 这个序列会让两边各丢掉对方刚写的那一笔（丢失更新）。
+                // 本地快照算完之后只做一次整槽赋值，把窗口压到最小。
+                var slotState = _recentSongs[newSlot];
+                bool resumable = slotState.AppId == appId
                                  && _slotSessions[newSlot] != null
-                                 && IsFreshSlot(_recentSongs[newSlot]);
-                if (!resumable) _recentSongs[newSlot].Position = TimeSpan.Zero;
-                _recentSongs[newSlot].AppId = appId;
+                                 && IsFreshSlot(slotState);
+                _recentSongs[newSlot] = (
+                    slotState.Title,
+                    slotState.Artist,
+                    resumable ? slotState.Position : TimeSpan.Zero,
+                    slotState.TickedAt,
+                    appId);
                 _slotSessions[newSlot] = null; // 这首歌已回到台前，交回当前会话推进
             }
 
@@ -2419,12 +2483,20 @@ namespace NotchPeninsula
             public readonly int[] CumChars;
             /// <summary>有时间标注的字的总有效字符数（扫光比例的分子上限）。</summary>
             public readonly int TotalChars;
+            /// <summary>
+            /// 这份时间轴所属的 yrc 行首时刻（毫秒）。EndMs 是相对它算出来的。
+            /// 之所以要留这个原点：lrc 行首与 yrc 行首并不总是相等（网易云两侧系统性错位
+            /// 170~650ms，且越往后越大），而扫光用的是「当前播放位置 − lrc 行首」。
+            /// 折算时必须把两份坐标系对齐，否则网易云这类源会整首偏快或偏慢。
+            /// </summary>
+            public readonly int LineStartMs;
 
-            public LyricWordTiming(int[] endMs, int[] cumChars, int totalChars)
+            public LyricWordTiming(int[] endMs, int[] cumChars, int totalChars, int lineStartMs)
             {
                 EndMs = endMs;
                 CumChars = cumChars;
                 TotalChars = totalChars;
+                LineStartMs = lineStartMs;
             }
         }
 
@@ -2509,7 +2581,7 @@ namespace NotchPeninsula
 
                 if (totalChars == 0 || endMs.Count != cumChars.Count) continue;
                 table.Add((lineStart, NormalizeLyricText(text.ToString()),
-                    new LyricWordTiming(endMs.ToArray(), cumChars.ToArray(), totalChars)));
+                    new LyricWordTiming(endMs.ToArray(), cumChars.ToArray(), totalChars, lineStart)));
             }
 
             table.Sort((a, b) => a.StartMs.CompareTo(b.StartMs));
@@ -2558,9 +2630,17 @@ namespace NotchPeninsula
                 if (table[j].Key == key) { cursor = j + 1; return table[j].Timing; }
             }
 
+            // 时间戳兜底：只用于「文本因个别标点差异对不上」的行。
+            // 这里额外要求两行的有效字符数一致 —— 扫光比例是「已唱字数 / 逐字表总字数」，
+            // 而渲染层拿整行文本宽度去乘它。字数不等（对错了句 / 一方少了标点字数）时，
+            // 比例会整体缩放，扫光要么永远到不了头、要么提前走完。
+            // 宁可这一行回落整行扫光，也不要拿一份字数对不上的逐字表去驱动。
+            // key 已去掉空白，所以它的长度就是有效字符数。
+            int lineChars = key.Length;
             for (int j = cursor; j < table.Length && table[j].StartMs <= lineMs + YrcTimeFallbackMs; j++)
             {
-                if (Math.Abs(table[j].StartMs - lineMs) <= YrcTimeFallbackMs)
+                if (Math.Abs(table[j].StartMs - lineMs) <= YrcTimeFallbackMs
+                    && table[j].Timing.TotalChars == lineChars)
                 {
                     cursor = j + 1;
                     return table[j].Timing;
@@ -2581,6 +2661,10 @@ namespace NotchPeninsula
         /// 为什么是一条链：两条路径产出的是同一个 0~1 标量，
         /// 渲染层的扫光依旧是「整行总宽 × 进度」，不需要知道自己拿到的是哪一种驱动。
         /// 于是「这首歌没有逐字数据」不会退化成不扫光，而只是自动降级成整行均匀扫光。
+        ///
+        /// <paramref name="position"/> 传的是**原始播放位置**（不含起唱提前量）。
+        /// 两条分支对这份提前量的处理不同：逐字分支直接用它（yrc 字级时间戳就是真实起唱时刻），
+        /// 整行分支才自行叠上 0.6s + LyricDelayOffset（整行 lrc 时间戳普遍偏晚，需要一点提前量）。
         /// </summary>
         private float ComputeScanProgress(int lineIndex, TimeSpan position)
         {
@@ -2591,18 +2675,23 @@ namespace NotchPeninsula
                 && lineIndex < timings.Length
                 && timings[lineIndex] is { TotalChars: > 0 } wordTiming)
             {
+                // 逐字时间轴的 EndMs 是相对 **yrc 行首** 记的，而 position 是绝对播放位置。
+                // 折算时统一用「position − yrc 行首」：lrc 行首与 yrc 行首并不总是相等
+                // （网易云两侧系统性错位，见 LyricWordTiming.LineStartMs 的说明），
+                // 若按 lrc 行首去减，逐字扫光会整首偏快或偏慢，且偏差随行数累积。
                 return ComputeWordAlignedProgress(
-                    wordTiming, (position - lineStart).TotalMilliseconds);
+                    wordTiming, position.TotalMilliseconds - wordTiming.LineStartMs);
             }
 
-            // ② 逐字不可用 → 回退整行扫光
+            // ② 逐字不可用 → 回退整行扫光（这里才加起唱提前量）
+            TimeSpan scanPos = position + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
             TimeSpan endTime = lineIndex < _lyrics.Length - 1
                 ? _lyrics[lineIndex + 1].Time
                 : lineStart + TimeSpan.FromSeconds(4); // 末行没有下一句可依，按 4 秒估
             double duration = (endTime - lineStart).TotalSeconds;
             if (duration <= 0) return 0f;
 
-            return Math.Clamp((float)((position - lineStart).TotalSeconds / duration), 0f, 1f);
+            return Math.Clamp((float)((scanPos - lineStart).TotalSeconds / duration), 0f, 1f);
         }
 
         /// <summary>
@@ -2611,13 +2700,16 @@ namespace NotchPeninsula
         ///
         /// 口径是「字符数」而不是像素宽度：中文与日文基本等宽，折算误差肉眼不可见；
         /// 好处是渲染层零改动 —— 它拿到的仍然只是一个 0~1 的标量，扫光依旧是「整行总宽 × 比例」。
-        /// 含大量拉丁字母 / 空格的行会有几像素偏差，这是已知取舍。
+        /// 含大量拉丁字母 / 空格的行会有几像素偏差（总字数按非空白字符计，渲染宽度却含空格），
+        /// 这是已知取舍；中日文歌不受影响。
         /// </summary>
         private static float ComputeWordAlignedProgress(LyricWordTiming timing, double elapsedMs)
         {
             int[] ends = timing.EndMs;
             int n = ends.Length;
             if (n == 0 || timing.TotalChars <= 0) return 0f;
+            // 最后一段唱完到本行结束之间通常是间奏：进度钉在 1（整行已唱完），
+            // 与主流卡拉 OK 一致；等到下一行时间戳到了自然换行。
             if (elapsedMs >= ends[n - 1]) return 1f;
             if (elapsedMs <= 0) return 0f;
 
@@ -2706,9 +2798,49 @@ namespace NotchPeninsula
                 {
                     var t = _currentSession.GetTimelineProperties();
                     _smtcPos = t.Position;
-                    _smtcDuration = t.EndTime > TimeSpan.Zero ? t.EndTime : TimeSpan.Zero;
+
+                    // 总长取两级兜底，因为各家播放器「把总长填在哪一栏」并不统一：
+                    //   1. EndTime     —— 规范字段，大多数播放器（QQ 音乐 / Spotify / 浏览器）填这里
+                    //   2. MaxSeekTime —— 少数播放器只填可 seek 上界，EndTime 恒为 0（有总长但不写规范栏）
+                    //   3. 都没有 → 0    —— 进度条画不出来，但「已播放 mm:ss」照样能走真实 SMTC 值
+                    // 判据是 > 0 而不是 >= 0：TimeSpan.Zero 与「没上报」在 API 上无法区分，一律当没给。
+                    // MaxSeekTime 只是「能拖到哪」的上界，理论上可能略大于实际总长 ——
+                    // 宁可比例略不准（进度条短一点点），也不要总时长整个缺失（进度条直接消失）。
+                    _smtcDuration = t.EndTime > TimeSpan.Zero ? t.EndTime
+                        : t.MaxSeekTime > TimeSpan.Zero ? t.MaxSeekTime
+                        : TimeSpan.Zero;
+
+                    // LastUpdatedTime 一并采下来（见字段声明处：Position 是「截至 LastUpdatedTime」的快照，
+                    // 实时位置要自己用 now - LastUpdatedTime 外推）。
+                    // 判据：DateTimeOffset 的默认值（MinValue / 0001-01-01）说明播放器根本不上报这个字段，
+                    // 那种情况下外推没有基准，必须退回虚拟跑表。
+                    var lu = t.LastUpdatedTime;
+                    _smtcHasLastUpdated = lu > DateTimeOffset.UnixEpoch;
+                    _smtcLastUpdatedUtc = _smtcHasLastUpdated ? lu.UtcDateTime : DateTime.MinValue;
+
+                    // 顺带校准播放状态。为什么必须在采样点做、不能只靠 PlaybackInfoChanged 事件：
+                    //   时间轴外推要乘上「现在是不是在播放」（暂停时外推量必须为 0），所以 _isPlaying
+                    //   一旦过期，外推方向就错 —— 暂停了还按播放涨，或播着却冻住。
+                    //   而事件并不可靠：部分播放器暂停/续播根本不发 PlaybackInfoChanged；
+                    //   通用媒体模式下这条事件还会先绕一圈 UpdateSession（内部有 await + COM），
+                    //   等它落到 _isPlaying 已是几百毫秒之后。
+                    //   这里每 200ms 用一次轻量 GetPlaybackInfo 就地校准，迟到问题从根上消失。
+                    //   代价可以忽略：GetPlaybackInfo 是会话对象上的本地状态读取，不额外产生
+                    //   网络/跨进程往返，而且和上面那次 GetTimelineProperties 是同一个会话对象。
+                    var info = _currentSession.GetPlaybackInfo();
+                    if (info != null)
+                        _isPlaying = info.PlaybackStatus
+                            == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
                 }
-                catch { _smtcPos = TimeSpan.Zero; _smtcDuration = TimeSpan.Zero; }
+                catch
+                {
+                    _smtcPos = TimeSpan.Zero;
+                    _smtcDuration = TimeSpan.Zero;
+                    _smtcHasLastUpdated = false;
+                    _smtcLastUpdatedUtc = DateTime.MinValue;
+                    // 故意不动 _isPlaying：这次采样失败只说明「没读到」，不代表「暂停了」。
+                    // 把它按暂停处理会让进度条凭空冻住一帧；保留旧值更接近真实状态。
+                }
                 // 没有端到端时长（网易云 / 酷狗等）：强制对齐标记留着也没用，就地消费掉，
                 // 让采样稳定回到 200ms 节流 —— 否则它会每帧都触发一次补采，等于没节流。
                 if (_smtcDuration <= TimeSpan.Zero) _forceResync = false;
@@ -2717,6 +2849,9 @@ namespace NotchPeninsula
             // 「检测到 SMTC 提供歌曲进度」= 端到端时长有效，不区分具体平台
             HasTimeline = _smtcDuration > TimeSpan.Zero;
             Duration = _smtcDuration;
+            // 时间文本在推进之前刷新：「已播放 mm:ss」按整秒缓存，早一帧算只会让秒数最多晚 16ms
+            // 跳变（肉眼不可见），却能让 Duration 本帧就被进度条读到。放在 AdvanceTimeline 之后
+            // 反而要重排这一行的调用位置，得不偿失。
             UpdateTimelineTexts();
 
             // 浏览器视频 / PotPlayer 这类无歌词会话、以及尚未接管歌词的歌：不显示歌词，
@@ -2724,7 +2859,7 @@ namespace NotchPeninsula
             if (IsNonLyricSession || _lyricSlot < 0)
             {
                 SetLyric("", "", 0f, false);
-                AdvanceFreeTimeline(_smtcPos, dt);
+                AdvanceFreeTimeline(_smtcPos, dt, now);
                 _forceResync = false; // 无歌词槽位：强制对齐标记不适用，就地消费，避免每帧重复采样
                 return;
             }
@@ -2734,9 +2869,17 @@ namespace NotchPeninsula
             // 「会话已换、歌词还没换」的缝隙里 —— 那一瞬间上一首的歌词会被新会话的时间轴推着继续走，
             // 这就是切歌残留的根源。这里每帧做一次本地比对（多数情况下是同一实例的短路比较），
             // 只要对不上就当场清空：宁可空一帧，也不让上一首的歌词多留一帧。
-            if (_recentSongs[_lyricSlot].Title != Title
-                || _recentSongs[_lyricSlot].Artist != Artist
-                || _recentSongs[_lyricSlot].AppId != _currentAppId)
+            //
+            // 三个比较项各取一次本地快照：三者在异步线程上是分几次写入的（_currentAppId 最先，
+            // Title / Artist 随后），逐项直接读字段可能让这一帧混用「新旧两首歌」的值
+            // ——那会得出「匹配」的错误结论，反而是残留歌词唯一的漏网窗口。先快照再比，至少保证
+            // 同一帧内三项来自同一份采样。
+            string ownerTitle = _recentSongs[_lyricSlot].Title;
+            string ownerArtist = _recentSongs[_lyricSlot].Artist;
+            string ownerAppId = _recentSongs[_lyricSlot].AppId;
+            if (ownerTitle != Title
+                || ownerArtist != Artist
+                || ownerAppId != _currentAppId)
             {
                 SetLyric("", "", 0f, false);
                 return;
@@ -2751,15 +2894,21 @@ namespace NotchPeninsula
             string found = "";
             string foundTrans = "";
             float progress = 0f;
-            TimeSpan compensatedPosition = _recentSongs[_lyricSlot].Position + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
+            // 选行用「补偿后」的位置：整行 lrc 时间戳普遍略晚于起唱，加一点提前量让高亮跟上人声。
+            // 但逐字扫光（yrc）不该用这份补偿 —— 字级时间戳本身已是真实起唱时刻，
+            // 再叠 0.6 秒会让扫光整首恒定超前，表现就是「扫光比人声快一点」。
+            // 所以扫光一律用原始位置，选行才用补偿后的位置（见 ComputeScanProgress 的两个参数）。
+            TimeSpan rawPosition = _recentSongs[_lyricSlot].Position;
+            TimeSpan compensatedPosition = rawPosition + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
             for (int i = _lyrics.Length - 1; i >= 0; i--)
             {
                 if (compensatedPosition >= _lyrics[i].Time)
                 {
                     found = _lyrics[i].Text;
                     foundTrans = _lyrics[i].Translation;
-                    // 本句的扫光进度：逐字优先，逐字不可用则自动回退整行扫光（见 ComputeScanProgress）
-                    progress = ComputeScanProgress(i, compensatedPosition);
+                    // 本句的扫光进度：逐字优先，逐字不可用则自动回退整行扫光（见 ComputeScanProgress）。
+                    // 传原始位置而不是补偿位置：逐字时间戳是真实起唱时刻，不需要那份提前量。
+                    progress = ComputeScanProgress(i, rawPosition);
                     break;
                 }
             }
@@ -2841,9 +2990,46 @@ namespace NotchPeninsula
         private const double TimelineStallAheadSeconds = 1.2;
 
         /// <summary>
-        /// 推进当前歌词歌的时间轴。SMTC 采样已由 UpdateLyrics 统一完成（每帧最多一次），
-        /// 这里只做纯计算。提供真实时间轴的播放器（Apple Music / QQ音乐 等，EndTime 有效）以 SMTC 为准；
-        /// 不提供时间轴的播放器（网易云、酷狗等，EndTime 恒为 0）才按播放状态自行累加。
+        /// 把本帧的 SMTC 快照外推成「此刻的真实 SMTC 位置」。
+        ///
+        /// 原理见字段声明处：SMTC 给的是 (LastUpdatedTime, Position) 这样一对「某时刻的位置」，
+        /// 实时值要用 `Position + (now - LastUpdatedTime)` 算出来。播放中才加这段外推量 ——
+        /// 暂停时位置本来就不走，直接返回 Position 才对，否则会算出「暂停了进度还在涨」。
+        ///
+        /// 返回 false 表示无法外推（播放器不上报 LastUpdatedTime），调用方应回退到虚拟跑表。
+        /// 时钟回拨 / 跨时区等异常（外推量为负）一律判为不可用 —— 宁可退回虚拟跑表，
+        /// 也不要拿一个倒退的位置去纠偏（那会把进度条往回拽）。
+        /// </summary>
+        private bool TryGetSmtcLivePosition(DateTime now, out TimeSpan live)
+        {
+            live = _smtcPos;
+            if (!_smtcHasLastUpdated) return false;
+
+            if (!IsPlaying) return true;   // 暂停：位置冻结在快照那一刻，直接用 Position
+
+            double elapsed = (now - _smtcLastUpdatedUtc).TotalSeconds;
+            if (elapsed < 0) return false;                  // 时钟回拨：不可信
+            if (elapsed > SmtcMaxExtrapolationSec) return false; // 快照太旧：外推会被放大成跳变
+
+            live = _smtcPos + TimeSpan.FromSeconds(elapsed);
+
+            // 外推不得超过曲目总长（避免片尾把进度条推出界）
+            if (_smtcDuration > TimeSpan.Zero && live > _smtcDuration) live = _smtcDuration;
+            return true;
+        }
+
+        /// <summary>SMTC 快照最大外推时长：超过它就认为这份快照已经失效，退回虚拟跑表。</summary>
+        private const double SmtcMaxExtrapolationSec = 10.0;
+
+        /// <summary>
+        /// 推进当前歌词歌的时间轴。
+        ///
+        /// 两级真源，优先级从高到低：
+        /// 1. 真实 SMTC 时间轴（LastUpdatedTime 可用）→ 直接用外推出的 SMTC 位置，
+        ///    本地不做任何自由跑表 / 纠偏（见 TryGetSmtcLivePosition）。
+        /// 2. 虚拟时间轴（SMTC 只给了进度没给时间戳）→ 按播放状态自行累加，有 Position 时顺带纠偏。
+        ///
+        /// SMTC 采样已由 UpdateLyrics 统一完成（每帧最多一次），这里只做纯计算。
         /// </summary>
         /// <param name="newSample">
         /// 本帧是否刚采到一份新的 SMTC 快照。纠偏与跳变判定只在拿到新快照的那一帧做 ——
@@ -2855,6 +3041,32 @@ namespace NotchPeninsula
             int slot = _lyricSlot;
             if (slot < 0 || _isDragging) return; // 状态锁：拖动期间禁止上游写入与自动推进
 
+            // 拖动静默期内同样不能外推：播放器执行 seek 的几十~几百毫秒里，
+            // LastUpdatedTime 与 Position 都还是旧值。照算的话这段窗口里位置会自己往上涨，
+            // 刚拖到的落点会被拽走一段（拖动后进度条「弹一下」）。静默期让 _timelinePos 停在
+            // 落点上不动，等播放器把新位置报上来（外推量归零）再自然接上。
+            bool settling = now < _seekSettleUntil;
+
+            // ---- 第一级：真实 SMTC 时间轴（外推） ----
+            // 只要 SMTC 能给出 (LastUpdatedTime, Position)，位置就完全由它决定 ——
+            // 本地既不自由跑表也不纠偏，那两套机制正是「进度和真实 SMTC 对不上」的来源。
+            //
+            // 闸门是 TryGetSmtcLivePosition 本身（它内部检查 _smtcHasLastUpdated），
+            // 而不是 hasTimeline（那个要求 EndTime > 0）。
+            // 单向时间轴 = 有 Position + LastUpdatedTime，不要求有总时长：
+            // 有播放器只给位置不给总长（进度条画不出来，但「已播放 mm:ss」照样能显示真实值），
+            // 这种情况也必须走真实 SMTC，不能因为 hasTimeline=false 就退回虚拟跑表。
+            if (!settling && TryGetSmtcLivePosition(now, out TimeSpan live))
+            {
+                _recentSongs[slot].Position = live;
+                _timelineAhead = false;   // 不再需要「领先降速」那套补偿
+                _recentSongs[slot].TickedAt = now;
+                _timelinePos = live;
+                _forceResync = false;
+                return;
+            }
+
+            // ---- 第二级：虚拟时间轴（SMTC 时间戳不可用） ----
             // 播放器没给端到端时间轴（网易云 / 酷狗等 EndTime 恒为 0）⇒ 纠偏块整段不执行，
             // `_timelineAhead` 就没有任何机会被复位。此时必须主动清掉：它是「上一首 / 上一个播放器」
             // 留下的状态，背着它会让本首的时间轴全程按 0.8 倍速走（每秒落后 0.2s，见下面的安全阀说明）。
@@ -2885,7 +3097,7 @@ namespace NotchPeninsula
                     && smtcPos < _prevSmtcPos - TimeSpan.FromSeconds(TimelineSeekBackSeconds);
                 _prevSmtcPos = smtcPos;
                 _hasPrevSmtcPos = true;
-                bool settling = now < _seekSettleUntil; // 刚松手拖动：播放器还没执行完 seek
+                // settling 已在方法开头算好，本处沿用（拖动刚松手时播放器还没执行完 seek）
 
                 if (_forceResync || delta > TimelineJumpSeconds || (!settling && smtcWentBack))
                 {
@@ -2924,11 +3136,33 @@ namespace NotchPeninsula
             _timelinePos = _recentSongs[slot].Position; // 进度条与歌词同源：永远读同一份位置
         }
 
-        // 无歌词槽位的时间轴（浏览器视频 / PotPlayer / 尚未接管歌词）：位置只服务进度条。
-        // smtcPos 为 0 视为「本帧没有可用时间轴」，只按播放状态自走；否则跳变超过 1.5 秒即对齐。
-        private void AdvanceFreeTimeline(TimeSpan smtcPos, TimeSpan dt)
+        /// <summary>
+        /// 无歌词槽位的时间轴（浏览器视频 / PotPlayer / 尚未接管歌词）：位置只服务进度条。
+        ///
+        /// 与 AdvanceTimeline 同一套两级真源：
+        /// 1. SMTC 能给出 (LastUpdatedTime, Position) → 直接用外推值，本地不跑表；
+        /// 2. 否则退回「位置为 0 就自走、否则按 1.5 秒阈值对齐」的老口径。
+        ///
+        /// 老的「跳变对齐 + 自走」在每个 16ms 帧都在跑，而 SMTC 只 200ms 才刷新一次 ——
+        /// 两次快照之间进度条完全靠自走估，这就是无歌词会话进度同样对不上的原因。
+        /// </summary>
+        private void AdvanceFreeTimeline(TimeSpan smtcPos, TimeSpan dt, DateTime now)
         {
             if (_isDragging) return;
+
+            // 拖动静默期内不做外推（理由同 AdvanceTimeline：seek 未生效时快照仍是旧值，
+            // 外推会把刚落下的位置继续往前拽）；也不纠偏，就停在当前值上。
+            bool settling = now < _seekSettleUntil;
+
+            // 第一级：真实 SMTC 时间轴外推
+            if (!settling && TryGetSmtcLivePosition(now, out TimeSpan live) && live >= TimeSpan.Zero)
+            {
+                _timelinePos = live;
+                return;
+            }
+            if (settling) return;
+
+            // 第二级：虚拟跑表
             if (smtcPos > TimeSpan.Zero && Math.Abs((smtcPos - _timelinePos).TotalSeconds) > 1.5) _timelinePos = smtcPos;
             if (IsPlaying) _timelinePos += dt;
         }

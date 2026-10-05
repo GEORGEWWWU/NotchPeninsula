@@ -159,6 +159,12 @@ namespace NotchPeninsula
 
         private static void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
         {
+            // 系统偏好变了，主题缓存先作废（含「跟随系统」下真实明暗已翻面的情况），
+            //    否则 ApplyThemeColors 拿到的是缓存里的旧值。作废放在判断之前：
+            //    当前是手动黑 / 手动白时也要作废 —— 用户随时可能切回「跟随系统」，
+            //    那时读的必须是切回之后的实时值。
+            Renderer.InvalidateSystemThemeCache();
+
             // 当前设为「跟随系统(2)」时，系统主题改变即重新渲染颜色
             if (Renderer.ThemeMode == 2)
             {
