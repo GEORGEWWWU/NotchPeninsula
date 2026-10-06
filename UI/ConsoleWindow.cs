@@ -69,13 +69,13 @@ namespace NotchPeninsula
         private readonly object _renderLock = new object();
 
         // 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
-        //    名称独占上行，按钮全在下行：从左到右 [重载] [移除] [开关]
+        //    名称独占上行，按钮全在下行：从左到右 [重载] [卸载] [开关]
         //    排序小三角（← / →）已移除 —— 显示与排序统一收敛到
         //       「显示设置 → 显示内容」那一张列表，插件中心只留启用/禁用这一件事。
 
         private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
 
-        private const float PLUGIN_BTN_REMOVE_X = 460f;  // 移除按钮
+        private const float PLUGIN_BTN_REMOVE_X = 460f;  // 卸载按钮
 
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 

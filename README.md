@@ -11,7 +11,7 @@
 ![C#](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp&logoColor=white)
 ![NAudio](https://img.shields.io/badge/NAudio-2.2-5C2D91)
 ![SkiaSharp](https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2)
-![Version](https://img.shields.io/badge/version-1.9.5-blue)
+![Version](https://img.shields.io/badge/version-1.9.6-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
 
 <p>
@@ -19,7 +19,7 @@
   <a href="https://github.com/GEORGEWWWU/NotchPeninsula/wiki">进阶玩法</a> &nbsp; | &nbsp;
   <a href="https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest">下载地址</a> &nbsp; | &nbsp;
   想获取最新测试版？加入
-  <a href="https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW\&jump_from=webapi\&authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87" target="\_blank">交流群：1080730621</a>
+  <a href="https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW\&jump_from=webapi\&authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87" target="\_blank">QQ交流群：1080730621</a>
   
 </p>
 
@@ -49,6 +49,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 | 模块 | 说明 |
 | --- | --- |
 | **媒体控制** | 自动接管系统媒体会话（浏览器 / 网易云音乐 / QQ 音乐 / 酷狗 / Spotify / Apple Music / Echo Music / LX Music 等），支持播放暂停、上下曲与时间轴拖动。**系统同时给出歌名与歌手**即为音乐模式：联网取歌词与封面，否则按视频模式处理：只显示标题与应用图标，不联网 |
+| **全局快捷键** | 播放 / 暂停、上一首、下一首、快退 3 秒、快进 3 秒五个动作可各绑一组全局热键，在**媒体设置 → 全局快捷键**里录制；按键必须搭配 Ctrl / Alt / Shift / Win，被别的程序占用时会说明哪一条没生效。**出厂关闭**（不注册任何热键，绝不占用用户的按键）；录制键位期间会临时撤下全部热键，避免「按一下看看录成什么」变成真的切歌 |
 | **灵动岛歌词** | 持续优化歌词处理与显示，取词按顺序（下面有介绍）逐个尝试 API，支持**译文**与**逐字歌词**（无逐字歌词自动回退软件模拟卡拉 OK 效果）；岛体按歌词自适应设置长度 |
 | **实时音频可视化** | WASAPI Loopback 捕获系统输出，分析为 5 组频段并平滑渲染；未播放媒体时保留音量动态效果；自动跟随系统默认输出设备 |
 | **Windows 通知** | 监听 Toast 通知，支持「缩略 / 紧凑 / 完整」三种呈现并可整体关闭；可选消息提示音（内置 14 个音源或本地音频） |
@@ -98,11 +99,15 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - **个性化中心** —— 主题、背景不透明度、刘海样式与圆角、全局折叠态高度、通知尺寸、DPI 缩放
 - **通用设置** —— 开机自启、窗口置顶、系统消息通知与提示音、剪贴板链接检测、灵动岛字体
 - **显示设置** —— 显示形态、目标显示器、显示模式（待机 / 普通 + 双击空白切换）、待机模式（待机后显示时间 / 空白 / 媒体控制）、**显示内容**（勾选显示项并调整先后次序）
-- **媒体设置** —— 媒体控制、目标媒体平台、歌词与译文、逐字歌词、歌词延迟
+- **媒体设置** —— 媒体控制、目标媒体平台、歌词与译文、逐字歌词、歌词延迟、**全局快捷键**
 - **交互设置** —— 自动隐藏、媒体交互方式、双击封面跳转应用、鼠标穿透
-- **我的插件** —— 导入 / 启用 / 禁用 / 热重载 / 移除插件、打开插件目录、拖入 DLL 直接安装
-- **插件市场** —— 按分类（全部 / 主题外观 / 媒体增强 / 效率工具 / 开发者）浏览、搜索、下载 / 更新 / 重装、卸载、查看详情
+- **我的插件** —— 导入 / 启用 / 禁用 / 热重载 / 卸载插件（二次确认）、打开插件目录、拖入 DLL 直接安装
+- **插件市场** —— 按分类（全部 / 主题外观 / 媒体增强 / 效率工具 / 开发者）浏览，搜索与「只看已安装」筛选，下载 / 更新 / 重装、卸载（二次确认）、查看详情
 - **关于软件** —— 版本信息与相关链接
+
+> 插件导入或安装失败时会弹窗提示：**请确认已使用最新版 NPS，可前往 QQ 群下载最新版本**
+> （绝大多数失败都是插件按新版宿主 API 编译、宿主还旧）。成功导入 / 安装 / 卸载不再刷状态行提示，
+> 结果直接体现在列表里；失败的具体原因仍会在状态行标红。
 
 > 「媒体交互方式」是折叠态媒体区的**展开功能总闸**，同时决定展开入口：
 >   
@@ -146,6 +151,7 @@ NotchPeninsula/
 │   ├── MediaLogoProvider.cs          # 媒体平台身份判定（AUMID 关键字归类）
 │   ├── AppIconProvider.cs            # 按会话 AUMID 取应用自身图标（视频模式封面 / 音乐模式兜底）
 │   ├── MediaAppLauncher.cs           # 双击媒体控制 → 跳回对应应用（窗口激活 + AUMID 兜底）
+│   ├── MediaHotkey.cs                # 全局快捷键：注册 / 注销、键位持久化、录制期挂起
 │   ├── JustSoloLyricClient.cs        # Just Solo LyricServer 歌词客户端
 │   ├── AudioAnalyzer.cs              # WASAPI Loopback 音频频谱分析
 │   ├── Audio.cs                      # NAudio 音频底层适配
@@ -217,4 +223,4 @@ dotnet publish -c Release -r win-x64 --self-contained false     # 发布
 
 - 本项目是 Windows 桌面程序，不适合在 macOS/Linux 平台直接运行。
 - 使用了 Windows 通知管理 API，因此需要在 Windows 10/11 环境中执行。
-- 若你的系统未安装相应音频设备或输出设备，音频频谱可能会显示为空白或保持静止。
+- 若系统未安装相应音频设备或输出设备，音频频谱可能会显示为空白或保持静止。

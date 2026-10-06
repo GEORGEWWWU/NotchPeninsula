@@ -206,16 +206,21 @@ namespace NotchPeninsula
         private bool _marketTriedFetch;                  // 只自动拉一次；失败后切回页签时重试
         private string _marketError = "";                // 非空 = 拉取失败（市场卡状态行红字提示）
         private string _marketBusyId = "";               // 正在下载/安装的市场插件 id（该行按钮置灰）
-        private string _marketHint = "";                 // 最近一次安装 / 卸载的结果提示（状态行右侧）
+        private string _marketHint = "";                 // 状态行右侧红字：只用于安装 / 卸载失败，成功不提示
         private bool _marketHintIsError;
         private int _marketScroll;                       // 市场列表滚动首行（绝对条目下标）
 
         // 弹窗（同一套外观：左上标题 + 右上关闭按钮 + 可选正文/按钮行）
-        //   详情 / 评分 / 卸载确认三种弹窗互斥，同一时刻最多一个。
-        private enum MarketDialog { None, Detail, Rate, ConfirmUninstall }
+        //   详情 / 评分 / 卸载确认 / 本地插件卸载确认 / 加载失败提示五种弹窗互斥，同一时刻最多一个。
+        //   ConfirmRemoveLocal 是「我的插件」列表的卸载确认：目标不是市场条目而是本地
+        //   PluginEntry（存 _dialogRemoveEntry），矩形与交互复用市场确认弹窗同一套模板。
+        //   LoadFailed 是纯告知（导入 / 安装失败时给「确认宿主是最新版 + QQ 群下载」的引导），
+        //   只有一颗「好的」，两个页签都要能画出来。
+        private enum MarketDialog { None, Detail, Rate, ConfirmUninstall, ConfirmRemoveLocal, LoadFailed }
 
         private MarketDialog _marketDialog = MarketDialog.None;
         private int _marketDialogIndex = -1;             // 弹窗对应的市场条目下标
+        private PluginEntry? _dialogRemoveEntry;         // ConfirmRemoveLocal 弹窗对应的本地插件
         private bool _hoveredDialogClose;                // 弹窗右上角 ❌ 是否悬停
         private int _hoveredDialogButton = -1;           // 弹窗内按钮：0 = 主按钮，1 = 取消
 
@@ -239,9 +244,32 @@ namespace NotchPeninsula
             if (_marketDialog == MarketDialog.None && _marketDialogIndex == -1) return;
             _marketDialog = MarketDialog.None;
             _marketDialogIndex = -1;
+            _dialogRemoveEntry = null;
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
             _rateStatus = "";
+            if (render) Render();
+        }
+
+        /// <summary>
+        /// 插件加载失败提示（导入 DLL / 市场安装失败都走这里）。
+        ///
+        /// 为什么是固定文案而不是把底层异常原样甩出来：绝大多数失败都是「插件是按新版宿主 API
+        /// 编译的，宿主还旧」这一种，用户能做的只有升级宿主；把 TypeLoadException 之类的栈给用户
+        /// 看没有意义。具体原因照样进 app.log 与状态行红字，排查不受影响。
+        ///
+        /// render:false 供「渲染过程中发现失败」的调用点使用（ApplyPendingMarketResult），
+        /// 避免在 Render 里再套一层 Render。
+        /// </summary>
+        private void ShowPluginLoadFailedDialog(bool render = true)
+        {
+            _marketDialog = MarketDialog.LoadFailed;
+            // 市场那条路进来时没有市场条目：下标复位，渲染 / 命中靠 GetCurrentDialogRect
+            //    单独回答 LoadFailed 的矩形（见那里的注释）。
+            _marketDialogIndex = -1;
+            _dialogRemoveEntry = null;
+            _hoveredDialogClose = false;
+            _hoveredDialogButton = -1;
             if (render) Render();
         }
 
@@ -623,12 +651,27 @@ namespace NotchPeninsula
         /// </summary>
         private static SKRect GetRateDialogRect() => GetMarketDialogRect(4f, false);
 
-        /// <summary>卸载确认弹窗矩形：标题 + 两行正文 + 按钮行。</summary>
+        /// <summary>卸载确认弹窗矩形：标题 + 两行正文 + 按钮行。（加载失败提示同款高度）</summary>
         private static SKRect GetConfirmDialogRect() => GetMarketDialogRect(2f, true);
+
+        /// <summary>
+        /// 单按钮告知弹窗里那颗按钮的矩形：水平居中。
+        /// 与 GetMarketDialogButtonRect 的「右对齐主按钮 + 左取消」不同 —— 没有可取消的动作时，
+        /// 居中的单按钮才是用户期待的位置（Windows 消息框也是居中）。
+        /// </summary>
+        private static SKRect GetDialogSingleButtonRect(SKRect popup)
+        {
+            float y = popup.Bottom - 6f - DialogBtnH - 12f;
+            float x = popup.MidX - DialogBtnW / 2f;
+            return new SKRect(x, y, x + DialogBtnW, y + DialogBtnH);
+        }
 
         /// <summary>当前打开着的弹窗矩形（没有弹窗返回空）。渲染 / 命中 / 点击三处共用。</summary>
         private SKRect GetCurrentDialogRect()
         {
+            // 这两种弹窗都不依赖市场条目：本地卸载确认（目标在 _dialogRemoveEntry 里）与加载失败提示
+            if (_marketDialog == MarketDialog.ConfirmRemoveLocal || _marketDialog == MarketDialog.LoadFailed)
+                return GetConfirmDialogRect();
             var mp = GetMarketAt(_marketDialogIndex);
             if (mp == null) return SKRect.Empty;
             return _marketDialog switch
@@ -736,19 +779,19 @@ namespace NotchPeninsula
 
                     if (ok)
                     {
-                        _rateStatus = $"已记录你的评分：{FormatScore(_rateMine)} 分，感谢反馈！";
+                        _rateStatus = $"已记录您的评分：{FormatScore(_rateMine)} 分，感谢反馈！";
                         _rateStatusIsError = false;
                     }
                     else
                     {
                         string err = root.TryGetProperty("error", out var e) ? e.GetString() ?? "" : "";
-                        // already_rated 也带回了 mine（服务端记录的「你打过的分」），
-                        //    所以这里能把真实分数报出来 —— 比干巴巴一句「你已经评过分」有用得多。
+                        // already_rated 也带回了 mine（服务端记录的「您打过的分」），
+                        //    所以这里能把真实分数报出来 —— 比干巴巴一句「您已经评过分」有用得多。
                         _rateStatus = err switch
                         {
                             "already_rated" => _rateMine > 0
-                                ? $"你已经给此插件打了 {FormatScore(_rateMine)} 分，感谢您的参与"
-                                : "你已经给此插件打过分了，感谢您的参与",
+                                ? $"您已经给此插件打了 {FormatScore(_rateMine)} 分，感谢您的参与"
+                                : "您已经给此插件打过分了，感谢您的参与",
                             "too_many" => "提交太频繁了，请过一会儿再试。",
                             _ => "评分提交失败，请稍后再试。",
                         };
@@ -1055,11 +1098,9 @@ namespace NotchPeninsula
         {
             if (_marketBusyId.Length > 0) return;   // 同一时刻只允许一个下载任务
             _marketBusyId = mp.Id;
-            _marketHint = $"正在下载 {mp.Name}…";
-            _marketHintIsError = false;
-            // 「正在下载」不设过期（装完再按结果重新计时）。上一轮的自动消失表要先停掉 ——
-            // 否则它的到期时刻早就在眼前，一触发就会把「正在下载…」提前清掉。
-            StopMarketHintTimer();
+            // 状态行不再写「正在下载…」：进度已经由该行的「正在下载安装…」表达（见 Render）。
+            // 上一轮遗留的提示交给它自己的自动消失计时器收尾，这里不手动停表 ——
+            // 停了表但不清文案，那条旧提示就会永远挂在状态行上。
             PostAsyncRerender();
 
             Task.Run(async () =>
@@ -1112,7 +1153,7 @@ namespace NotchPeninsula
         private int _marketPendingRateIndex = -1;
 
         /// <summary>
-        /// 在 UI 线程消费后台安装结果：刷新两处列表 + 写提示（含自动消失计时）+ 按需弹出评分弹窗。
+        /// 在 UI 线程消费后台安装结果：刷新两处列表 + 失败时写红字提示 + 按需弹出评分弹窗。
         /// 刷新是必须的 —— 装完后「我的插件」多了一行、市场那行的按钮也要从「下载」变「重装」，
         /// 所以这里无条件 RefreshPluginView()（它内部按变更序号缓存，没变时是空操作）。
         /// </summary>
@@ -1121,18 +1162,29 @@ namespace NotchPeninsula
             if (!_marketPendingHintDone) return;
             _marketPendingHintDone = false;
 
-            RefreshPluginView();          // 已安装列表 + 市场行按钮文案都靠它重算
-
-            if (_marketPendingHint.Length > 0)
-            {
-                SetMarketHint(_marketPendingHint, _marketPendingHintIsError);
-                _marketPendingHint = "";
-            }
-
+            // 评分目标是用「旧视图下标」记下来的，而下面可能重建过滤视图让下标整体错位，
+            // 所以先把条目引用摘出来，重建之后再交给 OpenRateDialog（它自己会按引用重查下标）。
             int rateIdx = _marketPendingRateIndex;
             _marketPendingRateIndex = -1;
-            if (rateIdx >= 0 && rateIdx < _marketView.Count)
-                OpenRateDialog(_marketView[rateIdx]);   // 装完自动问一句评分
+            var rateTarget = rateIdx >= 0 && rateIdx < _marketView.Count ? _marketView[rateIdx] : null;
+
+            RefreshPluginView();          // 已安装列表 + 市场行按钮文案都靠它重算
+            // 勾着「只看已安装」时过滤视图是固定住的：刚装上的插件要立刻出现在列表里
+            // （卸载一侧同理，见 UninstallMarketPlugin）
+            if (_marketOnlyInstalled) RefreshMarketFilter();
+
+            // 成功不提示 —— 列表本身已经说明结果了；只有失败给红字 + 引导弹窗。
+            if (_marketPendingHintIsError && _marketPendingHint.Length > 0)
+            {
+                SetMarketHint(_marketPendingHint, true);
+                // 这里正在 Render 里（RenderTabMarket → 本方法），所以不能再套一层 Render
+                ShowPluginLoadFailedDialog(render: false);
+            }
+            _marketPendingHint = "";
+            _marketPendingHintIsError = false;
+
+            if (rateTarget != null)
+                OpenRateDialog(rateTarget);   // 装完自动问一句评分
         }
 
         private int IndexOfMarketView(MarketPlugin mp)
@@ -1145,7 +1197,8 @@ namespace NotchPeninsula
         private bool InstallDllPlugin(string tempFile)
         {
             var (ok, msg) = PluginManager.Instance.Import(tempFile);   // 同 Id 旧版本由 Import 自动清掉
-            _marketPendingHint = msg;
+            // 成功不提示：装没装上，看列表那行的主按钮从「下载」变成「重装」就知道；只有失败给红字
+            _marketPendingHint = ok ? "" : msg;
             _marketPendingHintIsError = !ok;
             return ok;
         }
@@ -1187,7 +1240,7 @@ namespace NotchPeninsula
             }
             if (PluginManager.Instance.Load(fresh))
             {
-                _marketPendingHint = $"已安装并加载：{fresh.FriendlyName}";
+                _marketPendingHint = "";   // 成功不提示（同上）
                 _marketPendingHintIsError = false;
                 return true;
             }
@@ -1204,7 +1257,10 @@ namespace NotchPeninsula
             PluginManager.Instance.Remove(local);
             ResetPluginHover();
             RefreshPluginView();
-            SetMarketHint($"已卸载：{mp.Name}", false);
+            // 勾着「只看已安装」时，刚卸载掉的那条必须立刻从列表消失 —— 过滤视图是按本地安装状态
+            // 算好就固定住的，不重建的话这一行会留到下次筛选变化为止（行内明细本身每帧现算，
+            // 所以没勾选时不必重建，也就不会把列表滚动位置顶回顶部）。
+            if (_marketOnlyInstalled) RefreshMarketFilter();
             Render();
         }
 
