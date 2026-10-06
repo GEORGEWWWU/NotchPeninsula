@@ -13,7 +13,7 @@
     <PublishSingleFile>true</PublishSingleFile>
 		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 
-	<Version>1.9.5</Version>
+	<Version>1.9.6</Version>
 	</PropertyGroup>
 
 	<ItemGroup>

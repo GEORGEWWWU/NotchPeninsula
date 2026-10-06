@@ -336,8 +336,12 @@ namespace NotchPeninsula
         /// <summary>录制成功收尾：退出录制态并把热键按开关重新装上。</summary>
         private void EndHotkeyRecording()
         {
+            int edited = _hotkeyRecordingIndex;
             _hotkeyRecordingIndex = -1;
             MediaHotkeys.ResumeRegistration();
+            // 录制期间刻意不注册，所以「这组键被别的程序占着」只能在这一刻才知道 ——
+            //    只把属于刚改的这一条的失败挂到卡片副标题上，别把别的行的旧毛病也算到它头上。
+            _hotkeyHint = MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError : "";
             Render();
         }
 

@@ -66,11 +66,25 @@ namespace NotchPeninsula
         private static IntPtr _hwnd;
         private static bool _enabled;
 
+        /// <summary>
+        /// 是否处在「录制中」的挂起态。挂起期间一律不上报任何热键 ——
+        /// 判据是「报到系统里」这件事本身，而不是某一条：SetBinding / SetEnabled / Attach
+        /// 只要在录制中发生，都走同一道闸，全部推迟到 ResumeRegistration 统一重建。
+        /// </summary>
+        private static bool _suspended;
+
         /// <summary>全局快捷键总开关（默认关闭 = 出厂不劫持任何按键）。</summary>
         public static bool IsEnabled => _enabled;
 
         /// <summary>最近一次注册失败的原因（空串 = 全部正常）。设置页拿它当提示文案。</summary>
         public static string LastError { get; private set; } = "";
+
+        /// <summary>
+        /// 最近一次注册失败的条目下标（-1 = 没有失败）。
+        /// 录制期间不注册，所以「这条键被别的程序占着」只能等到 ResumeRegistration 那一刻才判得出来；
+        /// UI 拿它对比「用户刚改的是哪一条」，只把属于这一条的失败挂到卡片副标题上。
+        /// </summary>
+        public static int LastErrorIndex { get; private set; } = -1;
 
         static MediaHotkeys() => ResetToDefaults();
 
@@ -156,7 +170,11 @@ namespace NotchPeninsula
             _vks[index] = vk;
             Persist(index);
 
-            if (_enabled && _hwnd != IntPtr.Zero && !RegisterOne(index))
+            // 录制期间不单独注册：SuspendRegistration 已经把热键全撤下来了，这里若把新键装上，
+            //    就成了「录完还没松手就已经生效」—— 按住主键不放时系统自动重复会直接触发动作
+            //    （用户按 Ctrl+Alt+空格 录播停，随手多按一下就是真的暂停了一首歌）。
+            //    代价是「被别的程序占用」要等 ResumeRegistration 才判得出来，见 LastErrorIndex。
+            if (!_suspended && _enabled && _hwnd != IntPtr.Zero && !RegisterOne(index))
             {
                 _mods[index] = oldMods;
                 _vks[index] = oldVk;
@@ -188,13 +206,22 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 录制期间把热键全部撤下。否则用户按下的那一组恰好就是当前键位时，
+        /// 录制期间把热键全部撤下并进入挂起态。否则用户按下的那一组恰好就是当前键位时，
         /// 系统会直接触发动作（「按一下看看录成什么」变成「真的切了一首歌」）。
+        /// 挂起态本身也要记下来：挂起期间 SetBinding 更不能把新键装上（见那里的注释）。
         /// </summary>
-        public static void SuspendRegistration() => UnregisterAll();
+        public static void SuspendRegistration()
+        {
+            _suspended = true;
+            UnregisterAll();
+        }
 
-        /// <summary>录制结束（成功或取消）后按开关重新装上。</summary>
-        public static void ResumeRegistration() => ApplyRegistration();
+        /// <summary>录制结束（成功或取消）后退出挂起态，按开关把该装的统一重建一遍。</summary>
+        public static void ResumeRegistration()
+        {
+            _suspended = false;
+            ApplyRegistration();
+        }
 
         /// <summary>WM_HOTKEY 分派：按 id 找到动作交给媒体控制器。管它是谁在前台。</summary>
         public static void Handle(int id)
@@ -297,13 +324,20 @@ namespace NotchPeninsula
         {
             UnregisterAll();
             LastError = "";
-            if (!_enabled || _hwnd == IntPtr.Zero) return;
+            LastErrorIndex = -1;
+            // 挂起态（录制中）里什么都不上报：这一条闸必须挡在所有调用方前面 ——
+            //    SetBinding / SetEnabled / Attach 都汇到这里，档位不同但结论一样：
+            //    录制中一个热键都不该活。ResumeRegistration 会统一重建。
+            if (_suspended || !_enabled || _hwnd == IntPtr.Zero) return;
 
             for (int i = 0; i < Count; i++)
             {
                 if (RegisterOne(i)) continue;
                 if (LastError.Length == 0)
+                {
                     LastError = $"{FormatKey(i)} 被其他程序占用，{_labels[i]} 不生效";
+                    LastErrorIndex = i;
+                }
             }
         }
 

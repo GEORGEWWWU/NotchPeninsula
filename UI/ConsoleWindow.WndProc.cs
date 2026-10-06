@@ -466,7 +466,9 @@ namespace NotchPeninsula
                 }
 
                 // 顶栏控件（分类下拉 + 搜索框）——弹窗 / 下拉展开时不吃悬停
-                if (_marketDialogIndex == -1)
+                //    判据用 _marketDialog 而不是 _marketDialogIndex：加载失败提示没有市场条目（下标恒为 -1），
+                //    只看下标会让它开着的时候底下的控件照样亮起来。
+                if (_marketDialog == MarketDialog.None)
                 {
                     newMarketSearchHovered = x >= MarketSearchX && x <= MarketSearchX + MarketSearchW
                         && y >= MarketControlsY && y <= MarketControlsY + MarketControlH;
@@ -495,7 +497,19 @@ namespace NotchPeninsula
                         newHoveredMarketCategoryIndex = -2;
                 }
 
-                if (_marketDialogIndex != -1)
+                if (_marketDialog == MarketDialog.LoadFailed)
+                {
+                    // 加载失败提示：只算关闭按钮与那颗居中的「好的」，底下列表完全不吃悬停
+                    var rect = GetCurrentDialogRect();
+                    if (rect.Width > 0)
+                    {
+                        var close = GetMarketDialogCloseRect(rect);
+                        close.Inflate(4f, 4f);
+                        newHoveredDialogClose = close.Contains(x, y);
+                        if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
+                    }
+                }
+                else if (_marketDialogIndex != -1)
                 {
                     // 弹窗打开：只算关闭按钮（命中框外扩 4px）与弹窗内按钮/星星，底下列表完全不吃悬停
                     var mp = GetMarketAt(_marketDialogIndex);
@@ -564,39 +578,63 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 6) // 我的插件
             {
-                float topY = TITLE_BAR_HEIGHT + 12;
-                // 顶部操作按钮：导入 DLL | 打开目录 | 插件市场
-                if (y >= topY + 60 && y <= topY + 84)
+                if (_marketDialog == MarketDialog.ConfirmRemoveLocal || _marketDialog == MarketDialog.LoadFailed)
                 {
-                    if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入 DLL
-                    else if (x >= CONTENT_TEXT_X + 104 && x <= CONTENT_TEXT_X + 200) newHoveredPluginAction = 1;  // 打开目录
-                    else if (x >= CONTENT_TEXT_X + 208 && x <= CONTENT_TEXT_X + 304) newHoveredPluginAction = 2;  // 插件市场
-                }
-
-                // ── 已安装列表：行内按钮（下行：重载 | 移除 | 开关）──
-                GetPluginListCardTop(out float listY);
-                // 可视行数走布局真源（与渲染 / 滚轮共用）；slot 是可视槽位，
-                // 命中结果换算成绝对条目下标（slot + _pluginScroll）—— 渲染与点击两侧都用绝对下标比对
-                GetPluginListLayout(out int rows, out int pluginMaxFirst);
-                _pluginScroll = Math.Clamp(_pluginScroll, 0, pluginMaxFirst);
-                // 这里的行起点必须与 Render() 里的 `listY + 44` 严格一致。
-                if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= listY + 44)
-                {
-                    int slot = (int)((y - (listY + 44)) / PluginListRowH);
-                    int idx = slot + _pluginScroll;
-                    // 只判 slot 就够：rows / _pluginScroll 都刚由布局真源算过，
-                    // 满足 idx ∈ [0, _pluginView.Count) —— 见 GetPluginListLayout 的不变量。
-                    // slot < rows 不能省：y 可能远在列表底部之下，那时 slot 会超出可视行数。
-                    if (slot >= 0 && slot < rows)
+                    // 弹窗打开：只算关闭按钮（命中框外扩 4px）与弹窗内的按钮，底下列表完全不吃悬停
+                    // —— 与市场弹窗（tab 7）同一套规矩。加载失败提示只有一颗居中按钮。
+                    var rect = GetCurrentDialogRect();
+                    if (rect.Width > 0)
                     {
-                        float rowY = listY + 44 + slot * PluginListRowH;
-                        // 下行按钮区（rowY+18 .. rowY+44，与行高 50 配套）
-                        if (y >= rowY + 18 && y <= rowY + 44)
+                        var close = GetMarketDialogCloseRect(rect);
+                        close.Inflate(4f, 4f);
+                        newHoveredDialogClose = close.Contains(x, y);
+                        if (_marketDialog == MarketDialog.LoadFailed)
                         {
-                            // 从左到右：重载 | 移除 | 开关
-                            if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
-                            else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
-                            else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
+                            if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
+                        }
+                        else
+                        {
+                            for (int b = 0; b < 2; b++)
+                                if (GetMarketDialogButtonRect(rect, b).Contains(x, y)) newHoveredDialogButton = b;
+                        }
+                    }
+                }
+                else
+                {
+                    float topY = TITLE_BAR_HEIGHT + 12;
+                    // 顶部操作按钮：导入 DLL | 打开目录 | 插件市场
+                    if (y >= topY + 60 && y <= topY + 84)
+                    {
+                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入 DLL
+                        else if (x >= CONTENT_TEXT_X + 104 && x <= CONTENT_TEXT_X + 200) newHoveredPluginAction = 1;  // 打开目录
+                        else if (x >= CONTENT_TEXT_X + 208 && x <= CONTENT_TEXT_X + 304) newHoveredPluginAction = 2;  // 插件市场
+                    }
+
+                    // ── 已安装列表：行内按钮（下行：重载 | 卸载 | 开关）──
+                    GetPluginListCardTop(out float listY);
+                    // 可视行数走布局真源（与渲染 / 滚轮共用）；slot 是可视槽位，
+                    // 命中结果换算成绝对条目下标（slot + _pluginScroll）—— 渲染与点击两侧都用绝对下标比对
+                    GetPluginListLayout(out int rows, out int pluginMaxFirst);
+                    _pluginScroll = Math.Clamp(_pluginScroll, 0, pluginMaxFirst);
+                    // 这里的行起点必须与 Render() 里的 `listY + 44` 严格一致。
+                    if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= listY + 44)
+                    {
+                        int slot = (int)((y - (listY + 44)) / PluginListRowH);
+                        int idx = slot + _pluginScroll;
+                        // 只判 slot 就够：rows / _pluginScroll 都刚由布局真源算过，
+                        // 满足 idx ∈ [0, _pluginView.Count) —— 见 GetPluginListLayout 的不变量。
+                        // slot < rows 不能省：y 可能远在列表底部之下，那时 slot 会超出可视行数。
+                        if (slot >= 0 && slot < rows)
+                        {
+                            float rowY = listY + 44 + slot * PluginListRowH;
+                            // 下行按钮区（rowY+18 .. rowY+44，与行高 50 配套）
+                            if (y >= rowY + 18 && y <= rowY + 44)
+                            {
+                                // 从左到右：重载 | 卸载 | 开关
+                                if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
+                                else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
+                                else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
+                            }
                         }
                     }
                 }

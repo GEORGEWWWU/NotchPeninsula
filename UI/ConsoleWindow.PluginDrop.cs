@@ -190,24 +190,22 @@ namespace NotchPeninsula
                     Logger.Info($"[PluginCenter] 拖入导入 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
-                // 提示文案：统一「已导入 X 个插件」句式，前面不带 Emoji
-                // （那颗勾选框是彩色 Emoji，得走 DrawTextWithEmoji 逐段回退才画得出来，纯文字更干净）。
-                // · 全成功 → 「已导入 X 个插件」。
-                //     以前只贴最后一条 Import() 的返回串（「已导入并加载：中文名」），拖三个也只看得到一个名字。
-                // · 有失败 → 在结论后面补「N 个失败：<原因>」。颜色随结果走（见 _pluginHintIsError），
-                //     所以半个成功也会是绿的 —— 这是「至少成了一些」的语义，失败明细照样在提示里和日志里。
-                // · 全失败 → 同一个句式（已导入 0 个），后面照样带 Bot 返回的具体原因，不抹掉排查线索。
-                if (okCount > 0 && okCount == dlls.Count)
-                    _pluginHint = $"已导入 {okCount} 个插件";
+                // 成功不再写提示：列表里当场就多了一行，状态行没必要再复述一遍。
+                // 只有失败才提示（红字），把 Bot 返回的具体原因带出来，不抹掉排查线索。
+                if (okCount == dlls.Count)
+                    _pluginHint = "";
                 else if (okCount > 0)
-                    _pluginHint = $"已导入 {okCount} 个插件，{dlls.Count - okCount} 个失败：{lastMsg}";
+                    _pluginHint = $"{dlls.Count - okCount} 个导入失败：{lastMsg}";
                 else
-                    _pluginHint = $"已导入 0 个插件，{dlls.Count} 个失败：{lastMsg}";
+                    _pluginHint = $"导入失败：{lastMsg}";
 
-                _pluginHintIsError = okCount == 0;
+                _pluginHintIsError = okCount != dlls.Count;
 
                 ResetPluginHover();
                 RefreshPluginView();
+                // 有失败就弹「插件加载失败」引导窗（版本不匹配是绝大多数失败的原因）；
+                // 具体的失败原因仍留在状态行红字与日志里。这里传 render:false，重绘交给下面这一次。
+                if (okCount != dlls.Count) ShowPluginLoadFailedDialog(render: false);
                 Render();
             }
             catch (Exception ex)

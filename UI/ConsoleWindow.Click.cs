@@ -507,7 +507,45 @@ namespace NotchPeninsula
             // ---- 我的插件交互（tab 6）----
             else if (_selectedTab == 6)
             {
-                if (_hoveredPluginAction != -1)
+                if (_marketDialog == MarketDialog.LoadFailed)
+                {
+                    // 加载失败提示：只有一颗「好的」，关闭叉 / 点按钮 / 点弹窗外都是关窗
+                    if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
+                    else
+                    {
+                        bool inside = TryGetCursorClientPos(out int px, out int py)
+                            && GetCurrentDialogRect().Contains(px, py);
+                        if (!inside) CloseMarketDialog(true);
+                    }
+                }
+                else if (_marketDialog == MarketDialog.ConfirmRemoveLocal)
+                {
+                    // 本地卸载确认弹窗打开：交互与市场确认弹窗同一套 —— 关闭按钮 / 弹窗外 → 关闭；
+                    //   「卸载」执行后关弹窗，「取消」只关弹窗。弹窗开着时底下列表不吃点击。
+                    if (_dialogRemoveEntry == null) { CloseMarketDialog(true); }
+                    else if (_hoveredDialogClose) { CloseMarketDialog(true); }
+                    else if (_hoveredDialogButton == 0)
+                    {
+                        var pe = _dialogRemoveEntry;   // 先摘出来：CloseMarketDialog 会清空字段
+                        CloseMarketDialog();
+                        if (pe != null)
+                        {
+                            PluginManager.Instance.Remove(pe);
+                            ResetPluginHover();
+                            RefreshPluginView();
+                        }
+                        Render();
+                    }
+                    else if (_hoveredDialogButton == 1) { CloseMarketDialog(true); }
+                    else
+                    {
+                        // 点弹窗内其它位置：不关。点弹窗外：关。
+                        bool inside = TryGetCursorClientPos(out int px, out int py)
+                            && GetCurrentDialogRect().Contains(px, py);
+                        if (!inside) CloseMarketDialog(true);
+                    }
+                }
+                else if (_hoveredPluginAction != -1)
                 {
                     switch (_hoveredPluginAction)
                     {
@@ -540,14 +578,32 @@ namespace NotchPeninsula
                 }
                 else if (_hoveredPluginRemove != -1)
                 {
+                    // 卸载是破坏性操作，先弹确认窗（复用市场的确认弹窗模板，目标换成本地插件）
                     var pe = GetPluginAt(_hoveredPluginRemove);
-                    if (pe != null) { PluginManager.Instance.Remove(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    if (pe != null)
+                    {
+                        _marketDialog = MarketDialog.ConfirmRemoveLocal;
+                        _dialogRemoveEntry = pe;
+                        _hoveredDialogButton = -1;
+                        Render();
+                    }
                 }
             }
             // ---- 插件市场交互（tab 7）----
             else if (_selectedTab == 7)
             {
-                if (_marketDialogIndex != -1)
+                if (_marketDialog == MarketDialog.LoadFailed)
+                {
+                    // 加载失败提示：只有一颗「好的」，关闭叉 / 点按钮 / 点弹窗外都是关窗
+                    if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
+                    else
+                    {
+                        bool inside = TryGetCursorClientPos(out int px, out int py)
+                            && GetCurrentDialogRect().Contains(px, py);
+                        if (!inside) CloseMarketDialog(true);
+                    }
+                }
+                else if (_marketDialogIndex != -1)
                 {
                     // 弹窗打开：关闭按钮 / 弹窗外 → 关闭；卸载确认的按钮 → 执行或取消；
                     //   评分弹窗的星星 → 提交评分。弹窗内部其它区域不响应。
@@ -559,7 +615,7 @@ namespace NotchPeninsula
                     }
                     else if (_marketDialog == MarketDialog.ConfirmUninstall && _hoveredDialogButton == 0)
                     {
-                        UninstallMarketPlugin(mp);      // 内部会 SetMarketHint + Render
+                        UninstallMarketPlugin(mp);      // 内部会刷新列表 + Render
                         CloseMarketDialog(true);
                     }
                     else if (_marketDialog == MarketDialog.ConfirmUninstall && _hoveredDialogButton == 1)

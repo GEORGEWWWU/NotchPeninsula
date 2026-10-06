@@ -1372,7 +1372,7 @@ namespace NotchPeninsula
             _pluginScroll = Math.Clamp(_pluginScroll, 0, maxFirstRow);
 
             // 上行：名称独占整行，可延展至卡片右边界外侧
-            // 下行：信息（左）+ 操作按钮（右，从左到右：重载 | 移除 | 开关）
+            // 下行：信息（左）+ 操作按钮（右，从左到右：重载 | 卸载 | 开关）
             float nameTextMax = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;                // 名称几乎全宽
             float infoTextMax = PLUGIN_BTN_RELOAD_X - CONTENT_TEXT_X - 8;     // 信息止于按钮区之前
 
@@ -1417,7 +1417,7 @@ namespace NotchPeninsula
                 // ── 下行按钮（全部在同一行，y 中心 ≈ rowY+38） ──
                 const float btnTop = 21f, btnH = 20f;       // 操作按钮矩形
 
-                // 操作按钮（重载 / 移除）+ 开关
+                // 操作按钮（重载 / 卸载）+ 开关
                 // 排序小三角已移除：位置调整统一走「显示设置 → 显示内容」，
                 //    这里不再有 CanMoveOrder / MoveOrder 的入口。
                 void DrawRowButton(float bx, bool hovered, string label, bool danger)
@@ -1431,7 +1431,7 @@ namespace NotchPeninsula
                     DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
                 }
                 DrawRowButton(PLUGIN_BTN_RELOAD_X, _hoveredPluginReload == i, "重载", false);
-                DrawRowButton(PLUGIN_BTN_REMOVE_X, _hoveredPluginRemove == i, "移除", true);
+                DrawRowButton(PLUGIN_BTN_REMOVE_X, _hoveredPluginRemove == i, "卸载", true);
 
                 float tW = 42, tH = 20;
                 float tX = PLUGIN_BTN_TOGGLE_X, tY = rowY + 22;
@@ -1489,6 +1489,18 @@ namespace NotchPeninsula
                 _uiTextPaint.Color = SKColors.White;
                 canvas.DrawText(dropHint, hintX, hintY, _uiTextPaint);
                 _uiTextPaint.Color = _fgColor;
+            }
+
+            // ── 弹窗（卸载确认 / 加载失败提示，与市场那套同一模板，画在卡片与拖入高亮之上）──
+            if (_marketDialog == MarketDialog.LoadFailed)
+            {
+                DrawLoadFailedDialog(canvas);
+            }
+            else if (_marketDialog == MarketDialog.ConfirmRemoveLocal)
+            {
+                // 条目失效（刷新过列表 / 别处已卸载）：直接收掉，别画一个指向空气的弹窗
+                if (_dialogRemoveEntry == null) CloseMarketDialog();
+                else DrawRemoveLocalDialog(canvas);
             }
         }
 
@@ -1840,8 +1852,13 @@ namespace NotchPeninsula
                 _subTextPaint.Color = Neutral(170);
             }
 
-            // ── 市场弹窗（详情 / 评分 / 卸载确认，同一时刻最多一个）──
-            if (_marketDialogIndex >= 0)
+            // ── 市场弹窗（详情 / 评分 / 卸载确认 / 加载失败提示，同一时刻最多一个）──
+            if (_marketDialog == MarketDialog.LoadFailed)
+            {
+                // 加载失败提示没有市场条目（下标是 -1），所以不能走下面的下标分支
+                DrawLoadFailedDialog(canvas);
+            }
+            else if (_marketDialogIndex >= 0)
             {
                 var mp = GetMarketAt(_marketDialogIndex);
                 if (mp == null) CloseMarketDialog();
@@ -1887,26 +1904,12 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 市场弹窗总入口：三种弹窗（详情 / 评分 / 卸载确认）共用「左上标题 + 右上关闭按钮」的头部，
-        /// 正文按类型分派。用户已确认详情弹窗的样式，所以头部与圆角/描边都沿用原来那套
-        /// （_menuBg + _menuBorder + 描边叉），只是把弹窗本体抽成了模板。
+        /// 弹窗头部：左上标题（超宽截断，带 Emoji 回退）+ 右上关闭按钮（悬停加粗变亮）。
+        /// 返回正文起始 y —— 四种弹窗（详情 / 评分 / 市场卸载确认 / 本地卸载确认）共用这一段，
+        /// 样式一致靠它保证，别在各自的分支里再抄一遍。
         /// </summary>
-        private void DrawMarketDialog(SKCanvas canvas, MarketPlugin mp)
+        private float DrawDialogHeader(SKCanvas canvas, SKRect rect, string title)
         {
-            var rect = GetCurrentDialogRect();
-            if (rect.Width <= 0) return;
-
-            canvas.DrawRoundRect(rect, 8, 8, _menuBg);
-            canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
-
-            string title = _marketDialog switch
-            {
-                MarketDialog.Rate => $"评价「{mp.Name}」",
-                MarketDialog.ConfirmUninstall => "确认卸载",
-                _ => mp.Name,
-            };
-
-            // ── 头部：左上标题 + 右上关闭按钮 ──
             float titleMax = rect.Width - DialogPad * 2 - 30;
             DrawTextWithEmoji(canvas, TruncateText(title, _uiTextPaint, titleMax), _uiTextPaint, titleMax,
                 rect.Left + DialogPad, rect.Top + DialogTitleH - 4);
@@ -1931,7 +1934,31 @@ namespace NotchPeninsula
                 canvas.DrawLine(ccx - half, ccy + half, ccx + half, ccy - half, cross);
             }
 
-            float bodyY = rect.Top + DialogTitleH + 8f;
+            return rect.Top + DialogTitleH + 8f;
+        }
+
+        /// <summary>
+        /// 市场弹窗总入口：详情 / 评分 / 卸载确认共用头部模板（见 DrawDialogHeader），
+        /// 正文按类型分派。圆角与描边沿用原来那套（_menuBg + _menuBorder）。
+        /// 注：本地插件（「我的插件」页签）的卸载确认走 DrawRemoveLocalDialog，目标不是市场条目。
+        /// </summary>
+        private void DrawMarketDialog(SKCanvas canvas, MarketPlugin mp)
+        {
+            var rect = GetCurrentDialogRect();
+            if (rect.Width <= 0) return;
+
+            canvas.DrawRoundRect(rect, 8, 8, _menuBg);
+            canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
+
+            string title = _marketDialog switch
+            {
+                MarketDialog.Rate => $"评价「{mp.Name}」",
+                MarketDialog.ConfirmUninstall => "确认卸载",
+                _ => mp.Name,
+            };
+
+            // ── 头部：左上标题 + 右上关闭按钮 ──
+            float bodyY = DrawDialogHeader(canvas, rect, title);
             switch (_marketDialog)
             {
                 case MarketDialog.Detail: DrawDialogDetail(canvas, rect, mp, bodyY); break;
@@ -1995,7 +2022,7 @@ namespace NotchPeninsula
             {
                 // 已评过：直接用用户定的那句话（与提交时 already_rated 的提示同一口径）
                 status = _rateMine > 0
-                    ? $"你已经给此插件打了 {FormatScore(_rateMine)} 分，感谢您的参与"
+                    ? $"您已经给此插件打了 {FormatScore(_rateMine)} 分，感谢您的参与"
                     : _rateLoading ? "" : "拖到星星上选分，点一下提交（支持半星，每人只能评一次）";
             }
             if (status.Length > 0)
@@ -2085,6 +2112,59 @@ namespace NotchPeninsula
 
             DrawDialogButton(canvas, rect, 0, "卸载", true, _hoveredDialogButton == 0);
             DrawDialogButton(canvas, rect, 1, "取消", false, _hoveredDialogButton == 1);
+        }
+
+        /// <summary>
+        /// 「我的插件」列表的卸载确认正文：与市场确认弹窗同一模板，只是目标换成宿主侧的本地条目
+        /// （名称 / 版本直接取 PluginEntry，不再走一遍市场匹配 —— 这个页签本来就没有市场上下文）。
+        /// </summary>
+        private void DrawRemoveLocalDialog(SKCanvas canvas)
+        {
+            var pe = _dialogRemoveEntry!;
+            var rect = GetConfirmDialogRect();
+            canvas.DrawRoundRect(rect, 8, 8, _menuBg);
+            canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
+
+            float bodyY = DrawDialogHeader(canvas, rect, "确认卸载");
+            string line1 = $"确定要卸载「{pe.FriendlyName}」吗？";
+            string line2 = pe.Version.Length > 0
+                ? $"v{pe.Version} 将被移入 plugins\\_recycle，可手动找回。"
+                : "插件文件将被移入 plugins\\_recycle，可手动找回。";
+            _subTextPaint.Color = Neutral(200);
+            canvas.DrawText(TruncateText(line1, _subTextPaint, DialogInnerW), rect.Left + DialogPad, bodyY + 12, _subTextPaint);
+            _subTextPaint.Color = Neutral(150);
+            canvas.DrawText(TruncateText(line2, _subTextPaint, DialogInnerW), rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
+            _subTextPaint.Color = Neutral(170);
+
+            DrawDialogButton(canvas, rect, 0, "卸载", true, _hoveredDialogButton == 0);
+            DrawDialogButton(canvas, rect, 1, "取消", false, _hoveredDialogButton == 1);
+        }
+
+        /// <summary>
+        /// 加载失败提示弹窗：标题 + 两行正文 + 一颗居中的「好的」。
+        /// 与确认弹窗同模板，只是按钮从「危险主操作 + 取消」简化成单按钮 —— 纯告知，
+        /// 没有可取消的动作，关闭叉 / 点外部 / 点按钮都是关窗（见 Click.cs 两个页签的分支）。
+        /// </summary>
+        private void DrawLoadFailedDialog(SKCanvas canvas)
+        {
+            var rect = GetConfirmDialogRect();
+            canvas.DrawRoundRect(rect, 8, 8, _menuBg);
+            canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
+
+            float bodyY = DrawDialogHeader(canvas, rect, "插件加载失败");
+            _subTextPaint.Color = Neutral(200);
+            canvas.DrawText(TruncateText("请确认您已使用最新 NPS。", _subTextPaint, DialogInnerW),
+                rect.Left + DialogPad, bodyY + 12, _subTextPaint);
+            _subTextPaint.Color = Neutral(150);
+            canvas.DrawText(TruncateText("可前往 QQ 群下载最新版本的 NPS。", _subTextPaint, DialogInnerW),
+                rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
+            _subTextPaint.Color = Neutral(170);
+
+            var btn = GetDialogSingleButtonRect(rect);
+            _dynamicFillPaint.Color = _hoveredDialogButton == 0 ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+            canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
+            _uiTextPaint.Color = SKColors.White;
+            DrawCenteredButtonLabel(canvas, "好的", btn, _uiTextPaint);
         }
 
         /// <summary>弹窗按钮：primary = 蓝底白字（危险动作用红），否则灰底。</summary>

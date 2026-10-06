@@ -16,7 +16,7 @@ namespace NotchPeninsula
 
         private int _hoveredPluginReload = -1;  // 行索引：热重载
 
-        private int _hoveredPluginRemove = -1;  // 行索引：移除
+        private int _hoveredPluginRemove = -1;  // 行索引：卸载
 
         private List<PluginEntry> _pluginView = new();
 
@@ -178,6 +178,8 @@ namespace NotchPeninsula
                 Logger.Info($"[PluginCenter] 导入结果: {(ok ? "成功" : "失败")} — {msg}");
                 ResetPluginHover();
                 RefreshPluginView();
+                // 失败弹「插件加载失败」引导窗（绝大多数是插件按新版宿主 API 编译、宿主还旧）
+                if (!ok) ShowPluginLoadFailedDialog(render: false);
                 Render();
             }
             catch (Exception ex)
