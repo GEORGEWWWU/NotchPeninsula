@@ -56,9 +56,148 @@ namespace NotchPeninsula
         private bool _marketSearchFocused;
         private bool _marketSearchHovered;
 
+        // 搜索框的编辑模型（插入点 / 框选）——自绘框没有原生 EDIT，这两样得自己维护：
+        //   _marketSearchCaret     = 插入点（0..串长）
+        //   _marketSearchSelAnchor = 框选锚点；与插入点相同 = 没有选区，选区 = [min, max)
+        //   _marketSearchDragging  = 左键在框里按住拖动中（松开由 WM_MOUSEMOVE 的 leftDown 判掉）
+        private int _marketSearchCaret;
+        private int _marketSearchSelAnchor;
+        private bool _marketSearchDragging;
+
+        private int MarketSelStart => Math.Min(_marketSearchCaret, _marketSearchSelAnchor);
+        private int MarketSelEnd => Math.Max(_marketSearchCaret, _marketSearchSelAnchor);
+        private bool MarketHasSelection => _marketSearchCaret != _marketSearchSelAnchor;
+
+        /// <summary>搜索框里文字的起点（含左侧内边距）——渲染与命中必须同一个数。</summary>
+        private const float MarketSearchTextX = MarketSearchX + 26f;
+        /// <summary>文字可用宽度（右边留给内边距）——渲染截断与命中换算共用。</summary>
+        private const float MarketSearchTextMax = MarketSearchW - 34f;
+
+        // ── 搜索串的逐字符前缀宽度（缓存）──
+        // MeasureText 是 O(串长)，而「插入点 ↔ x」的换算天然要对每个字符边界各量一次：
+        //    逐字符扫一遍就是 O(n²)，拖选时每帧要跑四次（选区两端 + 光标 + 可视起点），
+        //    往搜索框里粘一整段文字再拖选会把界面直接拖卡。
+        // 这里按「串的引用变了才重建」缓存一份前缀和，之后渲染改差分、命中改二分，都是 O(log n)。
+        //    string 不可变 ⇒ 引用没换就是内容没换（改串必然产生新对象），拿引用当键是安全的。
+        private string _searchMetricsSrc = "";
+        private float[] _searchPrefix = new float[1];
+
+        /// <summary>取前缀宽度表（[i] = 前 i 个字符的总宽，长度 ≥ 串长 + 1）。串没换就直接复用。</summary>
+        private float[] SearchPrefix()
+        {
+            if (ReferenceEquals(_searchMetricsSrc, _marketSearch)) return _searchPrefix;
+
+            int n = _marketSearch.Length;
+            if (_searchPrefix.Length < n + 1) _searchPrefix = new float[n + 1];
+            _searchPrefix[0] = 0f;
+            float acc = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                // 逐「UTF-16 单位」量（与原逐字符扫描同一套口径）；Span 重载不分配 ——
+                //    2.88 没有 MeasureText(string, int, int)，只有 ReadOnlySpan<char>
+                acc += _marketTextPaint.MeasureText(_marketSearch.AsSpan(i, 1));
+                _searchPrefix[i + 1] = acc;
+            }
+            _searchMetricsSrc = _marketSearch;
+            return _searchPrefix;
+        }
+
+        // 拖选期间冻结的可视窗口起点（-1 = 未冻结）。
+        //   不冻结的话：窗口跟着插入点往右挪 → 同一个鼠标 x 命中到另一个字符 → 插入点往回跳 →
+        //   窗口再挪回来，一帧之内自激来回，长串里拖着像卡住。冻结后「鼠标 ↔ 字符」全程一一对应。
+        //   只在 _marketSearchDragging 为真时生效，所以松手（拖选结束）即自动恢复正常跟随，不必额外解冻。
+        private int _marketSearchViewFrozen = -1;
+
+        /// <summary>
+        /// 可见窗口的起始下标。整串放得下就是 0；放不下时把左端右移到「插入点贴着右边界」，
+        /// 打字时插入点始终可见（和原生编辑框一个体感）。渲染与命中都走这一个函数，窗口才不会错位。
+        /// </summary>
+        private int MarketSearchViewStart()
+        {
+            if (_marketSearchDragging && _marketSearchViewFrozen >= 0)
+                return Math.Clamp(_marketSearchViewFrozen, 0, _marketSearch.Length);
+
+            int caret = Math.Clamp(_marketSearchCaret, 0, _marketSearch.Length);
+            float[] px = SearchPrefix();
+            if (px[_marketSearch.Length] <= MarketSearchTextMax) return 0;
+
+            // 二分找最小的 start 使 [start, caret) 塞得进框（px 单调递增，可二分）
+            int lo = 0, hi = caret;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (px[caret] - px[mid] <= MarketSearchTextMax) hi = mid;
+                else lo = mid + 1;
+            }
+            return lo;
+        }
+
+        /// <summary>插入点下标 → 客户区 x（DIP）。画光标 / 铺选区底色、以及命中选择起止都用它。</summary>
+        private float MarketSearchXAtIndex(int index)
+        {
+            float[] px = SearchPrefix();
+            int start = MarketSearchViewStart();
+            if (index <= start) return MarketSearchTextX;
+            index = Math.Clamp(index, start, _marketSearch.Length);
+            // 右端必须钳在框内：串尾可能落在可视窗口之外（全选时插入点在串尾、
+            //    而窗口起点又被推到很靠右），不钳的话高亮与光标会直接画到搜索框外面去。
+            return MathF.Min(MarketSearchTextX + (px[index] - px[start]), MarketSearchTextX + MarketSearchTextMax);
+        }
+
+        /// <summary>客户区 x（DIP）→ 插入点下标。取「最近的字符边界」，与原生框手感一致。</summary>
+        private int MarketSearchIndexAtX(float x)
+        {
+            float[] px = SearchPrefix();
+            int start = MarketSearchViewStart();
+            int len = _marketSearch.Length;
+            // 拖到可见文字右侧之外：直接给串尾。原生框也是这个手感。
+            if (x >= MarketSearchTextX + (px[len] - px[start])) return len;
+
+            // 二分找「第一个宽度 ≥ 目标」的字符边界，再跟它左边那个比谁更近 —— 与原先逐字符扫描同样的取舍。
+            float rel = x - MarketSearchTextX;
+            int lo = start, hi = len;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (px[mid] - px[start] < rel) lo = mid + 1;
+                else hi = mid;
+            }
+            if (lo > start && MathF.Abs(rel - (px[lo - 1] - px[start])) < MathF.Abs(rel - (px[lo] - px[start])))
+                return lo - 1;
+            return lo;
+        }
+
+        /// <summary>删掉选区（没有选区则返回 false），插入点落到选区左端。</summary>
+        private bool MarketDeleteSelection()
+        {
+            if (!MarketHasSelection) return false;
+            int s = MarketSelStart, e = MarketSelEnd;
+            _marketSearch = _marketSearch[..s] + _marketSearch[e..];
+            _marketSearchCaret = _marketSearchSelAnchor = s;
+            return true;
+        }
+
+        /// <summary>在插入点插入文本（先删选区），插入完光标落在新内容末尾。</summary>
+        private void MarketInsertText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            MarketDeleteSelection();
+            int at = Math.Clamp(_marketSearchCaret, 0, _marketSearch.Length);
+            _marketSearch = _marketSearch[..at] + text + _marketSearch[at..];
+            _marketSearchCaret = _marketSearchSelAnchor = at + text.Length;
+        }
+
+        /// <summary>插入点 / 选区一起挪到末尾（外部改串、聚焦收尾统一走这里）。</summary>
+        private void MarketCaretToEnd()
+        {
+            _marketSearchCaret = _marketSearchSelAnchor = _marketSearch.Length;
+            _marketSearchDragging = false;
+        }
+
         /// <summary>「只看已安装」复选框（勾选后列表只留本机已装的插件；与搜索、分类叠加过滤）。</summary>
         private bool _marketOnlyInstalled;
         private bool _hoveredMarketChk;
+        private bool _hoveredMarketRefresh;   // 第二行「刷新」按钮悬停
 
         /// <summary>数据刚拉到，需要在 UI 线程重建过滤视图（后台线程只置标志）。</summary>
         private bool _marketDataDirty;
@@ -71,7 +210,7 @@ namespace NotchPeninsula
         private bool _marketHintIsError;
         private int _marketScroll;                       // 市场列表滚动首行（绝对条目下标）
 
-        // 弹窗（同一套外观：左上标题 + 右上 ❌ + 可选正文/按钮行）
+        // 弹窗（同一套外观：左上标题 + 右上关闭按钮 + 可选正文/按钮行）
         //   详情 / 评分 / 卸载确认三种弹窗互斥，同一时刻最多一个。
         private enum MarketDialog { None, Detail, Rate, ConfirmUninstall }
 
@@ -94,7 +233,7 @@ namespace NotchPeninsula
         private int _hoveredMarketUninstall = -1;
         private int _hoveredMarketDetail = -1;
 
-        /// <summary>关闭所有市场弹窗（切页签 / 弹窗外点击 / ❌ 都走这里）。</summary>
+        /// <summary>关闭所有市场弹窗（切页签 / 弹窗外点击 /关闭按钮 都走这里）。</summary>
         private void CloseMarketDialog(bool render = false)
         {
             if (_marketDialog == MarketDialog.None && _marketDialogIndex == -1) return;
@@ -109,8 +248,13 @@ namespace NotchPeninsula
         // ---- 布局真源 ----
         // 「我的插件」（tab 6）与「插件市场」（tab 7）各一张整页高卡片，行布局同一套：
         //   我的插件  顶卡 TITLE_BAR_HEIGHT+12..+108，列表卡 listY = TITLE_BAR_HEIGHT+122，行起点 +44
-        //   插件市场  顶栏（分类下拉 + 搜索框）TITLE_BAR_HEIGHT+22..+48，状态行基线 +90，行起点 +98
+        //   插件市场  第一行（分类下拉 + 搜索框）      TITLE_BAR_HEIGHT+22..+48
+        //             第二行（只看已安装 + 计数｜刷新）TITLE_BAR_HEIGHT+54..+80
+        //             列表行起点 +92
         // 渲染 / 命中 / 滚轮三处共用，改一处必须同步。
+        // 两行是**同款 26 高控件行**、行距 6px；行内所有元素的垂直位置统一按
+        //    「行顶 + 17」= 文字基线、「行顶 + 5」= 16px 方框顶 —— 这是「每行每个东西上下对齐」的落点；
+        //    字号一律 13px（_marketTextPaint）= 「字体一样大」。改行高必须两行一起改。
         // 行高 50：一行为「名称 + 信息/按钮」两段，46px 内容 + 4px 呼吸。
         //    56 时市场卡底部会剩十几像素、我的插件卡剩近 50px（放不下整行却也不显示）——
         //    收到 50 后两张卡各多显示一行。
@@ -119,26 +263,37 @@ namespace NotchPeninsula
         private void GetPluginListCardTop(out float listY)
             => listY = TITLE_BAR_HEIGHT + 122f;
 
-        private const float MarketControlsY = TITLE_BAR_HEIGHT + 22f;   // 顶栏控件行顶（54，卡顶下留 10）
-        private const float MarketControlH = 26f;
+        // ── 第一行：分类下拉（左）+ 搜索框 ──
+        private const float MarketControlsY = TITLE_BAR_HEIGHT + 22f;   // 第一行顶（54，卡顶下留 10）
+        private const float MarketControlH = 26f;                       // 控件行高（两行共用）
         private const float MarketCatBtnW = 132f;                       // 分类按钮宽（左起 CONTENT_TEXT_X）
-        // 搜索框：紧接分类按钮右侧 16px，右边界与下方按钮组同一条基准线（MarketRightPad）。
-        //    顶栏这一行只放「分类 + 搜索」两个控件，所以搜索框能吃满中间的空白。
+        // 搜索框：紧接分类按钮右侧 16px，右端一直铺到第二行「刷新」按钮的右边界基准线
+        //    （WIDTH - MarketRightPad）—— 第一行右侧不留空，两行左右两端严格对齐。
         private const float MarketSearchX = CONTENT_TEXT_X + MarketCatBtnW + 16f;       // 350
-        private const float MarketSearchW = (WIDTH - MarketRightPad) - MarketSearchX;   // 214
-        private const float MarketStatusBaseline = TITLE_BAR_HEIGHT + 90f;
-        private const float MarketRowsTop = TITLE_BAR_HEIGHT + 98f;     // 行起点（与命中 / 滚轮严格同源）
+        private const float MarketSearchW = WIDTH - MarketRightPad - MarketSearchX;     // 214
 
-        // 「只看已安装」复选框：**放在状态行**（顶栏那行只留分类 + 搜索，避免三个控件挤在一起）。
+        // ── 第二行：只看已安装 + 计数（左）｜刷新（右）──
+        //    与第一行同高、间距 10px（比 6 松一点，两行贴太近像挤在一起）。
+        //    文字基线 = 行顶 + 17（与第一行同一套），16px 方框顶 = 行顶 + 5。
+        private const float MarketStatusRowY = TITLE_BAR_HEIGHT + 58f;  // 第二行顶（90）
+        private const float MarketStatusBaseline = MarketStatusRowY + 17f;
+        // 刷新按钮：第二行最右，右边界与列表行按钮组同基准线（点击重新拉取市场数据，加载失败后的重试入口）
+        private const float MarketRefreshW = 50f;
+        private const float MarketRefreshX = WIDTH - MarketRightPad - MarketRefreshW;   // 514
+        // 列表行起点：第二行底（+84）再留 8px。比原来的 +98 上移了，可见行数仍是满 10 行
+        //    （GetMarketListLayout 的算式随本常量走）。
+        private const float MarketRowsTop = TITLE_BAR_HEIGHT + 92f;
+
+        // 「只看已安装」复选框：第二行左端（第一行放分类 + 搜索框，第二行放复选框 + 计数 + 刷新）。
         //    勾上后列表只留本机已装的插件（与搜索、分类叠加）。
-        //    状态行左侧 = 复选框，右侧 = 计数 / 加载状态 / 安装结果提示（右对齐）。
+        //    第二行左侧 = 复选框 + 标签，中间 = 计数 / 加载状态，右端 = 刷新按钮。
         private const float MarketChkX = CONTENT_TEXT_X;
         private const float MarketChkBoxSize = 16f;
         private const string MarketChkLabel = "只看已安装";
         private const float MarketChkLabelGap = 7f;
         private static float MarketChkLabelX => MarketChkX + MarketChkBoxSize + MarketChkLabelGap;
-        /// <summary>复选框方框的 y（在状态行里与文字视觉居中；比文字中线略高一点看着更稳）。</summary>
-        private const float MarketChkY = MarketStatusBaseline - 15f;
+        /// <summary>复选框方框的 y：16px 方框在 26 高行里垂直居中（行顶 + 5），与同行文字同一中线。</summary>
+        private const float MarketChkY = MarketStatusRowY + 5f;
 
         // 市场行三个按钮：各自独立（互不相连）、统一 50 宽、右对齐、间隔 6px。
         //    三颗一样大、文字各自居中绘制（见 Render.cs，测量与绘制必须同一个画笔，
@@ -219,7 +374,7 @@ namespace NotchPeninsula
                 }
                 catch (Exception ex)
                 {
-                    _marketError = "市场加载失败，切走再切回来可重试";
+                    _marketError = "市场加载失败，请点击刷新重试";
                     Logger.Error("[Market] 拉取插件市场失败", ex);
                 }
                 finally
@@ -243,9 +398,11 @@ namespace NotchPeninsula
                 var mp = new MarketPlugin
                 {
                     Id = p.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
-                    Name = p.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
-                    Author = p.TryGetProperty("author", out var author) ? author.GetString() ?? "" : "",
-                    Desc = p.TryGetProperty("desc", out var desc) ? desc.GetString() ?? "" : "",
+                    // 服务端文案里的零宽字符（如描述里夹的 U+200B）在这里就摘掉：
+                    //   它是给网页排版用的，进了自绘画笔就是一个豆腐块（见 StripInvisible）。
+                    Name = p.TryGetProperty("name", out var name) ? StripInvisible(name.GetString() ?? "") : "",
+                    Author = p.TryGetProperty("author", out var author) ? StripInvisible(author.GetString() ?? "") : "",
+                    Desc = p.TryGetProperty("desc", out var desc) ? StripInvisible(desc.GetString() ?? "") : "",
                     Version = p.TryGetProperty("version", out var ver) ? ver.GetString() ?? "" : "",
                     Updated = p.TryGetProperty("updated", out var upd) ? upd.GetString() ?? "" : "",
                     Official = p.TryGetProperty("official", out var off) && off.ValueKind == JsonValueKind.True,
@@ -259,7 +416,7 @@ namespace NotchPeninsula
                     var parts = new List<string>();
                     foreach (var t in tags.EnumerateArray())
                     {
-                        string s = t.GetString() ?? "";
+                        string s = StripInvisible(t.GetString() ?? "");
                         if (s.Length > 0) parts.Add(s);
                     }
                     mp.Tags = string.Join(" · ", parts);
@@ -290,11 +447,11 @@ namespace NotchPeninsula
         ///
         /// 判据由强到弱五级 —— 单靠「文件名相等」是不够的（用户实测：装了 8 个只认出 4 个）：
         ///   ① 插件自报的 pluginId 与市场 id 相同；
-        ///   ② **归一化后相等**：去掉 - _ 空格并转小写再比。市场 slug 常写成 nps-media-mixer，
+        ///   ② 归一化后相等：去掉 - _ 空格并转小写再比。市场 slug 常写成 nps-media-mixer，
         ///      而插件声明的 Id 是 NpsMediaMixer —— 原样比永远不相等，归一化后是同一个词；
-        ///   ③ **显示名相同**：市场条目名与插件自报名出自同一作者，通常逐字一致（最稳的一档）；
+        ///   ③ 显示名相同：市场条目名与插件自报名出自同一作者，通常逐字一致（最稳的一档）；
         ///   ④ 目录名 / Key 首段 == 市场 id（zip 包装出来的 plugins/&lt;id&gt;/ 走这条）；
-        ///   ⑤ 归一化后**互相包含**（较短者 ≥ 4 字符，避免 nps 之类短词误判）——
+        ///   ⑤ 归一化后互相包含（较短者 ≥ 4 字符，避免 nps 之类短词误判）——
         ///      兜住「本地文件名带时间戳后缀」「市场包名比插件名多几个词」这类情况。
         ///
         /// 归一化 + 包含这两层是必须的：本地文件名可能是 NpsMediaMixer_20261001133637.dll，
@@ -404,7 +561,7 @@ namespace NotchPeninsula
             => index >= 0 && index < _marketView.Count ? _marketView[index] : null;
 
         // ---- 弹窗几何（三种弹窗共用同一套外观与命中口径）----
-        // 版式：标题行（左上标题 + 右上 ❌）→ 可选正文 → 可选按钮行。
+        // 版式：标题行（左上标题 + 右上关闭按钮）→ 可选正文 → 可选按钮行。
         // 高度一律按「内容行数」现算，避免渲染与命中各算一份。
 
         private const float DialogW = 380f;
@@ -428,7 +585,7 @@ namespace NotchPeninsula
             return new SKRect(px, py, px + DialogW, py + ph);
         }
 
-        /// <summary>右上角 ❌ 的矩形（渲染与命中同源）。</summary>
+        /// <summary>右上角关闭按钮 的矩形（渲染与命中同源）。</summary>
         private static SKRect GetMarketDialogCloseRect(SKRect popup)
             => new SKRect(popup.Right - DialogPad - 18f, popup.Top + 8f, popup.Right - DialogPad, popup.Top + 8f + 18f);
 
@@ -654,30 +811,80 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 搜索框键盘输入：可见字符追加、退格删除、ESC 取消聚焦、回车取消聚焦。
+        /// 搜索框键盘输入：可见字符在插入点插入、退格 / Delete 删除（先吃选区）、
+        /// ← → Home End 移光标、按住 Shift 移光标 = 框选、Ctrl+A 全选，ESC / 回车取消聚焦。
         /// 只有市场页且搜索框聚焦时才吃掉按键（见 WndProc 的 WM_CHAR / WM_KEYDOWN）。
         /// </summary>
         private bool HandleMarketSearchKey(int vk, char ch)
         {
             if (_selectedTab != 7 || !_marketSearchFocused) return false;
 
-            if (vk == Win32.VK_ESCAPE) { _marketSearchFocused = false; Render(); return true; }
-            if (vk == Win32.VK_RETURN) { _marketSearchFocused = false; Render(); return true; }
-            if (vk == Win32.VK_BACK)                                                   // Backspace
+            if (vk == Win32.VK_ESCAPE || vk == Win32.VK_RETURN)
             {
-                if (_marketSearch.Length > 0)
-                {
-                    _marketSearch = _marketSearch[..^1];
+                _marketSearchFocused = false;
+                MarketCaretToEnd();               // 失去焦点不留选区（高亮只在聚焦时画，这里顺手清干净）
+                Render();
+                return true;
+            }
+
+            bool shift = (Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0;
+            bool ctrl = (Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0;
+
+            // 移动光标：不按 Shift 就顺手把锚点带走（= 取消选区），按了 Shift 锚点不动（= 拉选区）
+            int MoveCaret(int target)
+            {
+                target = Math.Clamp(target, 0, _marketSearch.Length);
+                if (target == _marketSearchCaret) return target;
+                _marketSearchCaret = target;
+                if (!shift) _marketSearchSelAnchor = target;
+                Render();
+                return target;
+            }
+
+            switch (vk)
+            {
+                case Win32.VK_LEFT: MoveCaret((shift ? _marketSearchCaret : MarketSelStart) - 1); return true;
+                case Win32.VK_RIGHT: MoveCaret((shift ? _marketSearchCaret : MarketSelEnd) + 1); return true;
+                case Win32.VK_HOME: MoveCaret(0); return true;
+                case Win32.VK_END: MoveCaret(_marketSearch.Length); return true;
+                case Win32.VK_DELETE:
+                    if (!MarketDeleteSelection())
+                    {
+                        // 没有选区：删插入点右边那个字符；已经在末尾就什么都不做
+                        int at = Math.Clamp(_marketSearchCaret, 0, _marketSearch.Length);
+                        if (at >= _marketSearch.Length) return true;
+                        _marketSearch = _marketSearch[..at] + _marketSearch[(at + 1)..];
+                    }
                     RefreshMarketFilter();
                     Render();
+                    return true;
+            }
+            if (ctrl && (vk == Win32.VK_A || vk == Win32.VK_A + 32))       // Ctrl+A 全选
+            {
+                _marketSearchSelAnchor = 0;
+                _marketSearchCaret = _marketSearch.Length;
+                Render();
+                return true;
+            }
+            if (vk == Win32.VK_BACK)                                                   // Backspace
+            {
+                // 先吃选区；没选区才删插入点左边那一个（光标可能在串中间，不是删串尾）
+                if (!MarketDeleteSelection())
+                {
+                    int at = Math.Clamp(_marketSearchCaret, 0, _marketSearch.Length);
+                    if (at == 0) return true;
+                    _marketSearch = _marketSearch[..(at - 1)] + _marketSearch[at..];
+                    _marketSearchCaret = _marketSearchSelAnchor = at - 1;
                 }
+                RefreshMarketFilter();
+                Render();
                 return true;
             }
             if (vk != -1) return true;   // 其它非字符键（方向键等）吞掉，不落进搜索串
 
             if (ch >= ' ' && ch != 0x7F)
             {
-                _marketSearch += ch;
+                MarketInsertText(ch.ToString());
                 RefreshMarketFilter();
                 Render();
             }
@@ -689,8 +896,10 @@ namespace NotchPeninsula
         //   STARTCOMPOSITION / COMPOSITION / ENDCOMPOSITION。
         // 关键一条：WM_IME_COMPOSITION 带 GCS_RESULTSTR 时把「已上屏」的串取回来追加，
         //   否则用户打完中文按空格选词后，字符串只进了 IME，搜索框里什么都没有。
-        // GCS_COMPSTR 时把「正在组字」的串存下来，画在搜索框里当预览（灰字），
-        //   不然用户看不到自己正在拼什么。组字窗与候选窗都钉到搜索框下方。
+        // GCS_COMPSTR 时把「正在组字」的串存下来，画在搜索框里当预览（灰字 + 下划线），
+        //   不然用户看不到自己正在拼什么。组字串只在搜索框里画一份 —— IME 自带的组字窗
+        //   在 WndProc 的 WM_IME_SETCONTEXT 里被关掉了（否则同一个拼音会画两遍），
+        //   候选窗仍钉在搜索框下方（选词靠它）。
 
         /// <summary>正在组字（未上屏）的串，仅用于显示预览。</summary>
         private string _marketImeComposing = "";
@@ -710,13 +919,14 @@ namespace NotchPeninsula
 
                 case Win32.WM_IME_COMPOSITION:
                 {
-                    int flags = lParam.ToInt32();
+                    int flags = Win32.Low32(lParam);
                     if ((flags & Win32.GCS_RESULTSTR) != 0)
                     {
                         string result = ReadImeString(Win32.GCS_RESULTSTR);
                         if (result.Length > 0)
                         {
-                            _marketSearch += result;
+                            // 插到插入点（有选区先替换掉）—— 不是无脑往串尾拼，与打字同一套
+                            MarketInsertText(result);
                             _marketImeComposing = "";
                             RefreshMarketFilter();
                             Render();
@@ -731,7 +941,7 @@ namespace NotchPeninsula
                             _marketImeComposing = comp;
                             Render();
                         }
-                        return false;  // 组字串仍交给默认处理，IME 自己要画
+                        return false;  // 组字串交给默认处理，IME 才会推进组字状态（但不再画组字窗）
                     }
                     return false;
                 }
@@ -768,7 +978,8 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>把 IME 的组字窗与候选窗钉到搜索框左下角（DIP → 物理像素）。</summary>
+        /// <summary>把 IME 的候选窗钉到搜索框左下角，并顺手把组字窗的「锚点」也指过去
+        /// （组字窗本身已关，但 IME 靠它知道插入点在哪儿，不设的话某些输入法会把光标相关操作算到窗口左上角）。</summary>
         private void PositionImeWindows()
         {
             IntPtr himc = Win32.ImmGetContext(_hwnd);
@@ -857,7 +1068,7 @@ namespace NotchPeninsula
                 try
                 {
                     string tempDir = Path.Combine(Path.GetTempPath(), "NotchPeninsula", "market");
-                    // ⚠️ 临时文件的**文件名必须是市场发布的原名**（mp.FileName）：
+                    // 临时文件的文件名必须是市场发布的原名（mp.FileName）：
                     //    Import() 是按「传入路径的文件名」把 dll 复制进 plugins 的，
                     //    早先这里拼成 mp.Id + "_" + mp.FileName，结果插件在 plugins 里被存成
                     //    「onesaying_OneSaying.dll」这种带市场 id 前缀的乱名（本地已实测到），

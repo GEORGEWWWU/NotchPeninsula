@@ -937,6 +937,91 @@ namespace NotchPeninsula
             _dynamicFillPaint.Color = _lyricResetHovered ? Overlay(30) : Overlay(15);
             canvas.DrawRoundRect(new SKRect(cardRightX - 40, btnY, cardRightX, btnY + 24), 4, 4, _dynamicFillPaint);
             canvas.DrawText("重置", cardRightX - 33, btnY + 17, _subTextPaint);
+
+            DrawHotkeyCard(canvas);
+        }
+
+        // 页签：媒体设置 —— 「全局快捷键」卡片（媒体页最后一张，坐标常量见 HOTKEY_CARD_Y 处）。
+        //
+        // 版式沿用本页其它卡片：标题 + 副标题 + 右侧开关；开关下面是五行「动作 → 键位框」。
+        //    键位框可点：点一下进入录制态（框内提示「按下按键…」），下一次按键组合就成新键位。
+        //    副标题平时写使用说明，出错时被 _hotkeyHint 顶掉（卡片里没有第二行可以挂提示）。
+        private void DrawHotkeyCard(SKCanvas canvas)
+        {
+            float cardY = HOTKEY_CARD_Y;
+            var cardRect = new SKRect(CONTENT_L, cardY, WIDTH - CONTENT_RM, cardY + HOTKEY_CARD_H);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+
+            // ── 标题区：标题 + 副标题（左），总开关（右，纵向居中于标题区）──
+            canvas.DrawText("全局快捷键", CONTENT_TEXT_X, cardY + 19, _uiTextPaint);
+
+            bool hasHint = _hotkeyHint.Length > 0;
+            bool recording = _hotkeyRecordingIndex >= 0;
+            // 优先级：错误提示 > 录制操作说明 > 平时说明。
+            //    录制中把「Esc 取消 / Backspace 清空」摆出来，否则这两个操作用户根本发现不了
+            //    （框里只能放得下「按下按键…」四个字）。
+            string sub = hasHint ? _hotkeyHint
+                : (recording ? "按下按键录制 · Esc 取消 · Backspace 清空"
+                             : "在其他窗口也能控制播放 · 点按键框可重录");
+            _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
+            // 宽度上限到开关左缘为止（开关轨道左缘 = 窗口右边 -12 -16 -42），别压在开关上
+            float subMax = (WIDTH - CONTENT_RM - 16f - 42f) - 12f - CONTENT_TEXT_X;
+            DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 36);
+            _subTextPaint.Color = Neutral(170);
+
+            float tW = 42f, tH = 20f;
+            float tX = WIDTH - CONTENT_RM - 16f - tW;
+            float tY = cardY + 12f;
+            var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+            if (MediaHotkeys.IsEnabled)
+            {
+                _dynamicFillPaint.Color = _hotkeyToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+            }
+            else
+            {
+                _dynamicStrokePaint.Color = _hotkeyToggleHovered ? Neutral(150) : Neutral(100);
+                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                _toggleCirclePaint.Color = _hotkeyToggleHovered ? Neutral(200) : Neutral(150);
+                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                _toggleCirclePaint.Color = SKColors.White;
+            }
+
+            // ── 五行键位：左 = 动作名，右 = 键位框 ──
+            for (int i = 0; i < MediaHotkeys.Count; i++)
+            {
+                float rowY = cardY + HOTKEY_HEAD_H + i * HOTKEY_ROW_H;
+                canvas.DrawText(MediaHotkeys.Label(i), CONTENT_TEXT_X, rowY + 20, _subTextPaint);
+
+                bool rowRecording = _hotkeyRecordingIndex == i;
+                var boxRect = new SKRect(HOTKEY_BOX_X, rowY + 4, HOTKEY_BOX_RIGHT, rowY + 4 + HOTKEY_BOX_H);
+
+                _dynamicFillPaint.Color = rowRecording ? new SKColor(0, 120, 212, 70)
+                    : (_hoveredHotkeyRow == i ? Overlay(30) : Overlay(15));
+                canvas.DrawRoundRect(boxRect, 4, 4, _dynamicFillPaint);
+                if (rowRecording)
+                {
+                    // 录制态加一圈蓝边：只有这一处会闪，用户一眼能认出「在等我按键」。
+                    // 笔画宽度画完要还原 —— 这支画笔是共用的，别把下一帧的卡片描边也带粗。
+                    float oldStroke = _dynamicStrokePaint.StrokeWidth;
+                    _dynamicStrokePaint.Color = new SKColor(0, 140, 240);
+                    _dynamicStrokePaint.StrokeWidth = 1f;
+                    canvas.DrawRoundRect(boxRect, 4, 4, _dynamicStrokePaint);
+                    _dynamicStrokePaint.StrokeWidth = oldStroke;
+                }
+
+                string text = rowRecording ? "按下按键…" : MediaHotkeys.FormatKey(i);
+                // 三种态用三种颜色：录制中（蓝）> 有键位（正文色）> 未设置（弱化），
+                //    弱化那档让「这条被清空了」一眼可辨，不用去数键位名。
+                _dynamicTextPaint.Color = rowRecording ? new SKColor(0, 150, 255)
+                    : (MediaHotkeys.IsBound(i) ? _fgColor : Neutral(120));
+                // 右对齐到框内右侧 12px：键名长短不一，右对齐比居中更整齐（与框外其它控件的右基准线呼应）
+                DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
+                    HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);
+                _dynamicTextPaint.Color = _fgColor;
+            }
         }
 
         // 页签：交互设置
@@ -1025,7 +1110,7 @@ namespace NotchPeninsula
             // 关于页是独立的竖向居中布局（不在卡片里），中心点必须锁死在这个值：
             //    下面那排链接的起点由 centerX 推导，而 WndProc 里三个链接的命中区
             //    （x 305..370 / 375..440 / 445..500）是按 center=400 手写的，两边必须同源。
-            //    ⚠️ 想挪这个中心，就必须同时改 WndProc 的 tab 4 段，否则链接会「画在左边、点在右边」。
+            //    想挪这个中心，就必须同时改 WndProc 的 tab 4 段，否则链接会「画在左边、点在右边」。
             //    这里不用 CONTENT_L 推导，是因为内容区在 2026-10-05 加宽过（左边界 200→186），
             //    跟随推导会把链接整体左移 7px 而命中区不动，反而点不中。
             const float centerX = 400f;
@@ -1255,6 +1340,8 @@ namespace NotchPeninsula
 
             DrawPluginButton(0, "导入 DLL", CONTENT_TEXT_X, topY + 60, 96);
             DrawPluginButton(1, "打开目录", CONTENT_TEXT_X + 104, topY + 60, 96);
+            // 「插件市场」= 一键切到市场页签（与点左栏那一项同一条路），省得用户自己去找
+            DrawPluginButton(2, "插件市场", CONTENT_TEXT_X + 208, topY + 60, 96);
 
             // ── 已安装插件列表卡片（可滚动，整卡高度）──
             GetPluginListCardTop(out float listY);
@@ -1417,14 +1504,14 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
 
-            // ── 顶栏：分类下拉｜「只看已安装」复选框｜搜索框 ──
+            // ── 第一行：分类下拉 + 搜索框（同一行、同一基线、同一字号，见 Market.cs 的布局真源）──
             var catRect = new SKRect(CONTENT_TEXT_X, MarketControlsY, CONTENT_TEXT_X + MarketCatBtnW, MarketControlsY + MarketControlH);
             _dynamicFillPaint.Color = _marketCategoryOpen || _hoveredMarketCategoryIndex != -1 ? Overlay(30) : Overlay(15);
             canvas.DrawRoundRect(catRect, 5, 5, _dynamicFillPaint);
             _dynamicStrokePaint.Color = Neutral(_marketCategoryOpen ? (byte)130 : (byte)90);
             canvas.DrawRoundRect(catRect, 5, 5, _dynamicStrokePaint);
-            _uiTextPaint.Color = _fgColor;
-            canvas.DrawText(MarketCategoryName(_marketCategoryKey), CONTENT_TEXT_X + 12, MarketControlsY + 17, _uiTextPaint);
+            _marketTextPaint.Color = _fgColor;
+            canvas.DrawText(MarketCategoryName(_marketCategoryKey), CONTENT_TEXT_X + 12, MarketControlsY + 17, _marketTextPaint);
             // 下拉箭头
             float ax = catRect.Right - 16, ay = MarketControlsY + 11;
             _dynamicStrokePaint.Color = Neutral(170);
@@ -1433,51 +1520,72 @@ namespace NotchPeninsula
             canvas.DrawLine(ax, ay + 4, ax + 4, ay, _dynamicStrokePaint);
             _dynamicStrokePaint.StrokeWidth = 1.5f;   // 复位：共用画笔
 
-            // ── 搜索框（点击聚焦后可打字）：紧接分类按钮，吃满顶栏右侧空白 ──
+            // ── 搜索框（点击聚焦后可打字）：紧接分类按钮，宽度固定 158（不为右侧空白伸缩）──
             var searchRect = new SKRect(MarketSearchX, MarketControlsY, MarketSearchX + MarketSearchW, MarketControlsY + MarketControlH);
             _dynamicFillPaint.Color = Overlay(15);
             canvas.DrawRoundRect(searchRect, 5, 5, _dynamicFillPaint);
             _dynamicStrokePaint.Color = _marketSearchFocused ? new SKColor(0, 140, 240) : Neutral(_marketSearchHovered ? (byte)130 : (byte)90);
             canvas.DrawRoundRect(searchRect, 5, 5, _dynamicStrokePaint);
-            // 放大镜
+            // 放大镜（复用描边画笔：Draw 每秒 60 帧，别在这里 new SKPaint）
             float mgx = MarketSearchX + 14, mgy = MarketControlsY + 12;
-            var mag = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, Color = Neutral(150) };
-            canvas.DrawCircle(mgx, mgy, 5f, mag);
-            canvas.DrawLine(mgx + 3.6f, mgy + 3.6f, mgx + 7f, mgy + 7f, mag);
-            mag.Dispose();
-            _subTextPaint.Color = _marketSearch.Length == 0 && _marketImeComposing.Length == 0 ? Neutral(120) : _fgColor;
+            _dynamicStrokePaint.Color = Neutral(150);
+            _dynamicStrokePaint.StrokeWidth = 1.5f;
+            canvas.DrawCircle(mgx, mgy, 5f, _dynamicStrokePaint);
+            canvas.DrawLine(mgx + 3.6f, mgy + 3.6f, mgx + 7f, mgy + 7f, _dynamicStrokePaint);
+            _marketTextPaint.Color = _marketSearch.Length == 0 && _marketImeComposing.Length == 0 ? Neutral(120) : _fgColor;
             // 搜索框内容 = 已确认的搜索串 + 正在组字的串（组字串用灰色，与已上屏的部分区分开）
-            float caretX = MarketSearchX + 26;
+            // 串太长时只显示「插入点贴着右边界」的那一段（窗口起点见 MarketSearchViewStart）
+            float caretX = MarketSearchTextX;
             if (_marketSearch.Length > 0)
             {
-                string shownSearch = TruncateText(_marketSearch, _subTextPaint, MarketSearchW - 34);
-                canvas.DrawText(shownSearch, MarketSearchX + 26, MarketControlsY + 17, _subTextPaint);
-                caretX = MarketSearchX + 26 + _subTextPaint.MeasureText(shownSearch);
+                int viewStart = MarketSearchViewStart();
+                // 框选高亮：先铺底色再画字。只在聚焦时画（失焦后不该留着一块高亮），
+                //    起点会被 MarketSearchXAtIndex 自动钳到可视窗口里，窗口外的部分本来也看不见。
+                if (_marketSearchFocused && MarketHasSelection)
+                {
+                    float hx1 = MarketSearchXAtIndex(MarketSelStart);
+                    float hx2 = MarketSearchXAtIndex(MarketSelEnd);
+                    if (hx2 - hx1 > 0.5f)
+                    {
+                        _dynamicFillPaint.Color = new SKColor(0, 120, 212, 96);
+                        canvas.DrawRect(new SKRect(hx1, MarketControlsY + 5f, hx2, MarketControlsY + 21f), _dynamicFillPaint);
+                    }
+                }
+                string shownSearch = TruncateText(_marketSearch[viewStart..], _marketTextPaint, MarketSearchTextMax);
+                canvas.DrawText(shownSearch, MarketSearchTextX, MarketControlsY + 17, _marketTextPaint);
+                caretX = MarketSearchXAtIndex(_marketSearchCaret);
             }
             else if (_marketImeComposing.Length == 0)
             {
-                canvas.DrawText("搜索插件", MarketSearchX + 26, MarketControlsY + 17, _subTextPaint);
+                canvas.DrawText("搜索插件", MarketSearchTextX, MarketControlsY + 17, _marketTextPaint);
             }
             if (_marketImeComposing.Length > 0)
             {
                 // 组字预览：跟在已上屏串后面，灰色 + 下划线，表示「还没上屏」
-                _subTextPaint.Color = Neutral(150);
-                string comp = TruncateText(_marketImeComposing, _subTextPaint, MarketSearchX + MarketSearchW - 8 - caretX);
-                canvas.DrawText(comp, caretX, MarketControlsY + 17, _subTextPaint);
-                float cw = _subTextPaint.MeasureText(comp);
+                _marketTextPaint.Color = Neutral(150);
+                string comp = TruncateText(_marketImeComposing, _marketTextPaint, MarketSearchX + MarketSearchW - 8 - caretX);
+                canvas.DrawText(comp, caretX, MarketControlsY + 17, _marketTextPaint);
+                float cw = _marketTextPaint.MeasureText(comp);
                 canvas.DrawLine(caretX, MarketControlsY + 21, caretX + cw, MarketControlsY + 21, _separatorPaint);
                 caretX += cw;
+                // 光标在串中间组字时，把后面的内容往右顺移（原生编辑框也是把尾巴推开，不能叠在一起）
+                if (_marketSearchCaret < _marketSearch.Length)
+                {
+                    _marketTextPaint.Color = _fgColor;
+                    string tail = TruncateText(_marketSearch[_marketSearchCaret..], _marketTextPaint,
+                        MarketSearchX + MarketSearchW - 8 - caretX);
+                    canvas.DrawText(tail, caretX, MarketControlsY + 17, _marketTextPaint);
+                }
             }
-            // 光标：聚焦时画在内容末尾
+            // 光标：聚焦时画在插入点上（点哪儿、按方向键都跟着动，不再固定贴串尾）
             if (_marketSearchFocused)
             {
                 _dynamicFillPaint.Color = new SKColor(0, 140, 240);
                 canvas.DrawRect(new SKRect(caretX + 1, MarketControlsY + 6, caretX + 2.4f, MarketControlsY + 20), _dynamicFillPaint);
             }
-            _subTextPaint.Color = Neutral(170);
 
-            // ── 状态行：左 = 「只看已安装」复选框 + 计数；右 = 加载状态 / 最近一次安装结果 ──
-            // 复选框放在这一行（用户要求），顶栏那行只留分类 + 搜索两个控件，不挤。
+            // ── 第二行：左 = 「只看已安装」复选框 + 计数；右 = 刷新按钮 ──
+            // 刷新按钮从第一行搬到这里（用户要求），与复选框同处一行、垂直位置走同一套「行顶 + 17」规则。
             var chkBox = new SKRect(MarketChkX, MarketChkY, MarketChkX + MarketChkBoxSize, MarketChkY + MarketChkBoxSize);
             _dynamicStrokePaint.Color = _marketOnlyInstalled
                 ? new SKColor(0, 120, 212)
@@ -1493,23 +1601,40 @@ namespace NotchPeninsula
                 canvas.DrawLine(MarketChkX + 6, MarketChkY + 11, MarketChkX + 13, MarketChkY + 4, _iconPaint);
                 _iconPaint.Color = _fgColor;
             }
-            _subTextPaint.Color = _hoveredMarketChk ? _fgColor : Neutral(190);
-            canvas.DrawText(MarketChkLabel, MarketChkLabelX, MarketStatusBaseline, _subTextPaint);
+            _marketTextPaint.Color = _hoveredMarketChk ? _fgColor : Neutral(190);
+            canvas.DrawText(MarketChkLabel, MarketChkLabelX, MarketStatusBaseline, _marketTextPaint);
 
             string status = _marketFetching ? "正在加载插件市场…"
                 : _marketError.Length > 0 ? _marketError
                 : $"共 {_marketView.Count} 个插件" + (string.Equals(_marketCategoryKey, "all", StringComparison.OrdinalIgnoreCase) && _marketSearch.Length == 0 && !_marketOnlyInstalled ? "" : "（已筛选）");
-            float statusX = MarketChkLabelX + _subTextPaint.MeasureText(MarketChkLabel) + 18f;
-            _subTextPaint.Color = _marketError.Length > 0 && !_marketFetching ? new SKColor(232, 100, 100) : Neutral(140);
-            canvas.DrawText(status, statusX, MarketStatusBaseline, _subTextPaint);
-            _subTextPaint.Color = Neutral(140);
+            float statusX = MarketChkLabelX + _marketTextPaint.MeasureText(MarketChkLabel) + 18f;
+            // 右端现在是刷新按钮（不再是窗口右边）—— 计数 / 加载状态必须在它左侧收住，
+            //    _marketError 可能很长，不截断会直接压到按钮上。
+            float statusMax = MarketRefreshX - 10f - statusX;
+            _marketTextPaint.Color = _marketError.Length > 0 && !_marketFetching ? new SKColor(232, 100, 100) : Neutral(140);
+            canvas.DrawText(TruncateText(status, _marketTextPaint, statusMax), statusX, MarketStatusBaseline, _marketTextPaint);
+            _marketTextPaint.Color = Neutral(140);
             if (!string.IsNullOrEmpty(_marketHint) && !_marketFetching)
             {
-                float hintMax = (WIDTH - CONTENT_TEXT_RM) - statusX - _subTextPaint.MeasureText(status) - 16;
-                _subTextPaint.Color = _marketHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
-                DrawTextWithEmoji(canvas, _marketHint, _subTextPaint, hintMax, WIDTH - CONTENT_TEXT_RM, MarketStatusBaseline, rightAlign: true);
-                _subTextPaint.Color = Neutral(140);
+                float hintRight = MarketRefreshX - 10f;   // 提示右对齐到刷新按钮左侧，别钻到按钮底下
+                float hintMax = hintRight - statusX - _marketTextPaint.MeasureText(status) - 16;
+                _marketTextPaint.Color = _marketHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
+                DrawTextWithEmoji(canvas, _marketHint, _marketTextPaint, hintMax, hintRight, MarketStatusBaseline, rightAlign: true);
+                _marketTextPaint.Color = Neutral(140);
             }
+
+            // ── 刷新按钮：第二行最右（右边界与列表行按钮组同基准线），点击重新拉取市场数据 ──
+            var refreshRect = new SKRect(MarketRefreshX, MarketStatusRowY, MarketRefreshX + MarketRefreshW, MarketStatusRowY + MarketControlH);
+            bool refreshActive = !_marketFetching;
+            _dynamicFillPaint.Color = refreshActive && _hoveredMarketRefresh ? Overlay(30) : Overlay(15);
+            canvas.DrawRoundRect(refreshRect, 5, 5, _dynamicFillPaint);
+            _dynamicStrokePaint.Color = Neutral(refreshActive && _hoveredMarketRefresh ? (byte)130 : (byte)90);
+            canvas.DrawRoundRect(refreshRect, 5, 5, _dynamicStrokePaint);
+            _marketTextPaint.Color = refreshActive ? _fgColor : Neutral(110);
+            float refreshTw = _marketTextPaint.MeasureText("刷新");
+            canvas.DrawText("刷新", MarketRefreshX + (MarketRefreshW - refreshTw) / 2f, MarketStatusBaseline, _marketTextPaint);
+            _marketTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = Neutral(170);   // 下面列表区继续用这支，保持默认灰
 
             float rowsTop = MarketRowsTop;
             // 名称行的可用宽度不在这里定 —— 右侧要放「评分 + 下载量」的右对齐簇，
@@ -1537,13 +1662,13 @@ namespace NotchPeninsula
 
                 var local = MatchLocalPlugin(mp);
                 bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
-                // 本地已装但**被禁用**：整行文字置灰（名字 / 官方 / 已装标签 / 版本信息），
+                // 本地已装但被禁用：整行文字置灰（名字 / 官方 / 已装标签 / 版本信息），
                 //    与「本机根本没装」区分开 —— 文件还在 plugins 里，用户只是没让它跑。
                 //    按钮与右侧评分不置灰：前者仍要能点（重装 / 卸载），后者是市场侧信息。
                 bool dim = PluginManager.Instance.IsDisabled(local);
                 // 只有「本地版本 ≠ 市场版本」才提示已装 —— 版本一致时那颗按钮本来就是「重装」，
                 //    再多一行「已装 vX」纯属重复信息。
-                // ⚠️ 本地版本可能为空：插件被禁用后重启，它不会被加载，PluginEntry.Version 就读不到了
+                // 本地版本可能为空：插件被禁用后重启，它不会被加载，PluginEntry.Version 就读不到了
                 //    （只有 CachedName 有缓存）。这时不能拼「已装 v」——后面会空一截，
                 //    也绝不显示（无从判断版本是否一致）。
                 string localVer = local?.Version ?? "";
@@ -1551,7 +1676,7 @@ namespace NotchPeninsula
                 bool versionDiff = local != null && hasLocalVer && CompareVersions(mp.Version, localVer) != 0;
 
                 // ═══ 上行右侧：评分 + 下载量（右对齐成一个簇，评分在下载量左边）═══
-                // 星形用 BuildStarPath 画**完整的实心五角星**，不依赖 ★ 字符 ——
+                // 星形用 BuildStarPath 画完整的实心五角星，不依赖 ★ 字符 ——
                 //    ★（U+2605）要经字体回退，回退到不同字体时笔形残缺、看着「显示不全」；
                 //    路径绘制恒定饱满（与评分弹窗那排星同一套路径）。
                 // 分数只显示数字（如「4.5」），不带「分」字，简洁。
@@ -1591,7 +1716,7 @@ namespace NotchPeninsula
                 // 名称可用的宽度必须按「右侧评分簇 + 后面要跟的标签」动态收窄，
                 //    否则长名字会压到评分/下载量上（右侧那块是右对齐的，不会自己让位）。
                 string tagOfficial = mp.Official ? "官方" : "";
-                // 按用户定的口径：**只有版本不一致才提示「已装 vX」**（版本一致时按钮本就是「重装」，
+                // 按用户定的口径：只有版本不一致才提示「已装 vX」（版本一致时按钮本就是「重装」，
                 //    再挂一行已装属重复信息）。版本读不到（禁用后重启）时无从比较，同样不显示 ——
                 //    绝不拼成半截的「已装 v」。
                 string tagInstalled = versionDiff ? $"已装 v{localVer}" : "";
@@ -1733,7 +1858,7 @@ namespace NotchPeninsula
             => score.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
 
         /// <summary>
-        /// 主操作按钮的配色：**按状态分三种颜色**（用户明确要求）。
+        /// 主操作按钮的配色：按状态分三种颜色（用户明确要求）。
         ///   下载 = 绿（获取新东西）／更新 = 橙（有新版本，需要留意）／重装 = 主题蓝（与全程序各处
         ///   强调蓝同色：0,120,212，悬停 0,140,240 —— 本地已最新，是常规可放心操作的动作）。
         /// </summary>
@@ -1749,7 +1874,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 在按钮矩形里居中画标签，并顺手把共用画笔的颜色还原回前景色。
         ///
-        /// 为什么必须单独抽一个：**测量与绘制一定要用同一个画笔**。
+        /// 为什么必须单独抽一个：测量与绘制一定要用同一个画笔。
         /// 设置窗口里绘制按钮文字用的是 _uiTextPaint（13px），若拿 _subTextPaint（12px）去量宽度，
         /// 量出来的值比真实字宽小，文字就会整体偏左 —— 每颗按钮都偏一点，看着就是「没居中」。
         /// 垂直也在这里统一（基线 = 按钮中线 + 字号的 0.35，即常规的视觉居中偏移）。
@@ -1762,7 +1887,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 市场弹窗总入口：三种弹窗（详情 / 评分 / 卸载确认）共用「左上标题 + 右上 ❌」的头部，
+        /// 市场弹窗总入口：三种弹窗（详情 / 评分 / 卸载确认）共用「左上标题 + 右上关闭按钮」的头部，
         /// 正文按类型分派。用户已确认详情弹窗的样式，所以头部与圆角/描边都沿用原来那套
         /// （_menuBg + _menuBorder + 描边叉），只是把弹窗本体抽成了模板。
         /// </summary>
@@ -1781,7 +1906,7 @@ namespace NotchPeninsula
                 _ => mp.Name,
             };
 
-            // ── 头部：左上标题 + 右上 ❌ ──
+            // ── 头部：左上标题 + 右上关闭按钮 ──
             float titleMax = rect.Width - DialogPad * 2 - 30;
             DrawTextWithEmoji(canvas, TruncateText(title, _uiTextPaint, titleMax), _uiTextPaint, titleMax,
                 rect.Left + DialogPad, rect.Top + DialogTitleH - 4);
@@ -1897,26 +2022,35 @@ namespace NotchPeninsula
             float r = size / 2f;
             float cy = area.MidY;
 
+            // 五颗星半径完全一致 ⇒ 共用一份路径，靠 canvas.Translate 摆位。
+            //    原先每颗星各 new 一个 SKPath 且从不 Dispose —— 评分弹窗每次渲染（含纯悬停换帧）
+            //    就漏 5 个原生轮廓，同文件 :1705 / :1921 的 BuildStarPath 调用都用了 using，这里是漏网的一处。
+            //    路径建在原点、坐标系交给 Translate，所以下面的裁剪矩形也换成以中心为原点。
+            using var star = BuildStarPath(0f, 0f, r * 0.92f, r * 0.40f);
+
             for (int i = 0; i < stars; i++)
             {
                 float cx = area.Left + slotW * i + slotW / 2f;
                 float fillRatio = (float)Math.Clamp(value - i, 0d, 1d);
 
-                var path = BuildStarPath(cx, cy, r * 0.92f, r * 0.40f);
+                canvas.Save();
+                canvas.Translate(cx, cy);
 
                 _dynamicStrokePaint.Color = Neutral(150);
                 _dynamicStrokePaint.StrokeWidth = 1.4f;
-                canvas.DrawPath(path, _dynamicStrokePaint);
+                canvas.DrawPath(star, _dynamicStrokePaint);
 
                 if (fillRatio > 0.001f)
                 {
                     canvas.Save();
                     // 按比例裁切：左半颗 = 只露出左边一半宽度的实心星
-                    canvas.ClipRect(new SKRect(cx - r, cy - r, cx - r + size * fillRatio, cy + r));
+                    canvas.ClipRect(new SKRect(-r, -r, -r + size * fillRatio, r));
                     _dynamicFillPaint.Color = new SKColor(0, 140, 240);
-                    canvas.DrawPath(path, _dynamicFillPaint);
+                    canvas.DrawPath(star, _dynamicFillPaint);
                     canvas.Restore();
                 }
+
+                canvas.Restore();
             }
         }
 

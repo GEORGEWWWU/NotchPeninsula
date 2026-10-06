@@ -61,7 +61,7 @@ namespace NotchPeninsula
         /// 主题模式（0=黑 / 1=白 / 2=跟随系统）。
         /// 
         /// 必须走属性而不是自动属性：主题一改，「跟随系统」下真实生效的明暗可能翻面，
-        /// 缓存（<see cref="SystemIsLightTheme"/>）必须当场作废，否则设置窗口 / 岛体
+        /// 缓存（SystemIsLightTheme）必须当场作废，否则设置窗口 / 岛体
         /// 会拿旧值画一整段时间，直到下一次 WM_SETTINGCHANGE 才纠正。
         /// 写入点见 UI/ConsoleWindow.Click.cs（主题选项）与 Core/Program.cs（启动读配置）。
         /// </summary>
@@ -80,7 +80,7 @@ namespace NotchPeninsula
         //
         // 为什么要缓存：ThemeMode == 2（跟随系统）时，主题色要用
         // HKCU\...\Themes\Personalize\AppsUseLightTheme。而这个值过去是在
-        // ▶ 渲染热路径 ◀ 上现读的 —— 设置窗口「显示设置」页里每个胶囊示意图
+        // 渲染热路径上现读的 —— 设置窗口「显示设置」页里每个胶囊示意图
         // （显示形态 2 个、显示模式 2 个、待机场景 4 个）各读一次，等于每帧 8 次
         // CreateKey + RegQueryValueEx + RegCloseKey。滚轮翻页时每滚一格重绘一次，
         // 就是一秒几十次无谓的内核往返。岛体那边的 Renderer.ApplyThemeColors()
@@ -131,7 +131,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 作废系统主题缓存。系统主题变更、或「主题模式」被改写时调用；
-        /// 下一次读 <see cref="SystemIsLightTheme"/> 会重新落地到注册表。
+        /// 下一次读 SystemIsLightTheme 会重新落地到注册表。
         /// </summary>
         public static void InvalidateSystemThemeCache()
         {
@@ -144,16 +144,16 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 待机模式在岛上显示什么：1 = 只显示时间，2 = 空白，3 = 折叠媒体控制。
-        /// 由「显示设置 → 待机模式」选择并持久化；进入 / 退出待机由 <see cref="StandbyActive"/> 单独表示。
-        /// 与旧的 <see cref="StandbyDisplayMode"/> 是两个独立概念（那个是已被复选框取代的历史键）。
+        /// 由「显示设置 → 待机模式」选择并持久化；进入 / 退出待机由 StandbyActive 单独表示。
+        /// 与旧的 StandbyDisplayMode 是两个独立概念（那个是已被复选框取代的历史键）。
         /// </summary>
         public static int StandbyScene { get; set; } = 1;
 
         /// <summary>
-        /// 当前是否处于待机模式。进入 / 退出由「双击空白」（<see cref="StandbyToggleByDoubleClick"/> 打开时）
+        /// 当前是否处于待机模式。进入 / 退出由「双击空白」（StandbyToggleByDoubleClick 打开时）
         /// 或设置页手动切换驱动；这是运行时状态，不持久化 —— 重启后回到默认显示。
         ///
-        /// 写入会触发 <see cref="StandbyActiveChanged"/>：设置窗口打开时并不参与这层交互
+        /// 写入会触发 StandbyActiveChanged：设置窗口打开时并不参与这层交互
         /// （双击发生在岛体上），它靠这个事件把「显示模式」卡片的高亮刷过来。
         /// 直接改字段（绕过属性）就不会通知 UI，别这么写。
         /// </summary>

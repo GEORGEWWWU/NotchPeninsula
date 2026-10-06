@@ -272,5 +272,83 @@ namespace NotchPeninsula
             Program.SaveSetting("ToastSoundVolume", ToastSoundConfig.VolumePercent);
             Render();
         }
+
+        // ---- 媒体设置页「全局快捷键」的录制 ----
+        //    自绘框没有原生 EDIT，录制得自己收键：点了键位框之后，下一次按下的按键组合就是新键位。
+        //    出口有三条：按下合法组合（写回并落盘）、Esc（放弃，保留原键位）、Backspace（清空这一条）。
+
+        /// <summary>
+        /// 录制态收键。返回 true 表示这次按键已经被吃掉，消息链不用再往下传。
+        ///
+        /// 规则：
+        ///   裸修饰键（Ctrl / Alt / Shift / Win 左右分身）不算一次输入，继续等主键 ——
+        ///       否则用户手指刚压下去就被当成「录完了」，录到的永远是 Ctrl 本身。
+        ///   Esc 取消（保留原键位，与原生编辑框的语义一致）；
+        ///   Backspace 清空这一条（留空 = 这个动作没有全局快捷键），改完也是一样结束录制；
+        ///   组合不合法（没搭配修饰键 / 与别的动作撞车 / 系统里被占用）时留在录制态让用户重按，
+        ///       原因挂到卡片副标题上。
+        /// </summary>
+        private bool HandleHotkeyRecording(int vk)
+        {
+            if (_hotkeyRecordingIndex < 0) return false;
+
+            if (vk is Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU
+                or Win32.VK_LWIN or Win32.VK_RWIN
+                or Win32.VK_LSHIFT or Win32.VK_RSHIFT
+                or Win32.VK_LCONTROL or Win32.VK_RCONTROL
+                or Win32.VK_LMENU or Win32.VK_RMENU)
+                return true;
+
+            if (vk == Win32.VK_ESCAPE) { CancelHotkeyRecording(); return true; }
+
+            // Backspace = 清空这一条（留空表示这个动作没有全局快捷键），和 Esc 一样结束录制。
+            //    放在修饰键状态计算之前：清空不关心当时有没有按着 Ctrl / Alt。
+            if (vk == Win32.VK_BACK)
+            {
+                MediaHotkeys.ClearBinding(_hotkeyRecordingIndex);
+                _hotkeyHint = "";
+                EndHotkeyRecording();
+                return true;
+            }
+
+            // 修饰键的实时状态直接问系统：自己记按下/抬起会被焦点切换、Alt+Tab 弄脏。
+            uint mods = 0;
+            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
+            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
+            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
+            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
+                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
+
+            string error = MediaHotkeys.SetBinding(_hotkeyRecordingIndex, mods, vk);
+            if (error.Length > 0)
+            {
+                // 不合法：留在录制态等用户换个组合，提示走卡片副标题
+                _hotkeyHint = error;
+                Render();
+                return true;
+            }
+
+            _hotkeyHint = "";
+            EndHotkeyRecording();
+            return true;
+        }
+
+        /// <summary>录制成功收尾：退出录制态并把热键按开关重新装上。</summary>
+        private void EndHotkeyRecording()
+        {
+            _hotkeyRecordingIndex = -1;
+            MediaHotkeys.ResumeRegistration();
+            Render();
+        }
+
+        /// <summary>放弃录制：退出录制态、清掉提示、键位保持原样。</summary>
+        private void CancelHotkeyRecording()
+        {
+            if (_hotkeyRecordingIndex < 0) return;
+            _hotkeyRecordingIndex = -1;
+            _hotkeyHint = "";
+            MediaHotkeys.ResumeRegistration();
+            Render();
+        }
     }
 }

@@ -504,6 +504,31 @@ namespace NotchPeninsula
 
         private const float APP_MENU_W = 280f;         // 软件菜单宽度
 
+        // ---- 媒体设置页「全局快捷键」卡片（渲染与鼠标命中必须使用同一组坐标）----
+        //    卡片顺序追加在歌词卡之后：歌词设置 222..398 → 全局快捷键 410..620。
+        //    高度是硬约束：媒体设置页不做整页滚动（只有显示页有），卡片必须落在窗口内 ——
+        //    所以这里按「标题区 44 + 5 行 × 32 = 204」反推，不是随手写的高度。
+        //    行内纵向：行首 = 卡顶 + HOTKEY_HEAD_H + i × HOTKEY_ROW_H，键位框居中于该行（顶 = 行首 + 4）。
+
+        private const float HOTKEY_CARD_Y = LYRIC_CARD_Y + 188f;   // 歌词卡底（+176）再留 12px 间距
+
+        private const float HOTKEY_CARD_H = 210f;
+
+        /// <summary>标题区高度：标题（13px）+ 副标题（12px）两行 + 上下留白，右侧放总开关。</summary>
+        private const float HOTKEY_HEAD_H = 44f;
+
+        /// <summary>每个动作一行的高度（五行：播放/上一首/下一首/快退/快进）。</summary>
+        private const float HOTKEY_ROW_H = 32f;
+
+        /// <summary>键位框尺寸与右边界（右对齐到卡片内文字边界，与其它控件同一条基准线）。</summary>
+        private const float HOTKEY_BOX_W = 148f;
+
+        private const float HOTKEY_BOX_H = 24f;
+
+        private const float HOTKEY_BOX_RIGHT = WIDTH - CONTENT_TEXT_RM;
+
+        private const float HOTKEY_BOX_X = HOTKEY_BOX_RIGHT - HOTKEY_BOX_W;
+
         private bool _minHovered = false;
 
         private bool _closeHovered = false;
@@ -705,6 +730,23 @@ namespace NotchPeninsula
         private bool _lyricPlusHovered = false;
 
         private bool _lyricResetHovered = false;
+
+        // ---- 媒体设置页「全局快捷键」卡片 ----
+
+        /// <summary>卡片标题右侧的总开关（默认关闭：出厂不占用任何按键）。</summary>
+        private bool _hotkeyToggleHovered = false;
+
+        /// <summary>指针压在哪个键位框上（-1 = 没有），仅作悬停反馈。</summary>
+        private int _hoveredHotkeyRow = -1;
+
+        /// <summary>正在录制的是哪一行（-1 = 没在录）。录制期间热键全部撤下、键盘输入被吃掉。</summary>
+        private int _hotkeyRecordingIndex = -1;
+
+        /// <summary>
+        /// 卡片副标题位置的一次性提示（键位被占用 / 组合不合法 / 注册失败）。
+        /// 非空时顶掉说明文案显示，下一次操作时清空 —— 卡片里没地方再挂一行红字。
+        /// </summary>
+        private string _hotkeyHint = "";
         // 关于页交互状态
 
         private int _hoveredLinkIndex = -1;
@@ -1105,17 +1147,28 @@ namespace NotchPeninsula
 
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
-            if (_instance != null)
+            try
             {
-                bool initializingContent = _instance._hwnd == IntPtr.Zero;
-                // 重建材质窗期间（_backdropRebuilding）旧材质窗的句柄已被摘掉，但它的销毁消息
-                // 还会同步回来 —— 这里一并发给 InstanceWndProc，由它按「非内容窗」处理（见那里的说明）。
-                bool rebuildingBackdrop = _instance._backdropRebuilding && hwnd != _instance._hwnd;
-                if (initializingContent || rebuildingBackdrop
-                    || hwnd == _instance._hwnd || hwnd == _instance._backdropHwnd)
-                    return _instance.InstanceWndProc(hwnd, msg, wParam, lParam);
+                if (_instance != null)
+                {
+                    bool initializingContent = _instance._hwnd == IntPtr.Zero;
+                    // 重建材质窗期间（_backdropRebuilding）旧材质窗的句柄已被摘掉，但它的销毁消息
+                    // 还会同步回来 —— 这里一并发给 InstanceWndProc，由它按「非内容窗」处理（见那里的说明）。
+                    bool rebuildingBackdrop = _instance._backdropRebuilding && hwnd != _instance._hwnd;
+                    if (initializingContent || rebuildingBackdrop
+                        || hwnd == _instance._hwnd || hwnd == _instance._backdropHwnd)
+                        return _instance.InstanceWndProc(hwnd, msg, wParam, lParam);
+                }
+                return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
             }
-            return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+            catch (Exception ex)
+            {
+                // 窗口过程是最外层回调，没有调用方能接住异常 —— 一旦逃出去，进程立刻退出，
+                //   用户看到的就是「莫名其妙闪退」（本次 OverflowException 就是这么来的）。
+                // 记下来、吞掉，窗口继续活着：坏的顶多是这一次交互。
+                Logger.Error($"窗口过程处理消息 0x{msg:X4} 时异常，已忽略", ex);
+                return IntPtr.Zero;
+            }
         }
 
         private IntPtr InstanceWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -1160,7 +1213,7 @@ namespace NotchPeninsula
                 // 任务栏按钮的「点击最小化」走 WM_SYSCOMMAND(SC_MINIMIZE)，这里自己兜住，
                 // 免得 DefWindowProc 在某些样式组合下把它吞掉。
                 case Win32.WM_SYSCOMMAND:
-                    if ((wParam.ToInt32() & 0xFFF0) == Win32.SC_MINIMIZE)
+                    if ((Win32.Low32(wParam) & 0xFFF0) == Win32.SC_MINIMIZE)
                     {
                         MinimizeToTaskbar();
                         return IntPtr.Zero;
@@ -1168,7 +1221,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_SIZE:
-                    if (wParam.ToInt32() == Win32.SIZE_MINIMIZED)
+                    if (Win32.Low32(wParam) == Win32.SIZE_MINIMIZED)
                     {
                         HideBackdrop();
                     }
@@ -1185,7 +1238,7 @@ namespace NotchPeninsula
                 // 重新激活（点任务栏、Alt+Tab、从别的程序切回来、SetForegroundWindow 拉前台）：
                 // 材质窗重新亮出来 + 重新贴一次材质，否则背景会变成全透明（亚克力丢失）。
                 case Win32.WM_ACTIVATE:
-                    if ((wParam.ToInt32() & 0xFFFF) != Win32.WA_INACTIVE && _hwnd != IntPtr.Zero)
+                    if ((Win32.Low32(wParam) & 0xFFFF) != Win32.WA_INACTIVE && _hwnd != IntPtr.Zero)
                     {
                         ShowBackdrop();
                         ReapplyBackdropMaterial();
@@ -1193,6 +1246,12 @@ namespace NotchPeninsula
                         // 初始化覆盖，所以再挂一个短定时器，等激活流程彻底走完再补一次兜底。
                         // Win10 上真正起作用的是定时器里那次「重建材质窗」，别把这里删掉。
                         Win32.SetTimer(hwnd, BACKDROP_REFRESH_TIMER_ID, 150, IntPtr.Zero);
+                    }
+                    else if (_hotkeyRecordingIndex >= 0)
+                    {
+                        // 窗口失活（Alt+Tab / 点了别的程序）：录制没法继续了（按键不再派发到本窗口），
+                        //    收工并保留原键位 —— 别把半截状态挂在那儿。
+                        CancelHotkeyRecording();
                     }
                     break;
 
@@ -1217,7 +1276,20 @@ namespace NotchPeninsula
                     break;
 
                 // 输入法：搜索框要能打中文，必须把 IME 的三条消息接进来
-                //  （未处理的一律放行给 DefWindowProc，IME 自己还要画组字串与候选窗）
+                //  （未处理的一律放行给 DefWindowProc，IME 自己还要画候选窗）
+                case Win32.WM_IME_SETCONTEXT:
+                {
+                    // 组字串我们已经在搜索框里自己画了（灰字 + 下划线），IME 再飘一个白底组字窗
+                    //   就是同一个拼音画两遍。这里抹掉组字窗那一位，候选窗保留。
+                    //   注意必须继续走 DefWindowProc：IME 上下文靠它激活，直接 return 会打不出字。
+                    //
+                    // 位运算放 long 上做，且别先 ToInt32()：lParam 的低 32 位是 ISC_* 标志，
+                    //   而组字窗那一位恰恰是 bit31 —— 它一置位，整个参数在 64 位下就是个
+                    //   「超出 int 范围的正数」，ToInt32() 直接抛 OverflowException（闪退就是这么来的）。
+                    long ctx = lParam.ToInt64() & ~(long)unchecked((uint)Win32.ISC_SHOWUICOMPOSITIONWINDOW);
+                    return Win32.DefWindowProc(hwnd, msg, wParam, (IntPtr)ctx);
+                }
+
                 case Win32.WM_IME_STARTCOMPOSITION:
                 case Win32.WM_IME_COMPOSITION:
                 case Win32.WM_IME_ENDCOMPOSITION:
@@ -1242,13 +1314,13 @@ namespace NotchPeninsula
 
                 case Win32.WM_MOUSEMOVE:
                     OnMouseMove(
-                        (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale),
-                        (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale),
-                        (wParam.ToInt32() & 0x0001) != 0);
+                        (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale),
+                        (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale),
+                        (Win32.Low32(wParam) & 0x0001) != 0);
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    OnLeftButtonDown(hwnd, (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale));
+                    OnLeftButtonDown(hwnd, (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale));
                     break;
 
                 // 滚轮：服务于两张条目数不封顶的长列表 —— 提示音下拉浮层、以及
@@ -1382,7 +1454,14 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_KEYDOWN:
-                    if (HandleMarketSearchKey(wParam.ToInt32(), '\0')) return IntPtr.Zero;
+                    if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
+                    if (HandleMarketSearchKey(Win32.Low32(wParam), '\0')) return IntPtr.Zero;
+                    break;
+
+                // 按住 Alt 时后续按键走 WM_SYSKEYDOWN（不是 WM_KEYDOWN）——
+                //    「全局快捷键」里大量用 Alt 组合，不接这条就录不到主键。
+                case Win32.WM_SYSKEYDOWN:
+                    if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     break;
                 // 后台任务（显示器枚举等）完成后请求的一次重绘 —— 在这里（UI 线程）执行，
                 // 而不是在投递它的线程池线程里直接 Render（见构造函数里 Task.Run 的说明）。
@@ -1413,7 +1492,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_SETCURSOR:
-                    if (_isHoveringDisabledArea && (lParam.ToInt32() & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
+                    if (_isHoveringDisabledArea && (Win32.Low32(lParam) & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
                     {
                         Win32.SetCursor(Win32.LoadCursor(IntPtr.Zero, (int)32648)); // 强制注入系统 NO (禁止) 指针
                         return (IntPtr)1;

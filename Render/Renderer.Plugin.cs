@@ -301,7 +301,7 @@ namespace NotchPeninsula
 
         // ---- 双击 / 右键透传（插件注册后才回调）----
         // 两档互相独立，都不注册就完全走宿主原有行为：
-        //   · AcceptsRightClick —— 右键**单击**也交回插件（面板不再折叠 / 组件不再展开详情页）；
+        //   · AcceptsRightClick —— 右键单击也交回插件（面板不再折叠 / 组件不再展开详情页）；
         //   · AcceptsDoubleClick —— 只把「双击」交回插件；若同时没开单击，宿主用「挂一个双击窗口」分辨单双击。
         // 还有一条铁律：单击不触发双击回调，宿主也不做「延迟单击等双击」的排队
         //（那会给每一次普通点击都加半个双击窗口的迟滞）。
@@ -408,7 +408,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 当前详情页是否把右键**单击**透传给插件（IDetailPage.AcceptsRightClick）。
+        /// 当前详情页是否把右键单击透传给插件（IDetailPage.AcceptsRightClick）。
         /// 未展开 / 已熔断 / 读取抛异常时一律 false —— 返回 false 就是「维持老行为（折叠面板）」，
         /// 绝不能让一个读标记的异常把折叠之类的既有逻辑带崩。
         /// </summary>
@@ -467,7 +467,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 把一次右键**单击**交给当前详情页（落点必须在详情页矩形内）。
+        /// 把一次右键单击交给当前详情页（落点必须在详情页矩形内）。
         /// 详情页没开 AcceptsRightClick 时返回 false —— 调用方据此走原来的「折叠面板」。
         /// </summary>
         public static bool DispatchDetailPageRightClick(float x, float y)

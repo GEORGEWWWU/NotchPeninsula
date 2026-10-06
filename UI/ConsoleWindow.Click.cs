@@ -16,6 +16,10 @@ namespace NotchPeninsula
         //    调整任何分支的位置都等于改行为，所以整条链保持平铺，不要拆散。
         private void OnLeftButtonDown(IntPtr hwnd, int clickY)
         {
+            // 录制态：除了「再点那个正在录的框」，任何一次左键都先收工（键位保持原样）。
+            //    这里不 return —— 这次点击该走哪个分支照走，用户点别处时手感不会「粘」在录制上。
+            if (_hotkeyRecordingIndex >= 0 && _hoveredHotkeyRow != _hotkeyRecordingIndex)
+                CancelHotkeyRecording();
 
             if (_closeHovered)
             {
@@ -379,6 +383,26 @@ namespace NotchPeninsula
                 Program.SaveSetting("LyricDelayOffset", MediaController.LyricDelayOffset);
                 Render();
             }
+            else if (_selectedTab == 2 && _hotkeyToggleHovered)
+            {
+                _hotkeyHint = "";
+                MediaHotkeys.SetEnabled(!MediaHotkeys.IsEnabled);
+                // 开启时若有键位被别的程序占着，把原因挂到卡片副标题上：
+                //    用户至少要知道「哪一条装了但没生效」，否则会一直以为是宿主没响应。
+                if (MediaHotkeys.IsEnabled) _hotkeyHint = MediaHotkeys.LastError;
+                Render();
+            }
+            else if (_selectedTab == 2 && _hoveredHotkeyRow >= 0)
+            {
+                _hotkeyHint = "";
+                // 录制期间先把热键全撤下来：否则用户按下的恰好就是当前键位时，
+                //    系统会直接触发那个动作 —— 「按一下看看会录成什么」变成「真的切了一首歌」。
+                MediaHotkeys.SuspendRegistration();
+                _hotkeyRecordingIndex = _hoveredHotkeyRow;
+                // 焦点必须收进本窗口，否则 WM_KEYDOWN 根本不会派发过来（能看到框闪却录不进东西）
+                if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
+                Render();
+            }
             else if (_autoHideToggleHovered)
             {
                 // 总开关：只翻转自己，不改写下面三个模式的偏好。
@@ -489,6 +513,19 @@ namespace NotchPeninsula
                     {
                         case 0: ImportPluginDll(); break;
                         case 1: PluginManager.Instance.OpenPluginsFolder(); break;
+                        case 2:
+                            // 插件市场：与点侧边栏那项走同一条路（关掉市场弹窗/下拉、留一次失败重试的机会），
+                            //    省得用户自己找到左栏去切页签。
+                            _selectedTab = 7;
+                            _dropdownOpen = false;
+                            CloseMarketDialog();
+                            _marketCategoryOpen = false;
+                            _marketSearchFocused = false;
+                            if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;
+                            EnsureMarketData();
+                            ResetPluginHover();
+                            Render();
+                            break;
                     }
                 }
                 else if (_hoveredPluginToggle != -1)
@@ -512,7 +549,7 @@ namespace NotchPeninsula
             {
                 if (_marketDialogIndex != -1)
                 {
-                    // 弹窗打开：❌ / 弹窗外 → 关闭；卸载确认的按钮 → 执行或取消；
+                    // 弹窗打开：关闭按钮 / 弹窗外 → 关闭；卸载确认的按钮 → 执行或取消；
                     //   评分弹窗的星星 → 提交评分。弹窗内部其它区域不响应。
                     var mp = GetMarketAt(_marketDialogIndex);
                     if (mp == null) { CloseMarketDialog(true); }
@@ -567,6 +604,18 @@ namespace NotchPeninsula
                     _marketSearchFocused = false;
                     Render();
                 }
+                else if (_hoveredMarketRefresh)               // 刷新按钮：重新拉取市场数据
+                {
+                    if (_marketSearchFocused) _marketSearchFocused = false;
+                    if (!_marketFetching)                     // 拉取中点了也不重入
+                    {
+                        _marketTriedFetch = false;            // 放开 EnsureMarketData 的幂等闸
+                        _marketError = "";
+                        _marketScroll = 0;
+                        EnsureMarketData();
+                    }
+                    Render();
+                }
                 else if (_hoveredMarketChk)                   // 「只看已安装」复选框
                 {
                     _marketOnlyInstalled = !_marketOnlyInstalled;
@@ -578,7 +627,16 @@ namespace NotchPeninsula
                     // 保险：把键盘焦点收进本窗口，否则窗口没焦点时 WM_CHAR 根本不会派发过来，
                     //    用户能看到光标却打不出字。
                     if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
-                    if (!_marketSearchFocused) { _marketSearchFocused = true; Render(); }
+                    // 点哪儿光标落哪儿：按下时定位插入点、锚点对齐（此刻还没有选区），
+                    //    接着按住拖才拉出选区（拖动在 OnMouseMove 的 tab 7 段，与原生编辑框同一手感）。
+                    if (TryGetCursorClientPos(out int sx, out _)) _marketSearchCaret = MarketSearchIndexAtX(sx);
+                    _marketSearchSelAnchor = _marketSearchCaret;
+                    // 冻结可视窗口起点（此刻 dragging 还是 false，取到的是实时值）：拖选期间窗口不再
+                    //    跟着插入点滚动，否则「窗口动 → 命中变 → 插入点跳」会让选区自己抖起来。
+                    _marketSearchViewFrozen = MarketSearchViewStart();
+                    _marketSearchDragging = true;
+                    _marketSearchFocused = true;
+                    Render();
                 }
                 else if (_hoveredMarketInstall != -1)
                 {

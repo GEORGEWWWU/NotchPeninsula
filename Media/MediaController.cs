@@ -102,10 +102,10 @@ namespace NotchPeninsula
 
         // ---- 取词失败的重试记账 ----
         //
-        // 为什么必须有：歌词槽位是在发起取词**之前**就绑定的（见 FetchMediaAsync），
+        // 为什么必须有：歌词槽位是在发起取词之前就绑定的（见 FetchMediaAsync），
         // 所以同一首歌再进来时 IsLyricOwner 判为已归属、直接返回；而 RefreshPropertiesCore
         // 那边又只在「标题/歌手变了」时才触发取词 —— 取词失败并不会改变标题。
-        // 两处叠起来的结果就是：**一次失败 = 这首歌永久没有歌词**，用户只能手动切歌重来。
+        // 两处叠起来的结果就是：一次失败 = 这首歌永久没有歌词，用户只能手动切歌重来。
         //
         // 重试由渲染循环驱动（与封面兜底同一个时钟，见 UpdateLyrics）：RefreshProperties 只在
         // 元数据 / 播放状态变化时才跑，播放中一次都不会来，靠它自己重试是不可能的。
@@ -118,7 +118,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 申请一次取词重试额度。返回 false 表示不满足条件（次数用尽 / 距上次太近）。
-        /// 额度在**申请时**就扣掉，避免渲染循环每帧都来问一次。
+        /// 额度在申请时就扣掉，避免渲染循环每帧都来问一次。
         /// </summary>
         private bool TryBeginLyricRetry()
         {
@@ -182,6 +182,37 @@ namespace NotchPeninsula
         private DateTime _lastSessionCoverAttempt = DateTime.MinValue;
         private string _sessionCoverAttemptTitle = "";
         private string _sessionCoverAttemptAppId = "";
+
+        // ---- 「标题还没就绪」的兜底重试 ----
+        //
+        // 现象：PotPlayer 这类播放器播 SMB / 网络文件时，SMTC 的 Title 会先报**自己的应用名**
+        //      （"PotPlayerMini64"），要等文件元数据 / 网络加载完才换成真正的文件名；
+        //      而这一次替换**多半不发 MediaPropertiesChanged**（实机现象：只有暂停、切歌这类
+        //      播放状态变化时才刷新）。宿主只在事件里读属性，于是标题一直卡在应用名上，
+        //      直到用户手动暂停一次才「自己好了」。
+        //
+        // 与封面、取词一样，重试只能挂在渲染循环这个稳定时钟上：RefreshProperties 播放期间
+        // 一次都不会来，指望事件自愈是不可能的。
+        //
+        // 判据必须保守 —— 只有「标题为空」或「标题就是本会话的应用名」才算未就绪，
+        // 正常曲目名一次都不会命中，也就不会为它多打一次 COM 调用。
+        // 额度用尽就停：真的拿不到标题的播放器（SMTC 永久为空）不该被无限重试。
+        private const int TitleRetryMax = 10;
+        private static readonly TimeSpan TitleRetryFirstDelay = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan TitleRetryInterval = TimeSpan.FromSeconds(2);
+        // 下面三个字段的读写都留在渲染线程上（UpdateMediaMode 只置 _titleRetryResetPending 这个
+        // volatile 标志，真正的清零由渲染线程执行）—— 省掉一次跨线程同步。
+        private int _titleRetryCount;
+        // MinValue = 本轮还没排期（收到未就绪的第一帧只排期、不读，见 RetryTitleIfNeeded）
+        private DateTime _titleRetryNextAt = DateTime.MinValue;
+        private volatile bool _titleRetryResetPending;
+
+        // 「应用名」推导要每帧做，Substring 不能放在帧路径上 —— 按 AppID 缓存结果，变了才重算
+        // （与排版缓存同一套做法：字段逐项比较，不做字符串拼接）。
+        private string _appNameCacheKey = "";
+        private string _appNameCacheValue = "";
+
+        private static readonly char[] PathSeparators = ['\\', '/'];
 
         // 当前 Thumbnail 里放的到底是「哪个程序的应用图标」；为其他来源的封面时置空。
         // 少了它，视频模式下每次属性刷新都会新建一张 SKBitmap 再把旧的那张 Dispose 掉 ——
@@ -315,21 +346,61 @@ namespace NotchPeninsula
         // 所以「换引用」必须在这里自己串起来，否则两次并发换图会把同一份位图换乱。
         private readonly object _thumbSwap = new();
 
+        // ---- 封面位图的内存上限 ----
+        // 封面最终只画在两处：折叠态 22×22、展开面板 50×50（见 Renderer.MediaWidget）。
+        //    此前是「源站返回多大就解码多大」——一张 1000×1000 的图解码后是 4MB 原生位图，
+        //    而它一辈子只被画进 50×50 的方格里。160 已给到 3 倍 DPI 余量，再大纯属浪费。
+        private const int CoverMaxEdge = 160;
+
+        /// <summary>
+        /// 单张封面的下载字节上限。挡的是「源站返回一张几十 MB 的原图」这类输入 ——
+        /// 封面缺失顶多退回应用图标，把进程撑起来才是真事故。
+        /// 同类上限见 ToastIconProvider.MAX_BYTES（那里是 4MB，因为岛上只画 28px）。
+        /// </summary>
+        private const long CoverMaxBytes = 8L * 1024 * 1024;
+
+        /// <summary>解码后用来的缩放画笔（只在换歌时用到，静态复用）。</summary>
+        private static readonly SKPaint _coverScalePaint = new() { FilterQuality = SKFilterQuality.High };
+
+        /// <summary>
+        /// 换下的封面位图先在这里排队，不当场 Dispose。
+        ///
+        /// 不能当场释放：渲染线程每帧 canvas.DrawBitmap(media.Thumbnail, …) 直接读这个属性、
+        ///    不持 _thumbSwap，一 Dispose 就是原生 use-after-free（0xC0000005，托管层拦不住）。
+        ///
+        /// 也不能全交给 GC：SKBitmap 的终结器要等一整轮 GC 才跑，而快速切歌时封面几百毫秒就换一张，
+        ///    没缩放的源图更是几 MB 起步，原生内存会在「已无人使用但尚未回收」的状态里堆积。
+        ///
+        /// 折中：队列超过 RetiredThumbKeep 张时才回收最老的那张。渲染线程每帧只取一次引用、
+        ///    当帧用完，排到第 9 张时第 1 张早已不在任何一帧的栈上 —— 既收回了内存，又完全绕开竞态。
+        /// </summary>
+        private const int RetiredThumbKeep = 8;
+        private readonly Queue<SKBitmap> _retiredThumbs = new();
+
+        /// <summary>把一张换下的封面位图挂进待回收队列（只在 _thumbSwap 锁内调用）。</summary>
+        private void RetireThumbnail(SKBitmap? bmp)
+        {
+            if (bmp == null) return;
+            _retiredThumbs.Enqueue(bmp);
+            while (_retiredThumbs.Count > RetiredThumbKeep)
+                _retiredThumbs.Dequeue().Dispose();
+        }
+
         /// <summary>
         /// 换上新的封面位图。
         ///
-        /// 刻意不 Dispose 被换下的那一张：渲染线程每帧 canvas.DrawBitmap(media.Thumbnail, …)
-        /// 直接读这个属性且不持本锁，这里一 Dispose 就会释放正在绘制的原生位图。
-        /// SkiaSharp 的 use-after-free 表现是原生访问违例 0xC0000005 直接杀进程，托管层 try/catch 拦不住。
-        ///
-        /// 不 Dispose 是安全的：SKBitmap 有终结器，最后一个引用丢掉后由 GC 释放，
-        /// 代价只是封面多活一小会儿（300×300 约 300KB）。同样的取舍见 ToastIconProvider 的图标缓存。
+        /// 换下的那一张不当场 Dispose，而是交给 RetireThumbnail 排队延迟回收 ——
+        /// 渲染线程每帧 canvas.DrawBitmap(media.Thumbnail, …) 直接读这个属性且不持本锁，
+        /// 当场释放就会释放正在绘制的原生位图。SkiaSharp 的 use-after-free 表现是
+        /// 原生访问违例 0xC0000005 直接杀进程，托管层 try/catch 拦不住。回收的时机与理由见
+        /// RetiredThumbKeep。
         /// </summary>
         private void SetThumbnail(SKBitmap? next)
         {
             lock (_thumbSwap)
             {
                 if (ReferenceEquals(Thumbnail, next)) return;
+                RetireThumbnail(Thumbnail);
                 Thumbnail = next;
                 // 换图即作废「当前放的是哪个程序的图标」这条记账：调用方（SetAppIcon）换完之后自己补上，
                 // 其余所有来源（网络封面 / 清空）都天然落到「不是程序图标」，不需要每处都记得清。
@@ -754,6 +825,7 @@ namespace NotchPeninsula
             "spotify",                 // Spotify
             "qishui", "汽水",           // 汽水音乐
             "migu", "咪咕",             // 咪咕音乐
+            "justsolo",                // Just Solo：本地播放器，封面就是它自己通过 SMTC 给出的那张原图
         ];
 
         /// <summary>
@@ -945,6 +1017,10 @@ namespace NotchPeninsula
                 _isMusicMode = false;
             }
 
+            // 换了会话 / 换了曲目：通知渲染线程把标题重试的额度清零 ——
+            // 上一首用剩的额度不该带到下一首（下一首可能同样是「先报应用名」的播放器）。
+            if (appChanged || titleChanged) _titleRetryResetPending = true;
+
             Title = _trackTitle.Length > 0 ? _trackTitle : "Unknown";
             Artist = _isMusicMode ? _trackArtist : ""; // 视频模式：只要标题，歌手不要
         }
@@ -984,9 +1060,11 @@ namespace NotchPeninsula
             //   ① 音乐模式 + SmtcCoverPreferredIds 里的播放器 —— 图就是当前这首歌的专辑封面；
             //   ② 原标题带 "_哔哩哔哩_bilibili" 的网页视频 —— 视频模式也走：SMTC 给的是视频封面，
             //      比浏览器图标有信息量。这一条优先于「无歌手只显示应用 logo」的通用规则。
-            bool preferSessionCover = _isMusicMode
-                ? IsSmtcCoverPreferredAppId(_currentAppId)
-                : _isBilibiliBrowserSession;
+            //   ③ justsolo 无条件走 —— 它给的就是本机正在播的那首的原图（本地 SMTC 拿，不走网络搜索），
+            //      所以哪怕这一拍没拿到歌手（会被判成视频模式）也该用它的缩略图；
+            //      真拿不到时不记账，随后的网络封面链路照常接管（见 FetchSmtcCoverAsync）。
+            bool preferSessionCover = _isJustSoloSession
+                || (_isMusicMode ? IsSmtcCoverPreferredAppId(_currentAppId) : _isBilibiliBrowserSession);
 
             // 外部封面还没就位（首次刷新，或屏上还挂着上一个会话的封面）：先用当前会话的应用图标顶住。
             //    这一步同时保证「切会话时不会把上一个会话的封面留在屏上」——
@@ -1007,6 +1085,89 @@ namespace NotchPeninsula
             _lastSessionCoverAttempt = now;
 
             _ = FetchSmtcCoverAsync(_trackTitle, _trackAppId);
+        }
+
+        /// <summary>
+        /// 从会话 AppID 推出「应用名」：取进程名（去掉路径与扩展名）后小写。结果按 AppID 缓存。
+        /// 例：PotPlayerMini64.exe → potplayermini64，AppleInc.AppleMusicWin_8wekyb3d8bbwe → 原样。
+        /// </summary>
+        private string AppNameFromAppId()
+        {
+            string appId = _currentAppId;
+            if (string.Equals(appId, _appNameCacheKey, StringComparison.Ordinal)) return _appNameCacheValue;
+
+            string name = appId;
+            int slash = name.LastIndexOfAny(PathSeparators);
+            if (slash >= 0) name = name[(slash + 1)..];
+            int dot = name.LastIndexOf('.');
+            if (dot > 0) name = name[..dot];
+
+            _appNameCacheKey = appId;
+            _appNameCacheValue = name.ToLowerInvariant();
+            return _appNameCacheValue;
+        }
+
+        /// <summary>
+        /// 标题是不是「还没就绪」—— 空串，或者当前显示的就是本会话的应用名而不是曲目名。
+        ///
+        /// 后者是 PotPlayer 播网络文件时的典型表现：文件没加载完之前，SMTC 的 Title 填的是
+        /// 播放器自己的名字，所以「标题 == 应用名」是可靠的未就绪信号。
+        /// 双向包含是为了兼容 AppID 与显示名对不齐的写法（PotPlayerMini64.exe ↔ PotPlayer）。
+        /// </summary>
+        private bool IsTitleNotReady()
+        {
+            // 浏览器会话不参与：它的标题是网页标题，撞上 AppID 关键字（chrome / msedge）的概率
+            // 比播放器高得多，而浏览器也不会「先报应用名、加载完再换真名」。
+            if (_isBrowserSession) return false;
+
+            string title = _trackTitle;
+            if (title.Length == 0) return true;
+            // 太短的标题两边都容易撞上（歌名 "Pot" 之类），宁可不判定：漏判只是少几次重试，
+            // 误判却会让一首正常的歌被反复重读属性
+            if (title.Length < 4) return false;
+
+            string appName = AppNameFromAppId();
+            if (appName.Length < 3) return false;
+
+            return title.Contains(appName, StringComparison.OrdinalIgnoreCase)
+                || appName.Contains(title, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 渲染循环里的标题兜底重试（原因见 TitleRetryMax 上方的注释）。
+        /// 未就绪 → 先等首延迟再读第一次（此刻读多半还是同一个旧值），此后按固定间隔重读，
+        /// 直到标题不再像应用名、或额度用尽。
+        /// </summary>
+        private void RetryTitleIfNeeded(DateTime now)
+        {
+            // 换会话 / 换曲目：额度清零重来（标志由属性刷新线程置位，见 UpdateMediaMode）
+            if (_titleRetryResetPending)
+            {
+                _titleRetryResetPending = false;
+                _titleRetryCount = 0;
+                _titleRetryNextAt = DateTime.MinValue;
+            }
+
+            if (!IsTitleNotReady())
+            {
+                // 就绪：撤掉本轮排期，下一首遇到未就绪时重新从首延迟开始
+                _titleRetryCount = 0;
+                _titleRetryNextAt = DateTime.MinValue;
+                return;
+            }
+
+            if (_titleRetryCount >= TitleRetryMax) return;
+
+            if (_titleRetryNextAt == DateTime.MinValue)
+            {
+                _titleRetryNextAt = now + TitleRetryFirstDelay;
+                return;
+            }
+            if (now < _titleRetryNextAt) return;
+
+            _titleRetryCount++;
+            _titleRetryNextAt = now + TitleRetryInterval;
+            _ = RefreshProperties();
         }
 
         private static readonly string[] BrowserVideoSuffixes =
@@ -1239,8 +1400,8 @@ namespace NotchPeninsula
         /// <summary>
         /// 渲染循环里的取词补偿，每帧调用（真正的判定很轻：几个字符串比较 + 一次时间差）。
         ///
-        /// 触发条件：当前歌已归属槽位、却一条歌词都没有。此时才申请重试额度，并**重新读一次
-        /// SMTC 总长**再取词 —— 这一条同时治两种病：首次取词时时长还是上一首的（被候选的
+        /// 触发条件：当前歌已归属槽位、却一条歌词都没有。此时才申请重试额度，并重新读一次
+        /// SMTC 总长再取词 —— 这一条同时治两种病：首次取词时时长还是上一首的（被候选的
         /// 时长门槛整条挡掉），以及纯粹的网络偶发失败。重试间隔 2 秒，那时 timeline 早已跟上。
         ///
         /// 刻意不重置时间轴：重试只是往已经在走的那条时间轴上补文本，位置必须保持连续。
@@ -1290,7 +1451,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 取歌词。译文与封面都随主歌词一起回来，不额外单开接口。按逐字歌词开关分两条路：
         ///
-        /// 开关打开（<see cref="IsLyricScanEnabled"/>，默认开）：逐字优先 —— 先走两个能给出
+        /// 开关打开（IsLyricScanEnabled，默认开）：逐字优先 —— 先走两个能给出
         /// 逐字时间轴的落月源；其余三档（QQ 音乐官方歌词 / 网易云官方 / LRCLIB）不带逐字数据，不参与
         /// 「优先」，但两个落月源都没给出可用歌词时，由网易云官方 → LRCLIB 依次兜底 ——
         /// 宁可给一份没有逐字的歌词（扫光自动回退整行），也不能整首歌没歌词。
@@ -1691,10 +1852,8 @@ namespace NotchPeninsula
                 if (response.IsSuccessStatusCode)
                 {
                     using var stream = await response.Content.ReadAsStreamAsync();
-                    using var buffer = new MemoryStream();
-                    await stream.CopyToAsync(buffer);
-                    buffer.Position = 0;
-                    cover = SKBitmap.Decode(buffer);
+                    using var buffer = await ReadLimitedAsync(stream, CoverMaxBytes);
+                    if (buffer != null) cover = DecodeCover(buffer);
                 }
             }
             catch (Exception ex)
@@ -1778,16 +1937,90 @@ namespace NotchPeninsula
                 }
 
                 using var stream = await thumbRef.OpenReadAsync();
-                using var buffer = new MemoryStream();
-                await stream.AsStreamForRead().CopyToAsync(buffer);
-                buffer.Position = 0;
-                return SKBitmap.Decode(buffer);
+                using var buffer = await ReadLimitedAsync(stream.AsStreamForRead(), CoverMaxBytes);
+                return buffer == null ? null : DecodeCover(buffer);
             }
             catch (Exception ex)
             {
                 Logger.Debug($"会话自带封面读取失败: {ex.Message}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 带上限地把流读完，超过上限返回 null。调用方负责 Dispose 返回的 MemoryStream。
+        ///
+        /// 用分块读而不是 CopyToAsync：后者没有任何长度闸门，源站给多大就收多大。
+        /// 这里读到超限就立刻掉头，最多也就多收一个 chunk。
+        /// </summary>
+        private static async Task<MemoryStream?> ReadLimitedAsync(Stream stream, long maxBytes)
+        {
+            var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            long total = 0;
+            try
+            {
+                int read;
+                while ((read = await stream.ReadAsync(chunk)) > 0)
+                {
+                    total += read;
+                    if (total > maxBytes)
+                    {
+                        Logger.Debug($"封面体积超过 {maxBytes / 1024 / 1024}MB 上限，已放弃");
+                        buffer.Dispose();
+                        return null;
+                    }
+                    buffer.Write(chunk, 0, read);
+                }
+            }
+            catch
+            {
+                buffer.Dispose();
+                throw;   // 交给调用方原有的 catch 记日志
+            }
+
+            buffer.Position = 0;
+            return buffer;
+        }
+
+        /// <summary>
+        /// 解码封面并把最长边压到 CoverMaxEdge 以内。解码失败返回 null。
+        ///
+        /// 缩放这一步是封面链路省内存的关键：源站给的往往是 640 / 1000 见方的原图，
+        /// 而它只会被画进 50×50 的方格。按原分辨率长期持有一张 4MB 的位图，
+        /// 快速切歌时新旧几张叠在一起就是十几 MB —— 全都花在了根本看不见的像素上。
+        /// </summary>
+        private static SKBitmap? DecodeCover(Stream buffer)
+        {
+            SKBitmap? decoded;
+            try
+            {
+                decoded = SKBitmap.Decode(buffer);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"封面解码失败: {ex.Message}");
+                return null;
+            }
+
+            if (decoded == null) return null;
+
+            int maxEdge = Math.Max(decoded.Width, decoded.Height);
+            if (maxEdge <= CoverMaxEdge) return decoded;
+
+            float scale = CoverMaxEdge / (float)maxEdge;
+            int w = Math.Max(1, (int)Math.Round(decoded.Width * scale));
+            int h = Math.Max(1, (int)Math.Round(decoded.Height * scale));
+
+            // 目标格式固定 Bgra8888/Premul：源图的 ColorType 可能是 Index8 之类，
+            // 照抄过去会得到一张画不出东西的位图。
+            var scaled = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+            using (var canvas = new SKCanvas(scaled))
+                canvas.DrawBitmap(decoded, new SKRect(0, 0, w, h), _coverScalePaint);
+
+            // 原图只是个局部变量、还没交给任何人，这里当场放掉是安全的
+            decoded.Dispose();
+            return scaled;
         }
 
         /// <summary>
@@ -2167,8 +2400,8 @@ namespace NotchPeninsula
         /// 换更短的搜索词也没用（实测三种搜索词返回的候选完全相同），卡点在打分。
         /// 歌手校验在任何档位都不放宽。
         ///
-        /// 两级匹配（见方法内注释）：时长门槛只是**第一级**。一条都没过、且这次确实拿到了时长
-        /// （durationSec &gt; 0）时，会忽略时长再筛一遍，但那一遍只接受标题归一化后**全等**的候选 ——
+        /// 两级匹配（见方法内注释）：时长门槛只是第一级。一条都没过、且这次确实拿到了时长
+        /// （durationSec &gt; 0）时，会忽略时长再筛一遍，但那一遍只接受标题归一化后全等的候选 ——
         /// 时长门槛原本要防的「互相包含」型同名不同版本（《海屿你》vs《海屿你2.0》）因此仍被挡住。
         /// 之所以必须有第二级：durationSec 来自与媒体属性同一次刷新的 SMTC timeline，
         /// 而 timeline 更新滞后，换歌那一拍往往是上一首的时长，会把正确候选整条列表全挡。
@@ -2186,13 +2419,13 @@ namespace NotchPeninsula
             //
             // 时长门槛要防的是「同名不同版本」（见上），但它依赖一个前提 —— 传入的 durationSec
             // 确实属于这首歌。而调用链里它是与媒体属性同一次刷新读出来的 SMTC timeline：
-            // timeline 的更新**滞后于** media properties，换歌那一拍拿到的往往是上一首的时长。
+            // timeline 的更新滞后于 media properties，换歌那一拍拿到的往往是上一首的时长。
             // 一旦如此，本曲目的正确候选会被整条列表全挡（实测《STAY》141s 与《LOVE SCENARIO》
             // 209s 互相套用对方时长时，10/10 条全被挡、零命中），日志只留一行「没有匹配到候选」，
             // 而在外面用同样的搜索词一搜就中 —— 这就是「换歌后必没歌词」的根源。
             //
             // 所以分两级：先按时长严格筛；一条都没过（且确实给过时长）时，忽略时长再筛一遍。
-            // 第二级只接受**标题归一化后全等**的候选（score 的 2 分档），把「互相包含」的
+            // 第二级只接受标题归一化后全等的候选（score 的 2 分档），把「互相包含」的
             // 同名不同版本（《海屿你》vs《海屿你2.0》，titleScore 只有 1）继续挡在外面 ——
             // 那正是时长门槛原本要防的一类，放开时长后由标题全等接手，保护不丢。
             string? foundCover = null, foundMid = null;
@@ -2886,7 +3119,7 @@ namespace NotchPeninsula
         /// 渲染层的扫光依旧是「整行总宽 × 进度」，不需要知道自己拿到的是哪一种驱动。
         /// 于是「这首歌没有逐字数据」不会退化成不扫光，而只是自动降级成整行均匀扫光。
         ///
-        /// <paramref name="position"/> 传的是原始播放位置（不含起唱提前量）。
+        /// position 传的是原始播放位置（不含起唱提前量）。
         /// 两条分支对这份提前量的处理不同：逐字分支直接用它（yrc 字级时间戳就是真实起唱时刻），
         /// 整行分支才自行叠上 0.6s + LyricDelayOffset（整行 lrc 时间戳普遍偏晚，需要一点提前量）。
         /// </summary>
@@ -2996,6 +3229,11 @@ namespace NotchPeninsula
                 || !string.Equals(_externalCoverTitle, _trackTitle, StringComparison.Ordinal)
                 || !string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal))
                 UpdateCover(true);
+
+            // 标题未就绪的兜底重试（同上，共用渲染循环这个稳定时钟）：
+            // PotPlayer 播 SMB / 网络文件时 SMTC 先报自己的应用名，加载完才换成文件名，
+            // 而那一次替换多半不发属性变更事件 —— 不补重试就会一直卡在应用名上（详见 TitleRetryMax）。
+            RetryTitleIfNeeded(now);
 
             // 取词失败的补偿重试（与上面封面兜底共用渲染循环这个稳定时钟）。
             // 为什么非挂这里不可：RefreshPropertiesCore 只在「标题/歌手变了」时触发取词，
@@ -3432,6 +3670,30 @@ namespace NotchPeninsula
             // 否则落点会被判成跳变而把进度条与歌词弹回原处。
             _seekSettleUntil = DateTime.UtcNow.AddSeconds(SeekSettleSeconds);
             if (_currentSession != null) CommitSeek(_currentSession, _timelinePos.Ticks);
+        }
+
+        /// <summary>
+        /// 全局快捷键的进度步进：在当前位置上前后挪 seconds 秒，夹在 [0, 总长] 内。
+        ///
+        /// 与拖动同一条路：只改本地位置（进度条与歌词立刻跟上），再异步提交一次 seek ——
+        /// 连按十几下也不会在 UI 线程上等播放器。返回 false 表示当前没有可用时间轴
+        /// （没有会话 / SMTC 没给总长），调用方据此静默跳过。
+        /// </summary>
+        public bool SeekBy(double seconds)
+        {
+            if (!HasTimeline || Duration <= TimeSpan.Zero || _currentSession == null) return false;
+
+            double target = Math.Clamp(_timelinePos.TotalSeconds + seconds, 0, Duration.TotalSeconds);
+            var pos = TimeSpan.FromSeconds(target);
+            _timelinePos = pos;
+            if (_lyricSlot >= 0) _recentSongs[_lyricSlot].Position = pos;
+            UpdateTimelineTexts();
+
+            // 与松手拖动同一套静默期：播放器执行 seek 的几十~几百毫秒里上报的仍是旧位置，
+            //    不设静默期会被判成跳变，把进度条与歌词弹回原处。
+            _seekSettleUntil = DateTime.UtcNow.AddSeconds(SeekSettleSeconds);
+            CommitSeek(_currentSession, pos.Ticks);
+            return true;
         }
 
         // 提交一次 seek（位置单位是 100ns tick）。异步丢弃：UI 线程绝不等待播放器，异常也不会冒泡打断交互。

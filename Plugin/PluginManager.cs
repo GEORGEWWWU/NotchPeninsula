@@ -225,7 +225,7 @@ public sealed class PluginManager
     }
 
     /// <summary>
-    /// 该插件是否处于**禁用**状态（在禁用清单里）。
+    /// 该插件是否处于禁用状态（在禁用清单里）。
     ///
     /// 「禁用」与「未安装」是两回事：禁用的插件文件仍留在 plugins 目录里，只是不加载运行 ——
     /// 所以它的 Version / Author / DisplayName 都读不到（只有名字有缓存），状态一律是 NotLoaded。
@@ -299,6 +299,9 @@ public sealed class PluginManager
                     // 还会让用户在排序时碰上"点一下没动"的落点。重新启用后自动回到原位。
                     if (e == null || string.IsNullOrEmpty(e.Key)) continue;
                     if (e.State != PluginState.Loaded) continue;
+                    // 不占岛体位的内容（任务栏组件）在这里跳过：插件照常加载运行，只是不进这张排序表，
+                    // 顺序位照旧留在 _order 里（以后若要恢复排序，去掉这个判定即可）。见 IgnoresDisplayOrder。
+                    if (IgnoresDisplayOrder(e)) continue;
                     list.Add(new DisplayItem
                     {
                         Key = e.Key,
@@ -325,6 +328,24 @@ public sealed class PluginManager
             return built;
         }
     }
+
+    /// <summary>
+    /// 该插件是否不参与「显示内容」排序 —— 依旧加载运行，只是不出现在显示设置那张列表里。
+    ///
+    /// 目前只有任务栏组件（NpsTaskbarWidget）走这条：它把内容画在挂在任务栏上的自有窗口里，
+    /// 岛体上没有对应组件，列进排序表既排不出效果，又白占一个落点。
+    /// 按插件标识识别（Key 是 plugins 下的相对路径，Id 是插件自报的 pluginId），插件无需改代码；
+    /// 两侧都用「包含」匹配，插件换了目录布局、或者文件名带上版本号后缀也照样认得出。
+    /// </summary>
+    private static bool IgnoresDisplayOrder(PluginEntry e)
+    {
+        const string marker = "taskbarwidget";
+        return ContainsMarker(e.Key, marker) || ContainsMarker(e.Id, marker);
+    }
+
+    /// <summary>不区分大小写的包含判定（Key 与 pluginId 的命名习惯不统一）。</summary>
+    private static bool ContainsMarker(string? value, string marker)
+        => !string.IsNullOrEmpty(value) && value.Contains(marker, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>内置模块的中文名（与显示设置页的文案一致）。调用方需持有 _lock。</summary>
     private static string BuiltinName(string key)
@@ -454,7 +475,7 @@ public sealed class PluginManager
     private bool IsListedPluginLocked(string key)
     {
         var e = FindEntryByKeyOrId(key);
-        return e != null && e.State == PluginState.Loaded;
+        return e != null && e.State == PluginState.Loaded && !IgnoresDisplayOrder(e);
     }
 
     /// <summary>原生模块当前是否勾选显示（与显示设置页的复选框、渲染器的绘制门控同源）。</summary>
