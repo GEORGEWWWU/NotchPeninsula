@@ -461,11 +461,20 @@ namespace NotchPeninsula
 
         private static IntPtr StaticWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
-            var menu = _active;
-            if (menu != null && menu._hwnd == hwnd)
-                return menu.InstanceWndProc(hwnd, msg, wParam, lParam);
+            try
+            {
+                var menu = _active;
+                if (menu != null && menu._hwnd == hwnd)
+                    return menu.InstanceWndProc(hwnd, msg, wParam, lParam);
 
-            return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+                return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+            }
+            catch (Exception ex)
+            {
+                // 窗口过程是最外层回调，异常逃出去就是进程退出。记下来、吞掉，菜单顶多这一次没响应。
+                Error($"托盘菜单窗口过程处理消息 0x{msg:X4} 时异常，已忽略", ex);
+                return IntPtr.Zero;
+            }
         }
 
         private IntPtr InstanceWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -487,8 +496,8 @@ namespace NotchPeninsula
                             if (Win32.TrackMouseEvent(ref tme)) _trackingMouse = true;
                         }
 
-                        int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int x = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int y = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         int hit = HitTest(x, y);
                         if (hit != _hoveredIndex)
                         {
@@ -514,8 +523,8 @@ namespace NotchPeninsula
                         // 就会把菜单关掉，连点击都送不到。
                         // 正确姿势是保持捕获，等 WM_LBUTTONUP 再统一判定：
                         //   落在项上 → 执行；落在菜单外 → 收起。
-                        int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int x = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int y = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         if (HitTest(x, y) == -1)
                         {
                             // 按下位置在菜单外 → 收起，并立刻交还捕获，
@@ -530,8 +539,8 @@ namespace NotchPeninsula
                 case Win32.WM_LBUTTONUP:
                     {
                         // 捕获期间坐标可能落在菜单外（负数或超界），HitTest 自然判为 -1
-                        int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int x = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int y = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         int hit = HitTest(x, y);
 
                         if (hit >= 0 && hit < _items.Count)
@@ -568,7 +577,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_TRAYMENU_CLOSE:
                     // 只认自己那条：句柄被复用的情况下，这条消息可能是发给"上一个菜单"的
-                    if (wParam.ToInt32() != _token) return IntPtr.Zero;
+                    if (Win32.Low32(wParam) != _token) return IntPtr.Zero;
                     CloseActive();
                     return IntPtr.Zero;
 
@@ -576,7 +585,7 @@ namespace NotchPeninsula
                     // 事实上这条分支永远不会被触发：WS_EX_NOACTIVATE 的窗口拿不到键盘焦点。
                     // ESC 收起实际由 PollDismiss 轮询 GetAsyncKeyState(VK_ESCAPE) 完成。
                     // 保留它只是为了"窗口万一变前台"时不至于丢掉 ESC。
-                    if (wParam.ToInt32() == Win32.VK_ESCAPE)
+                    if (Win32.Low32(wParam) == Win32.VK_ESCAPE)
                     {
                         RequestDismiss();
                         return IntPtr.Zero;
@@ -585,7 +594,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_TIMER:
                     // 菜单存活期间唯一的"点外面关掉"通路（原因见 PollDismiss 的注释）
-                    if (wParam.ToInt32() == POLL_TIMER_ID)
+                    if (Win32.Low32(wParam) == POLL_TIMER_ID)
                     {
                         PollDismiss();
                         return IntPtr.Zero;

@@ -130,6 +130,10 @@ namespace NotchPeninsula
 
                     Renderer.PassthroughModeEnabled = (int)key.GetValue("PassthroughMode", 0) != 0;
 
+                    // 媒体全局快捷键：这里只把「开关 + 键位」读回内存，注册要等宿主窗口建好
+                    //（NotchWindow 里 Attach）—— 注册得有个有效句柄当宿主。
+                    MediaHotkeys.Load(key);
+
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
 

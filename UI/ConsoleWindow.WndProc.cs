@@ -140,6 +140,7 @@ namespace NotchPeninsula
             double newRateStars = 0;
             bool newHoveredMarketChk = false;
             bool newMarketSearchHovered = false;
+            bool newMarketRefreshHovered = false;
             bool newFontPickHovered = false;
             bool newFontResetHovered = false;
 
@@ -399,6 +400,29 @@ namespace NotchPeninsula
                     _lyricResetHovered = newLyricResetHovered;
                     Render();
                 }
+
+                // 全局快捷键卡片（坐标常量与 Render 的 DrawHotkeyCard 同源）：
+                //    右侧总开关一行，下面五行键位框（框是横向一条，纵向按行高切）。
+                bool newHotkeyToggleHovered = !anyPopupOpen
+                    && x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
+
+                int newHoveredHotkeyRow = -1;
+                if (!anyPopupOpen && x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT)
+                {
+                    for (int i = 0; i < MediaHotkeys.Count; i++)
+                    {
+                        float rowTop = HOTKEY_CARD_Y + HOTKEY_HEAD_H + i * HOTKEY_ROW_H + 4;
+                        if (y >= rowTop && y <= rowTop + HOTKEY_BOX_H) { newHoveredHotkeyRow = i; break; }
+                    }
+                }
+
+                if (newHotkeyToggleHovered != _hotkeyToggleHovered || newHoveredHotkeyRow != _hoveredHotkeyRow)
+                {
+                    _hotkeyToggleHovered = newHotkeyToggleHovered;
+                    _hoveredHotkeyRow = newHoveredHotkeyRow;
+                    Render();
+                }
             }
             else if (_selectedTab == 3) // 交互设置
             {
@@ -429,16 +453,32 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 7) // 插件市场
             {
+                // 搜索框拖选：按住左键在框里拖 = 拉选区（锚点按下时定好，这里只推插入点）。
+                //    松开不用等 WM_LBUTTONUP —— 这一支本来就带着左键状态，见 dragging 变 false 即收手。
+                if (_marketSearchDragging)
+                {
+                    if (dragging)
+                    {
+                        int caret = MarketSearchIndexAtX(x);
+                        if (caret != _marketSearchCaret) { _marketSearchCaret = caret; Render(); }
+                    }
+                    else _marketSearchDragging = false;
+                }
+
                 // 顶栏控件（分类下拉 + 搜索框）——弹窗 / 下拉展开时不吃悬停
                 if (_marketDialogIndex == -1)
                 {
                     newMarketSearchHovered = x >= MarketSearchX && x <= MarketSearchX + MarketSearchW
                         && y >= MarketControlsY && y <= MarketControlsY + MarketControlH;
 
-                    // 「只看已安装」复选框：位于**状态行**（不是顶栏），命中区含方框与标签、并稍微放宽
+                    // 「刷新」按钮：第二行最右（拉取中点击不响应，悬停也只在高亮不上浮）
+                    newMarketRefreshHovered = x >= MarketRefreshX && x <= MarketRefreshX + MarketRefreshW
+                        && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
+
+                    // 「只看已安装」复选框：与刷新按钮同处第二行（命中区含方框与标签、并稍微放宽）
                     newHoveredMarketChk = x >= MarketChkX - 4f
                         && x <= MarketChkLabelX + 64f
-                        && y >= MarketStatusBaseline - 19f && y <= MarketStatusBaseline + 6f;
+                        && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
 
                     bool overCatBtn = x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + MarketCatBtnW
                         && y >= MarketControlsY && y <= MarketControlsY + MarketControlH;
@@ -457,7 +497,7 @@ namespace NotchPeninsula
 
                 if (_marketDialogIndex != -1)
                 {
-                    // 弹窗打开：只算 ❌（命中框外扩 4px）与弹窗内按钮/星星，底下列表完全不吃悬停
+                    // 弹窗打开：只算关闭按钮（命中框外扩 4px）与弹窗内按钮/星星，底下列表完全不吃悬停
                     var mp = GetMarketAt(_marketDialogIndex);
                     var rect = GetCurrentDialogRect();
                     if (mp != null && rect.Width > 0)
@@ -474,7 +514,7 @@ namespace NotchPeninsula
                         else if (_marketDialog == MarketDialog.Rate && _rateMine <= 0 && !_rateLoading)
                         {
                             // 星星悬停 → 实时预览分值（半星粒度）。
-                            // ⚠️ 右半边必须 +1.0 而不是 +0.5：写成 floor(rel)+0.5 时，
+                            // 右半边必须 +1.0 而不是 +0.5：写成 floor(rel)+0.5 时，
                             //    第 5 颗星里 floor 最大只能取到 4，结果上限永远是 4.5 —— 这就是「评不到 5.0」的根因。
                             //    正确语义：落在第 N 颗星的左半边 = N-0.5 分，右半边 = N 分。
                             var sr = GetRateStarsRect(rect);
@@ -525,11 +565,12 @@ namespace NotchPeninsula
             else if (_selectedTab == 6) // 我的插件
             {
                 float topY = TITLE_BAR_HEIGHT + 12;
-                // 顶部操作按钮：导入 DLL | 打开目录
+                // 顶部操作按钮：导入 DLL | 打开目录 | 插件市场
                 if (y >= topY + 60 && y <= topY + 84)
                 {
                     if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入 DLL
                     else if (x >= CONTENT_TEXT_X + 104 && x <= CONTENT_TEXT_X + 200) newHoveredPluginAction = 1;  // 打开目录
+                    else if (x >= CONTENT_TEXT_X + 208 && x <= CONTENT_TEXT_X + 304) newHoveredPluginAction = 2;  // 插件市场
                 }
 
                 // ── 已安装列表：行内按钮（下行：重载 | 移除 | 开关）──
@@ -655,6 +696,7 @@ namespace NotchPeninsula
                 newHoveredMarketChk != _hoveredMarketChk ||
                 newHoveredMarketCategoryIndex != _hoveredMarketCategoryIndex ||
                 newMarketSearchHovered != _marketSearchHovered ||
+                newMarketRefreshHovered != _hoveredMarketRefresh ||
                 newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered
                 )
             {
@@ -715,6 +757,7 @@ namespace NotchPeninsula
                 _hoveredMarketChk = newHoveredMarketChk;
                 _hoveredMarketCategoryIndex = newHoveredMarketCategoryIndex;
                 _marketSearchHovered = newMarketSearchHovered;
+                _hoveredMarketRefresh = newMarketRefreshHovered;
                 _fontPickHovered = newFontPickHovered;
                 _fontResetHovered = newFontResetHovered;
 

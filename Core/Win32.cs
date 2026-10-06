@@ -46,6 +46,36 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern uint GetDoubleClickTime();
 
+        /// <summary>
+        /// 调用线程消息队列里最新一条按键消息的状态（高位 0x8000 = 按下）。
+        /// 自绘搜索框判 Shift / Ctrl 组合键用它：组合键是「按住时按别的键」，
+        /// 自己记按下/抬起容易被焦点切换、Alt+Tab 弄脏状态，系统这份最准。
+        /// </summary>
+        [DllImport("user32.dll")]
+        public static extern short GetKeyState(int nVirtKey);
+
+        /// <summary>
+        /// 消息参数取低 32 位。窗口过程里读 wParam / lParam 一律走这里，别直接 ToInt32()。
+        ///
+        /// IntPtr.ToInt32() 只在「值正好塞得进 int」时才不抛：64 位下这两个参数的高位并不总是 0 ——
+        /// WM_IME_SETCONTEXT / WM_IME_COMPOSITION 的高位挂着 IME 上下文句柄，坐标类消息的打包值在
+        /// 坐标为负时 bit31 也是 1。碰到这种值它直接抛 OverflowException，异常从窗口过程逃出去
+        /// 就是整个进程崩掉（WndProc 没有调用方能接住）。
+        /// </summary>
+        public static int Low32(IntPtr v) => unchecked((int)v.ToInt64());
+
+        /// <summary>
+        /// 注册一条系统级热键：无论前台是谁，按下组合键都会向 hWnd 投一条 WM_HOTKEY，
+        /// wParam = id（比 lParam 里的键位可靠得多，直接按 id 分派即可）。
+        /// 同一个组合同一时刻全系统只能注册一次，被别的程序占用时返回 false（GetLastError = 1409）。
+        /// </summary>
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        /// <summary>注销一条热键。必须与注册时的 hWnd / id 成对，否则会一直占着那个组合。</summary>
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
         /// <summary>滚轮消息：wParam 高字是 ±120 的整数倍，低字是按键状态；lParam 是屏幕坐标。</summary>
         public const int WM_MOUSEWHEEL = 0x020A;
         public const int WM_LBUTTONUP = 0x0202;
@@ -76,16 +106,59 @@ namespace NotchPeninsula
         public const int WM_MOUSEHOVER = 0x02A1;
         public const int WM_CAPTURECHANGED = 0x0215;  // 鼠标捕获被抢占/释放
         public const int WM_KEYDOWN = 0x0100;
+        /// <summary>按住 Alt 时后续按键走的是这条（不是 WM_KEYDOWN）——录制 Alt 组合键必须接它。</summary>
+        public const int WM_SYSKEYDOWN = 0x0104;
         public const int WM_CHAR = 0x0102;            // 插件市场搜索框的字符输入
+        /// <summary>热键被按下：wParam = 注册时给的 id（高位字还带修饰键状态，别整个拿去用）。</summary>
+        public const int WM_HOTKEY = 0x0312;
+
+        // 全局热键的修饰键位（RegisterHotKey 的 fsModifiers）
+        public const uint MOD_ALT = 0x0001;
+        public const uint MOD_CONTROL = 0x0002;
+        public const uint MOD_SHIFT = 0x0004;
+        public const uint MOD_WIN = 0x0008;
+        /// <summary>按住不放时不重复触发（长按 Alt+← 不会连跳十几首）。</summary>
+        public const uint MOD_NOREPEAT = 0x4000;
+
         public const int VK_BACK = 0x08;
         public const int VK_RETURN = 0x0D;
         public const int VK_ESCAPE = 0x1B;
+        // 自绘搜索框的编辑键（移动光标 / 框选 / 删除）
+        public const int VK_SHIFT = 0x10;
+        public const int VK_CONTROL = 0x11;
+        public const int VK_MENU = 0x12;              // Alt（左 / 右通用码）
+        public const int VK_CAPITAL = 0x14;           // CapsLock
+        public const int VK_END = 0x23;
+        public const int VK_HOME = 0x24;
+        public const int VK_LEFT = 0x25;
+        public const int VK_UP = 0x26;
+        public const int VK_RIGHT = 0x27;
+        public const int VK_DOWN = 0x28;
+        public const int VK_DELETE = 0x2E;
+        public const int VK_SPACE = 0x20;
+        public const int VK_PRIOR = 0x21;             // PageUp
+        public const int VK_NEXT = 0x22;              // PageDown
+        public const int VK_A = 0x41;
+        public const int VK_LWIN = 0x5B;
+        public const int VK_RWIN = 0x5C;
+        // 左右分身的修饰键（左/右 Shift、Ctrl、Alt）——录制时要按「修饰键」识别，不能当主键收下
+        public const int VK_LSHIFT = 0xA0;
+        public const int VK_RSHIFT = 0xA1;
+        public const int VK_LCONTROL = 0xA2;
+        public const int VK_RCONTROL = 0xA3;
+        public const int VK_LMENU = 0xA4;
+        public const int VK_RMENU = 0xA5;
 
         // ---- 输入法（IMM32）：搜索框要能打中文，必须接这几条 ----
         public const int WM_IME_STARTCOMPOSITION = 0x010D;
         public const int WM_IME_ENDCOMPOSITION = 0x010E;
         public const int WM_IME_COMPOSITION = 0x010F;
         public const int WM_IME_SETCONTEXT = 0x0281;
+        // WM_IME_SETCONTEXT 的 lParam 位：告诉 IME 哪些自带 UI 要显示。
+        //   ISC_SHOWUICOMPOSITIONWINDOW 抹掉后 IME 不再画组字窗（我们自己在搜索框里画），
+        //   候选窗那一位保留（选词还得靠它）。
+        public const int ISC_SHOWUICANDIDATEWINDOW = 0x0001;
+        public const int ISC_SHOWUICOMPOSITIONWINDOW = unchecked((int)0x80000000);
         public const int GCS_COMPSTR = 0x0008;
         public const int GCS_RESULTSTR = 0x0800;
         // IMM 的候选窗位置：CFS_POINT（相对窗口客户区）/ CFS_EXCLUDE

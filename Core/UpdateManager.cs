@@ -159,7 +159,7 @@ namespace NotchPeninsula
         {
             _tag = tag;
             _version = version;
-            _wndProcDelegate = WndProc;
+            _wndProcDelegate = WndProcSafe;
 
             LoadAppIcon();
             BuildWrappedLines(content, 380f); // 文本最大宽度 380 (左右边距40)
@@ -258,13 +258,30 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 窗口过程的异常兜底：WndProc 是最外层回调，异常逃出去会直接终结进程。
+        /// 记日志后吞掉，坏的只是这一次交互。注册窗口类时挂的是这个方法。
+        /// </summary>
+        private IntPtr WndProcSafe(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            try
+            {
+                return WndProc(hwnd, msg, wParam, lParam);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"更新窗口过程处理消息 0x{msg:X4} 时异常，已忽略", ex);
+                return IntPtr.Zero;
+            }
+        }
+
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             switch (msg)
             {
                 case Win32.WM_MOUSEMOVE:
-                    int x = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                    int y = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                    int x = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                    int y = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
 
                     // 命中判定与绘制共用 GetButtonRect，避免两边各写一套坐标
                     int hit = -1;
@@ -286,7 +303,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    int clickY = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                    int clickY = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                     if (_hoveredButton == 0)
                     {
                         // using：启动浏览器后立刻释放 Process 包装对象，不影响浏览器本身

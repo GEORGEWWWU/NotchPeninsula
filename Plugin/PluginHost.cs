@@ -495,7 +495,7 @@ public sealed class PluginHost
                 windows = winList;
         }
 
-        // 「组件被停用」通知 —— 必须在**切断渲染侧快照之后**才回调。
+        // 「组件被停用」通知 —— 必须在切断渲染侧快照之后才回调。
         //
         // 顺序不能反：插件在 OnDeactivate 里释放自己的画笔是常规做法（rayburst 就是把
         // _barBackgroundPaint / _iconPaint / _textPaints 全 Dispose 掉的那一个），

@@ -82,8 +82,8 @@ public sealed class ToastNotice
 
 /// <summary>
 /// 宿主发布给插件的只读数据通道。
-/// 插件订阅 <see cref="MediaChanged"/> / <see cref="SystemNotification"/> 即可，
-/// 也可以随时用 <see cref="CurrentMedia"/> / <see cref="LastNotification"/> 拉一次最新值。
+/// 插件订阅 MediaChanged / SystemNotification 即可，
+/// 也可以随时用 CurrentMedia / LastNotification 拉一次最新值。
 /// </summary>
 public static class PluginDataBridge
 {
@@ -97,6 +97,10 @@ public static class PluginDataBridge
 
     private static System.Threading.Timer? _sampler;
     private static bool _samplerStarted;
+
+    // 「由 EnsureStarted() 而非订阅启动」的标志：这类采样是插件明确要求常驻的，
+    // 不随订阅者归零而停（停表的条件见 MediaChanged.remove）。
+    private static bool _explicitStarted;
 
     // ---- 采样缓存（只在锁内读写）----
     private static string _signature = "";
@@ -120,10 +124,23 @@ public static class PluginDataBridge
     {
         add
         {
-            lock (_gate) { _mediaChanged += value; }
-            EnsureSampler();
+            lock (_gate)
+            {
+                _mediaChanged += value;
+                EnsureSamplerLocked();
+            }
         }
-        remove { lock (_gate) { _mediaChanged -= value; } }
+        remove
+        {
+            lock (_gate)
+            {
+                _mediaChanged -= value;
+                // 订阅者归零、又没有插件显式要求常驻 ⇒ 停表。
+                //    否则插件被卸载 / 禁用（正常退订）之后，这个 250ms 的采样器会陪着进程跑到底，
+                //    一直读媒体属性、拼签名，还顺手把 _lastThumb 那张封面钉在静态字段上。
+                if (_mediaChanged == null && !_explicitStarted) StopSamplerLocked();
+            }
+        }
     }
 
     /// <summary>系统通知到达（在宿主 UI 线程上触发）。</summary>
@@ -133,19 +150,48 @@ public static class PluginDataBridge
         remove { lock (_gate) { _notification -= value; } }
     }
 
-    /// <summary>显式启动采样（不订阅事件、只想轮询 CurrentMedia 时用）。幂等。</summary>
-    public static void EnsureStarted() => EnsureSampler();
-
-    // ---- 内部：采样 ----
-
-    private static void EnsureSampler()
+    /// <summary>
+    /// 显式启动采样（不订阅事件、只想轮询 CurrentMedia 时用）。幂等。
+    ///
+    /// 与「订阅启动」的区别：这条路径启动的采样器不会因为订阅者归零而停 ——
+    /// 调用方要的就是「一直采样」，停表条件里用 _explicitStarted 把它排除在外。
+    /// </summary>
+    public static void EnsureStarted()
     {
         lock (_gate)
         {
-            if (_samplerStarted) return;
-            _samplerStarted = true;
-            _sampler = new System.Threading.Timer(_ => Tick(), null, TimeSpan.Zero, SampleInterval);
+            _explicitStarted = true;
+            EnsureSamplerLocked();
         }
+    }
+
+    // ---- 内部：采样 ----
+
+    /// <summary>启动采样定时器（调用方必须已持 _gate）。</summary>
+    private static void EnsureSamplerLocked()
+    {
+        if (_samplerStarted) return;
+        _samplerStarted = true;
+        _sampler = new System.Threading.Timer(_ => Tick(), null, TimeSpan.Zero, SampleInterval);
+    }
+
+    /// <summary>
+    /// 停采样，并清掉这一轮留在静态字段上的快照与封面引用（调用方必须已持 _gate）。
+    ///
+    /// 光 Dispose 定时器不够：_currentMedia 里存着上一条 MediaSnapshot、_lastThumb 直接引用着
+    /// 一张封面位图、_coverPng 是编码后的字节。这些静态字段会把一份已经没人要的媒体状态
+    /// （含位图）钉到进程结束。订阅都退干净了，它们没有任何存在意义。
+    /// </summary>
+    private static void StopSamplerLocked()
+    {
+        if (!_samplerStarted) return;
+        _samplerStarted = false;
+        _sampler?.Dispose();
+        _sampler = null;
+        _currentMedia = null;
+        _signature = "";
+        _lastThumb = null;
+        _coverPng = null;
     }
 
     private static void Tick()
@@ -181,6 +227,10 @@ public static class PluginDataBridge
 
             lock (_gate)
             {
+                // 采样已经被停掉（订阅归零）、而这一次回调还在路上：什么都不做 ——
+                // 否则会把 StopSamplerLocked 刚清空的快照又填回去，静态引用继续钉着。
+                if (!_samplerStarted) return;
+
                 if (signature == _signature) return;
 
                 // 封面：引用没换就复用上次编码出来的字节，换了才重新编码

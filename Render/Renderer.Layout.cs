@@ -440,7 +440,7 @@ namespace NotchPeninsula
         private static bool InZone(float x, float l, float r) => l >= 0f && x >= l && x <= r;
 
         /// <summary>
-        /// 折叠态媒体模块的右半边（频谱 / 悬停播放按钮那一带），与 <see cref="HitMediaLaunchZone"/>
+        /// 折叠态媒体模块的右半边（频谱 / 悬停播放按钮那一带），与 HitMediaLaunchZone
         /// 的左半边互补。待机模式选「折叠媒体控制」时岛内被媒体模块占满、没有空白可双击，
         /// 退出待机就靠这一块；其余场景一律走双击空白。
         /// </summary>

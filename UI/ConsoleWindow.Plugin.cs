@@ -231,6 +231,41 @@ namespace NotchPeninsula
         private static readonly SKTypeface _hintEmojiTypeface = SKTypeface.FromFamilyName("Segoe UI Emoji");
 
         /// <summary>
+        /// 摘掉零宽 / 不可见格式字符。
+        /// 这些码点「什么都不该显示」，但 YaHei 与 Segoe UI Emoji 都没有对应字形，
+        /// 逐段回退救不回来，Skia 会老老实实画成一个豆腐块。ZWJ（U+200D）不在此列 ——
+        /// 它在 Emoji 组合序列里有实际作用，删了会把组合 Emoji 拆散。
+        /// </summary>
+        private static string StripInvisible(string s)
+        {
+            int hit = -1;
+            for (int i = 0; i < s.Length; i++)
+                if (IsInvisibleFormat(s[i])) { hit = i; break; }
+            if (hit < 0) return s;   // 绝大多数文案干净，不做无谓的拷贝
+
+            var sb = new System.Text.StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+                if (!IsInvisibleFormat(s[i])) sb.Append(s[i]);
+            return sb.ToString();
+        }
+
+        private static bool IsInvisibleFormat(char c) => c switch
+        {
+            '\u00AD' => true,   // 软连字符
+            '\u061C' => true,   // 阿拉伯字母标记
+            '\u180E' => true,   // 蒙古文元音分隔符
+            '\u200B' => true,   // 零宽空格
+            '\u200C' => true,   // 零宽非连接符
+            '\u200E' => true,   // 从左到右标记
+            '\u200F' => true,   // 从右到左标记
+            '\u2028' => true,   // 行分隔符
+            '\u2029' => true,   // 段分隔符
+            '\u2060' => true,   // 单词连接符
+            '\uFEFF' => true,   // 零宽不换行空格
+            _ => false,
+        };
+
+        /// <summary>
         /// 画一行可能含 Emoji / 特殊符号的文案，缺字的码点自动改用 Segoe UI Emoji。
         ///
         /// 为什么设置窗口必须自带这一层：渲染器（Renderer）内部有逐码点的字体回退
@@ -246,6 +281,12 @@ namespace NotchPeninsula
         private static void DrawTextWithEmoji(SKCanvas canvas, string text, SKPaint paint, float maxWidth, float rightEdge, float baselineY, bool rightAlign = false)
         {
             if (string.IsNullOrEmpty(text)) return;
+
+            // 先摘掉零宽 / 不可见格式字符：这类码点在 YaHei 里没有字形、Segoe UI Emoji 里也没有，
+            //   逐段回退也救不回来，直接画成一个豆腐块（市场里就有插件描述夹了 U+200B 零宽空格）。
+            //   顺手清掉后，后面的测量、换行、右对齐算出来的宽度才和肉眼看到的一致。
+            text = StripInvisible(text);
+            if (text.Length == 0) return;
 
             var baseTypeface = paint.Typeface;
             var emoji = _hintEmojiTypeface;

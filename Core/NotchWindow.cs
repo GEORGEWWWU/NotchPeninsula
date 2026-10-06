@@ -328,7 +328,7 @@ namespace NotchPeninsula
             _dispatcher = Dispatcher.CurrentDispatcher;
             _media = new MediaController();
             _audioAnalyzer = new AudioAnalyzer();
-            _wndProcDelegate = WndProc;
+            _wndProcDelegate = WndProcSafe;
 
             var wc = new Win32.WNDCLASS
             {
@@ -415,6 +415,9 @@ namespace NotchPeninsula
             // 订阅剪贴板监听：窗口句柄就绪后注册 WM_CLIPBOARDUPDATE
             _clipboardMonitor.OnUrlDetected += OnClipboardUrlDetected;
             _clipboardMonitor.Attach(_hwnd);
+            // 媒体全局快捷键：同样等句柄就绪后注册（开关关闭时内部什么都不做）。
+            // 挂在岛主窗口而不是设置窗口上 —— 设置窗口关掉后热键要照常生效。
+            MediaHotkeys.Attach(_hwnd);
             // 每 500ms 读一次系统音量，发现不经过 SystemSettingsManager 的改动（音量键 / 系统 OSD / 其它软件）
             _audioWatchTimer = new Timer(500);
             _audioWatchTimer.Elapsed += OnAudioWatchTick;
@@ -422,7 +425,42 @@ namespace NotchPeninsula
         }
 
         /// <summary>渲染时钟（16ms）。具名方法：退出时能 -= 退订。</summary>
-        private void OnRenderTick(object? sender, System.Timers.ElapsedEventArgs e) => RenderLoop();
+        private void OnRenderTick(object? sender, System.Timers.ElapsedEventArgs e)
+        {
+            RenderLoop();
+            EnsureTopmostAlive();
+        }
+
+        // 置顶保活：WS_EX_TOPMOST 只是窗口的一个样式位，Windows 并不替我们看守 topmost 组内部的次序。
+        // 任何别的置顶窗口（任务栏组件、托盘菜单、其它悬浮工具）每被激活一次就排到本岛前面，
+        // 而本岛几乎从不激活（它刻意不抢焦点），于是永远轮不到自己往回排 ——
+        // 症状就是「置顶有时候失效」，重新拨一次设置里的置顶开关立刻恢复
+        // （那次 SetWindowPos 把它重新提到了组首）。这里按固定间隔补同样的调用，省掉手工那一步。
+
+        private const int TOPMOST_KEEPALIVE_MS = 2000;
+        private long _lastTopmostKeepAlive;
+
+        private void EnsureTopmostAlive()
+        {
+            if (!IsTopmostEnabled || _hwnd == IntPtr.Zero) return;
+
+            long now = Environment.TickCount64;
+            if (now - _lastTopmostKeepAlive < TOPMOST_KEEPALIVE_MS) return;
+            _lastTopmostKeepAlive = now;
+
+            // 用户正在操作本进程的其它窗口（设置窗口 / 插件窗口）时不动 Z 序：
+            // 那些窗口与岛矩形重叠，把岛提到最前会让点击落到岛身上，设置窗口就点不动了。
+            IntPtr foreground = Win32.GetForegroundWindow();
+            if (foreground != IntPtr.Zero && foreground != _hwnd)
+            {
+                _ = Win32.GetWindowThreadProcessId(foreground, out uint pid);
+                if (pid == (uint)Environment.ProcessId) return;
+            }
+
+            // SWP_NOACTIVATE 必带：补 Z 序不能顺手把焦点从用户正在用的窗口抢过来。
+            Win32.SetWindowPos(_hwnd, Win32.HWND_TOPMOST, 0, 0, 0, 0,
+                Win32.SWP_NOMOVE_NOSIZE | Win32.SWP_NOACTIVATE);
+        }
 
         /// <summary>系统音量看门狗（500ms）。具名方法：退出时能 -= 退订。</summary>
         private void OnAudioWatchTick(object? sender, System.Timers.ElapsedEventArgs e) => audio.RefreshFromSystem();
@@ -1647,6 +1685,24 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 窗口过程的异常兜底。WndProc 是最外层回调，没有调用方能接住异常 —— 一旦逃出去进程立刻退出，
+        /// 用户看到的就是「莫名闪退」。这里记日志后吞掉，坏的只是这一次交互。
+        /// 注册窗口类时挂的是这个方法，不是 WndProc 本身。
+        /// </summary>
+        private IntPtr WndProcSafe(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            try
+            {
+                return WndProc(hwnd, msg, wParam, lParam);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"窗口过程处理消息 0x{msg:X4} 时异常，已忽略", ex);
+                return IntPtr.Zero;
+            }
+        }
+
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {            switch (msg)
             {
@@ -1655,9 +1711,17 @@ namespace NotchPeninsula
                     if (IsClipboardEnabled) _clipboardMonitor.HandleClipboardUpdate();
                     return (IntPtr)0;
 
+                // 媒体全局快捷键：不管前台是谁都会投到这里，按注册 id 分派给媒体控制器。
+                // 吃下消息即可（DefWindowProc 对 WM_HOTKEY 没有额外处理）。
+                case Win32.WM_HOTKEY:
+                    MediaHotkeys.Handle(Win32.Low32(wParam));
+                    return (IntPtr)0;
+
                 case Win32.WM_DESTROY:
                     // 窗口销毁前反注册剪贴板监听，避免系统继续向已销毁窗口投递消息
                     _clipboardMonitor.Detach();
+                    // 全局热键同理：句柄一失效，系统里的注册就再也撤不掉了，会一直占着那几组键
+                    MediaHotkeys.Detach();
                     // 同理：OLE 那边还捏着一个指向本窗口的拖入目标，销毁前必须摘掉
                     RevokeIslandDropTarget();
                     break;
@@ -1683,8 +1747,8 @@ namespace NotchPeninsula
                         }
 
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
-                        int mx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int my = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int mx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int my = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         // 记录鼠标逻辑坐标，供插件组件的悬停判定使用
                         Renderer.UpdatePluginMouse(mx, my);
                         float hitTopY = 12f * _currentStyleProgress;
@@ -1790,8 +1854,8 @@ namespace NotchPeninsula
                     // 免得被下面媒体拖动分支的 return 漏掉。
                     if (Renderer.HasActiveDetailPage)
                     {
-                        int ux = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int uy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int ux = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int uy = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         Renderer.DispatchDetailPageMouseUp(ux, uy - 12f * _currentStyleProgress);
                     }
                     // 松手：解除状态锁并把落点提交给播放器（拖动期间攒下的所有改动只在这一刻提交一次）
@@ -1854,8 +1918,8 @@ namespace NotchPeninsula
                         // （直接交互模式下是悬停显示播放控件；展开交互模式下看跳转开关：
                         // 开着 → 右键展开、左键不做事；关掉 → 左键单击展开）；
                         // · 展开态：封面那一格双击 → 跳转。
-                        int dx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int dy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int dx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int dy = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
 
                         // 岛体「整块不可见」的两种形态（穿透睡眠态 / 完全隐藏态）：双击只当唤醒用，
                         // 与 WM_LBUTTONDOWN 里 HitWakeButton 的优先级保持一致，不在这里触发跳转。
@@ -1929,8 +1993,8 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDOWN:
                     {
-                        int cx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int cy = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int cx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int cy = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
 
                         // 完美对齐渲染中心点，精准拦截唤醒点击
@@ -2100,8 +2164,8 @@ namespace NotchPeninsula
                 case Win32.WM_RBUTTONDOWN:
                     if (_isHovered)
                     {
-                        int rx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                        int ry = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                        int rx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int ry = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         HandleIslandRightClick(rx, ry, 12f * _currentStyleProgress, fromDoubleClickTimeout: false);
                     }
                     break;
@@ -2114,8 +2178,8 @@ namespace NotchPeninsula
                         // DefWindowProc —— 与改动前完全一致，老插件与原生内容一个都不受影响。
                         if (_isHovered)
                         {
-                            int bx = (int)((short)(lParam.ToInt32() & 0xFFFF) / _dpiScale);
-                            int by = (int)((short)((lParam.ToInt32() >> 16) & 0xFFFF) / _dpiScale);
+                            int bx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                            int by = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                             float bTopY = 12f * _currentStyleProgress;
                             if (ConsumeRightDoubleClick(bx, by - bTopY)) return (IntPtr)0;
                             // 第一下已经当「右键单击」透传出去的目标（两档都开）在这里补一次双击 ——
@@ -2130,7 +2194,7 @@ namespace NotchPeninsula
         }
 
         // ---- 右键双击待定（插件注册接收双击时的「等第二下」）----
-        // 命中「注册接收双击」的组件 / 详情页时，第一下右键**不立即执行**默认行为（展开详情页 / 折叠面板），
+        // 命中「注册接收双击」的组件 / 详情页时，第一下右键不立即执行默认行为（展开详情页 / 折叠面板），
         // 而是先挂一个与系统双击判定窗口同源的截止时间：
         //   · 截止前收到 WM_RBUTTONDBLCLK → 撤销待定，把双击通知给插件，默认行为一次都不执行；
         //   · 截止后什么都没来 → 说明用户只想单击 → 重放一次原来的右键处理（fromDoubleClickTimeout = true，
@@ -2230,7 +2294,7 @@ namespace NotchPeninsula
         ///
         /// 优先级：详情页收起 → 插件组件广播 → 媒体面板展开 → 设置窗口。
         ///
-        /// <paramref name="fromDoubleClickTimeout"/> = true 表示这是「右键双击待定到期后的重放」：
+        /// fromDoubleClickTimeout = true 表示这是「右键双击待定到期后的重放」：
         /// 跳过所有待定判定，老实执行单击的默认行为，避免再挂一次待定（自己递归自己）。
         /// </summary>
         private void HandleIslandRightClick(int rx, int ry, float rtY, bool fromDoubleClickTimeout)

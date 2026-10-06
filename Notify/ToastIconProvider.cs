@@ -32,12 +32,20 @@ namespace NotchPeninsula
         // 缓存条目上限。单张 112×112 约 50KB，24 条 ≈ 1.2MB，可以忽略。
         private const int MAX_CACHE_ENTRIES = 24;
 
+        // 被淘汰的位图不当场 Dispose（可能正被某个还没消失的 ToastData 拿着绘制），
+        // 先在这里排队，队列超过这个数才释放最老的那张 —— 等到那一步时它早已不在任何
+        // Toast 的绘制路径上。与 MediaController.RetiredThumbKeep 是同一个取舍。
+        private const int PENDING_DISPOSE_KEEP = 8;
+
         private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(3) };
         private static readonly object _lock = new();
 
         // 值允许为 null：表示「这个描述解析失败」，避免同一条坏消息每次都重试一遍
         private static readonly Dictionary<string, SKBitmap?> _cache = new(StringComparer.Ordinal);
         private static readonly Queue<string> _cacheOrder = new();
+
+        // 已淘汰、等窗口过去再释放的位图（只在 _lock 内读写）
+        private static readonly Queue<SKBitmap> _pendingDispose = new();
 
         // 别名里文件名不规则的那几个；其余按 data/image/<别名>-icon|logo.<ext> 约定自动找
         // （"qq" 就是靠这条约定命中 qq-icon.png）
@@ -69,12 +77,19 @@ namespace NotchPeninsula
                 _cache[key] = bmp;
                 _cacheOrder.Enqueue(key);
 
-                // 淘汰时【不 Dispose】：这张位图可能正被某个还没消失的 ToastData 拿着绘制，
-                // 提前释放会变成 use-after-free。从字典里摘掉即可，剩下交给 GC 的终结器回收。
+                // 淘汰时不当场 Dispose：这张位图可能正被某个还没消失的 ToastData 拿着绘制，
+                // 提前释放会变成 use-after-free。但也不能就这么丢给 GC 的终结器 ——
+                // 那要等一整轮 GC，被淘汰的图会一直占着原生内存，「淘汰」等于白做。
+                // 折中：挂进待回收队列，排到第 PENDING_DISPOSE_KEEP + 1 张时才释放最老的那张。
                 while (_cacheOrder.Count > MAX_CACHE_ENTRIES)
                 {
                     string oldest = _cacheOrder.Dequeue();
-                    _cache.Remove(oldest);
+                    if (_cache.Remove(oldest, out var evicted) && evicted != null)
+                    {
+                        _pendingDispose.Enqueue(evicted);
+                        while (_pendingDispose.Count > PENDING_DISPOSE_KEEP)
+                            _pendingDispose.Dequeue().Dispose();
+                    }
                 }
             }
 

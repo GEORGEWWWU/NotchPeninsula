@@ -58,7 +58,7 @@ namespace NotchPeninsula
         /// 
         /// 唯一的真源。这三处以前各自抄了一遍「ThemeMode==1 则白、==2 则读注册表」的逻辑，
         /// 等于每次渲染显示设置页要踩 8 次注册表（每帧），滚轮翻页时就是每秒几十次。
-        /// 现在统一收口到这里，「跟随系统」读 <see cref="Renderer.SystemIsLightTheme"/> 缓存。
+        /// 现在统一收口到这里，「跟随系统」读 Renderer.SystemIsLightTheme 缓存。
         /// 
         /// 注意：它看的是 ThemeMode（用户在「主题设置」页选的岛体主题），
         /// 而不是 _isLightAppearance（系统「应用模式」，管的是设置窗口自身的底色）——
@@ -75,6 +75,17 @@ namespace NotchPeninsula
         private static readonly SKPaint _uiTextPaint = new SKPaint { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 
         private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+
+        /// <summary>
+        /// 插件市场顶部两行（分类 / 搜索框 / 刷新 / 只看已安装 / 计数）专用画笔。
+        /// 
+        /// 为什么要单开一支：这两行里原本混用了 _uiTextPaint(13.5) 与 _subTextPaint(12)，
+        /// 同一行内字号不一致、视觉上「大小不一」。改 _uiTextPaint / _subTextPaint 的字号会波及
+        /// 全窗口其它页面，所以市场顶栏收口到这支 13px 画笔上。
+        /// 
+        /// ⚠️ 截断 / 宽度测量必须与绘制用**同一支画笔**，否则算出的可用宽度与实际字形对不上。
+        /// </summary>
+        private static readonly SKPaint _marketTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 
         private static readonly SKPaint _titleTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 12.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 
