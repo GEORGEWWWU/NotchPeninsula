@@ -847,6 +847,17 @@ namespace NotchPeninsula
 
         private bool _displayHoverTimerOn = false;
 
+        // 个性化中心那些蓝色提示文本（「系统自动调整，无需设置」「刘海模式下生效」）的悬停淡入：
+        // 默认完全隐藏，只有指针压在该行上才显示，进出都走同一个 16ms 动画表（约 0.2s 到位）。
+        // 与「显示内容」列表的行底动画共用一张表：_hintRow = 当前悬停的提示行（-1 = 没有）。
+        private readonly float[] _hintAnim = new float[8];
+
+        private int _hintRow = -1;
+
+        /// <summary>某一行的蓝色提示当前透明度（0 = 不画）。越界返回 0。</summary>
+        private float GetHintAlpha(int row)
+            => row >= 0 && row < _hintAnim.Length ? _hintAnim[row] : 0f;
+
         /// <summary>
         /// 「显示内容」列表的唯一布局真源：可视行数 / 最大首行。
         /// 绘制（RenderTabDisplay）、悬停命中（OnMouseMove）、滚轮

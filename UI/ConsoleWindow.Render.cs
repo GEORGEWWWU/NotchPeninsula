@@ -200,6 +200,17 @@ namespace NotchPeninsula
                 animating = true;
             }
 
+            // 个性化中心的蓝色提示：同一张表、同一套缓动（约 0.2s 淡入 / 淡出）
+            for (int i = 0; i < _hintAnim.Length; i++)
+            {
+                float target = i == _hintRow ? 1f : 0f;
+                float cur = _hintAnim[i];
+                if (Math.Abs(target - cur) <= 0.01f) { _hintAnim[i] = target; continue; }
+
+                _hintAnim[i] = cur + (target - cur) * DISPLAY_HOVER_EASE;
+                animating = true;
+            }
+
             // 无条件重绘：最后那一拍会把进度吸附到目标值，这一帧必须画出来，
             // 否则会停在 0.99 那种「差一点点」的状态上。
             Render();
@@ -1113,24 +1124,31 @@ namespace NotchPeninsula
 
                     // 底部圆角只在「经典刘海」样式下参与圆角插值：切到灵动岛样式后该项会被
                     //    islandRadius 完全覆盖（见 Renderer.Draw 的 rBottom 计算），调了也看不出来，
-                    //    所以就地标明生效条件。
+                    //    所以就地标明生效条件 —— 与下面那条「系统自动调整」一样，默认隐藏、悬停该行才淡入。
                     if (index == 7)
                     {
-                        // 与左侧子标签（「底部圆角」等）同字号、改用蓝色提示
-                        float labelW = _subTextPaint.MeasureText(subLabels[i]);
-                        _subTextPaint.Color = new SKColor(0, 140, 240);
-                        canvas.DrawText("刘海模式下生效", CONTENT_TEXT_X + labelW + 8, cardBtnY + 17, _subTextPaint);
-                        _subTextPaint.Color = Neutral(170); // 还原，防止污染后续标签
+                        float hintA = GetHintAlpha(index);
+                        if (hintA > 0.01f)
+                        {
+                            float labelW = _subTextPaint.MeasureText(subLabels[i]);
+                            _subTextPaint.Color = new SKColor(0, 140, 240, (byte)(255 * hintA));
+                            canvas.DrawText("刘海模式下生效", CONTENT_TEXT_X + labelW + 8, cardBtnY + 17, _subTextPaint);
+                            _subTextPaint.Color = Neutral(170);
+                        }
                     }
 
                     // index 0 / 2 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
                     if (index == 0 || index == 2 || index == 4)
                     {
-                        const string autoHint = "系统自动调整，无需设置";
-                        float hintW = _subTextPaint.MeasureText(autoHint);
-                        _subTextPaint.Color = new SKColor(0, 140, 240); // 蓝色提示（与左侧标签同字号）
-                        canvas.DrawText(autoHint, WIDTH - CONTENT_TEXT_RM - hintW, cardBtnY + 17, _subTextPaint);
-                        _subTextPaint.Color = Neutral(170); // 还原，防止污染后续标签
+                        float hintA = GetHintAlpha(index);
+                        if (hintA > 0.01f)
+                        {
+                            const string autoHint = "系统自动调整，无需设置";
+                            float hintW = _subTextPaint.MeasureText(autoHint);
+                            _subTextPaint.Color = new SKColor(0, 140, 240, (byte)(255 * hintA));
+                            canvas.DrawText(autoHint, WIDTH - CONTENT_TEXT_RM - hintW, cardBtnY + 17, _subTextPaint);
+                            _subTextPaint.Color = Neutral(170);
+                        }
                         continue;
                     }
 
