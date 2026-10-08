@@ -151,11 +151,13 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 当前是否处于待机模式。进入 / 退出由「双击空白」（StandbyToggleByDoubleClick 打开时）
-        /// 或设置页手动切换驱动；这是运行时状态，不持久化 —— 重启后回到默认显示。
+        /// 或设置页手动切换驱动，并**持久化**（注册表 StandbyActive）—— 重启后保持用户上次选的模式。
         ///
         /// 写入会触发 StandbyActiveChanged：设置窗口打开时并不参与这层交互
-        /// （双击发生在岛体上），它靠这个事件把「显示模式」卡片的高亮刷过来。
+        /// （双击发生在岛体上），它靠这个事件把「显示模式」的高亮刷过来。
         /// 直接改字段（绕过属性）就不会通知 UI，别这么写。
+        /// 持久化不在这里做（Renderer 不碰注册表）：两个改动点各自调 Program.SaveSetting，
+        /// 见 ConsoleWindow.Click（设置页点选）与 NotchWindow 的 WM_LBUTTONDBLCLK（岛上双击）。
         /// </summary>
         public static bool StandbyActive
         {

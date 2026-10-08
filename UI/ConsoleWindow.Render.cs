@@ -165,47 +165,6 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(new SKRect(x, thumbY, x + 3, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
         }
 
-        // 勾选框选项
-        private void DrawCheckItem(SKCanvas canvas, float yOffset, string label, bool isChecked, bool hovered, bool disabled)
-        {
-            float boxX = CONTENT_TEXT_X;
-            float boxY = yOffset;
-            float boxSize = 16f;
-            var boxRect = new SKRect(boxX, boxY, boxX + boxSize, boxY + boxSize);
-
-            if (disabled)
-            {
-                _dynamicStrokePaint.Color = Neutral(80);
-                _dynamicFillPaint.Color = Neutral(60);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = isChecked ? new SKColor(0, 120, 212) : (hovered ? Neutral(150) : Neutral(100));
-                _dynamicFillPaint.Color = isChecked ? new SKColor(0, 120, 212) : SKColors.Transparent;
-            }
-
-            canvas.DrawRoundRect(boxRect, 3, 3, _dynamicFillPaint);
-            canvas.DrawRoundRect(boxRect, 3, 3, _dynamicStrokePaint);
-
-            if (isChecked)
-            {
-                // 对勾压在蓝色勾选框上，深浅两套外观都必须保持白色。
-                // 用完立刻恢复基准色：_iconPaint 是整帧复用的，而标题栏的最小化 / 关闭图标
-                //    在下一帧的 Render 开头才画 —— 不恢复的话浅色外观下那两个图标会变白看不见。
-                _iconPaint.Color = SKColors.White;
-                canvas.DrawLine(boxX + 3, boxY + 8, boxX + 6, boxY + 11, _iconPaint);
-                canvas.DrawLine(boxX + 6, boxY + 11, boxX + 13, boxY + 4, _iconPaint);
-                _iconPaint.Color = _fgColor;
-            }
-
-            if (disabled)
-                _uiTextPaint.Color = Neutral(100);
-            else
-                _uiTextPaint.Color = _fgColor;
-            canvas.DrawText(label, boxX + 24, boxY + 13, _uiTextPaint);
-            _uiTextPaint.Color = _fgColor;
-        }
-
         // ---- 「显示内容」列表的行悬停动画 ----
         // 悬停是离散状态（指针在这一行 / 不在），底色硬切会闪；这里给每行一个 0→1 的进度，
         // 由窗口定时器逐拍逼近目标值，渲染时按进度算底色透明度 —— 进出都是淡入淡出。
@@ -252,64 +211,101 @@ namespace NotchPeninsula
             => row >= 0 && row < _displayHoverAnim.Length ? _displayHoverAnim[row] : 0f;
 
         /// <summary>
-        /// 「显示内容」列表行尾的上 / 下移动箭头（原插件中心那对左右箭头的同款细描边三角，
-        /// 只是方向朝上下）。
-        ///  是 16px 点击槽的左边界（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
-        ///  是它所在行的垂直中心； 为 false 时画朝下的三角。
-        ///
-        /// 这是每行调两次的热路径（一屏最多 8 行 = 16 次/帧，还叠着 16ms 悬停动画）。
-        /// 原实现每次都 `new SKPaint` + `new SKPath` —— 每帧 32 个 Skia 原生对象（见项目约定：
-        /// SKPaint/SKPath 都是 SKObject，构建即注册，必须 Dispose 才注销）。
-        /// 现在改成「进程级复用的两支画笔 + 按中心坐标原地改点的静态三角路径」：
-        /// 唯一会变的是颜色，而颜色只是改属性，零分配。
-        ///
-        /// 两种状态各一支画笔（静止 / 悬停），`enabled` 走第三支置灰色 ——
-        /// 三支都是 static readonly，与 ConsoleWindow.Paint.cs 里其它共享画笔同一套所有权约定。
+        /// 条目右端「把这一项往上 / 往下挪」的箭头：一根 11px 短竖杆 + 顶端两笔斜头（圆头描边），
+        /// 就是常见的 SVG ↑ / ↓ 图标那种样子 —— 不用实心三角（太重），也不用 ∧ ∨ 字符
+        ///（字符在不同字体下的墨迹高度与基线都不一样，纵向根本对不齐）。
+        /// slotX 是 18px 点击槽左边界（渲染与命中同源，见 DISPLAY_MOVE_UP_X / DOWN_X），
+        /// cy 是条目垂直中心；up=false 时画朝下的。三支画笔是进程级复用的静态对象，零分配。
         /// </summary>
-        private void DrawSortArrow(SKCanvas canvas, float slotX, float centerY, bool hovered, bool enabled, bool up)
+        private void DrawMoveArrow(SKCanvas canvas, float slotX, float cy, bool hovered, bool enabled, bool up)
         {
             var stroke = !enabled ? _sortArrowDisabledStroke
                 : hovered ? _sortArrowHoverStroke
                 : _sortArrowStroke;
 
-            // 尺寸是原左右箭头（半宽 3 / 半高 5）转 90° 后的结果：两个半轴对调 → 10×6 的扁三角。
-            //    照搬 6×10 直接改方向会得到一个又细又尖的竖三角，和原来那对完全不搭（踩过）。
-            //    顶点值不在这里算，见 CreateSortTriangle（路径按「中心在原点」预置）。
-            float cx = slotX + SORT_TRI_W / 2f;   // 水平居中于 16px 槽
+            float cx = slotX + SORT_TRI_W / 2f;
+            if (hovered && enabled)
+            {
+                // 悬停给一块小圆角底：让它读起来是「一颗按钮」，而不是飘在行尾的两个符号
+                _dynamicFillPaint.Color = Overlay(26);
+                canvas.DrawRoundRect(new SKRect(slotX, cy - 11f, slotX + SORT_TRI_W, cy + 11f), 5, 5, _dynamicFillPaint);
+            }
 
-            // 路径只存「以 (0,0) 为中心的三角」，实际绘制时用平移矩阵搬过去 ——
-            // 这样同一条静态路径能服务所有行，不必按 centerY 重建。
-            var path = up ? SortTriangleUpPath : SortTriangleDownPath;
-            canvas.Save();
-            canvas.Translate(cx, centerY);
-            canvas.DrawPath(path, stroke);
-            canvas.Restore();
+            float dir = up ? -1f : 1f;
+            float tipY = cy + dir * 5.5f;
+            float baseY = cy - dir * 5.5f;
+            canvas.DrawLine(cx, baseY, cx, tipY, stroke);
+            canvas.DrawLine(cx, tipY, cx - 4f, tipY - dir * 4.5f, stroke);
+            canvas.DrawLine(cx, tipY, cx + 4f, tipY - dir * 4.5f, stroke);
         }
 
-        // 上下三角的静态路径：顶点按「中心在原点」预置（半宽 5、半高 3）。
-        // 静态只读 —— 与 WindowClipPath 同级的进程级复用，不 Dispose（进程存活期都在用）。
-        private static readonly SKPath SortTriangleUpPath = CreateSortTriangle(up: true);
-
-        private static readonly SKPath SortTriangleDownPath = CreateSortTriangle(up: false);
-
-        private static SKPath CreateSortTriangle(bool up)
+        /// <summary>
+        /// 「显示内容」列表里的单个条目：本身就是一小块圆角卡片（不画分割线，靠 item 之间 4px 缝分隔），
+        /// 里面是 左侧复选框 + 名称（内置模块跟一枚「内置」胶囊）+ 右端一对上下箭头。
+        /// hoverP = 该行悬停动画进度（0~1），用来做底色淡入淡出；整块 item 都可点 = 勾选 / 取消勾选。
+        /// 所有 x 都从 DISPLAY_ITEM_L / DISPLAY_ITEM_R / DISPLAY_MOVE_* 推导，命中侧（WndProc）同源。
+        /// </summary>
+        private void DrawDisplayItem(SKCanvas canvas, float y, string name, bool isBuiltin, bool isShown, float hoverP,
+            bool hoverUp, bool hoverDown, bool canUp, bool canDown)
         {
-            const float halfW = 5f, halfH = 3f;
-            var path = new SKPath();
-            if (up)
+            var itemRect = new SKRect(DISPLAY_ITEM_L, y, DISPLAY_ITEM_R, y + DISPLAY_ITEM_H);
+            // 常态就有一层极淡的底（写清「这是一块独立条目」），悬停由动画进度再叠一层，不硬切
+            _dynamicFillPaint.Color = Overlay((byte)(8 + 20 * hoverP));
+            canvas.DrawRoundRect(itemRect, 6, 6, _dynamicFillPaint);
+
+            // 复选框 16×16：勾选 = 蓝底白勾，未勾 = 空心描边
+            const float boxS = 16f;
+            float boxX = DISPLAY_ITEM_L + 10f;
+            float boxY = y + (DISPLAY_ITEM_H - boxS) / 2f;
+            var box = new SKRect(boxX, boxY, boxX + boxS, boxY + boxS);
+            if (isShown)
             {
-                path.MoveTo(-halfW, halfH);
-                path.LineTo(0, -halfH);
-                path.LineTo(halfW, halfH);
+                _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                canvas.DrawRoundRect(box, 4, 4, _dynamicFillPaint);
+                canvas.DrawLine(boxX + 4f, boxY + 8.4f, boxX + 6.8f, boxY + 11.2f, _displayTickPaint);
+                canvas.DrawLine(boxX + 6.8f, boxY + 11.2f, boxX + 12f, boxY + 5f, _displayTickPaint);
             }
             else
             {
-                path.MoveTo(-halfW, -halfH);
-                path.LineTo(0, halfH);
-                path.LineTo(halfW, -halfH);
+                _dynamicStrokePaint.Color = hoverP > 0.5f ? Neutral(170) : Neutral(110);
+                canvas.DrawRoundRect(box, 4, 4, _dynamicStrokePaint);
             }
-            return path;
+
+            // 名称：没勾上的条目整行压暗（它当前不上岛），但保持可读
+            const string tag = "内置";
+            float tagW = isBuiltin ? _subTextPaint.MeasureText(tag) + 14f : 0f;
+            float textX = box.Right + 10f;
+            string shownName = TruncateText(name, _uiTextPaint, DISPLAY_MOVE_UP_X - 12f - textX - tagW);
+            _uiTextPaint.Color = isShown ? _fgColor : Neutral(150);
+            canvas.DrawText(shownName, textX, y + 20.5f, _uiTextPaint);
+            _uiTextPaint.Color = _fgColor;
+
+            // 「内置」胶囊：内置模块与第三方插件一眼分得开，比裸文字更整齐
+            if (isBuiltin)
+            {
+                float tagX = textX + _uiTextPaint.MeasureText(shownName) + 8f;
+                _dynamicFillPaint.Color = new SKColor(0, 120, 212, 40);
+                canvas.DrawRoundRect(new SKRect(tagX, y + 7f, tagX + tagW, y + 23f), 8, 8, _dynamicFillPaint);
+                _subTextPaint.Color = new SKColor(0, 140, 240);
+                canvas.DrawText(tag, tagX + 7f, y + 19f, _subTextPaint);
+                _subTextPaint.Color = Neutral(170);
+            }
+
+            float cy = y + DISPLAY_ITEM_H / 2f;
+            DrawMoveArrow(canvas, DISPLAY_MOVE_UP_X, cy, hoverUp, canUp, true);
+            DrawMoveArrow(canvas, DISPLAY_MOVE_DOWN_X, cy, hoverDown, canDown, false);
         }
+
+        // 条目复选框里的白勾：永远白色（压在蓝底上），不参与明暗重绑 —— 与 _iconPaint 的用法同理。
+        private static readonly SKPaint _displayTickPaint = new()
+        {
+            Color = SKColors.White,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.7f,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round,
+            IsAntialias = true
+        };
 
         // 三支箭头描边（静止 / 悬停 / 置灰）。颜色由调用方按状态挑，画完不用还原 ——
         // 它们只在这里被画，且每支的颜色是固定的，不存在「临时改色忘了复位」的风险
@@ -569,7 +565,7 @@ namespace NotchPeninsula
                 if (index == 0) // 调整经典刘海的矢量绘图比例，使其视觉高度和灵动岛保持一致
                 {
                     // using：SKPath 持有 Skia 原生对象，本方法每次渲染显示设置页都会调用，
-                    // 漏掉 it 就是"每次重绘泄漏一个原生路径"（与下方 DrawSortArrow 的写法保持一致）。
+                    // 漏掉 it 就是"每次重绘泄漏一个原生路径"。
                     using var path = new SKPath();
                     path.MoveTo(cx - 35, cy - 10);
                     path.QuadTo(cx - 25, cy - 10, cx - 25, cy - 5);
@@ -616,7 +612,7 @@ namespace NotchPeninsula
 
             // ── 显示模式（单行分段器）：待机 / 普通 ──
             // 高亮的是当前真实状态：点「待机模式」岛上立刻收拢、点「普通模式」立刻展开
-            //（Renderer.StandbyActive，运行时状态、不写注册表）。
+            //（Renderer.StandbyActive，写注册表 StandbyActive，重启后保持）。
             float modeRowY = TITLE_BAR_HEIGHT + MODE_ROW_Y + page;
             canvas.DrawText("显示模式", CONTENT_TEXT_X, modeRowY + ROW_LABEL_DY, _uiTextPaint);
             DrawSegmented(canvas, MODE_SEG_X, modeRowY + (ROW_H - SEG_H) / 2f, MODE_SEG_W, SEG_H,
@@ -653,12 +649,7 @@ namespace NotchPeninsula
             // 条目变少（插件被移除）时把滚动位置钳回可滚范围，避免停在一片空白上
             _displayScroll = Math.Clamp(_displayScroll, 0, maxFirstRow);
             if (displayItems.Count == 0)
-                canvas.DrawText("暂无可显示的内容", CONTENT_TEXT_X, contentCardY + DISPLAY_FIRST_ROW_Y + 18, _subTextPaint);
-
-            // 「（内置）」标记：副标题字号 + 强调蓝，紧跟在内置模块名之后
-            const string builtinTag = "（内置）";
-            var builtinTagColor = new SKColor(0, 140, 240);
-            float builtinTagW = _subTextPaint.MeasureText(builtinTag);
+                canvas.DrawText("暂无可显示的内容", DISPLAY_ITEM_L + 10f, contentCardY + DISPLAY_FIRST_ROW_Y + 20, _subTextPaint);
 
             // slot = 可视槽位（0 = 当前首行），i = 绝对条目下标
             for (int slot = 0; slot < visibleRows; slot++)
@@ -667,35 +658,11 @@ namespace NotchPeninsula
                 var item = displayItems[i];
                 float rowY = contentCardY + DISPLAY_FIRST_ROW_Y + slot * DISPLAY_ROW_H;
 
-                // 悬停底色：进度由定时器逐拍淡入淡出（0 = 完全不画），指针压在整行或任一箭头上都算
-                float hoverP = GetDisplayHoverProgress(slot);
-                if (hoverP > 0.01f)
-                {
-                    _dynamicFillPaint.Color = Overlay((byte)(16 * hoverP));
-                    canvas.DrawRoundRect(new SKRect(210, rowY - 2, WIDTH - 30, rowY + DISPLAY_ROW_H - 4), 5, 5, _dynamicFillPaint);
-                }
-
-                if (slot > 0) canvas.DrawLine(CONTENT_TEXT_X, rowY - 5, WIDTH - CONTENT_TEXT_RM, rowY - 5, _separatorPaint);
-
-                // 复选框 + 名称（点击整行任意处即可勾选 / 取消）
-                // 名称按「复选框文字起点 → ∧ 槽之前的空隙」截断，内置模块还要再让出「（内置）」标记的宽度
-                float nameMax = DISPLAY_MOVE_UP_X - 16 - (CONTENT_TEXT_X + 24) - (item.IsBuiltin ? builtinTagW + 4f : 0f);
-                string shownName = TruncateText(item.Name, _uiTextPaint, nameMax);
-                DrawCheckItem(canvas, rowY + 6, shownName, item.IsShown, _hoveredDisplayRow == i, false);
-
-                // 内置标记：紧跟名字右侧，用蓝色与第三方插件区分开
-                if (item.IsBuiltin)
-                {
-                    _subTextPaint.Color = builtinTagColor;
-                    canvas.DrawText(builtinTag, CONTENT_TEXT_X + 24 + _uiTextPaint.MeasureText(shownName) + 2, rowY + 19, _subTextPaint);
-                    _subTextPaint.Color = Neutral(170);
-                }
-
-                // 上下移动：rowY + 17 是行内垂直中心（行高 34）
-                DrawSortArrow(canvas, DISPLAY_MOVE_UP_X, rowY + 17, _hoveredDisplayMoveUp == i,
-                    PluginManager.Instance.CanMoveDisplay(item.Key, -1), true);
-                DrawSortArrow(canvas, DISPLAY_MOVE_DOWN_X, rowY + 17, _hoveredDisplayMoveDown == i,
-                    PluginManager.Instance.CanMoveDisplay(item.Key, 1), false);
+                DrawDisplayItem(canvas, rowY, item.Name, item.IsBuiltin, item.IsShown,
+                    GetDisplayHoverProgress(slot),
+                    _hoveredDisplayMoveUp == i, _hoveredDisplayMoveDown == i,
+                    PluginManager.Instance.CanMoveDisplay(item.Key, -1),
+                    PluginManager.Instance.CanMoveDisplay(item.Key, 1));
             }
 
             // 超出可视区时在卡片右侧画一条滚动条指示（与下拉浮层同款），避免用户以为「列表就这么长」。

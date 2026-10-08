@@ -115,7 +115,7 @@ namespace NotchPeninsula
             _separatorPaint.Color = Overlay(20);
             _hoverMinPaint.Color = Overlay(20);
 
-            // 「显示内容」列表的排序箭头（三支静态画笔，见 Render.cs 的 DrawSortArrow）。
+            // 「显示内容」列表条目右端的上下箭头（三支静态画笔，见 Render.cs 的 DrawMoveArrow）。
             // 这三支的颜色必须在这里重绑：它们在字段初始化时写的是深色外观下的值
             // （210 灰 / 白 / 130 灰），浅色外观下会变成「浅灰画在浅底上」几乎看不见。
             // 写成 Neutral() 而不是硬编码，才能跟着 _isLightAppearance 一起翻面。

@@ -58,12 +58,13 @@ namespace NotchPeninsula
             else if (_selectedTab == 1 && _hoveredDisplayModeIndex != -1)
             {
                 // 显示模式：点「待机模式」立刻收拢、点「普通模式」立刻展开。
-                // 这是运行时状态（不写注册表）：待机是否持续由用户当时的选择决定，不跨启动保留。
+                // 持久化（StandbyActive）：用户在设置里选的模式要能跨重启保留，与显示内容场景一个口径。
                 // 岛宽的收拢 / 展开交给既有的宽度弹簧（_targetWidth → _currentWidth）平滑过渡。
                 bool wantStandby = _hoveredDisplayModeIndex == 0;
                 if (Renderer.StandbyActive != wantStandby)
                 {
                     Renderer.StandbyActive = wantStandby;
+                    Program.SaveSetting("StandbyActive", wantStandby ? 1 : 0);
                     Render();
                 }
             }

@@ -80,12 +80,15 @@ namespace NotchPeninsula
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
         // 显示设置页「显示内容」列表（渲染与鼠标命中必须使用同一组坐标）
-        //    每行 = 复选框（勾选显示 / 隐藏）+ 名称 + ∧ ∨（调整在岛上的先后次序）
-        //    行高与首行偏移是一对渲染/命中同源的常量，改一个必须两个一起改。
+        //    每个条目是一块独立的 item（左侧复选框 + 名称（内置的跟一枚胶囊）+ 右侧上下箭头），
+        //    item 之间只留缝、不画分割线；item 本体高 30，行距 DISPLAY_ROW_H = 34（= 30 + 缝 4）。
+        //    item 左右缘、箭头槽位、行高与首行偏移全是渲染/命中同源常量，改一个必须几处一起改。
 
         private const float DISPLAY_ROW_H = 34f;
 
-        private const float DISPLAY_FIRST_ROW_Y = 22f;    // 首行顶部相对卡片顶部的偏移（卡片已无标题行）
+        private const float DISPLAY_ITEM_H = 30f;
+
+        private const float DISPLAY_FIRST_ROW_Y = 13f;    // 列表卡片顶部到首件 item 的距离（卡片无标题行）
 
         /// <summary>
         /// 「显示内容」列表最多显示几行 —— 列表高度、可视行数、可滚范围的唯一真源。
@@ -95,14 +98,24 @@ namespace NotchPeninsula
         /// </summary>
         private const int DISPLAY_MAX_ROWS = 8;
 
-        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源，紧随双击切换那一行）。</summary>
-        private const float DISPLAY_CARD_Y = TOGGLE_ROW_Y + 48f;
+        /// <summary>
+        /// 「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源）。
+        /// 与上面「双击空白切换」那一行留 64px：那行是个开关、下面是张列表卡片，
+        /// 贴太近会被读成同一组（用户要求拉开）。
+        /// </summary>
+        private const float DISPLAY_CARD_Y = TOGGLE_ROW_Y + 64f;
 
         /// <summary>
         /// 「显示内容」卡片高度：由 DISPLAY_MAX_ROWS 反推，正好放下约定的行数，底部不留空。
         /// 固定高度（不随条目数变），条目更多时由列表自身滚动查看。
         /// </summary>
         private const float DISPLAY_CARD_H = DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H;
+
+        /// <summary>
+        /// item 的左右缘（卡片左右各留 6 / 24：右边多留的那一段是给列表那条滚动条让位的，
+        /// 滚动条画在 WIDTH-26 上，item 右缘到 564 才不会压在滑块底下）。
+        /// </summary>
+        private const float DISPLAY_ITEM_L = CONTENT_L + 6f;
 
         /// <summary>滚轮一格（120）滚动几行。</summary>
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
@@ -199,11 +212,13 @@ namespace NotchPeninsula
         /// <summary>取符号（-1 / 0 / 1）。累计量只是用来比方向，用不着真值。</summary>
         private static int Sign(int v) => v > 0 ? 1 : v < 0 ? -1 : 0;
 
-        private const float DISPLAY_MOVE_UP_X = 486f;     // ∧ 槽左边界（槽宽 = SORT_TRI_W）
+        private const float DISPLAY_ITEM_R = WIDTH - CONTENT_RM - 24f;
 
-        private const float DISPLAY_MOVE_DOWN_X = 504f;   // ∨ 槽左边界（与 ∧ 只隔 2px，视觉上是同一组控件）
+        private const float DISPLAY_MOVE_UP_X = DISPLAY_ITEM_R - 46f;    // ↑ 槽左边界（槽宽 = SORT_TRI_W）
 
-        private const float SORT_TRI_W = 16f;             // 排序三角形的点击槽宽
+        private const float DISPLAY_MOVE_DOWN_X = DISPLAY_ITEM_R - 22f;  // ↓ 槽左边界（与 ↑ 只隔 6px，视觉上是同一组控件）
+
+        private const float SORT_TRI_W = 18f;             // 上下箭头槽的点击宽度（箭头本身只占槽中心 11×8）
 
         // 行悬停底色动画：鼠标压到某一行时，行底由浅入深淡入，移开再淡出（与托盘菜单同款 16ms 节拍）。
         //    —— 只是把「指针在哪一行」这个离散状态补上过渡，避免硬切造成的闪烁感。

@@ -294,7 +294,7 @@ namespace NotchPeninsula
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
                 float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
-                if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= displayRowTop && y <= displayRowBottom)
+                if (x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
                     if (rowIdx < _displayScroll + displayVisibleRows)

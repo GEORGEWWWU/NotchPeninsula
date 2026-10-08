@@ -2097,6 +2097,8 @@ namespace NotchPeninsula
                             if (hitsToggleZone)
                             {
                                 Renderer.StandbyActive = !Renderer.StandbyActive;
+                                // 与设置页里点「显示模式」同一个口径：待机 / 普通要跨重启保留
+                                Program.SaveSetting("StandbyActive", Renderer.StandbyActive ? 1 : 0);
                                 Logger.Info($"[待机模式] {(Renderer.StandbyActive ? "进入" : "退出")}"
                                     + $"（双击 {dx},{dy}，场景={Renderer.StandbyScene}）");
                                 return (IntPtr)0;
