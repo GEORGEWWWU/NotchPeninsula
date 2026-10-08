@@ -48,3 +48,13 @@ publish/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# ---------- 打包 / 发布产物（本地留档用，不上传）----------
+# 根目录的 *.zip 只有两种来源：build.ps1 打出来的发布包
+# （NotchPeninsula_v*_win-x64.zip）与插件打包结果（*_plugin.zip）。
+# 都不是源码，两个发布包加起来就 160 MB，别进库。
+*.zip
+
+# build.ps1 之外的本地发布目录：手工拷出去实测用的整套产物
+# （exe + data + plugins，约 200 MB）。要发布走 build.ps1 的 publish\。
+share/
