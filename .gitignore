@@ -19,6 +19,7 @@ publish/
 *.pssc
 
 # ---------- 本地工具数据（改代码时生成，不上传）----------
+.tools/
 .workbuddy
 .workbuddy/
 .workbuddy-ai
