@@ -240,43 +240,48 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 「显示内容」列表里的单个条目：本身就是一小块圆角卡片（不画分割线，靠 item 之间 4px 缝分隔），
-        /// 里面是 左侧复选框 + 名称（内置模块跟一枚「内置」胶囊）+ 右端一对上下箭头。
-        /// hoverP = 该行悬停动画进度（0~1），用来做底色淡入淡出；整块 item 都可点 = 勾选 / 取消勾选。
+        /// 「显示内容」列表里的单个条目：左侧复选框 + 名称（内置模块跟一枚「内置」胶囊）+ 右端一对上下箭头。
+        /// **常态不画背景**（只有悬停时按 hoverP 淡入一层底）—— 列表外面已经没有容器，
+        /// 条目不 hover 时完全融进页面，靠 4px 行距分隔，不画分割线。
+        /// enabled=false（待机模式）时整条退成灰色、箭头走禁用画笔。
         /// 所有 x 都从 DISPLAY_ITEM_L / DISPLAY_ITEM_R / DISPLAY_MOVE_* 推导，命中侧（WndProc）同源。
         /// </summary>
         private void DrawDisplayItem(SKCanvas canvas, float y, string name, bool isBuiltin, bool isShown, float hoverP,
-            bool hoverUp, bool hoverDown, bool canUp, bool canDown)
+            bool enabled, bool hoverUp, bool hoverDown, bool canUp, bool canDown)
         {
-            var itemRect = new SKRect(DISPLAY_ITEM_L, y, DISPLAY_ITEM_R, y + DISPLAY_ITEM_H);
-            // 常态就有一层极淡的底（写清「这是一块独立条目」），悬停由动画进度再叠一层，不硬切
-            _dynamicFillPaint.Color = Overlay((byte)(8 + 20 * hoverP));
-            canvas.DrawRoundRect(itemRect, 6, 6, _dynamicFillPaint);
+            // 底色只在悬停时才有（由动画进度淡入淡出）：常态让 item 与整页融为一体，不 hover 就没有背景。
+            // 整栏置灰（待机模式）时 hoverP 恒为 0，也就永远不画底。
+            if (enabled && hoverP > 0.01f)
+            {
+                _dynamicFillPaint.Color = Overlay((byte)(28 * hoverP));
+                canvas.DrawRoundRect(new SKRect(DISPLAY_ITEM_L, y, DISPLAY_ITEM_R, y + DISPLAY_ITEM_H), 6, 6, _dynamicFillPaint);
+            }
 
-            // 复选框 16×16：勾选 = 蓝底白勾，未勾 = 空心描边
+            // 复选框 16×16：勾选 = 蓝底白勾，未勾 = 空心描边（置灰时整套退成灰）
             const float boxS = 16f;
             float boxX = DISPLAY_ITEM_L + 10f;
             float boxY = y + (DISPLAY_ITEM_H - boxS) / 2f;
             var box = new SKRect(boxX, boxY, boxX + boxS, boxY + boxS);
             if (isShown)
             {
-                _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                _dynamicFillPaint.Color = enabled ? new SKColor(0, 120, 212) : Neutral(80);
                 canvas.DrawRoundRect(box, 4, 4, _dynamicFillPaint);
-                canvas.DrawLine(boxX + 4f, boxY + 8.4f, boxX + 6.8f, boxY + 11.2f, _displayTickPaint);
-                canvas.DrawLine(boxX + 6.8f, boxY + 11.2f, boxX + 12f, boxY + 5f, _displayTickPaint);
+                var tick = enabled ? _displayTickPaint : _sortArrowDisabledStroke;
+                canvas.DrawLine(boxX + 4f, boxY + 8.4f, boxX + 6.8f, boxY + 11.2f, tick);
+                canvas.DrawLine(boxX + 6.8f, boxY + 11.2f, boxX + 12f, boxY + 5f, tick);
             }
             else
             {
-                _dynamicStrokePaint.Color = hoverP > 0.5f ? Neutral(170) : Neutral(110);
+                _dynamicStrokePaint.Color = !enabled ? Neutral(60) : hoverP > 0.5f ? Neutral(170) : Neutral(110);
                 canvas.DrawRoundRect(box, 4, 4, _dynamicStrokePaint);
             }
 
-            // 名称：没勾上的条目整行压暗（它当前不上岛），但保持可读
+            // 名称：没勾上的条目整行压暗（它当前不上岛），但保持可读；整栏置灰时一律用禁用色
             const string tag = "内置";
             float tagW = isBuiltin ? _subTextPaint.MeasureText(tag) + 14f : 0f;
             float textX = box.Right + 10f;
             string shownName = TruncateText(name, _uiTextPaint, DISPLAY_MOVE_UP_X - 12f - textX - tagW);
-            _uiTextPaint.Color = isShown ? _fgColor : Neutral(150);
+            _uiTextPaint.Color = !enabled ? Neutral(100) : isShown ? _fgColor : Neutral(150);
             canvas.DrawText(shownName, textX, y + 20.5f, _uiTextPaint);
             _uiTextPaint.Color = _fgColor;
 
@@ -284,16 +289,16 @@ namespace NotchPeninsula
             if (isBuiltin)
             {
                 float tagX = textX + _uiTextPaint.MeasureText(shownName) + 8f;
-                _dynamicFillPaint.Color = new SKColor(0, 120, 212, 40);
+                _dynamicFillPaint.Color = enabled ? new SKColor(0, 120, 212, 40) : Overlay(10);
                 canvas.DrawRoundRect(new SKRect(tagX, y + 7f, tagX + tagW, y + 23f), 8, 8, _dynamicFillPaint);
-                _subTextPaint.Color = new SKColor(0, 140, 240);
+                _subTextPaint.Color = enabled ? new SKColor(0, 140, 240) : Neutral(90);
                 canvas.DrawText(tag, tagX + 7f, y + 19f, _subTextPaint);
                 _subTextPaint.Color = Neutral(170);
             }
 
             float cy = y + DISPLAY_ITEM_H / 2f;
-            DrawMoveArrow(canvas, DISPLAY_MOVE_UP_X, cy, hoverUp, canUp, true);
-            DrawMoveArrow(canvas, DISPLAY_MOVE_DOWN_X, cy, hoverDown, canDown, false);
+            DrawMoveArrow(canvas, DISPLAY_MOVE_UP_X, cy, hoverUp, enabled && canUp, true);
+            DrawMoveArrow(canvas, DISPLAY_MOVE_DOWN_X, cy, hoverDown, enabled && canDown, false);
         }
 
         // 条目复选框里的白勾：永远白色（压在蓝底上），不参与明暗重绑 —— 与 _iconPaint 的用法同理。
@@ -633,16 +638,16 @@ namespace NotchPeninsula
                 Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
 
             // ── 显示内容列表 ──
-            // 灵动岛显示什么、按什么次序，全在这一张列表里：每行 = 复选框（勾选 = 显示在岛上）
-            // + 名称（内置模块后面跟一个蓝色「（内置）」标记）+ ∧ ∨（调整在岛上的先后次序）。
+            // 灵动岛显示什么、按什么次序，全在这一栏里：每项 = 复选框（勾选 = 显示在岛上）
+            // + 名称（内置模块跟一枚「内置」胶囊）+ 右端的 ↑ ↓（调整在岛上的先后次序）。
             // 列表内容与顺序都取自 PluginManager 那张统一顺序表（内置模块与插件混排）。
-            // 卡片不再写标题行（省一屏空间），首行直接贴在卡片顶部：
-            // 条目数可能超过卡片高度，超出部分靠滚轮滚动查看（_displayScroll = 滚动首行），
+            // 这一栏不再套外层容器（没有卡片底 / 边框），item 直接铺满内容区：
+            // 靠「悬停才亮的那层底」表达可点，视觉上跟整页连成一体。
+            // 条目数可能超过一屏能放的行数，超出部分靠滚轮滚动查看（_displayScroll = 滚动首行），
             //    可滚范围与命中 / 滚轮共用 GetDisplayListLayout；滚动时才画右侧那条滚动条。
+            // 待机模式下整栏置灰不可交互（见 enabled）—— 那一栏管的是「普通模式显示什么」。
             float contentCardY = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page;
-            var contentCardRect = new SKRect(CONTENT_L, contentCardY, WIDTH - CONTENT_RM, contentCardY + DISPLAY_CARD_H);
-            canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBorder);
+            bool listEnabled = !Renderer.StandbyActive;
 
             var displayItems = PluginManager.Instance.DisplayItems;
             GetDisplayListLayout(out int visibleRows, out int maxFirstRow);
@@ -659,19 +664,19 @@ namespace NotchPeninsula
                 float rowY = contentCardY + DISPLAY_FIRST_ROW_Y + slot * DISPLAY_ROW_H;
 
                 DrawDisplayItem(canvas, rowY, item.Name, item.IsBuiltin, item.IsShown,
-                    GetDisplayHoverProgress(slot),
+                    listEnabled ? GetDisplayHoverProgress(slot) : 0f, listEnabled,
                     _hoveredDisplayMoveUp == i, _hoveredDisplayMoveDown == i,
                     PluginManager.Instance.CanMoveDisplay(item.Key, -1),
                     PluginManager.Instance.CanMoveDisplay(item.Key, 1));
             }
 
-            // 超出可视区时在卡片右侧画一条滚动条指示（与下拉浮层同款），避免用户以为「列表就这么长」。
+            // 超出可视区时在列表右侧画一条滚动条指示（与下拉浮层同款），避免用户以为「列表就这么长」。
             // 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
             // 自动隐藏：没在滚动时整条不画（见 DrawScrollBar）。
             if (maxFirstRow > 0 && visibleRows > 0)
             {
                 GetListScrollbarLayout(out float listTrackTop, out float listTrackH);
-                DrawScrollBar(canvas, WIDTH - 26, listTrackTop, listTrackH,
+                DrawScrollBar(canvas, WIDTH - 14, listTrackTop, listTrackH,
                     visibleRows / (float)displayItems.Count, _displayScroll / (float)maxFirstRow);
             }
 

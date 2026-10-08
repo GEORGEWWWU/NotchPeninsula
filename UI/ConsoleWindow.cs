@@ -92,30 +92,31 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 「显示内容」列表最多显示几行 —— 列表高度、可视行数、可滚范围的唯一真源。
-        /// 条目多于这个数就走列表自己的滚动（滚轮 / 拖右侧滚动条），卡片高度不再跟着条目数变。
+        /// 条目多于这个数就走列表自己的滚动（滚轮 / 拖右侧滚动条），列表区高度不再跟着条目数变。
         /// 卡片正好卡在最后一行底部，不留提示余量：溢出与否由右侧那条滚动条表达，
         /// 不再另写一行「滚轮可滚动查看其余 N 项」。
         /// </summary>
         private const int DISPLAY_MAX_ROWS = 8;
 
         /// <summary>
-        /// 「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源）。
-        /// 与上面「双击空白切换」那一行留 64px：那行是个开关、下面是张列表卡片，
-        /// 贴太近会被读成同一组（用户要求拉开）。
+        /// 「显示内容」列表区的顶部相对标题栏的偏移（渲染与命中必须同源）。
+        /// 列表外面不再套容器，这里只是「列表块」的上界，第一件 item 还要再往下 DISPLAY_FIRST_ROW_Y。
+        /// 与上面「双击空白切换」那一行留 64px：那行是个开关，贴太近会被读成同一组（用户要求拉开）。
         /// </summary>
         private const float DISPLAY_CARD_Y = TOGGLE_ROW_Y + 64f;
 
         /// <summary>
-        /// 「显示内容」卡片高度：由 DISPLAY_MAX_ROWS 反推，正好放下约定的行数，底部不留空。
+        /// 列表区高度：由 DISPLAY_MAX_ROWS 反推，正好放下约定的行数，底部不留空。
         /// 固定高度（不随条目数变），条目更多时由列表自身滚动查看。
         /// </summary>
         private const float DISPLAY_CARD_H = DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H;
 
         /// <summary>
-        /// item 的左右缘（卡片左右各留 6 / 24：右边多留的那一段是给列表那条滚动条让位的，
-        /// 滚动条画在 WIDTH-26 上，item 右缘到 564 才不会压在滑块底下）。
+        /// item 的左缘：直接铺满内容区（186 .. 588），不再缩进 —— 列表外面已经没有容器了，
+        /// item 自己就是这一栏。两个箭头槽贴着右缘排（↑ 544..562、↓ 570..588），
+        /// 所以列表滚动条挪到窗口右边距那一列（WIDTH-14），不再跟箭头抢位置。
         /// </summary>
-        private const float DISPLAY_ITEM_L = CONTENT_L + 6f;
+        private const float DISPLAY_ITEM_L = CONTENT_L;
 
         /// <summary>滚轮一格（120）滚动几行。</summary>
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
@@ -212,11 +213,14 @@ namespace NotchPeninsula
         /// <summary>取符号（-1 / 0 / 1）。累计量只是用来比方向，用不着真值。</summary>
         private static int Sign(int v) => v > 0 ? 1 : v < 0 ? -1 : 0;
 
-        private const float DISPLAY_ITEM_R = WIDTH - CONTENT_RM - 24f;
+        private const float DISPLAY_ITEM_R = WIDTH - CONTENT_RM;
 
-        private const float DISPLAY_MOVE_UP_X = DISPLAY_ITEM_R - 46f;    // ↑ 槽左边界（槽宽 = SORT_TRI_W）
+        /// <summary>箭头槽距内容区右缘的留白（8px：不贴边、也不留一大截空档）。</summary>
+        private const float DISPLAY_MOVE_PAD_R = 8f;
 
-        private const float DISPLAY_MOVE_DOWN_X = DISPLAY_ITEM_R - 22f;  // ↓ 槽左边界（与 ↑ 只隔 6px，视觉上是同一组控件）
+        private const float DISPLAY_MOVE_DOWN_X = DISPLAY_ITEM_R - DISPLAY_MOVE_PAD_R - SORT_TRI_W;          // 562（槽 562..580）
+
+        private const float DISPLAY_MOVE_UP_X = DISPLAY_MOVE_DOWN_X - SORT_TRI_W - 8f;                      // 536（槽 536..554）
 
         private const float SORT_TRI_W = 18f;             // 上下箭头槽的点击宽度（箭头本身只占槽中心 11×8）
 

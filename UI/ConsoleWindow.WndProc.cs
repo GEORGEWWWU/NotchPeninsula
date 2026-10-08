@@ -294,7 +294,8 @@ namespace NotchPeninsula
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
                 float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
-                if (x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= displayRowTop && y <= displayRowBottom)
+                if (!Renderer.StandbyActive
+                    && x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
                     if (rowIdx < _displayScroll + displayVisibleRows)
@@ -317,11 +318,11 @@ namespace NotchPeninsula
 
                 GetListScrollbarLayout(out float listBarTop, out float listBarH);
                 if (listBarH > 0f && ScrollBarAlpha() > 0.01f
-                    && x >= WIDTH - 32 && x <= WIDTH - 18
+                    && x >= WIDTH - 20 && x <= WIDTH - 8
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
 
-                // 「显示内容」卡片本体（含上下各留一点余量）：指针进卡片 → 滚轮先滚列表，出卡片 → 滚整页。
+                // 「显示内容」列表区（含上下各留一点余量）：指针进去 → 滚轮先滚列表，出来 → 滚整页。
                 // 这里只需要判「光标在不在卡里」—— 列表顶到边界后要不要接力给整页，
                 // 由 WM_MOUSEWHEEL 那条分支的累计阈值决定，与命中判定无关。
                 // 保留的覆盖规则：点过某条滚动条后，该层优先（_listScrollbarHovered 让列表优先

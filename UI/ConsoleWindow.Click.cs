@@ -484,7 +484,10 @@ namespace NotchPeninsula
             // ---- 显示内容列表 ----
             // 顺序项同时含内置模块与插件，统一走 PluginManager 那张顺序表 ——
             // 所以这里不需要（也不该）再区分「原生模块」与「插件」两套逻辑。
-            else if (_selectedTab == 1 && (_hoveredDisplayRow != -1 || _hoveredDisplayMoveUp != -1 || _hoveredDisplayMoveDown != -1))
+            // 待机模式下这一栏整条置灰不吃指针（命中侧已经拦掉，这里再挡一道，防止切到待机那一瞬间
+            // 还挂着上一帧的悬停下标 —— 那一下点击会改到「普通模式显示什么」，与当前界面不符）。
+            else if (_selectedTab == 1 && !Renderer.StandbyActive
+                && (_hoveredDisplayRow != -1 || _hoveredDisplayMoveUp != -1 || _hoveredDisplayMoveDown != -1))
             {
                 var displayItems = PluginManager.Instance.DisplayItems;
 
