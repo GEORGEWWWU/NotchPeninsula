@@ -114,7 +114,6 @@ namespace NotchPeninsula
             bool newMediaExpToggleHovered = false;
             bool newAppLaunchToggleHovered = false; // 「双击媒体控制跳转应用」（媒体交互方式下面一格）
             bool newPassToggleHovered = false;
-            bool newClipboardToggleHovered = false;
             bool newMspToggleHovered = false; // 「MSP 接入（实验性）」
             bool newMonitorDropdownHovered = false;
             int newHoveredMonitorDropdownIndex = -1;
@@ -209,11 +208,6 @@ namespace NotchPeninsula
                     if (x >= SOUND_PREVIEW_X && x <= SOUND_PREVIEW_X + SOUND_BTN_W) newSoundPreviewHovered = true;
                     if (x >= SOUND_RESET_X && x <= SOUND_RESET_X + SOUND_BTN_W) newSoundResetHovered = true;
                 }
-
-                if (x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
-                    && y <= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
-                    newClipboardToggleHovered = true;
 
                 // MSP 接入：卡片行首 MSP_CARD_Y + 开关位移
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
@@ -629,7 +623,6 @@ namespace NotchPeninsula
                 newSoundPreviewHovered != _soundPreviewHovered ||
                 newSoundResetHovered != _soundResetHovered ||
                 newPassToggleHovered != _passToggleHovered ||
-                newClipboardToggleHovered != _clipboardToggleHovered ||
                 newMspToggleHovered != _mspToggleHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
                 newHoveredPluginToggle != _hoveredPluginToggle ||
@@ -691,7 +684,6 @@ namespace NotchPeninsula
                 _soundResetHovered = newSoundResetHovered;
                 _topmostToggleHovered = newTopmostToggleHovered;
                 _passToggleHovered = newPassToggleHovered;
-                _clipboardToggleHovered = newClipboardToggleHovered;
                 _mspToggleHovered = newMspToggleHovered;
                 _hoveredPluginAction = newHoveredPluginAction;
                 _hoveredPluginToggle = newHoveredPluginToggle;

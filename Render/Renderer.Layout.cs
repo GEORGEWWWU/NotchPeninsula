@@ -352,7 +352,6 @@ namespace NotchPeninsula
         public static bool IsBlankAt(float x, float y, float currentHeight)
         {
             if (HitPluginZone(x, y)) return false;
-            if (HitClipboardOpen(x, y)) return false;
             if (HitMediaZone(x)) return false;
             if (HitMediaLaunchZone(x, y)) return false;
             if (HitMediaSpectrumZone(x)) return false;

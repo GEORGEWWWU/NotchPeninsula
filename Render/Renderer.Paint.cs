@@ -154,8 +154,6 @@ namespace NotchPeninsula
             _cachedToastSenderRuns.Clear();
             _cachedToastBodyRuns.Clear();
             _cachedToastAppNameRuns.Clear();
-            _cachedClipboardRuns.Clear();
-            _lastClipboardUrl = "";
             _karaokeRuns.Clear();
             _karaokeRuns1.Clear();
             _krKey0 = default;
@@ -196,53 +194,6 @@ namespace NotchPeninsula
         private static readonly SKPath _prevPath = CreatePrevPath();
 
         private static readonly SKPath _nextPath = CreateNextPath();
-
-        // ---- 剪贴板面板图标（纯矢量，无位图） ----
-        // 所以深色主题下是纯白、浅色主题下是纯黑，双色自适应。
-
-        private const float ClipboardIconCanvas = 24f;
-
-        private static readonly SKPaint _clipboardLinkPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 2f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
-
-        private static readonly SKPaint _clipboardOpenPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
-
-        private static readonly SKPath _clipboardLinkPath = CreateClipboardLinkPath();
-
-        private static readonly SKPath _clipboardOpenPath = CreateClipboardOpenPath();
-
-        private static SKPath CreateClipboardLinkPath()
-        {
-            var path = new SKPath();
-            path.AddPath(ClipboardCapsule(14.6f, 5.8f, 7.4f, 7.4f));
-            path.AddPath(ClipboardCapsule(14.6f, 5.8f, 16.6f, 16.6f));
-            return path;
-        }
-
-        private static SKPath ClipboardCapsule(float w, float h, float cx, float cy)
-        {
-            var path = new SKPath();
-            path.AddRoundRect(new SKRect(-w / 2f, -h / 2f, w / 2f, h / 2f), h / 2f, h / 2f);
-            path.Transform(SKMatrix.Concat(SKMatrix.CreateTranslation(cx, cy), SKMatrix.CreateRotationDegrees(45f)));
-            return path;
-        }
-
-        private static SKPath CreateClipboardOpenPath()
-        {
-            var disc = new SKPath();
-            disc.AddCircle(12f, 12f, 10.5f);
-
-            // 折角箭头：斜杆 + 右上角的两笔折角（横臂、竖臂）
-            using var arrow = new SKPath();
-            arrow.MoveTo(7f, 17f); arrow.LineTo(17f, 7f);
-            arrow.MoveTo(7f, 7f); arrow.LineTo(17f, 7f); arrow.LineTo(17f, 17f);
-
-            // 把描边展开成填充轮廓，再与圆底做差集。
-            using var stroke = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 2.2f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
-            using var arrowFill = new SKPath();
-            stroke.GetFillPath(arrow, arrowFill);
-
-            return disc.Op(arrowFill, SKPathOp.Difference) ?? disc;
-        }
 
         // PNG 图标缓存替换 SVG
 

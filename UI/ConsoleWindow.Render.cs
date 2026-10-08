@@ -408,8 +408,6 @@ namespace NotchPeninsula
             DrawSoundButton(_soundPreviewHovered, "试听", SOUND_PREVIEW_X, SOUND_BTN_W, soundReady);
             DrawSoundButton(_soundResetHovered, "重置", SOUND_RESET_X, SOUND_BTN_W, soundReady);
 
-            DrawToggleCard(canvas, CLIPBOARD_CARD_Y, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
-
             // MSP 接入（实验性）：把灵动岛暴露成本机 MSP 节点，外部程序可弹通知、读控媒体。
             // 默认关闭 —— 它会监听一个本地端口，属于对外接口面，得用户自己点头。
             DrawToggleCard(canvas, MSP_CARD_Y, "MSP 接入",

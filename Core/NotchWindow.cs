@@ -25,7 +25,6 @@ namespace NotchPeninsula
         public event EventHandler<WindowClickEventArgs>? WindowClicked;
 
         public static bool IsToastEnabled = true;
-        public static bool IsClipboardEnabled = true; // 剪贴板链接检测开关（交互设置，默认开启）
         public static bool IsTopmostEnabled = true; // 默认开启置顶
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         private readonly IntPtr _hwnd;
@@ -136,11 +135,6 @@ namespace NotchPeninsula
         private bool HasAnyExpanded
             => _isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage;
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
-        private readonly ClipboardMonitor _clipboardMonitor = new ClipboardMonitor();
-        private string? _clipboardUrl;         // 当前正在展示的链接
-        private string? _pendingClipboardUrl;  // 被更高级别通知挤下后退回队列等待的链接（单槽位复用，零额外内存）
-        private DateTime _clipboardEndTime;    // 链接展示截止时间
-        public bool isClipboardActive;         // 本帧剪贴板面板是否激活
         // ---- 弹簧动画引擎（三处共用） ----
         //（峰值在 t≈0.154s），即「Q 弹」的来源。
         private const double SpringFrequency = 2.65;
@@ -307,8 +301,6 @@ namespace NotchPeninsula
             PluginManager.Instance.Initialize();
             _ = InitializeListenerAsync();
 
-            _clipboardMonitor.OnUrlDetected += OnClipboardUrlDetected;
-            _clipboardMonitor.Attach(_hwnd);
             MediaHotkeys.Attach(_hwnd);
             _audioWatchTimer = new Timer(500);
             _audioWatchTimer.Elapsed += OnAudioWatchTick;
@@ -489,8 +481,6 @@ namespace NotchPeninsula
             }
             catch { }
 
-            try { _clipboardMonitor.Detach(); } catch { }
-
             try
             {
                 _renderSurface?.Dispose();
@@ -621,36 +611,6 @@ namespace NotchPeninsula
             _toastEndTime = DateTime.Now.Add(toast.Duration);   // 同上：插件提醒可自定义展示时长
             clicked_info = false;
             PlayToastSound();
-        }
-
-        private void OnClipboardUrlDetected(string url)
-        {
-            if (string.IsNullOrEmpty(url)) return;
-            if (!IsClipboardEnabled) return; // 开关关闭：直接丢弃，不弹面板
-            if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnClipboardUrlDetected(url)); return; }
-
-            // 通知优先：通知展示中先把链接挂起，等通知结束再显示
-            if (isToastActive) { _pendingClipboardUrl = url; return; }
-
-            _clipboardUrl = url;
-            _clipboardEndTime = DateTime.Now.AddSeconds(3); // 链接停留 3s
-        }
-
-        private void OpenClipboardUrl()
-        {
-            string? url = _clipboardUrl;
-            if (string.IsNullOrEmpty(url)) return;
-            if (!url.Contains("://", StringComparison.Ordinal)) url = "https://" + url;
-
-            _clipboardUrl = null;
-            _pendingClipboardUrl = null;
-            _clipboardEndTime = default;
-            try
-            {
-                using (Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })) { }
-                Info($"[剪贴板] 已在默认浏览器打开链接: {url}");
-            }
-            catch (Exception ex) { Error("[剪贴板] 打开链接失败", ex); }
         }
 
         private bool HitWakeButton(int mx, int my)
@@ -818,29 +778,6 @@ namespace NotchPeninsula
                 // 判断当前 Toast 是否处于激活期
                 isToastActive = _currentToast != null && DateTime.Now < _toastEndTime;
 
-                // 开关关闭时立即收起正在展示的链接并清空排队槽位
-                // 排在后面会慢一帧、且与渲染状态不同步。
-                if (!IsClipboardEnabled)
-                {
-                    _clipboardUrl = null;
-                    _pendingClipboardUrl = null;
-                    _clipboardEndTime = default;
-                }
-                else if (isToastActive)
-                {
-                    if (_clipboardUrl != null) { _pendingClipboardUrl = _clipboardUrl; _clipboardUrl = null; }
-                }
-                else if (_pendingClipboardUrl != null)
-                {
-                    // 通知结束：把排队的链接提上来，并重新计时 3s
-                    _clipboardUrl = _pendingClipboardUrl;
-                    _pendingClipboardUrl = null;
-                    _clipboardEndTime = DateTime.Now.AddSeconds(3);
-                }
-                // 剪贴板激活期判定 + 超时清理
-                isClipboardActive = _clipboardUrl != null && DateTime.Now < _clipboardEndTime;
-                if (!isClipboardActive && _clipboardUrl != null) { _clipboardUrl = null; _clipboardEndTime = default; }
-
                 // 实时穿透与 0% 透明度智能判定
                 if (Renderer.PassthroughModeEnabled)
                 {
@@ -857,7 +794,7 @@ namespace NotchPeninsula
 
                     // 第五个例外：任一展开态存在时一律不淡出。
                     float targetAlpha = 1.0f;
-                    if (!_isPassthroughAwake && isOverNotch && _currentY >= -5f && !isClipboardActive && !isToastActive
+                    if (!_isPassthroughAwake && isOverNotch && _currentY >= -5f && !isToastActive
                         && !Renderer.FileDragInProgress && !HasAnyExpanded) targetAlpha = 0.0f;
 
                     if (Renderer.FileDragInProgress && (Win32.GetAsyncKeyState(0x01) & 0x8000) == 0)
@@ -905,9 +842,7 @@ namespace NotchPeninsula
                 TickFullscreenProbe();
 
                 // 三项都在它内部合成，所以这里不再重复写。
-                // 剪贴板与插件详情页同理。
-                bool shouldHide = CanAutoHideNow && !_media.IsDragging && !HasAnyExpanded && !isToastActive
-                                  && !isClipboardActive;
+                bool shouldHide = CanAutoHideNow && !_media.IsDragging && !HasAnyExpanded && !isToastActive;
 
                 float currentTopY = 12f * _currentStyleProgress;
                 float settledHeight = Math.Min(_currentHeight, _targetHeight);
@@ -947,7 +882,7 @@ namespace NotchPeninsula
                 // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
                 bool currentActive = _media.IsActive;
 
-                int currentDisplayState = isToastActive ? 3 : (isClipboardActive ? 4 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0));
+                int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0);
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
@@ -956,7 +891,7 @@ namespace NotchPeninsula
                 float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
 
                 float detailW = 0f, detailH = 0f;
-                bool detailOpen = !isToastActive && !isClipboardActive && Renderer.TryGetDetailPageSize(out detailW, out detailH);
+                bool detailOpen = !isToastActive && Renderer.TryGetDetailPageSize(out detailW, out detailH);
 
                 float nativeWidth = currentActive
                     ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH)
@@ -989,7 +924,7 @@ namespace NotchPeninsula
                 {
                     Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - Renderer.GetCompositeNativeWidth(_media));
                 }
-                else if (!isToastActive && !isClipboardActive && !detailOpen)
+                else if (!isToastActive && !detailOpen)
                 {
                     Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - nativeWidth);
                     pluginReserve = Renderer.GetPluginRowReserve();
@@ -1010,11 +945,6 @@ namespace NotchPeninsula
                 {
                     expectedTargetWidth = Renderer.GetToastAutoWidth();
                     expectedTargetHeight = Renderer.TOAST_HEIGHT;
-                }
-                else if (isClipboardActive)
-                {
-                    expectedTargetWidth = Renderer.GetClipboardAutoWidth(_clipboardUrl!);
-                    expectedTargetHeight = Renderer.MEDIA_HEIGHT;
                 }
                 else
                 {
@@ -1133,7 +1063,7 @@ namespace NotchPeninsula
                 _media.UpdateLyrics(); // 更新歌词
                 tLyricDone = Environment.TickCount64;
 
-                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha, isClipboardActive ? _clipboardUrl : null);
+                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
                 tDrawDone = Environment.TickCount64;
 
                 // 恢复原始矩阵状态
@@ -1366,16 +1296,11 @@ namespace NotchPeninsula
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {            switch (msg)
             {
-                case Win32.WM_CLIPBOARDUPDATE:
-                    if (IsClipboardEnabled) _clipboardMonitor.HandleClipboardUpdate();
-                    return (IntPtr)0;
-
                 case Win32.WM_HOTKEY:
                     MediaHotkeys.Handle(Win32.Low32(wParam));
                     return (IntPtr)0;
 
                 case Win32.WM_DESTROY:
-                    _clipboardMonitor.Detach();
                     MediaHotkeys.Detach();
                     RevokeIslandDropTarget();
                     break;
@@ -1435,16 +1360,11 @@ namespace NotchPeninsula
                             break;
                         }
 
-                        if (_isHovered && isClipboardActive)
-                        {
-                            // 剪贴板面板：仅「打开」按钮范围显示手型
-                            _isCursorOverIcon = Renderer.HitClipboardOpen(mx, my - hitTopY);
-                        }
-                        else if (_isHovered && _currentToast != null)
+                        if (_isHovered && _currentToast != null)
                         {
                             _isCursorOverIcon = true;
                         }
-                        else if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive)
+                        else if (_isHovered && _media.IsActive && _currentToast == null)
                         {
                             if (Renderer.IsMediaExpanded)
                             {
@@ -1531,7 +1451,7 @@ namespace NotchPeninsula
                         // 它主动声明要双击，语义比宿主的内置手势更明确）。
                         {
                             float dblTopY = 12f * _currentStyleProgress;
-                            if (_isHovered && _currentToast == null && !isClipboardActive)
+                            if (_isHovered && _currentToast == null)
                             {
                                 if (Renderer.HasActiveDetailPage)
                                 {
@@ -1548,12 +1468,12 @@ namespace NotchPeninsula
                         bool onCover = Renderer.HitMediaLaunchZone(dx, dy);
 
                         Logger.Info($"媒体跳转[诊断]：双击 ({dx},{dy}) 开关={launchEnabled} 悬停={_isHovered} "
-                            + $"媒体激活={_media.IsActive} 通知={_currentToast != null} 剪贴板={isClipboardActive} "
+                            + $"媒体激活={_media.IsActive} 通知={_currentToast != null} "
                             + $"详情页={Renderer.HasActiveDetailPage} 面板={Renderer.IsMediaPanelShowing(_media)} "
                             + $"命中封面={onCover}");
 
                         if (launchEnabled && _isHovered && _media.IsActive
-                            && _currentToast == null && !isClipboardActive
+                            && _currentToast == null
                             && !Renderer.HasActiveDetailPage
                             && onCover)
                         {
@@ -1562,7 +1482,7 @@ namespace NotchPeninsula
                         }
 
                         if (Renderer.StandbyToggleByDoubleClick && _isHovered
-                            && _currentToast == null && !isClipboardActive
+                            && _currentToast == null
                             && !Renderer.HasActiveDetailPage)
                         {
                             // 进入 / 退出的命中区：
@@ -1634,12 +1554,6 @@ namespace NotchPeninsula
                             }
                         }
 
-                        if (isClipboardActive && Renderer.HitClipboardOpen(cx, cy - hitTopY))
-                        {
-                            OpenClipboardUrl();
-                            return (IntPtr)0;
-                        }
-
                         // 插件详情页展开时：岛内左键优先交给详情页。
                         if (_isHovered && Renderer.HasActiveDetailPage)
                         {
@@ -1648,12 +1562,12 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
-                        if (_isHovered && _currentToast == null && !isClipboardActive && Renderer.DispatchPluginLeftClick(cx, cy - hitTopY))
+                        if (_isHovered && _currentToast == null && Renderer.DispatchPluginLeftClick(cx, cy - hitTopY))
                         {
                             return (IntPtr)0;
                         }
 
-                        if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive)
+                        if (_isHovered && _media.IsActive && _currentToast == null)
                         {
 
                             // 命中时间轴：进入拖动并锁住鼠标，同时消费这次点击

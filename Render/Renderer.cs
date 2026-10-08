@@ -163,7 +163,7 @@ namespace NotchPeninsula
 
         public const int INNER_R = 12;
 
-        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f, string? clipboardUrl = null)
+        public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
         {
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
@@ -177,8 +177,6 @@ namespace NotchPeninsula
 
                 // 时间轴几何登记表帧首作废：本帧不画就等于命中区不存在
                 _tlBarX1 = _tlBarX2 = _tlBarY = 0f;
-
-                _clipboardOpenHit = default;
 
                 InvalidateNativeHitZones();
 
@@ -270,8 +268,6 @@ namespace NotchPeninsula
                 _timePaint.Color = currentA;
                 _datePaint.Color = subA;
                 _mediaIconPaint.Color = currentA;
-                _clipboardLinkPaint.Color = currentA; // 剪贴板图标同为矢量：跟着主题色 + 透明度走
-                _clipboardOpenPaint.Color = currentA;
                 _barPaint.Color = currentA;
                 _highQualitySampling.Color = SKColors.White.WithAlpha(alpha); // 同步作用于图片图标
                 // Toast 消息通知
@@ -282,18 +278,6 @@ namespace NotchPeninsula
                     canvas.Restore();
                     canvas.Restore();
                     canvas.Restore();
-                    return;
-                }
-
-                // 剪贴板链接（已识别到链接）
-                // 所以这里只要拿到链接，就把整块岛体交给剪贴板面板绘制。
-                if (!string.IsNullOrEmpty(clipboardUrl))
-                {
-                    InvalidateDetailHitArea();
-                    DrawClipboard(canvas, clipboardUrl, left, right, currentHeight, textOffsetY);
-                    canvas.Restore(); // 1. 恢复 ClipPath 裁切
-                    canvas.Restore(); // 2. 闭合 SaveLayer 透明层
-                    canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
                     return;
                 }
 

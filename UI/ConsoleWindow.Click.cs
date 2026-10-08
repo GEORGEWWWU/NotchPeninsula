@@ -418,12 +418,6 @@ namespace NotchPeninsula
                 Renderer.ApplyThemeColors(); // 立刻刷新基底色
                 Render();
             }
-            else if (_clipboardToggleHovered)
-            {
-                NotchWindow.IsClipboardEnabled = !NotchWindow.IsClipboardEnabled;
-                Program.SaveSetting("ClipboardEnabled", NotchWindow.IsClipboardEnabled ? 1 : 0);
-                Render();
-            }
             else if (_mspToggleHovered)
             {
                 // MSP 接入（实验性）：立刻生效不用重启 —— 打开失败时 Enable 会把开关拨回来，

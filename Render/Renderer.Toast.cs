@@ -23,71 +23,6 @@ namespace NotchPeninsula
             return Math.Min(Math.Max(TOAST_WIDTH, w), MAX_ISLAND_WIDTH);
         }
 
-        //    封顶宽度与消息通知弹窗的最大长度保持一致
-
-        private const float CLIPBOARD_EXTRA_WIDTH = 10f; // 计算宽度之外的视觉呼吸量，避免文本贴边
-
-        public static float GetClipboardAutoWidth(string url)
-        {
-            EnsureClipboardTextCache(url);
-            float w = 14f + 20f + 10f + _cachedClipboardTextWidth + 10f + 22f + 14f + CLIPBOARD_EXTRA_WIDTH;
-            return Math.Min(Math.Max(MEDIA_WIDTH, w), MAX_ISLAND_WIDTH);
-        }
-
-        public static bool HitClipboardOpen(float x, float y)
-            => _clipboardOpenHit.Width > 0f && _clipboardOpenHit.Contains(x, y);
-
-        private static void EnsureClipboardTextCache(string url)
-        {
-            if (_lastClipboardUrl == url) return;
-            _lastClipboardUrl = url ?? "";
-            BuildTextRuns(_lastClipboardUrl, _textPaint, _semiBoldTypeface, _cachedClipboardRuns, out _cachedClipboardTextWidth);
-        }
-
-        private static void DrawClipboard(SKCanvas canvas, string url, float left, float right, float currentHeight, float textOffsetY)
-        {
-            EnsureClipboardTextCache(url);
-
-            //   不再有位图缩放的毛边，也不再需要裁切路径。）
-            float iconSize = 20f;
-            float iconX = left + 14f;
-            float iconY = (currentHeight - iconSize) / 2f + textOffsetY;
-            DrawSvgPath(canvas, _clipboardLinkPaint, iconX, iconY, _clipboardLinkPath, iconSize / ClipboardIconCanvas);
-
-            float btnSize = 22f;
-            float btnRight = right - 14f;
-            float btnLeft = btnRight - btnSize;
-            float btnTop = (currentHeight - btnSize) / 2f + textOffsetY;
-            _clipboardOpenHit = new SKRect(btnLeft - 4f, btnTop - 3f, btnRight + 4f, btnTop + btnSize + 3f);
-
-            // 中间链接文本（单行垂直居中）。
-            float textX = iconX + iconSize + 10f;
-            float textRightLimit = btnLeft - 10f;
-            float textY = currentHeight / 2f + _textPaint.TextSize * 0.36f + textOffsetY;
-            canvas.Save();
-            canvas.ClipRect(new SKRect(textX, 0f, textRightLimit, currentHeight), SKClipOperation.Intersect, false);
-            foreach (var run in _cachedClipboardRuns)
-            {
-                _textPaint.Typeface = run.Type;
-                canvas.DrawText(run.Text, textX + run.X, textY, _textPaint);
-            }
-            _textPaint.Typeface = _semiBoldTypeface; // 重置，防污染
-
-            if (textX + _cachedClipboardTextWidth > textRightLimit)
-            {
-                float fadeWidth = 15f;
-                float fadeStart = textRightLimit - fadeWidth;
-                canvas.Save();
-                canvas.Translate(fadeStart, 0);
-                canvas.Scale(fadeWidth, currentHeight);
-                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                canvas.Restore();
-            }
-            canvas.Restore(); // 结束文本裁剪区
-
-            DrawSvgPath(canvas, _clipboardOpenPaint, btnLeft, btnTop, _clipboardOpenPath, btnSize / ClipboardIconCanvas);
-        }
-
         private static uint _lastToastId = 0;
 
         private static string _cachedToastSender = "";
@@ -109,14 +44,6 @@ namespace NotchPeninsula
         private static float _cachedToastAppNameWidth = 0f;
 
         private static float _cachedToastCompactRightWidth = 0f;
-
-        private static readonly List<(string Text, SKTypeface Type, float X)> _cachedClipboardRuns = new();
-
-        private static string _lastClipboardUrl = "";
-
-        private static float _cachedClipboardTextWidth = 0f;
-
-        private static SKRect _clipboardOpenHit;   // 本帧「打开」按钮命中区，帧首作废
 
         private static void DrawToastLayer(SKCanvas canvas, ToastData toast, float left, float right, float currentHeight)
         {
