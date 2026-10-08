@@ -75,17 +75,13 @@ namespace NotchPeninsula
                     }
                 } 
 
-                // 个性化中心的蓝色提示（「系统自动调整，无需设置」/「刘海模式下生效」）默认隐藏，
+                // 个性化中心的蓝色提示（现在只剩「底部圆角」那行的「刘海模式下生效」）默认隐藏，
                 // 只有指针压在这一行上才淡入 —— 这里只认「在哪一行」，透明度交给 16ms 动画表算。
                 int newHintRow = -1;
                 if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM)
                 {
-                    for (int i = 0; i < 8; i++)
-                    {
-                        if (i != 0 && i != 2 && i != 4 && i != 7) continue;   // 只有带提示的行参与
-                        float hy = GetBtnY(i);
-                        if (y >= hy - 6 && y <= hy + 30) { newHintRow = i; break; }
-                    }
+                    float hy = GetBtnY(7);
+                    if (y >= hy - 6 && y <= hy + 30) newHintRow = 7;
                 }
                 if (newHintRow != _hintRow)
                 {

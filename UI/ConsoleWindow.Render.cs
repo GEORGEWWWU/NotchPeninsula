@@ -1077,43 +1077,15 @@ namespace NotchPeninsula
         // 页签：个性化中心
         private void RenderTabPersonalize(SKCanvas canvas)
         {
-            void DrawMultiCard(float yOffset, string title, string[] subLabels, int[] indices, string unit)
+            // 尺寸卡片：不再写标题（卡里只剩尺寸行，标题纯占高度），卡高 = 12 + 行数 × 34。
+            // 「水平宽度」「激活时宽度」「弹出的宽度」三行连同「媒体控制」整张卡都删了 ——
+            // 这三项都是自动调整的，留着只会让人以为要手动设。
+            void DrawMultiCard(float yOffset, string[] subLabels, int[] indices)
             {
-                // 该卡片的尺寸设置是否已被改动（index 0 / 2 / 4 已不可调，不参与判定）
-                bool isModified = false;
-                foreach (int index in indices)
-                {
-                    if (index == 0 || index == 2 || index == 4) continue;
-                    if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
-                    {
-                        isModified = true;
-                        break;
-                    }
-                }
-
-                float cardHeight = 36 + subLabels.Length * 34;
+                float cardHeight = 12 + subLabels.Length * 34;
                 var cardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + yOffset, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + yOffset + cardHeight);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
-
-                canvas.DrawText(title, CONTENT_TEXT_X, TITLE_BAR_HEIGHT + yOffset + 26, _uiTextPaint);
-
-                // 如果改动了某个尺寸设置，在标题旁边显示已生效标签
-                if (isModified)
-                {
-                    float titleWidth = _uiTextPaint.MeasureText(title);
-                    float tagX = CONTENT_TEXT_X + titleWidth + 10;
-                    float tagY = TITLE_BAR_HEIGHT + yOffset + 13;
-                    var tagRect = new SKRect(tagX, tagY, tagX + 38, tagY + 18);
-
-                    _dynamicFillPaint.Color = new SKColor(0, 120, 212, 35); // 浅背景颜色
-                    canvas.DrawRoundRect(tagRect, 3f, 3f, _dynamicFillPaint); // 小圆角
-
-                    _dynamicTextPaint.TextSize = 10f; // 小文本样式
-                    _dynamicTextPaint.Color = new SKColor(0, 140, 240);
-                    canvas.DrawText("已生效", tagX + 4, tagY + 13, _dynamicTextPaint);
-                    _dynamicTextPaint.TextSize = 13f; // 还原字号，防止污染后续文字渲染
-                }
 
                 for (int i = 0; i < subLabels.Length; i++)
                 {
@@ -1122,34 +1094,33 @@ namespace NotchPeninsula
 
                     canvas.DrawText(subLabels[i], CONTENT_TEXT_X, cardBtnY + 17, _subTextPaint);
 
+                    // 改过的那一行在标签右边挂一枚「已生效」小标（原来是挂在卡片标题旁边；
+                    //    标题删掉后改挂到具体那一行，反而更清楚是哪个值被改过）
+                    float afterLabelX = CONTENT_TEXT_X + _subTextPaint.MeasureText(subLabels[i]) + 8;
+                    if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
+                    {
+                        var tagRect = new SKRect(afterLabelX, cardBtnY + 3, afterLabelX + 38, cardBtnY + 21);
+                        _dynamicFillPaint.Color = new SKColor(0, 120, 212, 35);
+                        canvas.DrawRoundRect(tagRect, 3f, 3f, _dynamicFillPaint);
+                        _dynamicTextPaint.TextSize = 10f; // 小文本样式
+                        _dynamicTextPaint.Color = new SKColor(0, 140, 240);
+                        canvas.DrawText("已生效", afterLabelX + 4, cardBtnY + 16, _dynamicTextPaint);
+                        _dynamicTextPaint.TextSize = 13f; // 还原字号，防止污染后续文字渲染
+                        afterLabelX += 46;
+                    }
+
                     // 底部圆角只在「经典刘海」样式下参与圆角插值：切到灵动岛样式后该项会被
                     //    islandRadius 完全覆盖（见 Renderer.Draw 的 rBottom 计算），调了也看不出来，
-                    //    所以就地标明生效条件 —— 与下面那条「系统自动调整」一样，默认隐藏、悬停该行才淡入。
+                    //    所以就地标明生效条件 —— 默认隐藏、悬停该行才淡入。
                     if (index == 7)
                     {
                         float hintA = GetHintAlpha(index);
                         if (hintA > 0.01f)
                         {
-                            float labelW = _subTextPaint.MeasureText(subLabels[i]);
                             _subTextPaint.Color = new SKColor(0, 140, 240, (byte)(255 * hintA));
-                            canvas.DrawText("刘海模式下生效", CONTENT_TEXT_X + labelW + 8, cardBtnY + 17, _subTextPaint);
+                            canvas.DrawText("刘海模式下生效", afterLabelX, cardBtnY + 17, _subTextPaint);
                             _subTextPaint.Color = Neutral(170);
                         }
-                    }
-
-                    // index 0 / 2 / 4 不可调：右侧只显示提示，不画「减 / 值 / 加 / 重置」（WndProc 的命中循环同步跳过）
-                    if (index == 0 || index == 2 || index == 4)
-                    {
-                        float hintA = GetHintAlpha(index);
-                        if (hintA > 0.01f)
-                        {
-                            const string autoHint = "系统自动调整，无需设置";
-                            float hintW = _subTextPaint.MeasureText(autoHint);
-                            _subTextPaint.Color = new SKColor(0, 140, 240, (byte)(255 * hintA));
-                            canvas.DrawText(autoHint, WIDTH - CONTENT_TEXT_RM - hintW, cardBtnY + 17, _subTextPaint);
-                            _subTextPaint.Color = Neutral(170);
-                        }
-                        continue;
                     }
 
                     float cardRightX = WIDTH - CONTENT_TEXT_RM;
@@ -1239,10 +1210,7 @@ namespace NotchPeninsula
             // 「待机高度」与「媒体激活时高度」已合并为一个「全局折叠态高度」（index 3）：
             //    它同时管待机态、媒体折叠态与剪贴板面板的高度，值沿用原媒体控制存储的
             //    MEDIA_HEIGHT（注册表 Custom_MediaH），老用户的高度不会丢。
-            DrawMultiCard(147, "待机显示", ["水平宽度", "全局折叠态高度", "底部圆角"], [0, 3, 7], "px");
-            DrawMultiCard(299, "媒体控制", ["激活时宽度"], [2], "px");
-            DrawMultiCard(383, "消息通知", ["弹出的宽度", "弹出的高度"], [4, 5], "px");
-            DrawMultiCard(501, "全局 DPI 缩放", ["视觉比例"], [6], "x");
+            DrawMultiCard(147, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
         }
 
         // 页签：我的插件（已安装插件列表，一个标题 + 一个列表；市场在独立页签）
