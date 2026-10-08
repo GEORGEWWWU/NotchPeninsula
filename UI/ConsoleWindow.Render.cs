@@ -12,18 +12,10 @@ namespace NotchPeninsula
         // ----  ----
         // ----  ----
 
-        // 侧边栏单个页签：**只画悬停底与文字**。选中态的底与蓝色竖条由 DrawTabSelection 单独画 ——
+        // 侧边栏单个页签：**只画文字**。选中态的底与蓝色竖条由 DrawTabSelection 单独画 ——
         // 它们是一个整体，要能滑到别的行上去。
         private void DrawTab(SKCanvas canvas, int index, string label, float yOffset)
         {
-            // 悬停底走透明度过渡，不再是一上来就整块底
-            float hoverP = GetTabHoverProgress(index);
-            if (hoverP > 0.004f && _selectedTab != index)
-            {
-                _tabBgHovered.Color = Overlay((byte)(_tabHoverBaseAlpha * hoverP));
-                canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + yOffset, 170, TITLE_BAR_HEIGHT + yOffset + TAB_ROW_H), 4, 4, _tabBgHovered);
-            }
-
             canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, _uiTextPaint);
         }
 
@@ -257,21 +249,11 @@ namespace NotchPeninsula
                 animating = true;
             }
 
-            // 侧边栏：选中块的滑动 + 每项的悬停淡入
+            // 侧边栏：选中块的滑动
             if (_tabSlideT < 1f)
             {
                 _tabSlideT = (Environment.TickCount64 - _tabSlideStarted) / TAB_SLIDE_MS;
                 if (_tabSlideT > 1f) _tabSlideT = 1f;
-                animating = true;
-            }
-
-            for (int i = 0; i < _tabHoverAnim.Length; i++)
-            {
-                float target = i == _hoveredTab ? 1f : 0f;
-                float cur = _tabHoverAnim[i];
-                if (Math.Abs(target - cur) <= 0.01f) { _tabHoverAnim[i] = target; continue; }
-
-                _tabHoverAnim[i] = cur + (target - cur) * TAB_HOVER_EASE;
                 animating = true;
             }
 

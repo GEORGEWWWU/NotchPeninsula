@@ -157,8 +157,6 @@ namespace NotchPeninsula
 
         private const float TAB_SLIDE_MS = 200f;      // 选中块滑动的时长（太长就不跟手）
 
-        private const float TAB_HOVER_EASE = 0.45f;   // 悬停底的靠拢比例：比列表行(0.35)快一档，鼠标划过更跟手
-
         private const float TAB_SLIDE_STRETCH = 10f;  // 蓝条滑动途中两端各外扩的像素（中点最强、两端归零）→ 拉丝感
 
         private static float TabRowY(int index)
@@ -544,10 +542,7 @@ namespace NotchPeninsula
         private float GetHintAlpha(int row)
             => row >= 0 && row < _hintAnim.Length ? _hintAnim[row] : 0f;
 
-        // 侧边栏：每项的悬停淡入，以及选中块（背景方块 + 蓝色竖条）的滑动位置。
-        // 都用固定长度的小数组，每帧零分配。
-
-        private readonly float[] _tabHoverAnim = new float[8];
+        // 侧边栏：选中块（背景方块 + 蓝色竖条）的滑动位置。
 
         private float _tabSlideFromY, _tabSlideToY;   // 行首坐标（相对标题栏）的起点 / 终点
 
@@ -556,11 +551,6 @@ namespace NotchPeninsula
         private long _tabSlideStarted;
 
         private int _tabSlideDst = -1;                // 已经为哪个页签起过滑
-
-        private byte _tabHoverBaseAlpha = 8;
-
-        private float GetTabHoverProgress(int index)
-            => index >= 0 && index < _tabHoverAnim.Length ? _tabHoverAnim[index] : 0f;
 
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
         {

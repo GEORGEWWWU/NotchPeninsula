@@ -642,7 +642,6 @@ namespace NotchPeninsula
                 )
             {
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
-                if (newHoveredTab != _hoveredTab) StartDisplayHoverAnim();   // 侧边栏悬停底淡入，与列表行底共用那张 16ms 表
                 _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
                 _toastToggleHovered = newToastToggleHovered;
                 _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
