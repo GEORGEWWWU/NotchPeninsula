@@ -131,7 +131,9 @@ namespace NotchPeninsula
 
         private const float SORT_TRI_W = 18f;             // 上下箭头槽的点击宽度（箭头本身只占槽中心 11×8）
 
-        private const uint DISPLAY_HOVER_TICK_MS = 16;
+        // 15 而不是 16：系统默认 tick 是 15.625ms，请求 16ms 会被向上取整成 2 个 tick（≈31ms → 32FPS）。
+        // 15 落在 1 个 tick 内，即使 timeBeginPeriod 没生效也只有 ~15.6ms；生效时就是 ~15ms。
+        private const uint DISPLAY_HOVER_TICK_MS = 15;
 
         private const float DISPLAY_HOVER_EASE = 0.35f;   // 每拍向目标靠拢的比例（指数缓出）
 
@@ -142,6 +144,25 @@ namespace NotchPeninsula
         private const int SCROLLBAR_HOLD_MS = 800;    // 停手后保持满不透明度的时长
         private const int SCROLLBAR_FADE_MS = 260;    // 随后淡出的时长
         private const int SCROLLBAR_TICK_MS = 60;     // 淡出一拍的间隔
+
+        // ---- 侧边栏页签：几何 + 滑动动画 ----
+
+        /// <summary>页签行首（相对标题栏），**按页签号索引**——顺序与侧边栏视觉顺序不同，
+        ///    绘制顺序见 RenderSidebar。绘制 / 命中 / 滑动动画三处都从这里取，别再写死数字。</summary>
+        private static readonly float[] SidebarTabY = { 60f, 100f, 140f, 180f, 320f, 10f, 230f, 270f };
+
+        private const float TAB_ROW_H = 36f;          // 页签行高
+
+        private const float TAB_BAR_DY = 8f;          // 蓝色竖条相对行首的上下内缩（竖条高 = 36 - 2×8）
+
+        private const float TAB_SLIDE_MS = 200f;      // 选中块滑动的时长（太长就不跟手）
+
+        private const float TAB_HOVER_EASE = 0.45f;   // 悬停底的靠拢比例：比列表行(0.35)快一档，鼠标划过更跟手
+
+        private const float TAB_SLIDE_STRETCH = 10f;  // 蓝条滑动途中两端各外扩的像素（中点最强、两端归零）→ 拉丝感
+
+        private static float TabRowY(int index)
+            => index >= 0 && index < SidebarTabY.Length ? SidebarTabY[index] : 0f;
 
         private long _scrollBarShownAt;
 
@@ -522,6 +543,24 @@ namespace NotchPeninsula
 
         private float GetHintAlpha(int row)
             => row >= 0 && row < _hintAnim.Length ? _hintAnim[row] : 0f;
+
+        // 侧边栏：每项的悬停淡入，以及选中块（背景方块 + 蓝色竖条）的滑动位置。
+        // 都用固定长度的小数组，每帧零分配。
+
+        private readonly float[] _tabHoverAnim = new float[8];
+
+        private float _tabSlideFromY, _tabSlideToY;   // 行首坐标（相对标题栏）的起点 / 终点
+
+        private float _tabSlideT = 1f;                // 0 → 1
+
+        private long _tabSlideStarted;
+
+        private int _tabSlideDst = -1;                // 已经为哪个页签起过滑
+
+        private byte _tabHoverBaseAlpha = 8;
+
+        private float GetTabHoverProgress(int index)
+            => index >= 0 && index < _tabHoverAnim.Length ? _tabHoverAnim[index] : 0f;
 
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
         {

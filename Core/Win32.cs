@@ -610,6 +610,16 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        // ---- 定时器精度（winmm）----
+        // 系统默认 tick 是 15.625ms，SetTimer 请求 16ms 会被向上取整成 2 个 tick ≈ 31ms（只有 32FPS）。
+        // 动画期间把本进程的定时器精度提到 1ms，16ms 才会真的是 16ms。用完就归还，别常驻。
+        [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+        public static extern uint TimeBeginPeriod(uint uPeriod);
+
+        [DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+        public static extern uint TimeEndPeriod(uint uPeriod);
+
         // 传统打开文件对话框（comdlg32）
 
         public const uint OFN_HIDEREADONLY = 0x00000004;

@@ -12,20 +12,68 @@ namespace NotchPeninsula
         // ----  ----
         // ----  ----
 
-        // 侧边栏单个页签（选中态 / 悬停态 / 文本）
+        // 侧边栏单个页签：**只画悬停底与文字**。选中态的底与蓝色竖条由 DrawTabSelection 单独画 ——
+        // 它们是一个整体，要能滑到别的行上去。
         private void DrawTab(SKCanvas canvas, int index, string label, float yOffset)
         {
-            var tabRect = new SKRect(10, TITLE_BAR_HEIGHT + yOffset, 170, TITLE_BAR_HEIGHT + yOffset + 36);
-            if (_selectedTab == index)
+            // 悬停底走透明度过渡，不再是一上来就整块底
+            float hoverP = GetTabHoverProgress(index);
+            if (hoverP > 0.004f && _selectedTab != index)
             {
-                canvas.DrawRoundRect(tabRect, 4, 4, _tabBgSelected);
-                canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + yOffset + 8, 13, TITLE_BAR_HEIGHT + yOffset + 28), 1.5f, 1.5f, _tabIndicator);
+                _tabBgHovered.Color = Overlay((byte)(_tabHoverBaseAlpha * hoverP));
+                canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + yOffset, 170, TITLE_BAR_HEIGHT + yOffset + TAB_ROW_H), 4, 4, _tabBgHovered);
             }
-            else if (_hoveredTab == index)
-            {
-                canvas.DrawRoundRect(tabRect, 4, 4, _tabBgHovered);
-            }
+
             canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, _uiTextPaint);
+        }
+
+        // 选中态的整体：背景方块 + 左侧蓝色竖条，一起滑到选中行。
+        // 急出缓入位移（先快后慢）。**只有蓝条做「拉丝」**：背景块保持 36 高，方块跟着拉长反而显得不跟手。
+        private void DrawTabSelection(SKCanvas canvas)
+        {
+            float p = TabEase(_tabSlideT);
+            float d = _tabSlideToY - _tabSlideFromY;
+            float top = _tabSlideFromY + d * p;
+
+            canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + top, 170, TITLE_BAR_HEIGHT + top + TAB_ROW_H), 4, 4, _tabBgSelected);
+
+            // 蓝条以自身中线为中心对称外扩：中点最强、两端归零，所以起止两端没有跳变。
+            // 幅度固定、与滑动距离无关，最大伸展时 20 + 10 = 30 仍稳稳落在 36 高的方块里。
+            float stretch = TAB_SLIDE_STRETCH * (float)Math.Sin(Math.PI * Math.Sqrt(Math.Clamp(_tabSlideT, 0f, 1f)));
+            float mid = top + TAB_ROW_H * 0.5f;
+            float half = (TAB_ROW_H * 0.5f - TAB_BAR_DY) + stretch * 0.5f;
+
+            canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + mid - half, 13, TITLE_BAR_HEIGHT + mid + half),
+                1.5f, 1.5f, _tabIndicator);
+        }
+
+        // 急出缓入：先快后慢，到点前自己收住
+        private static float TabEase(float t)
+        {
+            float u = 1f - Math.Clamp(t, 0f, 1f);
+            return 1f - u * u * u;
+        }
+
+        // 选中页签变了就起一次滑动；正在滑的时候再切，从当前位置接着走，不跳回去。
+        // 只在渲染侧边栏时调（唯一入口），所以任何改 _selectedTab 的地方都自动有动画。
+        private void SyncTabSlide()
+        {
+            if (_tabSlideDst < 0)                        // 首次：直接定位，不做入场动画
+            {
+                _tabSlideDst = _selectedTab;
+                _tabSlideFromY = _tabSlideToY = TabRowY(_selectedTab);
+                _tabSlideT = 1f;
+                return;
+            }
+
+            if (_tabSlideDst == _selectedTab) return;
+
+            _tabSlideFromY += (_tabSlideToY - _tabSlideFromY) * TabEase(_tabSlideT);
+            _tabSlideToY = TabRowY(_selectedTab);
+            _tabSlideDst = _selectedTab;
+            _tabSlideStarted = Environment.TickCount64;
+            _tabSlideT = 0f;
+            StartDisplayHoverAnim();                     // 借用列表行底那张 16ms 表，跑完自己停
         }
 
         // 画整张卡片底 + 一行开关内容。
@@ -173,6 +221,9 @@ namespace NotchPeninsula
             if (_displayHoverTimerOn || _hwnd == IntPtr.Zero) return;
             if (Win32.SetTimer(_hwnd, DISPLAY_HOVER_TIMER_ID, DISPLAY_HOVER_TICK_MS, IntPtr.Zero) == IntPtr.Zero) return;
             _displayHoverTimerOn = true;
+            // 系统默认 tick 15.625ms，不抬精度的话 16ms 会被取整成 ~31ms（32FPS）。
+            // 只在动画期间抬，停下就还回去。
+            Win32.TimeBeginPeriod(1);
         }
 
         private void StopDisplayHoverAnim(IntPtr hwnd)
@@ -180,6 +231,7 @@ namespace NotchPeninsula
             if (!_displayHoverTimerOn) return;
             Win32.KillTimer(hwnd, DISPLAY_HOVER_TIMER_ID);
             _displayHoverTimerOn = false;
+            Win32.TimeEndPeriod(1);
         }
 
         private bool TickDisplayHoverAnim()
@@ -202,6 +254,24 @@ namespace NotchPeninsula
                 if (Math.Abs(target - cur) <= 0.01f) { _hintAnim[i] = target; continue; }
 
                 _hintAnim[i] = cur + (target - cur) * DISPLAY_HOVER_EASE;
+                animating = true;
+            }
+
+            // 侧边栏：选中块的滑动 + 每项的悬停淡入
+            if (_tabSlideT < 1f)
+            {
+                _tabSlideT = (Environment.TickCount64 - _tabSlideStarted) / TAB_SLIDE_MS;
+                if (_tabSlideT > 1f) _tabSlideT = 1f;
+                animating = true;
+            }
+
+            for (int i = 0; i < _tabHoverAnim.Length; i++)
+            {
+                float target = i == _hoveredTab ? 1f : 0f;
+                float cur = _tabHoverAnim[i];
+                if (Math.Abs(target - cur) <= 0.01f) { _tabHoverAnim[i] = target; continue; }
+
+                _tabHoverAnim[i] = cur + (target - cur) * TAB_HOVER_EASE;
                 animating = true;
             }
 
@@ -328,18 +398,21 @@ namespace NotchPeninsula
         // 侧边栏重排与分割线绘制
         private void RenderSidebar(SKCanvas canvas)
         {
-            // 个性化中心最上，两条分割线
-            DrawTab(canvas, 5, "个性化中心", 10);
-            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 52, 160, TITLE_BAR_HEIGHT + 52, _separatorPaint);
-            DrawTab(canvas, 0, "通用设置", 60);
-            DrawTab(canvas, 1, "显示设置", 100);
-            DrawTab(canvas, 2, "媒体设置", 140);
-            DrawTab(canvas, 3, "交互设置", 180);
-            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 222, 160, TITLE_BAR_HEIGHT + 222, _separatorPaint);
-            DrawTab(canvas, 6, "我的插件", 230);
-            DrawTab(canvas, 7, "插件市场", 270);
-            canvas.DrawLine(20, TITLE_BAR_HEIGHT + 312, 160, TITLE_BAR_HEIGHT + 312, _separatorPaint);
-            DrawTab(canvas, 4, "关于软件", 320);
+            SyncTabSlide();
+            DrawTabSelection(canvas);   // 先铺选中块：它在悬停底与文字之下，才不会被盖住
+
+            // 个性化中心最上，两条分割线（分割线 = 上一区块最后一行行首 + 42）
+            DrawTab(canvas, 5, "个性化中心", TabRowY(5));
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, _separatorPaint);
+            DrawTab(canvas, 0, "通用设置", TabRowY(0));
+            DrawTab(canvas, 1, "显示设置", TabRowY(1));
+            DrawTab(canvas, 2, "媒体设置", TabRowY(2));
+            DrawTab(canvas, 3, "交互设置", TabRowY(3));
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, _separatorPaint);
+            DrawTab(canvas, 6, "我的插件", TabRowY(6));
+            DrawTab(canvas, 7, "插件市场", TabRowY(7));
+            canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, _separatorPaint);
+            DrawTab(canvas, 4, "关于软件", TabRowY(4));
         }
 
         // 页签：通用设置

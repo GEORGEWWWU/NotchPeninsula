@@ -16,16 +16,16 @@ namespace NotchPeninsula
             bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
             bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
 
-            // Tab Hover 判定
+            // Tab Hover 判定：行首与行高和绘制同源（TabRowY / TAB_ROW_H），别写死数字
             int newHoveredTab = -1;
-            if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 10 && y <= TITLE_BAR_HEIGHT + 46) newHoveredTab = 5;      // 1. 个性化中心
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 60 && y <= TITLE_BAR_HEIGHT + 96) newHoveredTab = 0; // 2. 通用设置
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 100 && y <= TITLE_BAR_HEIGHT + 136) newHoveredTab = 1; // 3. 显示设置
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 140 && y <= TITLE_BAR_HEIGHT + 176) newHoveredTab = 2; // 4. 媒体设置
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 180 && y <= TITLE_BAR_HEIGHT + 216) newHoveredTab = 3; // 5. 交互设置
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 230 && y <= TITLE_BAR_HEIGHT + 266) newHoveredTab = 6; // 6. 我的插件
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 270 && y <= TITLE_BAR_HEIGHT + 306) newHoveredTab = 7; // 7. 插件市场
-            else if (x >= 10 && x <= 170 && y >= TITLE_BAR_HEIGHT + 320 && y <= TITLE_BAR_HEIGHT + 356) newHoveredTab = 4; // 8. 关于软件
+            if (x >= 10 && x <= 170)
+            {
+                for (int i = 0; i < SidebarTabY.Length; i++)
+                {
+                    float tabY = TITLE_BAR_HEIGHT + TabRowY(i);
+                    if (y >= tabY && y <= tabY + TAB_ROW_H) { newHoveredTab = i; break; }
+                }
+            }
 
             int newHoveredTheme = -1;
             int newHoveredOpacityIndex = -1;
@@ -642,6 +642,7 @@ namespace NotchPeninsula
                 )
             {
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
+                if (newHoveredTab != _hoveredTab) StartDisplayHoverAnim();   // 侧边栏悬停底淡入，与列表行底共用那张 16ms 表
                 _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
                 _toastToggleHovered = newToastToggleHovered;
                 _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;

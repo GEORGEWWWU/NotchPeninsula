@@ -88,7 +88,8 @@ namespace NotchPeninsula
             _chevronPaint.Color = Neutral(150);
 
             _tabBgSelected.Color = Overlay(15);
-            _tabBgHovered.Color = Overlay(8);
+            _tabHoverBaseAlpha = 8;                          // 悬停底的满透明度，实际绘制时按动画进度缩放
+            _tabBgHovered.Color = Overlay(_tabHoverBaseAlpha);
             _separatorPaint.Color = Overlay(20);
             _hoverMinPaint.Color = Overlay(20);
 
