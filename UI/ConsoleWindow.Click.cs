@@ -93,6 +93,7 @@ namespace NotchPeninsula
                 float travel = Math.Max(1f, trackH - thumbH);
                 float ratio = Math.Clamp((clickY - top - thumbH / 2f) / travel, 0f, 1f);
                 _displayPageScroll = ratio * pageMax;
+                NotifyScrolled();   // 滚动条显形（停手后自动淡出）
                 SyncHoverFromCursor();
                 Render();
             }
@@ -109,6 +110,7 @@ namespace NotchPeninsula
                     float ratio = Math.Clamp((clickY - top - thumbH / 2f) / travel, 0f, 1f);
                     _displayScroll = (int)Math.Round(ratio * maxFirstRow);
                 }
+                NotifyScrolled();   // 滚动条显形（停手后自动淡出）
                 SyncHoverFromCursor();
                 Render();
             }

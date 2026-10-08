@@ -85,7 +85,7 @@ namespace NotchPeninsula
 
         private const float DISPLAY_ROW_H = 34f;
 
-        private const float DISPLAY_FIRST_ROW_Y = 56f;    // 首行顶部相对卡片顶部的偏移
+        private const float DISPLAY_FIRST_ROW_Y = 22f;    // 首行顶部相对卡片顶部的偏移（卡片已无标题行）
 
         /// <summary>
         /// 「显示内容」列表最多显示几行 —— 列表高度、可视行数、可滚范围的唯一真源。
@@ -95,8 +95,8 @@ namespace NotchPeninsula
         /// </summary>
         private const int DISPLAY_MAX_ROWS = 8;
 
-        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源；紧随待机模式卡之后）。</summary>
-        private const float DISPLAY_CARD_Y = STANDBY_CARD_Y + STANDBY_CARD_H + 12f;
+        /// <summary>「显示内容」卡片顶部相对标题栏的偏移（渲染与命中必须同源，紧随双击切换那一行）。</summary>
+        private const float DISPLAY_CARD_Y = TOGGLE_ROW_Y + 48f;
 
         /// <summary>
         /// 「显示内容」卡片高度：由 DISPLAY_MAX_ROWS 反推，正好放下约定的行数，底部不留空。
@@ -107,13 +107,67 @@ namespace NotchPeninsula
         /// <summary>滚轮一格（120）滚动几行。</summary>
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
 
-        // ---- 显示设置页整页滚动 + 「显示模式」/「待机模式」卡片（渲染与鼠标命中必须同源）----
-        //    卡片自上而下：显示形态(12) → 目标显示器(172) → 显示模式(246) → 待机模式(500) → 显示内容(754)，
-        //    相邻卡之间留 12px；页面内容高于窗口，靠 _displayPageScroll 整页滚动查看。
-        //    「目标显示器」从最底一张（待机模式之后）提到「显示形态」正下方：
-        //      它决定整块岛画在哪块屏上，属于「先选屏幕、再谈样式/模式」的前置项。
+        // ---- 显示设置页版式（渲染与鼠标命中必须同源）----
+        //    为了一屏放下（整页不再需要向下滚动），全页只留「显示形态」一张大卡片；
+        //    其余四块压成不带容器的单行，控件类型刻意错开：下拉框 / 分段器 / 分段器 / 开关。
+        //    自上而下：显示形态(12..130) → 目标显示器(138) → 显示模式(182) → 待机显示内容(226)
+        //              → 双击空白切换(259) → 显示内容列表(307..601)，前面的行距 44，与列表之间留 48。
+        //    全部 y 都是「相对标题栏」的偏移；整页可滚高度由此算出（= 0，见 GetDisplayPageMaxScroll）。
 
-        /// <summary>整页滚轮一格（120）滚动的像素。</summary>
+        /// <summary>显示形态大卡片（唯一保留的卡片；里面就是两个形态选项，不再另写标题）。</summary>
+        private const float STYLE_CARD_Y = 12f;
+
+        private const float STYLE_CARD_H = 118f;   // = 选项高 90 + 上下内边距各 14
+
+        /// <summary>两个形态选项（150×90，胶囊示意图 + 单选 Radio）。</summary>
+        private const float STYLE_OPT_Y = STYLE_CARD_Y + 14f;
+
+        private const float STYLE_OPT_W = 150f;
+
+        private const float STYLE_OPT_H = 90f;
+
+        private const float STYLE_OPT_GAP = 20f;
+
+        private const float STYLE_OPT_X = 220f;
+
+        /// <summary>不带容器的行：行高 + 标签基线相对行顶的偏移（标签与该行控件同心）。</summary>
+        private const float ROW_H = 38f;
+
+        private const float ROW_LABEL_DY = 25f;
+
+        /// <summary>分段器（显示模式 / 待机显示内容）的段高。</summary>
+        private const float SEG_H = 30f;
+
+        /// <summary>目标显示器行：右侧下拉框（左端 = 内容区右缘 − MONITOR_DD_W）。</summary>
+        private const float MONITOR_ROW_Y = STYLE_CARD_Y + STYLE_CARD_H + 8f;   // 138
+
+        private const float MONITOR_DD_W = 160f;
+
+        private const float MONITOR_DD_H = 32f;
+
+        /// <summary>显示模式行（待机 / 普通，分段器靠右排）。</summary>
+        private const float MODE_ROW_Y = MONITOR_ROW_Y + 44f;                   // 182
+
+        private const float MODE_SEG_W = 184f;                                  // 2 段 × 92
+
+        private const float MODE_SEG_X = WIDTH - CONTENT_RM - MODE_SEG_W;       // 404
+
+        /// <summary>待机显示内容行（时间 / 空白 / 媒体控制，分段器靠右排）。</summary>
+        private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 226
+
+        private const float SCENE_SEG_W = 240f;                                 // 3 段 = 70 / 70 / 100
+
+        private const float SCENE_SEG_X = WIDTH - CONTENT_RM - SCENE_SEG_W;     // 348
+
+        /// <summary>
+        /// 「双击空白切换待机模式」开关行的 yOffset（喂给 DrawToggleRow，单行无副标题）。
+        /// 比上一行只低 33 而不是 44：DrawToggleRow 把控件中心锚在 yOffset + ROW_ANCHOR_Y（=30），
+        /// 而上面那些行的中心在「行首 + 19」—— 差 11，不减掉的话这一行的开关会明显偏下。
+        /// </summary>
+        private const float TOGGLE_ROW_Y = SCENE_ROW_Y + 33f;                   // 259
+
+
+        /// <summary>整页滚轮一格（120）滚动的像素（本页已压进一屏，只在内容变高时才用得上）。</summary>
         private const float DISPLAY_PAGE_WHEEL_STEP = 48f;
 
         // 「列表滚到头之后接力滚整页」的触发阈值，单位是滚轮格数（一格 = 120）。
@@ -145,52 +199,6 @@ namespace NotchPeninsula
         /// <summary>取符号（-1 / 0 / 1）。累计量只是用来比方向，用不着真值。</summary>
         private static int Sign(int v) => v > 0 ? 1 : v < 0 ? -1 : 0;
 
-        /// <summary>目标显示器卡顶部相对标题栏的偏移（紧接「显示形态」卡之后）。</summary>
-        private const float MONITOR_CARD_Y = 172f;
-
-        /// <summary>目标显示器卡高度（标题 + 副标题 + 右侧下拉框）。</summary>
-        private const float MONITOR_CARD_H = 62f;
-
-        /// <summary>「显示模式」卡（待机 / 普通切换 + 双击开关）顶部相对标题栏的偏移。</summary>
-        private const float MODE_CARD_Y = MONITOR_CARD_Y + MONITOR_CARD_H + 12f;
-
-        /// <summary>
-        /// 「显示模式」卡高度 = 开关行行首（MODE_TOGGLE_ROW_Y）+ 该行两行文字块高（约 48）+ 底部留白 16。
-        /// 留白只给一个卡片内边距的量（同页目标显示器卡 13、待机模式卡 20），
-        /// 不能让开关行下面拖出半行空档。开关行位置变动时这里自动跟随。
-        /// </summary>
-        private const float MODE_CARD_H = MODE_TOGGLE_ROW_Y - MODE_CARD_Y + 64f;
-
-        /// <summary>两个显示模式选项的顶部与尺寸（相对标题栏；与「显示形态」选项同款 150×90）。</summary>
-        private const float MODE_OPT_Y = MODE_CARD_Y + 56f;
-
-        private const float MODE_OPT_W = 150f;
-
-        private const float MODE_OPT_H = 90f;
-
-        private const float MODE_OPT_GAP = 20f;
-
-        private const float MODE_OPT_X = 220f;
-
-        /// <summary>「双击空白切换待机模式」开关行的 yOffset（喂给 DrawToggleRow）。</summary>
-        private const float MODE_TOGGLE_ROW_Y = MODE_CARD_Y + 154f;
-
-        /// <summary>「待机模式」卡（三个场景选项）顶部相对标题栏的偏移。</summary>
-        private const float STANDBY_CARD_Y = MODE_CARD_Y + MODE_CARD_H + 12f;
-
-        private const float STANDBY_CARD_H = 168f;
-
-        /// <summary>三个待机场景选项的顶部与尺寸（相对标题栏，横向排列）。</summary>
-        private const float STANDBY_OPT_Y = STANDBY_CARD_Y + 56f;
-
-        private const float STANDBY_OPT_W = 112f;
-
-        private const float STANDBY_OPT_H = 92f;
-
-        private const float STANDBY_OPT_GAP = 8f;
-
-        private const float STANDBY_OPT_X = 208f;
-
         private const float DISPLAY_MOVE_UP_X = 486f;     // ∧ 槽左边界（槽宽 = SORT_TRI_W）
 
         private const float DISPLAY_MOVE_DOWN_X = 504f;   // ∨ 槽左边界（与 ∧ 只隔 2px，视觉上是同一组控件）
@@ -205,6 +213,46 @@ namespace NotchPeninsula
 
         // 行悬停动画的窗口定时器 id（与 BACKDROP_REFRESH_TIMER_ID 各自独立）
         private static readonly IntPtr DISPLAY_HOVER_TIMER_ID = new IntPtr(0x4E51); // "NQ"
+
+        // ---- 滚动条自动隐藏（全窗口所有列表 / 整页滚动条共用一套）----
+        //   默认不画：只有真的滚动了才显形，停手 SCROLLBAR_HOLD_MS 后开始淡出，
+        //   淡完停表 —— 没有滚动的时候窗口上不会挂着任何滚动条，也不会有空转的定时器。
+        private static readonly IntPtr SCROLLBAR_TIMER_ID = new IntPtr(0x4E52); // "NR"
+
+        private const int SCROLLBAR_HOLD_MS = 800;    // 停手后保持满不透明度的时长
+        private const int SCROLLBAR_FADE_MS = 260;    // 随后淡出的时长
+        private const int SCROLLBAR_TICK_MS = 60;     // 淡出一拍的间隔
+
+        /// <summary>最近一次滚动发生的 TickCount64（0 = 本次会话还没滚过）。</summary>
+        private long _scrollBarShownAt;
+
+        private bool _scrollBarTimerOn;
+
+        /// <summary>任何滚动（滚轮 / 点滚动条）都要调一次，滚动条据此显形。</summary>
+        private void NotifyScrolled()
+        {
+            _scrollBarShownAt = Environment.TickCount64;
+            if (_hwnd == IntPtr.Zero || _scrollBarTimerOn) return;
+            if (Win32.SetTimer(_hwnd, SCROLLBAR_TIMER_ID, SCROLLBAR_TICK_MS, IntPtr.Zero) != IntPtr.Zero)
+                _scrollBarTimerOn = true;
+        }
+
+        /// <summary>滚动条当前不透明度（0 = 完全隐藏）。渲染侧乘到 Overlay 的 alpha 上。</summary>
+        private float ScrollBarAlpha()
+        {
+            if (_scrollBarShownAt == 0) return 0f;
+            long since = Environment.TickCount64 - _scrollBarShownAt;
+            if (since <= SCROLLBAR_HOLD_MS) return 1f;
+            return Math.Max(0f, 1f - (since - SCROLLBAR_HOLD_MS) / (float)SCROLLBAR_FADE_MS);
+        }
+
+        /// <summary>淡出的一拍：还在淡就继续重绘；返回 false 时调用方停表。</summary>
+        private bool TickScrollBarFade()
+        {
+            bool showing = ScrollBarAlpha() > 0f;
+            if (showing) Render();
+            return showing;
+        }
 
         // 通用设置页「切换灵动岛字体」卡片（渲染与鼠标命中必须使用同一组坐标）
         // 通用设置页卡片顺序（提示音并入通知卡之后）：
@@ -1271,6 +1319,16 @@ namespace NotchPeninsula
                         if (!TickDisplayHoverAnim()) StopDisplayHoverAnim(hwnd);
                         return IntPtr.Zero;
                     }
+                    if (wParam == SCROLLBAR_TIMER_ID)
+                    {
+                        // 滚动条淡出：淡完就停表（滚动条此后完全不画，窗口回归静态）
+                        if (!TickScrollBarFade())
+                        {
+                            Win32.KillTimer(hwnd, SCROLLBAR_TIMER_ID);
+                            _scrollBarTimerOn = false;
+                        }
+                        return IntPtr.Zero;
+                    }
                     // 市场提示自动消失（安装 / 卸载 / 评分结果 4 秒后清掉，跑完自己停表）
                     if (TickMarketHint(wParam)) return IntPtr.Zero;
                     break;
@@ -1338,6 +1396,7 @@ namespace NotchPeninsula
                                 _dropdownScroll = target;
                                 // 滚轮不产生 WM_MOUSEMOVE：光标下的行号变了、hover 却还停在旧项上，
                                 // 紧接着点下去就会选错音源。这里按当前光标位置补一次命中。
+                                NotifyScrolled();   // 浮层侧那条滚动条也显形（停手后自动淡出）
                                 SyncHoverFromCursor();
                                 Render();
                             }
@@ -1404,6 +1463,7 @@ namespace NotchPeninsula
                         {
                             // 滚动后光标下的行号与控件位置都变了，必须重算悬停，
                             // 否则紧接着的点击会拿旧下标命中错误的条目。
+                            NotifyScrolled();   // 滚动条显形（停手后自动淡出）
                             SyncHoverFromCursor();
                             Render();
                         }
@@ -1438,6 +1498,7 @@ namespace NotchPeninsula
                         if (moved)
                         {
                             // 滚动后光标下的行号变了，补一次悬停命中，避免紧接着的点击落错行
+                            NotifyScrolled();   // 滚动条显形（停手后自动淡出）
                             SyncHoverFromCursor();
                             Render();
                         }
@@ -1485,6 +1546,8 @@ namespace NotchPeninsula
                     // 否则万一在动画途中销毁窗口，标志会一直停在 true，下次开表会被自己挡掉。
                     _displayHoverTimerOn = false;
                     _marketHintTimerOn = false;   // 同上：市场提示的自动消失表也要归位
+                    _scrollBarTimerOn = false;    // 同上：滚动条的淡出表
+                    _scrollBarShownAt = 0;        // 下次打开窗口时滚动条从隐藏开始
                     // 静态事件必须跟着窗口退订：不退的话窗口关掉后 _instance 虽为 null，
                     // 但订阅列表里还挂着这个方法，下次打开会重复订阅（静态事件是进程级的）。
                     Renderer.StandbyActiveChanged -= OnStandbyActiveChanged;

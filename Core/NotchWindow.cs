@@ -1913,9 +1913,7 @@ namespace NotchPeninsula
                         {
                             _isCursorOverIcon = true;
                         }
-                        else if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive
-                            && !(Renderer.StandbyActive && Renderer.StandbyScene == 3
-                                 && !Renderer.IsMediaExpanded && Renderer.HitMediaSpectrumZone(mx)))
+                        else if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive)
                         {
                             if (Renderer.IsMediaExpanded)
                             {
@@ -2078,7 +2076,7 @@ namespace NotchPeninsula
                         }
 
                         // 待机模式切换（开关打开时）：默认态双击「空白」进入；待机态双击空白退出 ——
-                        // 而场景选「折叠媒体控制」时岛内被媒体模块占满、没有空白，改用双击频谱那一块退出。
+                        // 而场景选「折叠媒体控制」时岛内被媒体模块占满、没有空白，改用双击整块媒体区退出。
                         // 判定排在插件分发与封面跳转之后，插件组件上与封面上永远不会触发。
                         if (Renderer.StandbyToggleByDoubleClick && _isHovered
                             && _currentToast == null && !isClipboardActive
@@ -2086,13 +2084,14 @@ namespace NotchPeninsula
                         {
                             // 进入 / 退出的命中区：
                             //   · 非待机态：双击空白进入；
-                            //   · 待机态 + 场景 = 媒体控制：岛内被媒体模块占满、没有空白，退出认频谱那一块；
-                            //     而当前没有媒体播放时岛上退化成空白（媒体模块压根没画、频谱区不存在），
+                            //   · 待机态 + 场景 = 媒体控制：岛内被媒体模块占满、没有空白，退出认整块媒体区
+                            //     （折叠态与展开态都算 —— 单击那一块是展开面板，双击才是退出待机）；
+                            //     而当前没有媒体播放时岛上退化成空白（媒体模块压根没画、热区不存在），
                             //     这时改认空白 —— 两条合起来保证任何情况下都退得出来；
                             //   · 待机态 + 场景 = 时间 / 空白：双击空白退出。
                             bool onBlank = Renderer.IsBlankAt(dx, dy, _currentHeight);
                             bool hitsToggleZone = Renderer.StandbyActive && Renderer.StandbyScene == 3
-                                ? Renderer.HitMediaSpectrumZone(dx) || onBlank
+                                ? Renderer.HitMediaZone(dx) || onBlank
                                 : onBlank;
 
                             if (hitsToggleZone)
@@ -2200,12 +2199,10 @@ namespace NotchPeninsula
 
                         if (_isHovered && _media.IsActive && _currentToast == null && !isClipboardActive)
                         {
-                            // 待机模式选「媒体控制」时，频谱那一带（右半边）的左键单击不做事 ——
-                            // 它唯一的左键用途是双击退出待机（见 WM_LBUTTONDBLCLK）。必须显式消费，
-                            // 否则跳转关闭时下面的 MediaExpandByLeftClick 会在第一下就展开面板，双击被吃掉。
-                            if (Renderer.StandbyActive && Renderer.StandbyScene == 3
-                                && Renderer.HitMediaSpectrumZone(cx))
-                                return (IntPtr)0;
+                            // 待机模式选「媒体控制」时不再特判右半边：整块媒体区（含频谱那一带）左键都展开，
+                            // 退出待机走双击（见 WM_LBUTTONDBLCLK，热区同为整块媒体区）。
+                            // 曾经的「右半边左键显式消费」是为了保住双击退出，代价是那一半点了没反应 ——
+                            // 悬停给小手、点下去却什么都不发生，与被消费的那一下正好凑成这个 bug。
 
                             // 命中时间轴：进入拖动并锁住鼠标，同时消费这次点击
                             // （不能落到下面「点媒体区就展开」的那条分支）
@@ -2467,15 +2464,10 @@ namespace NotchPeninsula
                 }
             }
 
-            // 待机模式选「媒体控制」时岛上只剩媒体模块、没有空白：频谱那一带（右半边）的右键
-            // 固定打开设置窗口的媒体页 —— 待机时不该再把岛展开成完整面板。
-            // 判定与双击退出的 HitMediaSpectrumZone 同源。
-            if (_currentToast == null && Renderer.StandbyActive && Renderer.StandbyScene == 3
-                && Renderer.HitMediaSpectrumZone(rx))
-            {
-                ConsoleWindow.ShowTab(2);
-                return;
-            }
+            // 注：待机模式选「媒体控制」时不再为频谱那一带单开右键分支 ——
+            //     岛内被媒体模块占满，左右两半本就该同一条规则（跳转开启时右键展开，
+            //     否则右键直达媒体设置页签），与左键展开（见 WM_LBUTTONDOWN）保持同一口径。
+            //     曾经那条例外让右半边右键固定开设置，左半边却照常展开 —— 同一条媒体块两套行为。
 
             // 折叠态媒体区右键 = 展开媒体面板（曾经定下展开入口在右键，
             // 后来细化为「入口跟着跳转开关走」）：

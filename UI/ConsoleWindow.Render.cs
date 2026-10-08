@@ -108,6 +108,63 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 分段选择器（一排小胶囊按钮）：显示模式的「待机 / 普通」与待机显示内容的「时间 / 空白 / 媒体控制」都用它。
+        /// x / w 由调用方给（本页右对齐），段宽 = w / 段数 —— 命中侧（WndProc 的 tab 1 段）按同一算式取段号。
+        /// </summary>
+        private void DrawSegmented(SKCanvas canvas, float x, float y, float w, float h,
+            string[] labels, int selected, int hovered)
+        {
+            int n = labels.Length;
+            float segW = w / n;
+
+            _dynamicFillPaint.Color = Overlay(8);
+            canvas.DrawRoundRect(new SKRect(x, y, x + w, y + h), 6, 6, _dynamicFillPaint);
+
+            for (int i = 0; i < n; i++)
+            {
+                // 段之间留 2px 缝（两端不留）：不靠缝也能看出分界，但有缝更像一组按钮而不是一块色板。
+                var r = new SKRect(x + i * segW + (i > 0 ? 2f : 0f), y,
+                    x + (i + 1) * segW - (i < n - 1 ? 2f : 0f), y + h);
+                if (i == selected)
+                {
+                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(r, 5, 5, _dynamicFillPaint);
+                }
+                else if (i == hovered)
+                {
+                    _dynamicFillPaint.Color = Overlay(24);
+                    canvas.DrawRoundRect(r, 5, 5, _dynamicFillPaint);
+                }
+
+                // 文本用完立刻恢复基准色：本帧后面还要用同一支画笔
+                _uiTextPaint.Color = i == selected ? SKColors.White : _fgColor;
+                canvas.DrawText(labels[i], r.MidX - _uiTextPaint.MeasureText(labels[i]) / 2f, r.MidY + 5.5f, _uiTextPaint);
+            }
+            _uiTextPaint.Color = _fgColor;
+        }
+
+        /// <summary>
+        /// 画一条滚动条（3px 轨道 + 滑块）。窗口里所有列表 / 整页滚动条都走这里，
+        /// 「默认隐藏、滚动才显形」的透明度只在这一处生效（见 ScrollBarAlpha）。
+        /// thumbRatio = 滑块占轨道高的比例，posRatio = 滑块位置比例（0 = 顶）。
+        /// </summary>
+        private void DrawScrollBar(SKCanvas canvas, float x, float trackTop, float trackH,
+            float thumbRatio, float posRatio, float minThumbH = 18f)
+        {
+            float alpha = ScrollBarAlpha();
+            if (alpha <= 0.01f || trackH <= 0f) return;
+
+            float thumbH = Math.Max(minThumbH, trackH * Math.Clamp(thumbRatio, 0.05f, 1f));
+            float travel = Math.Max(1f, trackH - thumbH);
+            float thumbY = trackTop + travel * Math.Clamp(posRatio, 0f, 1f);
+
+            _dynamicFillPaint.Color = Overlay((byte)(30 * alpha));
+            canvas.DrawRoundRect(new SKRect(x, trackTop, x + 3, trackTop + trackH), 1.5f, 1.5f, _dynamicFillPaint);
+            _dynamicFillPaint.Color = Overlay((byte)(140 * alpha));
+            canvas.DrawRoundRect(new SKRect(x, thumbY, x + 3, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+        }
+
         // 勾选框选项
         private void DrawCheckItem(SKCanvas canvas, float yOffset, string label, bool isChecked, bool hovered, bool disabled)
         {
@@ -474,16 +531,19 @@ namespace NotchPeninsula
         }
 
         // 页签：显示设置
+        // 版式：一屏放下（整页不再滚动）。只保留「显示形态」一张大卡片，其余四块是不带容器的单行，
+        // 控件类型刻意错开（下拉框 / 分段器 / 分段器 / 开关），不是一个样式抄四遍。
         private void RenderTabDisplay(SKCanvas canvas)
         {
-            // 整页滚动偏移：内容高于窗口时全部卡片整体上移（命中侧同源，见 WndProc 的 tab 1 段）
+            // 整页滚动偏移：内容已压进一屏（GetDisplayPageMaxScroll = 0），这里恒为 0；
+            // 保留偏移项是为了以后内容变高时不必再改一遍坐标（命中侧同源，见 WndProc 的 tab 1 段）
             float page = -_displayPageScroll;
 
-            // 刘海形态两列布局选择器
-            var styleCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + 12 + page, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + 160 + page);
+            // 显示形态（唯一保留的大卡片：两个形态选项就是它的内容，不再另写标题行）
+            var styleCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + STYLE_CARD_Y + page,
+                WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + STYLE_CARD_Y + STYLE_CARD_H + page);
             canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("显示形态", CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 38 + page, _uiTextPaint);
 
             void DrawStyleOption(int index, string name, float x, float y)
             {
@@ -491,7 +551,7 @@ namespace NotchPeninsula
                 bool isHovered = _hoveredStyleIndex == index;
 
                 // 选项外框与背景反馈
-                var optRect = new SKRect(x, y, x + 150, y + 90);
+                var optRect = new SKRect(x, y, x + STYLE_OPT_W, y + STYLE_OPT_H);
                 _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? Overlay(15) : Overlay(8));
                 canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
                 _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : Neutral(80);
@@ -539,171 +599,54 @@ namespace NotchPeninsula
                 canvas.DrawText(name, cx - 15, radioY + 1, _dynamicTextPaint);
             }
 
-            DrawStyleOption(0, "经典刘海", 220, TITLE_BAR_HEIGHT + 50 + page);
-            DrawStyleOption(1, "悬浮灵动岛", 390, TITLE_BAR_HEIGHT + 50 + page);
+            DrawStyleOption(0, "经典刘海", STYLE_OPT_X, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
+            DrawStyleOption(1, "悬浮灵动岛", STYLE_OPT_X + STYLE_OPT_W + STYLE_OPT_GAP, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
 
-            // ── 显示模式卡片 ──
-            // 两个选项与「显示形态」同款（150×90、胶囊示意 + Radio）：高亮的是当前真实状态，
-            // 点「待机模式」岛上立刻收拢、点「普通模式」立刻展开（Renderer.StandbyActive，
-            // 运行时状态、不写注册表 —— 待机是否持续由用户当时的选择决定，不跨启动保留）。
-            // 下方开关决定「双击空白」能否在两种模式间来回切；场景选「媒体控制」时岛内没有空白可双击，
-            // 退出改走双击频谱，卡片底部那行蓝色提示就是为此补的说明。
-            float modeCardY = TITLE_BAR_HEIGHT + MODE_CARD_Y + page;
-            var modeCardRect = new SKRect(CONTENT_L, modeCardY, WIDTH - CONTENT_RM, modeCardY + MODE_CARD_H);
-            canvas.DrawRoundRect(modeCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(modeCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("显示模式", CONTENT_TEXT_X, modeCardY + 26, _uiTextPaint);
-            canvas.DrawText("选择岛上现在显示待机内容还是完整内容", CONTENT_TEXT_X, modeCardY + 46, _subTextPaint);
-
-            void DrawModeOption(int index, string name, float x, float y)
-            {
-                bool isSelected = index == 0 ? Renderer.StandbyActive : !Renderer.StandbyActive;
-                bool isHovered = _hoveredDisplayModeIndex == index;
-
-                var optRect = new SKRect(x, y, x + MODE_OPT_W, y + MODE_OPT_H);
-                _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? Overlay(15) : Overlay(8));
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
-                _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : Neutral(80);
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
-
-                float cx = x + MODE_OPT_W / 2f;
-                float cy = y + 35;
-                // 胶囊示意：底色与真实主题一致；「跟随系统」走缓存，不现读注册表
-                bool isLight = IsLightPreviewCapsule();
-
-                // 待机模式 = 收拢后的小胶囊 + 一条内容条；普通模式 = 完整宽度胶囊 + 缩略图与两条内容条
-                _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
-                var capsule = index == 0
-                    ? new SKRect(cx - 30, cy - 10, cx + 30, cy + 10)
-                    : new SKRect(cx - 52, cy - 10, cx + 52, cy + 10);
-                canvas.DrawRoundRect(capsule, 10, 10, _dynamicFillPaint);
-
-                _dynamicFillPaint.Color = Neutral(150);
-                if (index == 0)
-                {
-                    canvas.DrawRoundRect(new SKRect(cx - 16, cy - 3, cx + 16, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
-                }
-                else
-                {
-                    canvas.DrawRoundRect(new SKRect(cx - 40, cy - 4, cx - 30, cy + 4), 2, 2, _dynamicFillPaint);
-                    canvas.DrawRoundRect(new SKRect(cx - 26, cy - 3, cx - 4, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
-                    canvas.DrawRoundRect(new SKRect(cx + 2, cy - 3, cx + 38, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
-                }
-                _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
-
-                // 单选 Radio 与文本：与「显示形态」选项同一套版式
-                float radioY = y + 72;
-                canvas.DrawCircle(cx - 30, radioY - 4, 6, _dynamicStrokePaint);
-                if (isSelected)
-                {
-                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
-                    canvas.DrawCircle(cx - 30, radioY - 4, 3, _dynamicFillPaint);
-                }
-                _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : _fgColor;
-                canvas.DrawText(name, cx - 15, radioY + 1, _dynamicTextPaint);
-            }
-
-            DrawModeOption(0, "待机模式", MODE_OPT_X, TITLE_BAR_HEIGHT + MODE_OPT_Y + page);
-            DrawModeOption(1, "普通模式", MODE_OPT_X + MODE_OPT_W + MODE_OPT_GAP, TITLE_BAR_HEIGHT + MODE_OPT_Y + page);
-
-            DrawToggleRow(canvas, MODE_TOGGLE_ROW_Y + page,
-                "双击空白切换待机模式", "打开后双击岛上空白处即可进入 / 退出待机",
-                Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
-
-            // ── 待机模式卡片 ──
-            // 三个场景决定进入待机后岛上显示什么（只显示时间 / 空白 / 折叠媒体控制），
-            // 复用现成的时钟模块与折叠媒体模块（见 Renderer.StandbyScene）。
-            // 进入 / 退出的入口在上一张「显示模式」卡（切换控件 + 双击开关）。
-            float standbyCardY = TITLE_BAR_HEIGHT + STANDBY_CARD_Y + page;
-            var standbyCardRect = new SKRect(CONTENT_L, standbyCardY, WIDTH - CONTENT_RM, standbyCardY + STANDBY_CARD_H);
-            canvas.DrawRoundRect(standbyCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(standbyCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("待机模式", CONTENT_TEXT_X, standbyCardY + 26, _uiTextPaint);
-            canvas.DrawText("进入待机后岛上显示的内容", CONTENT_TEXT_X, standbyCardY + 46, _subTextPaint);
-
-            void DrawStandbyOption(int index, string name, float x, float y)
-            {
-                bool isSelected = Renderer.StandbyScene == index;
-                bool isHovered = _hoveredStandbySceneIndex == index;
-
-                var optRect = new SKRect(x, y, x + STANDBY_OPT_W, y + STANDBY_OPT_H);
-                _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? Overlay(15) : Overlay(8));
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
-                _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : Neutral(80);
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
-
-                // 胶囊示意：底色与真实主题一致；「跟随系统」走缓存，不现读注册表
-                float cx = x + STANDBY_OPT_W / 2f;
-                float cy = y + 32;
-                bool isLight = IsLightPreviewCapsule();
-                var capsule = new SKRect(cx - 38, cy - 10, cx + 38, cy + 10);
-                _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
-                canvas.DrawRoundRect(capsule, 10, 10, _dynamicFillPaint);
-
-                // 内容示意：时间 = 两段文字条；空白 = 只留胶囊；媒体控制 = 缩略图 + 文字条
-                _dynamicFillPaint.Color = Neutral(150);
-                if (index == 1)
-                {
-                    canvas.DrawRoundRect(new SKRect(cx - 24, cy - 3, cx - 4, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
-                    canvas.DrawRoundRect(new SKRect(cx - 1, cy - 3, cx + 20, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
-                }
-                else if (index == 3)
-                {
-                    canvas.DrawRoundRect(new SKRect(cx - 27, cy - 5, cx - 17, cy + 5), 2, 2, _dynamicFillPaint);
-                    canvas.DrawRoundRect(new SKRect(cx - 14, cy - 3, cx + 24, cy + 3), 1.5f, 1.5f, _dynamicFillPaint);
-                }
-                _dynamicFillPaint.Color = isLight ? SKColors.White : SKColors.Black;
-
-                // 单选 Radio 与文本：与「显示形态」选项同一套版式
-                float radioY = y + 72;
-                canvas.DrawCircle(cx - 30, radioY - 4, 6, _dynamicStrokePaint);
-                if (isSelected)
-                {
-                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
-                    canvas.DrawCircle(cx - 30, radioY - 4, 3, _dynamicFillPaint);
-                }
-                _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : _fgColor;
-                canvas.DrawText(name, cx - 20, radioY + 1, _dynamicTextPaint);
-            }
-
-            for (int i = 0; i < 3; i++)
-            {
-                DrawStandbyOption(i + 1,
-                    i == 0 ? "时间" : i == 1 ? "空白" : "媒体控制",
-                    STANDBY_OPT_X + i * (STANDBY_OPT_W + STANDBY_OPT_GAP),
-                    TITLE_BAR_HEIGHT + STANDBY_OPT_Y + page);
-            }
-
-            // 目标显示器卡片
-            float monitorCardY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + page;
-            var mCardRect = new SKRect(CONTENT_L, monitorCardY, WIDTH - CONTENT_RM, monitorCardY + MONITOR_CARD_H);
-            canvas.DrawRoundRect(mCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(mCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("目标显示器", CONTENT_TEXT_X, monitorCardY + 26, _uiTextPaint);
-            canvas.DrawText("选择刘海灵动岛显示的目标屏幕", CONTENT_TEXT_X, monitorCardY + 46, _subTextPaint);
-
-            float mdW = 110; float mdX = WIDTH - 140; float mdY = monitorCardY + 14; float mdH = 32;
-            var mdRect = new SKRect(mdX, mdY, mdX + mdW, mdY + mdH);
+            // ── 目标显示器（单行：标签 + 右侧下拉框，不套容器）──
+            float monitorRowY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + page;
+            canvas.DrawText("目标显示器", CONTENT_TEXT_X, monitorRowY + ROW_LABEL_DY, _uiTextPaint);
+            float mdX = WIDTH - CONTENT_RM - MONITOR_DD_W;
+            float mdY = monitorRowY + (ROW_H - MONITOR_DD_H) / 2f;
             _dynamicFillPaint.Color = _monitorDropdownHovered ? Overlay(15) : Overlay(8);
-            canvas.DrawRoundRect(mdRect, 4, 4, _dynamicFillPaint);
+            canvas.DrawRoundRect(new SKRect(mdX, mdY, mdX + MONITOR_DD_W, mdY + MONITOR_DD_H), 4, 4, _dynamicFillPaint);
             string mName = Renderer.TargetMonitorIndex < _monitorOptions.Length ? _monitorOptions[Renderer.TargetMonitorIndex] : "未知";
             canvas.DrawText(mName, mdX + 10, mdY + 21, _uiTextPaint);
-            canvas.DrawLine(mdX + mdW - 20, mdY + 14, mdX + mdW - 15, mdY + 19, _chevronPaint);
-            canvas.DrawLine(mdX + mdW - 15, mdY + 19, mdX + mdW - 10, mdY + 14, _chevronPaint);
+            canvas.DrawLine(mdX + MONITOR_DD_W - 20, mdY + 14, mdX + MONITOR_DD_W - 15, mdY + 19, _chevronPaint);
+            canvas.DrawLine(mdX + MONITOR_DD_W - 15, mdY + 19, mdX + MONITOR_DD_W - 10, mdY + 14, _chevronPaint);
 
-            // ── 显示内容卡片 ──
+            // ── 显示模式（单行分段器）：待机 / 普通 ──
+            // 高亮的是当前真实状态：点「待机模式」岛上立刻收拢、点「普通模式」立刻展开
+            //（Renderer.StandbyActive，运行时状态、不写注册表）。
+            float modeRowY = TITLE_BAR_HEIGHT + MODE_ROW_Y + page;
+            canvas.DrawText("显示模式", CONTENT_TEXT_X, modeRowY + ROW_LABEL_DY, _uiTextPaint);
+            DrawSegmented(canvas, MODE_SEG_X, modeRowY + (ROW_H - SEG_H) / 2f, MODE_SEG_W, SEG_H,
+                ["待机模式", "普通模式"], Renderer.StandbyActive ? 0 : 1, _hoveredDisplayModeIndex);
+
+            // ── 待机显示内容（单行分段器）：进入待机后岛上显示什么 ──
+            // 复用现成的时钟模块与折叠媒体模块（见 Renderer.StandbyScene）。
+            float sceneRowY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + page;
+            canvas.DrawText("待机显示内容", CONTENT_TEXT_X, sceneRowY + ROW_LABEL_DY, _uiTextPaint);
+            DrawSegmented(canvas, SCENE_SEG_X, sceneRowY + (ROW_H - SEG_H) / 2f, SCENE_SEG_W, SEG_H,
+                ["时间", "空白", "媒体控制"], Renderer.StandbyScene - 1, _hoveredStandbySceneIndex - 1);
+
+            // ── 双击空白切换待机模式（单行开关，不套容器、不写副标题）──
+            // 场景选「媒体控制」时岛内没有空白可双击，退出改走双击整块媒体区
+            //（见 Core/NotchWindow 的双击分支）。
+            DrawToggleRow(canvas, TOGGLE_ROW_Y + page,
+                "双击空白切换待机模式", "",
+                Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
+
+            // ── 显示内容列表 ──
             // 灵动岛显示什么、按什么次序，全在这一张列表里：每行 = 复选框（勾选 = 显示在岛上）
-            // + 名称（内置模块后面跟一个蓝色「（内置）」标记）+ ‹ ›（调整在岛上的左右次序）。
-            // 列表内容与顺序都取自 PluginManager 那张统一顺序表（内置模块与插件混排），
-            // 所以老版本在「插件中心」调好的插件位置，升级后会原样出现在这里。
-            // 条目数可能超过卡片高度：超出部分靠滚轮滚动查看（_displayScroll = 滚动首行），
-            //    可滚范围与命中 / 滚轮共用 GetDisplayListLayout；右侧画一条滚动条指示。
+            // + 名称（内置模块后面跟一个蓝色「（内置）」标记）+ ∧ ∨（调整在岛上的先后次序）。
+            // 列表内容与顺序都取自 PluginManager 那张统一顺序表（内置模块与插件混排）。
+            // 卡片不再写标题行（省一屏空间），首行直接贴在卡片顶部：
+            // 条目数可能超过卡片高度，超出部分靠滚轮滚动查看（_displayScroll = 滚动首行），
+            //    可滚范围与命中 / 滚轮共用 GetDisplayListLayout；滚动时才画右侧那条滚动条。
             float contentCardY = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page;
             var contentCardRect = new SKRect(CONTENT_L, contentCardY, WIDTH - CONTENT_RM, contentCardY + DISPLAY_CARD_H);
             canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(contentCardRect, 6, 6, _cardBorder);
-            canvas.DrawText("显示内容", CONTENT_TEXT_X, contentCardY + 26, _uiTextPaint);
-            canvas.DrawText("勾选要显示的内容，并用箭头调整它们在刘海上的先后次序", CONTENT_TEXT_X, contentCardY + 46, _subTextPaint);
 
             var displayItems = PluginManager.Instance.DisplayItems;
             GetDisplayListLayout(out int visibleRows, out int maxFirstRow);
@@ -757,15 +700,12 @@ namespace NotchPeninsula
 
             // 超出可视区时在卡片右侧画一条滚动条指示（与下拉浮层同款），避免用户以为「列表就这么长」。
             // 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
+            // 自动隐藏：没在滚动时整条不画（见 DrawScrollBar）。
             if (maxFirstRow > 0 && visibleRows > 0)
             {
                 GetListScrollbarLayout(out float listTrackTop, out float listTrackH);
-                float thumbH = Math.Max(18f, listTrackH * visibleRows / displayItems.Count);
-                float thumbY = listTrackTop + (listTrackH - thumbH) * _displayScroll / maxFirstRow;
-                _dynamicFillPaint.Color = Overlay(30);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 26, listTrackTop, WIDTH - 23, listTrackTop + listTrackH), 1.5f, 1.5f, _dynamicFillPaint);
-                _dynamicFillPaint.Color = Overlay(140);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 26, thumbY, WIDTH - 23, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+                DrawScrollBar(canvas, WIDTH - 26, listTrackTop, listTrackH,
+                    visibleRows / (float)displayItems.Count, _displayScroll / (float)maxFirstRow);
             }
 
             // 整页滚动条：页面高于窗口时画在窗口最右侧（比上面那条更靠外）。
@@ -774,12 +714,8 @@ namespace NotchPeninsula
             {
                 GetPageScrollbarLayout(out float pageTrackTop, out float pageTrackH);
                 float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f;
-                float pThumbH = Math.Max(24f, pageTrackH * HEIGHT / contentH);
-                float pThumbY = pageTrackTop + (pageTrackH - pThumbH) * _displayPageScroll / pageMaxScroll;
-                _dynamicFillPaint.Color = Overlay(30);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 8, pageTrackTop, WIDTH - 5, pageTrackTop + pageTrackH), 1.5f, 1.5f, _dynamicFillPaint);
-                _dynamicFillPaint.Color = Overlay(140);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 8, pThumbY, WIDTH - 5, pThumbY + pThumbH), 1.5f, 1.5f, _dynamicFillPaint);
+                DrawScrollBar(canvas, WIDTH - 8, pageTrackTop, pageTrackH,
+                    HEIGHT / contentH, _displayPageScroll / pageMaxScroll, minThumbH: 24f);
             }
         }
 
@@ -1458,18 +1394,14 @@ namespace NotchPeninsula
                 }
             }
 
-            // 超出可视区时在卡片右侧画一条滚动条指示（与「显示内容」列表同款），
+            // 超出可视区时在卡片右侧画一条滚动条指示（与「显示内容」列表同款，滚动时才显形），
             // 滑块行程只能是「轨道高 - 滑块高」，写成 trackH * first / maxFirst 会让滑块滑出轨道。
             if (maxFirstRow > 0 && visibleRows > 0)
             {
                 float trackTop = listY + 44 - 2f;
                 float trackH = visibleRows * PluginListRowH - 8f;
-                float thumbH = Math.Max(18f, trackH * visibleRows / _pluginView.Count);
-                float thumbY = trackTop + (trackH - thumbH) * _pluginScroll / maxFirstRow;
-                _dynamicFillPaint.Color = Overlay(30);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 26, trackTop, WIDTH - 23, trackTop + trackH), 1.5f, 1.5f, _dynamicFillPaint);
-                _dynamicFillPaint.Color = Overlay(140);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 26, thumbY, WIDTH - 23, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+                DrawScrollBar(canvas, WIDTH - 26, trackTop, trackH,
+                    visibleRows / (float)_pluginView.Count, _pluginScroll / (float)maxFirstRow);
             }
 
             // ── 拖入 DLL 的蓝色反馈（光标落在右侧内容区时整体亮起，见 ConsoleWindow.PluginDrop.cs）──
@@ -1816,17 +1748,13 @@ namespace NotchPeninsula
                 }
             }
 
-            // 市场列表滚动条（与「显示内容」/ 我的插件同款）
+            // 市场列表滚动条（与「显示内容」/ 我的插件同款，滚动时才显形）
             if (mMaxFirst > 0 && mVisibleRows > 0)
             {
                 float trackTop = rowsTop - 2f;
                 float trackH = mVisibleRows * PluginListRowH - 8f;
-                float thumbH = Math.Max(18f, trackH * mVisibleRows / _marketView.Count);
-                float thumbY = trackTop + (trackH - thumbH) * _marketScroll / mMaxFirst;
-                _dynamicFillPaint.Color = Overlay(30);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 26, trackTop, WIDTH - 23, trackTop + trackH), 1.5f, 1.5f, _dynamicFillPaint);
-                _dynamicFillPaint.Color = Overlay(140);
-                canvas.DrawRoundRect(new SKRect(WIDTH - 26, thumbY, WIDTH - 23, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+                DrawScrollBar(canvas, WIDTH - 26, trackTop, trackH,
+                    mVisibleRows / (float)_marketView.Count, _marketScroll / (float)mMaxFirst);
             }
 
             // ── 分类下拉浮层（画在卡片之上；点外部或选中项后收起）──
@@ -2180,21 +2108,15 @@ namespace NotchPeninsula
             }
             _dynamicTextPaint.Color = _fgColor;
 
-            // 超出可视区时在右侧画一条滚动条指示，避免用户以为「列表就这么长」
+            // 超出可视区时在右侧画一条滚动条指示（与其他列表同款：滚动时才显形）
             if (total > visible)
             {
                 float trackH = listH - 8;
-                float thumbH = Math.Max(18, trackH * visible / total);
-                // 滑块只能走「轨道高 - 滑块高」这段行程。
+                // 滑块只能走「轨道高 - 滑块高」这段行程（由 DrawScrollBar 保证）。
                 //    曾经写成 `trackH * first / maxFirst`：当滑块本身很长（可视行数接近总行数）时，
                 //    thumbY + thumbH 会一路超过轨道底边，滑块整条滑出下拉菜单往下掉 ——
-                //    这就是「下拉滑轨溢出菜单主体」那个现象。改这里必须保证
-                //    `thumbY + thumbH <= dY + 4 + trackH`。
-                float thumbY = dY + 4 + (trackH - thumbH) * first / Math.Max(1, maxFirst);
-                _dynamicFillPaint.Color = Overlay(30);
-                canvas.DrawRoundRect(new SKRect(x + w - 6, dY + 4, x + w - 3, dY + 4 + trackH), 1.5f, 1.5f, _dynamicFillPaint);
-                _dynamicFillPaint.Color = Overlay(110);
-                canvas.DrawRoundRect(new SKRect(x + w - 6, thumbY, x + w - 3, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
+                //    这就是「下拉滑轨溢出菜单主体」那个现象。
+                DrawScrollBar(canvas, x + w - 6, dY + 4, trackH, visible / (float)total, first / (float)Math.Max(1, maxFirst));
             }
         }
 
@@ -2301,11 +2223,12 @@ namespace NotchPeninsula
             }
 
             // 目标显示器（浮层锚点跟着整页偏移一起走，否则滚动后它会脱开下拉框）
+            // 几何与命中侧完全同源：左端 = 内容区右缘 − MONITOR_DD_W，顶 = 下拉框底部 + 2
             if (_selectedTab == 1 && _monitorDropdownOpen)
             {
-                float dX = WIDTH - 140;
-                float dY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + 48 - _displayPageScroll;
-                float dW = 110; float dH = _monitorOptions.Length * 26;
+                float dX = WIDTH - CONTENT_RM - MONITOR_DD_W;
+                float dY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + MONITOR_DD_H + 2f - _displayPageScroll;
+                float dW = MONITOR_DD_W; float dH = _monitorOptions.Length * 26;
                 var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
                 canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
                 canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);

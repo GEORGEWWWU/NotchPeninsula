@@ -245,46 +245,45 @@ namespace NotchPeninsula
                 // 所以这里必须同为负号 —— 两处符号相反会让偏移量翻倍、控件整体点不中。
                 float page = -_displayPageScroll;
 
-                // 刘海形态选择器的点击热区
-                float styleY = TITLE_BAR_HEIGHT + 50 + page;
-                if (x >= 220 && x <= 370 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 0;
-                if (x >= 390 && x <= 540 && y >= styleY && y <= styleY + 90) newHoveredStyleIndex = 1;
-
-                // 显示模式：两个选项 + 「双击空白切换」开关（开关已从「待机模式」卡移到这张卡）
-                float modeOptY = TITLE_BAR_HEIGHT + MODE_OPT_Y + page;
-                for (int i = 0; i < 2; i++)
+                // 显示形态：两个大卡片选项（150×90，几何与 STYLE_OPT_* 同源）
+                float styleY = TITLE_BAR_HEIGHT + STYLE_OPT_Y + page;
+                if (y >= styleY && y <= styleY + STYLE_OPT_H)
                 {
-                    float optX = MODE_OPT_X + i * (MODE_OPT_W + MODE_OPT_GAP);
-                    if (x >= optX && x <= optX + MODE_OPT_W && y >= modeOptY && y <= modeOptY + MODE_OPT_H)
-                        newHoveredDisplayModeIndex = i;
+                    if (x >= STYLE_OPT_X && x <= STYLE_OPT_X + STYLE_OPT_W) newHoveredStyleIndex = 0;
+                    else
+                    {
+                        float styleX1 = STYLE_OPT_X + STYLE_OPT_W + STYLE_OPT_GAP;
+                        if (x >= styleX1 && x <= styleX1 + STYLE_OPT_W) newHoveredStyleIndex = 1;
+                    }
                 }
 
-                float modeToggleCy = TITLE_BAR_HEIGHT + MODE_TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
-                if (x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
-                    newStandbyToggleHovered = true;
-
-                // 待机模式：三个场景选项
-                float standbyOptY = TITLE_BAR_HEIGHT + STANDBY_OPT_Y + page;
-                for (int i = 0; i < 3; i++)
-                {
-                    float optX = STANDBY_OPT_X + i * (STANDBY_OPT_W + STANDBY_OPT_GAP);
-                    if (x >= optX && x <= optX + STANDBY_OPT_W
-                        && y >= standbyOptY && y <= standbyOptY + STANDBY_OPT_H)
-                        newHoveredStandbySceneIndex = i + 1;
-                }
-
-                // 目标显示器卡片
-                float mdY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + 14 + page;
-                if (!_monitorDropdownOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= mdY && y <= mdY + 32)
+                // 目标显示器：右侧下拉框（左端与绘制侧共用 MONITOR_DD_W）
+                float mdY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + page;
+                float mdX = WIDTH - CONTENT_RM - MONITOR_DD_W;
+                if (!_monitorDropdownOpen && x >= mdX && x <= WIDTH - CONTENT_RM && y >= mdY && y <= mdY + MONITOR_DD_H)
                     newMonitorDropdownHovered = true;
 
                 if (_monitorDropdownOpen)
                 {
-                    float listY = TITLE_BAR_HEIGHT + MONITOR_CARD_Y + 48 + page;
-                    if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= listY && y < listY + _monitorOptions.Length * 26)
-                        newHoveredMonitorDropdownIndex = (y - (int)listY) / 26;
+                    float listY = mdY + MONITOR_DD_H + 2f;
+                    if (x >= mdX && x <= WIDTH - CONTENT_RM && y >= listY && y < listY + _monitorOptions.Length * 26)
+                        newHoveredMonitorDropdownIndex = (int)((y - listY) / 26);
                 }
+
+                // 显示模式 / 待机显示内容：两个分段器（几何与 DrawSegmented 完全同源）
+                float modeSegY = TITLE_BAR_HEIGHT + MODE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
+                if (y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
+                    newHoveredDisplayModeIndex = Math.Min(1, (int)((x - MODE_SEG_X) / (MODE_SEG_W / 2f)));
+
+                float sceneSegY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
+                if (y >= sceneSegY && y <= sceneSegY + SEG_H && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W)
+                    newHoveredStandbySceneIndex = Math.Min(2, (int)((x - SCENE_SEG_X) / (SCENE_SEG_W / 3f))) + 1;
+
+                // 「双击空白切换待机模式」开关（DrawToggleRow 的控件中心锚在 yOffset + ROW_ANCHOR_Y）
+                float modeToggleCy = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
+                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
+                    newStandbyToggleHovered = true;
 
                 // ── 显示内容列表（可滚动：首行 = _displayScroll，可视行数走 GetDisplayListLayout）──
                 // 行起点 / 行高 / 箭头槽位必须与 RenderTabDisplay 严格同源：
@@ -307,13 +306,18 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 两条滚动条：点它们决定滚轮优先滚哪一层（命中区比 3px 的视觉宽度放宽，否则细得点不中）
-                GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
-                if (x >= WIDTH - 14 && x <= WIDTH && y >= pageBarTop && y <= pageBarTop + pageBarH)
-                    newPageScrollbarHovered = true;
+                // 两条滚动条：点它们决定滚轮优先滚哪一层（命中区比 3px 的视觉宽度放宽，否则细得点不中）。
+                // 自动隐藏期间不吃指针 —— 隐形热区会把卡片最右侧那一小条也变成「点一下就跳页」。
+                if (GetDisplayPageMaxScroll() > 0f)
+                {
+                    GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
+                    if (x >= WIDTH - 14 && x <= WIDTH && y >= pageBarTop && y <= pageBarTop + pageBarH)
+                        newPageScrollbarHovered = true;
+                }
 
                 GetListScrollbarLayout(out float listBarTop, out float listBarH);
-                if (listBarH > 0f && x >= WIDTH - 32 && x <= WIDTH - 18
+                if (listBarH > 0f && ScrollBarAlpha() > 0.01f
+                    && x >= WIDTH - 32 && x <= WIDTH - 18
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
 
