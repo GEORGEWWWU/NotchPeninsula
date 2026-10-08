@@ -9,13 +9,7 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // 鼠标移动：整窗悬停命中（各页签热区）+ 悬停状态统一提交。
-        //
-        // 这段刻意保持「先收集 newXxx 局部变量、最后一次性提交到字段、只 Render() 一次」的写法：
-        //    中途直接写字段会让每帧多触发好几次重绘，拖拽时掉帧。
         //    因此它是一个整体，不要再按页签拆开。
-        //
-        // dragging = 左键按住中（原 wParam 的 MK_LBUTTON，0x0001），只有透明度滑轨会用到。
         private void OnMouseMove(int x, int y, bool dragging)
         {
 
@@ -38,13 +32,11 @@ namespace NotchPeninsula
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             if (_selectedTab == 5)
             {
-                // 主题分段器（黑 / 白 / 系统）：与绘制侧同一个 DrawSegmented，按段宽取段号
                 float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
                 if (y >= themeSegY && y <= themeSegY + SEG_H
                     && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
                     newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
 
-                // 透明度滑块热区判定与拖拽滑动逻辑（y 与绘制侧同一个 OPACITY_SLIDER_DY）
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
                 float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
@@ -58,7 +50,6 @@ namespace NotchPeninsula
                         if (newHoveredOpacityIndex < 0) newHoveredOpacityIndex = 0;
                         if (newHoveredOpacityIndex > 4) newHoveredOpacityIndex = 4;
 
-                        // 核心滑动逻辑：判断此时鼠标左键是否处于“按住”状态 (MK_LBUTTON = 0x0001)
                         if (dragging)
                         {
                             if (Renderer.BgOpacityLevel != newHoveredOpacityIndex)
@@ -72,8 +63,6 @@ namespace NotchPeninsula
                     }
                 } 
 
-                // 个性化中心的蓝色提示（现在只剩「底部圆角」那行的「刘海模式下生效」）默认隐藏，
-                // 只有指针压在这一行上才淡入 —— 这里只认「在哪一行」，透明度交给 16ms 动画表算。
                 int newHintRow = -1;
                 if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM)
                 {
@@ -89,7 +78,6 @@ namespace NotchPeninsula
                 for (int i = 0; i < 8; i++)
                 {
                     // 无控件的项不吃指针（与绘制侧保持一致）：
-                    // 0 / 2 / 4 是「系统自动调整」；1「垂直高度」已合并进 3「全局折叠态高度」删除。
                     if (i == 0 || i == 1 || i == 2 || i == 4) continue;
 
                     float btnY = GetBtnY(i);
@@ -157,8 +145,6 @@ namespace NotchPeninsula
 
             if (_selectedTab == 0) // 通用设置
             {
-                // 本段所有 y 值必须与 RenderTabGeneral 严格同源，坐标常量一律用上面的 const，
-                //    不要再手写数字 —— 上一版就是手写 y 值 + 常量没右对齐，导致整片热区错位。
                 // 开机自启
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newToggleHovered = true;
@@ -166,7 +152,6 @@ namespace NotchPeninsula
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                     newTopmostToggleHovered = true;
 
-                // 系统消息通知卡行 1：总开关（轨道高 TOGGLE_TRACK_H，中心 = 行内锚点）
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= TITLE_BAR_HEIGHT + TOAST_TOGGLE_ROW_Y && y <= TITLE_BAR_HEIGHT + TOAST_TOGGLE_ROW_Y + TOGGLE_TRACK_H)
                     newToastToggleHovered = true;
@@ -184,60 +169,46 @@ namespace NotchPeninsula
                         newHoveredToastModeIndex = (int)((y - menuTop) / 26);
                 }
 
-                // 行 3：消息提示音开关（轨道高 TOGGLE_TRACK_H，中心 = 行内锚点）
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_TOGGLE_ROW_Y + TOGGLE_TRACK_H)
                     newSoundToggleHovered = true;
 
                 // 行 4 的「提示音设置」是父开关「消息提示音」的附属：
-                //    父开关关掉时整行不吃指针（与绘制侧的置灰判据同源，见 ToastSoundConfig.IsRowEnabled）。
                 bool soundRowEnabled = ToastSoundConfig.IsRowEnabled;
-                // 音量 / 试听 / 重置 还要再多一个条件：已选中具体音源（同样与绘制侧同源）
                 bool soundReady = ToastSoundConfig.IsSourceReady;
 
-                // 行 4：提示音下拉（浮层展开时底层不吃指针，避免误触浮窗底下的框）
-                // 命中区必须与绘制侧同一个 SOUND_BOX_Y（框顶），不能用 SOUND_ROW_Y。
                 if (soundRowEnabled && !_toastSoundDropdownOpen
                     && x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
                     && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                     newToastSoundDropdownHovered = true;
                 if (_toastSoundDropdownOpen)
                 {
-                    // 布局（浮层顶 / 可视行数 / 最大首行）与绘制、滚轮共用同一个 GetToastSoundMenuLayout。
-                    //    以前这里自己算一份、滚轮再算一份（还漏了 ROW_DROPDOWN_TOP），三处对不上，
                     //    才会出现「滚两下就断」。
                     GetToastSoundMenuLayout(out float menuTop, out int visible, out int maxFirst);
-                    // 首行只认 _dropdownScroll，不再每帧「抢回选中项」—— 那是滚轮失效的元凶。
                     int first = Math.Clamp(_dropdownScroll, 0, maxFirst);
                     if (x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
                         && y >= menuTop && y < menuTop + visible * DROPDOWN_ROW_H)
                         newHoveredToastSoundIndex = first + (int)((y - menuTop) / DROPDOWN_ROW_H);
                 }
 
-                // 音量下拉：只在选了具体音源时接受指针（与绘制侧的置灰判据同源）
                 if (soundReady && !_soundVolumeDropdownOpen
                     && x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
                     && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                     newSoundVolumeDropdownHovered = true;
                 if (soundReady && _soundVolumeDropdownOpen)
                 {
-                    // 浮层顶 / 浮层底 / 可视行数只认 GetVolumeMenuLayout（与绘制侧同一个真源）。
-                    //    以前这里自己算了一份、绘制侧在 RenderDropdownList 里又算一份，而且少了
-                    //    `anchorY - 2` 那一步 —— 两边靠巧合算出同一个行数，SOUND_BOX_Y 一挪就错位。
                     GetVolumeMenuLayout(out float menuTopV, out float menuBottom, out _);
                     if (x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
                         && y >= menuTopV && y < menuBottom)
                         newHoveredSoundVolumeIndex = (int)((y - menuTopV) / DROPDOWN_ROW_H);
                 }
 
-                // 行 4 右侧按钮组：[试听] [重置]（同样只在有具体音源时接受指针）
                 if (soundReady && y >= TITLE_BAR_HEIGHT + SOUND_BTN_Y && y <= TITLE_BAR_HEIGHT + SOUND_BTN_Y + SOUND_BTN_H)
                 {
                     if (x >= SOUND_PREVIEW_X && x <= SOUND_PREVIEW_X + SOUND_BTN_W) newSoundPreviewHovered = true;
                     if (x >= SOUND_RESET_X && x <= SOUND_RESET_X + SOUND_BTN_W) newSoundResetHovered = true;
                 }
 
-                // 剪贴板链接检测（= 卡片行首 CLIPBOARD_CARD_Y + 开关位移 20..40）
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
                     && y <= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
@@ -252,11 +223,8 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1) // 显示设置
             {
-                // 整页滚动的命中偏移：渲染侧是把整页「上移」了这么多（每个 Y 都 −scroll），
-                // 所以这里必须同为负号 —— 两处符号相反会让偏移量翻倍、控件整体点不中。
                 float page = -_displayPageScroll;
 
-                // 显示形态：两个大卡片选项（150×90，几何与 STYLE_OPT_* 同源）
                 float styleY = TITLE_BAR_HEIGHT + STYLE_OPT_Y + page;
                 if (y >= styleY && y <= styleY + STYLE_OPT_H)
                 {
@@ -268,7 +236,6 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 目标显示器：右侧下拉框（左端与绘制侧共用 MONITOR_DD_W）
                 float mdY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + page;
                 float mdX = WIDTH - CONTENT_RM - MONITOR_DD_W;
                 if (!_monitorDropdownOpen && x >= mdX && x <= WIDTH - CONTENT_RM && y >= mdY && y <= mdY + MONITOR_DD_H)
@@ -281,7 +248,6 @@ namespace NotchPeninsula
                         newHoveredMonitorDropdownIndex = (int)((y - listY) / 26);
                 }
 
-                // 显示模式 / 待机显示内容：两个分段器（几何与 DrawSegmented 完全同源）
                 float modeSegY = TITLE_BAR_HEIGHT + MODE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
                 if (y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
                     newHoveredDisplayModeIndex = Math.Min(1, (int)((x - MODE_SEG_X) / (MODE_SEG_W / 2f)));
@@ -290,17 +256,11 @@ namespace NotchPeninsula
                 if (y >= sceneSegY && y <= sceneSegY + SEG_H && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W)
                     newHoveredStandbySceneIndex = Math.Min(2, (int)((x - SCENE_SEG_X) / (SCENE_SEG_W / 3f))) + 1;
 
-                // 「双击空白切换待机模式」开关（DrawToggleRow 的控件中心锚在 yOffset + ROW_ANCHOR_Y）
                 float modeToggleCy = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
                     newStandbyToggleHovered = true;
 
-                // ── 显示内容列表（可滚动：首行 = _displayScroll，可视行数走 GetDisplayListLayout）──
-                // 行起点 / 行高 / 箭头槽位必须与 RenderTabDisplay 严格同源：
-                //    卡片顶 = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y，首行 = 卡片顶 + DISPLAY_FIRST_ROW_Y，行高 DISPLAY_ROW_H。
-                //    整行（名称 + 复选框）都可点 = 勾选 / 取消勾选；只有两个箭头槽吃 ↑ / ↓ 的悬停。
-                //    命中出的行号是绝对条目下标（= 滚动首行 + 槽位），点击侧直接拿它索引 displayItems。
                 GetDisplayListLayout(out int displayVisibleRows, out int displayMaxFirstRow);
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
@@ -311,15 +271,12 @@ namespace NotchPeninsula
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
                     if (rowIdx < _displayScroll + displayVisibleRows)
                     {
-                        // 箭头槽比整行窄，所以先判箭头、再判整行 —— 箭头所在处不参与「整行勾选」的手感干扰
                         if (x >= DISPLAY_MOVE_UP_X && x <= DISPLAY_MOVE_UP_X + SORT_TRI_W) newHoveredDisplayMoveUp = rowIdx;
                         else if (x >= DISPLAY_MOVE_DOWN_X && x <= DISPLAY_MOVE_DOWN_X + SORT_TRI_W) newHoveredDisplayMoveDown = rowIdx;
                         else newHoveredDisplayRow = rowIdx;
                     }
                 }
 
-                // 两条滚动条：点它们决定滚轮优先滚哪一层（命中区比 3px 的视觉宽度放宽，否则细得点不中）。
-                // 自动隐藏期间不吃指针 —— 隐形热区会把卡片最右侧那一小条也变成「点一下就跳页」。
                 if (GetDisplayPageMaxScroll() > 0f)
                 {
                     GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
@@ -333,11 +290,6 @@ namespace NotchPeninsula
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
 
-                // 「显示内容」列表区（含上下各留一点余量）：指针进去 → 滚轮先滚列表，出来 → 滚整页。
-                // 这里只需要判「光标在不在卡里」—— 列表顶到边界后要不要接力给整页，
-                // 由 WM_MOUSEWHEEL 那条分支的累计阈值决定，与命中判定无关。
-                // 保留的覆盖规则：点过某条滚动条后，该层优先（_listScrollbarHovered 让列表优先
-                // 即便光标在卡外；_pageScrollbarHovered 反之）—— 滚动条是显式的层选择操作。
                 var displayCardHit = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page,
                     WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page);
                 bool inDisplayCard = x >= displayCardHit.Left && x <= displayCardHit.Right
@@ -347,22 +299,18 @@ namespace NotchPeninsula
                     ? true
                     : (!newPageScrollbarHovered && !newListScrollbarHovered ? false : _wheelPriorityList);
 
-                // 换层就清掉「继续滚」的累计：那是上一层的动量，跨层继承会让用户
                 // 在卡片里攒的格数在出卡片后突然把整页顶走一段。
                 if (newWheelPriorityList != _wheelPriorityList) _displayWheelCarry = 0;
                 _wheelPriorityList = newWheelPriorityList;
             }
             else if (_selectedTab == 2) // 媒体设置
             {
-                // 任意下拉展开时，底层控件一律不吃悬停，避免浮窗底下的按钮被误触
                 bool anyPopupOpen = _dropdownOpen || _matchModeDropdownOpen || _appDropdownOpen;
 
                 // 媒体控制
                 if (!anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newMediaToggleHovered = true;
 
-                // 下拉菜单（合并卡片第 1 行「目标媒体平台」；框体 +96..+128，命中内缩 2px）
-                // 必须与 Render() 里 tab 2 的 `dY = TITLE_BAR_HEIGHT + 96` / `dH = 32` 保持同步
                 if (!anyPopupOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
                     newDropdownHovered = true;
 
@@ -372,8 +320,6 @@ namespace NotchPeninsula
                         newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
                 }
 
-                // 匹配方式（合并卡片第 2 行）：仅通用媒体可选；右框只在手动模式下可选
-                // 坐标全部来自 MATCH_ROW_Y / MATCH_MENU_Y，与 Render() 同源
                 bool matchRowEnabled = MediaController.TargetPlatform == "other";
                 newMatchModeDropdownHovered = !anyPopupOpen && matchRowEnabled
                     && x >= MATCH_MODE_X && x <= MATCH_MODE_X + MATCH_BOX_W && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H;
@@ -417,8 +363,6 @@ namespace NotchPeninsula
                     Render();
                 }
 
-                // 全局快捷键卡片（坐标常量与 Render 的 DrawHotkeyCard 同源）：
-                //    右侧总开关一行，下面五行键位框（框是横向一条，纵向按行高切）。
                 bool newHotkeyToggleHovered = !anyPopupOpen
                     && x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
@@ -443,9 +387,6 @@ namespace NotchPeninsula
             else if (_selectedTab == 3) // 交互设置
             {
                 // 本段的 y 值必须与下面 tab 3 的渲染保持同步
-                //    （自动隐藏卡片是四行高：行1 +32、行2 +94、行3 +156、行4 +218；其余两张卡 +290 / +362）
-                // 四行热区都不受穿透模式影响。三个模式行的可用性另由点击侧按总开关放行
-                //（与 Render 侧的置灰同源：行 1 恒可用，行 2~4 需总开关为真）。
                 // 行 1：自动隐藏总开关
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newAutoHideToggleHovered = true;
@@ -458,10 +399,8 @@ namespace NotchPeninsula
                 // 行 4：全屏自动隐藏
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
                     newFsHideToggleHovered = true;
-                // 媒体交互模式（组合模式同样可用：组合模式现在也能展开媒体面板）—— 它是展开功能总闸
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 290 && y <= TITLE_BAR_HEIGHT + 310)
                     newMediaExpToggleHovered = true;
-                // 双击封面跳转应用（卡片排在「媒体交互方式」下面一格，行距 72）—— 它同时决定展开入口走左键还是右键
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 362 && y <= TITLE_BAR_HEIGHT + 382)
                     newAppLaunchToggleHovered = true;
                 // 使用局部变量，防止状态死锁
@@ -469,8 +408,6 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 7) // 插件市场
             {
-                // 搜索框拖选：按住左键在框里拖 = 拉选区（锚点按下时定好，这里只推插入点）。
-                //    松开不用等 WM_LBUTTONUP —— 这一支本来就带着左键状态，见 dragging 变 false 即收手。
                 if (_marketSearchDragging)
                 {
                     if (dragging)
@@ -481,19 +418,15 @@ namespace NotchPeninsula
                     else _marketSearchDragging = false;
                 }
 
-                // 顶栏控件（分类下拉 + 搜索框）——弹窗 / 下拉展开时不吃悬停
-                //    判据用 _marketDialog 而不是 _marketDialogIndex：加载失败提示没有市场条目（下标恒为 -1），
                 //    只看下标会让它开着的时候底下的控件照样亮起来。
                 if (_marketDialog == MarketDialog.None)
                 {
                     newMarketSearchHovered = x >= MarketSearchX && x <= MarketSearchX + MarketSearchW
                         && y >= MarketControlsY && y <= MarketControlsY + MarketControlH;
 
-                    // 「刷新」按钮：第二行最右（拉取中点击不响应，悬停也只在高亮不上浮）
                     newMarketRefreshHovered = x >= MarketRefreshX && x <= MarketRefreshX + MarketRefreshW
                         && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
 
-                    // 「只看已安装」复选框：与刷新按钮同处第二行（命中区含方框与标签、并稍微放宽）
                     newHoveredMarketChk = x >= MarketChkX - 4f
                         && x <= MarketChkLabelX + 64f
                         && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
@@ -508,14 +441,12 @@ namespace NotchPeninsula
                         if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + MarketCatBtnW && y >= mY && y < mY + MarketCategories.Length * rowH)
                             newHoveredMarketCategoryIndex = (int)((y - mY) / rowH);
                     }
-                    // 分类按钮悬停用 -2 表示（不是菜单项），与菜单项索引区分
                     if (overCatBtn && newHoveredMarketCategoryIndex == -1 && !_marketCategoryOpen)
                         newHoveredMarketCategoryIndex = -2;
                 }
 
                 if (_marketDialog == MarketDialog.LoadFailed)
                 {
-                    // 加载失败提示：只算关闭按钮与那颗居中的「好的」，底下列表完全不吃悬停
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
                     {
@@ -527,7 +458,6 @@ namespace NotchPeninsula
                 }
                 else if (_marketDialogIndex != -1)
                 {
-                    // 弹窗打开：只算关闭按钮（命中框外扩 4px）与弹窗内按钮/星星，底下列表完全不吃悬停
                     var mp = GetMarketAt(_marketDialogIndex);
                     var rect = GetCurrentDialogRect();
                     if (mp != null && rect.Width > 0)
@@ -539,9 +469,6 @@ namespace NotchPeninsula
                         if (_marketDialog == MarketDialog.Rate && _rateMine <= 0 && !_rateLoading)
                         {
                             // 星星悬停 → 实时预览分值（半星粒度）。
-                            // 右半边必须 +1.0 而不是 +0.5：写成 floor(rel)+0.5 时，
-                            //    第 5 颗星里 floor 最大只能取到 4，结果上限永远是 4.5 —— 这就是「评不到 5.0」的根因。
-                            //    正确语义：落在第 N 颗星的左半边 = N-0.5 分，右半边 = N 分。
                             var sr = GetRateStarsRect(rect);
                             if (sr.Contains(x, y))
                             {
@@ -554,11 +481,8 @@ namespace NotchPeninsula
                         }
                     }
                 }
-                // 分类菜单展开时不算列表悬停（菜单画在列表之上）；但绝不能 return ——
-                //    那会跳过本方法末尾的「提交新悬停值 + Render()」，菜单项高亮就永远不更新。
                 else if (!_marketCategoryOpen)
                 {
-                    // ── 市场行内按钮（下行：下载/更新/重装 | 卸载 | 详情）──
                     GetMarketListLayout(out int mRows, out int mMaxFirst);
                     _marketScroll = Math.Clamp(_marketScroll, 0, mMaxFirst);
                     float marketRowsTop = MarketRowsTop;   // 与 RenderTabMarket / GetMarketListLayout 严格同源
@@ -566,7 +490,6 @@ namespace NotchPeninsula
                     {
                         int slot = (int)((y - marketRowsTop) / PluginListRowH);
                         int idx = slot + _marketScroll;
-                        // 同上：idx 边界由 GetMarketListLayout 的不变量保证，只需判 slot 是否落在可视行内
                         if (slot >= 0 && slot < mRows)
                         {
                             float rowY = marketRowsTop + slot * PluginListRowH;
@@ -575,7 +498,6 @@ namespace NotchPeninsula
                                 var mp = _marketView[idx];
                                 bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
                                 var local = MatchLocalPlugin(mp);
-                                // 不可用的按钮置灰：命中侧直接不放行（渲染侧也没有悬停反馈）
                                 if (x >= MarketBtn1X && x <= MarketBtn1X + MarketBtnW)
                                 { if (!busy) newHoveredMarketInstall = idx; }
                                 else if (x >= MarketBtn2X && x <= MarketBtn2X + MarketBtnW)
@@ -591,9 +513,6 @@ namespace NotchPeninsula
             {
                 if (_marketDialog == MarketDialog.LoadFailed)
                 {
-                    // 弹窗打开：只算关闭按钮（命中框外扩 4px）与弹窗内的按钮，底下列表完全不吃悬停
-                    // —— 与市场弹窗（tab 7）同一套规矩。加载失败提示只有一颗居中按钮。
-                    // （卸载 / 重载都不再有确认弹窗，这里只剩这一种 —— 见 Click.cs。）
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
                     {
@@ -614,24 +533,16 @@ namespace NotchPeninsula
                         else if (x >= CONTENT_TEXT_X + 208 && x <= CONTENT_TEXT_X + 304) newHoveredPluginAction = 2;  // 插件市场
                     }
 
-                    // ── 已安装列表：行内按钮（下行：重载 | 卸载 | 开关）──
                     GetPluginListCardTop(out float listY);
-                    // 可视行数走布局真源（与渲染 / 滚轮共用）；slot 是可视槽位，
-                    // 命中结果换算成绝对条目下标（slot + _pluginScroll）—— 渲染与点击两侧都用绝对下标比对
                     GetPluginListLayout(out int rows, out int pluginMaxFirst);
                     _pluginScroll = Math.Clamp(_pluginScroll, 0, pluginMaxFirst);
-                    // 这里的行起点必须与 Render() 里的 `listY + 44` 严格一致。
                     if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= listY + 44)
                     {
                         int slot = (int)((y - (listY + 44)) / PluginListRowH);
                         int idx = slot + _pluginScroll;
-                        // 只判 slot 就够：rows / _pluginScroll 都刚由布局真源算过，
-                        // 满足 idx ∈ [0, _pluginView.Count) —— 见 GetPluginListLayout 的不变量。
-                        // slot < rows 不能省：y 可能远在列表底部之下，那时 slot 会超出可视行数。
                         if (slot >= 0 && slot < rows)
                         {
                             float rowY = listY + 44 + slot * PluginListRowH;
-                            // 下行按钮区（rowY+18 .. rowY+44，与行高 50 配套）
                             if (y >= rowY + 18 && y <= rowY + 44)
                             {
                                 // 从左到右：重载 | 卸载 | 开关
@@ -659,28 +570,15 @@ namespace NotchPeninsula
             }
 
             bool newIsHoveringDisabledArea = false;
-            // 「禁止」指针区域 —— 判据必须与 Render() 里对应卡片的 disabled 完全同源，
             // 否则就会出现「明明能点、却显示禁止指针」。
-            // 这些 y 区间是手写的，卡片一挪动就必须同步改（踩过一次：
-            //    自动隐藏卡片加高后，「媒体交互方式」卡片跟着往下挪，这里没跟着改，
-            //    禁止区域就压在了别的开关那一行上 —— 导致不管该开关是否被禁用，
-            //    hover 上去都是禁止指针。卡片现在的高度是四行 248px（12..260））。
             if (x >= 200 && x <= WIDTH - CONTENT_RM)
             {
-                // 注：tab 1 已没有置灰区域 —— 「待机显示内容」卡片与「启用组合模式」开关都在
-                //     已被「显示内容」列表取代，那张列表整行可点、没有禁用项。
                 if (_selectedTab == 0 && !ToastSoundConfig.IsRowEnabled
                     && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                 {
-                    // 提示音设置行（通知卡行 4）：父开关「消息提示音」关掉时整行禁止指针。
-                    //    判据与绘制侧的置灰（ToastSoundConfig.IsRowEnabled）、命中侧的不吃指针
-                    //    完全同源 —— 与「父开关关掉 → 附属行整行禁用」的通用约定同一套（如「消息提示音 → 提示音设置」）。
                     newIsHoveringDisabledArea = true;
                 }
-                // 注：tab 3（交互设置）已无置灰区域 —— 穿透模式不再让「自动隐藏」卡片禁用。
-                //     该页签「行 2~4 在总开关关掉时置灰」沿用历史口径：那种置灰由点击侧的
                 //     总开关条件拦下（点不动），这里不给禁止指针。
-                //     注：「媒体交互方式」卡片也不再因组合模式禁用（组合模式同样能展开媒体面板），
                 //     所以这里同样没有它对应的禁止指针区间。
             }
 
@@ -803,9 +701,6 @@ namespace NotchPeninsula
                 _fontPickHovered = newFontPickHovered;
                 _fontResetHovered = newFontResetHovered;
 
-                // 「显示内容」列表：指针压在这一行的任何部位（行本体 / ∧ / ∨）都算悬停，
-                //    行底动画统一按这个行号淡入淡出；行号一变就开表，由它逐拍推进到目标值。
-                //    动画数组按可视槽位索引（行号 - 滚动首行），所以滚动后槽位变了也会重开表。
                 int newDisplayHoverRow = newHoveredDisplayRow != -1 ? newHoveredDisplayRow
                     : (newHoveredDisplayMoveUp != -1 ? newHoveredDisplayMoveUp : newHoveredDisplayMoveDown);
                 int newDisplayHoverSlot = newDisplayHoverRow == -1 ? -1 : newDisplayHoverRow - _displayScroll;

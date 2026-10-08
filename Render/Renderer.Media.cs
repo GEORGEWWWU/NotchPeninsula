@@ -10,53 +10,28 @@ namespace NotchPeninsula
         public static float MeasureCurrentLyricWidth(string text)
         {
             if (string.IsNullOrEmpty(text)) return 0;
-            // 复用卡拉OK run 缓存：组合模式 / 折叠模式每帧都会用同一句歌词调这里，
-            // 命中缓存时连 MeasureText 都不做（稳定期零重算、零分配，也不打断渲染节奏）。
             if (ReuseCachedRuns(text, _semiBoldTypeface, out float cachedWidth)) return cachedWidth;
-            // 未命中时走逐 run 兜底测量：`_textPaint.MeasureText` 只按基础字体量，缺字的歌词会被量窄。
             return MeasureTextWithFallback(text);
         }
 
         public static bool IsMediaExpanded = false;
 
-        /// <summary>
-        /// 本帧是否真的在画展开面板 —— 与 DrawMediaControl 内部分流用的是同一条判据
-        /// （媒体激活 + 已展开 + 高度已涨过 60 的动画闸门）。命中侧（如双击跳转）据此区分
-        /// 「点的是 130px 的面板」还是「点的是 35px 的折叠内联行」。
-        /// </summary>
         public static bool IsMediaPanelShowing(MediaController? media)
             => media is { IsActive: true } && Renderer.IsMediaExpanded && _currentHeightForHit > 60f;
 
-        /// <summary>
-        /// 命中判定用的岛体高度快照：由渲染循环每帧写入（见 Renderer.Draw 的入口），
-        /// 让命中侧不必再从 WndProc 一路传高度进来。
-        /// </summary>
         private static float _currentHeightForHit;
 
-        /// <summary>渲染循环每帧同步一次当前岛体高度，供命中侧（IsMediaPanelShowing(MediaController?)）使用。</summary>
         public static void SetHitTestHeight(float height) => _currentHeightForHit = height;
 
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
 
         // ---- 播放控件命中几何（唯一真源） ----
-        // 展开态三颗按钮的悬停高亮与点击以前各写一套坐标，两套还不一样：
-        // 悬停区比点击区宽、垂直基准差 2px，两两之间还留着「亮着却点不动」的空隙 ——
-        // 用户感受就是「按钮不跟手」。现在统一从这里取，改一处两边同时生效。
-        //
-        // 几何规则（与 Renderer.MediaWidget 的绘制坐标严格对应）：
-        //   · 间距 54 —— 绘制在 center −60 / −7 / +45，图标宽约 13，所以圆心取 −54 / 0 / +54；
-        //   · 半径 20 —— 与悬停高亮圆的半径一致，手型、高亮、可点范围三者完全重合；
-        //   · 垂直圆心 = 按钮图标中心（绘制在 currentHeight − 34 起、高约 16 → 中心 = 当前高度 − 26）。
         private const float MediaButtonSpacing = 54f;
         private const float MediaButtonRadius = 20f;
         private const float MediaButtonCenterOffsetY = 26f;
 
         private static float MediaButtonCenterY(float currentHeight) => currentHeight - MediaButtonCenterOffsetY;
 
-        /// <summary>
-        /// 展开态播放控件命中：返回 0 = 上一首、1 = 播放/暂停、2 = 下一首、-1 = 没命中。
-        /// 悬停（高亮 / 手型）与点击共用本方法 —— 判据一旦同源，「亮着却点不动」就不可能再出现。
-        /// </summary>
         public static int HitExpandedButton(float x, float y, float currentHeight)
         {
             float centerX = WINDOW_WIDTH / 2f;
@@ -71,16 +46,9 @@ namespace NotchPeninsula
             return -1;
         }
 
-        /// <summary>
-        /// 折叠态内联行右端的播放控件命中（同为 0 / 1 / 2 / -1）。
-        /// 三颗图标绘制在媒体模块右边界 −90 / −60 / −30，各自再右移 11px 起画，
-        /// 所以圆心就是「右边界 −79 / −49 / −19」，半径与展开态一致。
-        /// </summary>
         public static int HitInlineButton(float x, float y, float right, float currentHeight)
         {
             float centerY = currentHeight / 2f;
-            // 折叠态图标只有 10~12px，热区半径取 12 是「图标本身 + 一圈手感余量」：
-            // 相邻按钮间距 30，两块热区之间还剩 6px，不会连成一片；再大就会越出媒体模块右缘。
             float radius = 12f;
 
             for (int i = 0; i < 3; i++)
@@ -93,8 +61,6 @@ namespace NotchPeninsula
         }
 
         // ---- 展开态歌曲时间轴 ----
-        // 几何登记表：Draw 里「真的画了」才登记，帧首统一作废 —— 画与点因此共用同一套坐标，
-        // 且 HitTimeline 返回 false 天然等价于「本帧没画」，收起 / 切状态时不会在空处误触发。
         private static float _tlBarX1, _tlBarX2, _tlBarY;
 
         private const float TL_SIDE_PAD = 22f;    // 时间文本距岛体左右边缘的留白
@@ -105,16 +71,10 @@ namespace NotchPeninsula
 
         private const float TL_MIN_HEIGHT = 140f; // 高度涨到这条线之前不画，避免与底部按钮叠字
 
-        // 显示门控：仅「纯媒体控制器（可点击展开）+ 灵动岛已展开 + SMTC 提供进度」时出现。
         // 刻意不再排除组合模式：组合模式现在也能展开媒体面板，
-        //    展开后面板与固定目标宽度(320) / 面板高度(158) 完全一致，时间轴照常出现。
 
         public static bool TimelineVisible(MediaController media)
             => IsMediaExpanded && MediaInteractionMode == 1 && media.HasTimeline;
-
-        // 展开态高度：只有在「本帧真的会画时间轴」时才为它加高 28px 留位。
-        // 直接交互模式下时间轴不画（见 TimelineVisible），右键展开出的媒体面板因此回到 130，
-        // 不会在封面与底部按钮之间多出一段空档。调用方仅在 IsMediaExpanded 时取值。
 
         public static float GetExpandedHeight(MediaController media) => TimelineVisible(media) ? 158f : 130f;
 
@@ -122,21 +82,10 @@ namespace NotchPeninsula
             => _tlBarX2 > _tlBarX1 && x >= _tlBarX1 - 8f && x <= _tlBarX2 + 8f && Math.Abs(y - _tlBarY) <= 13f;
 
         // ---- 歌词翻译（上下两行） ----
-        // 译文画在原文正下方，视觉上「上下分开」：译文沿用原文那支画笔，只把颜色调成次级灰、
-        // 再用画布缩放做小一号 —— 共用同一套字体 run 缓存，不额外占缓存槽，也不动 TextSize。
-        // 注意：两行不改变岛体高度，是在原高度里把两条线各自上下让开半格挤出来的
-        // （见 DrawLyricLine）：岛体尺寸恒定，歌词有没有译文都不会弹高弹低。
-        // 间距按默认媒体高度 40px 调过：两行基线相距 15px 时，整块占用约 y=4.4→36，
-        // 中文大字的上下都不打架，也不贴边；高度调小时它还是居中的，只是余量变小。
 
         private const float LYRIC_TRANS_LINE_STEP = 15f;  // 原文与译文两条基线的间距
 
         private const float LYRIC_TRANS_SCALE = 0.92f;    // 译文视觉缩放：12.5px → 约 11.5px（略小于原文，保持主次）
-
-        /// <summary>
-        /// 本帧是否要把译文作为第二行画出来：开关开启 + 正在显示歌词 + 这句确实有译文。
-        /// 三者缺一不可 —— 否则会把译文贴到「歌手 - 歌名」下面。
-        /// </summary>
 
         public static bool IsTranslationLineVisible(MediaController? media)
             => media != null
@@ -144,22 +93,11 @@ namespace NotchPeninsula
                && !string.IsNullOrEmpty(media.CurrentLyric)
                && !string.IsNullOrEmpty(media.CurrentLyricTranslation);
 
-        /// <summary>译文行的排版宽度（已经折算过视觉缩放），供岛体自适应宽度使用。</summary>
-
         public static float MeasureLyricTranslationWidth(string text)
             => string.IsNullOrEmpty(text) ? 0f : MeasureCurrentLyricWidth(text) * LYRIC_TRANS_SCALE;
 
         // ---- 折叠态媒体标题区：故意没有右键热区 ----
-        // 这里曾经有一套「本帧真的画了标题文本才登记命中区、帧首统一作废」的机制（`_mediaTitleHit` +
-        // `HitMediaTitle`），给「右键媒体标题展开媒体面板」用。但那个热区高度 = 整个岛体高、宽度 = 文字宽度，
-        // 媒体控制器铺满岛体时几乎吃掉整片右键：用户想打开设置窗口得精确点到岛体最右侧那条窄边。
-        // 整个媒体控制器的右键都只打开设置窗口，故整套机制已删除 ——
-        // 原生媒体区域（标题 / 歌词 / 频谱 / 播放按钮 / 空白）的右键一律不消费（照旧打开设置窗口）。
         // 这里的右键只按区域决定「直达设置窗口的哪个页签」，
-        // 命中区是渲染时登记的、贴着模块真实边界的 x 区间（见 Renderer.Layout.cs 的 NativeRightClickTab），
-        // 依然不消费右键、也不覆盖整岛高度。以后要再加媒体区域右键行为，不要退回「覆盖整岛高度的大热区」。
-
-        // 鼠标 x → 0~1 落点比例（与 HitTimeline 共用同一套坐标）
 
         public static float TimelineRatio(float x)
             => _tlBarX2 > _tlBarX1 ? Math.Clamp((x - _tlBarX1) / (_tlBarX2 - _tlBarX1), 0f, 1f) : 0f;
@@ -188,7 +126,6 @@ namespace NotchPeninsula
 
         private static DateTime _lyricChangeTime; // 动画起始时间
 
-        // 硬件监控零 GC 缓存池 (预热101个字符串，避免每帧 ToString 分配内存)
         private static string[]? _cpuStrs;
 
         private static string[]? _ramStrs;
@@ -277,9 +214,6 @@ namespace NotchPeninsula
 
         private static bool _krSlot;
 
-        // 展开态歌曲时间轴：左「当前时间」+ 中间进度条 + 右「总时长」。
-        // 纵向从岛体底边反推（currentHeight - TL_BOTTOM_GAP），随展开动画一起生长，天然落在封面与按钮之间。
-        // 全程只用静态画笔与 SKRect 值类型，零分配；画完登记几何，供命中判定与落点换算共用。
         private static void DrawTimeline(SKCanvas canvas, MediaController media, float left, float right, float currentHeight, byte alpha)
         {
             float barY = currentHeight - TL_BOTTOM_GAP;
@@ -308,16 +242,10 @@ namespace NotchPeninsula
             _tlBarX1 = x1; _tlBarX2 = x2; _tlBarY = barY;
         }
 
-        // 扫光渲染 —— 卡拉 OK 与逐字歌词合并后的唯一渲染出口。
-        //
-        // 它只吃一个 0~1 的 progress：扫光位置 = 整行总宽 × 进度。至于这个进度是按整行均匀插值算的、
-        // 还是按逐字时间轴算的，全由上层 MediaController.ComputeScanProgress 决定 —— 逐字效果不可用时
-        // 那条链会自动回退成卡拉 OK 的整行扫光，所以这里无需区分驱动方式，也不必自己判断开关。
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
             SKTypeface baseTypeface = paint.Typeface;
 
-            // 缓存 runs：播放时段文本不变则直接复用，不重建，避免每帧 BuildTextRuns 拖慢渲染帧率导致时间刷新滞后
             List<(string Text, SKTypeface Type, float X)> runs;
             float totalWidth;
             if (ReuseCachedRuns(text, baseTypeface, out totalWidth))
@@ -341,13 +269,6 @@ namespace NotchPeninsula
                 _krSlot = !_krSlot;
             }
 
-            // 非扫光场景（歌名 / 译文，isLyric=false）或扫光总闸关闭时短路画实体文字，瞬间返回，0 性能开销。
-            //
-            // 注意这里不能再加「progress <= 0」这一条。progress == 0 有两种含义：
-            //   · 非扫光场景：由 isLyric=false 覆盖，不需要它；
-            //   · 本行刚唱到开头（真实进度就是 0）：这一条会把它误判成「不扫光」而画成全体高亮，
-            //     等进度涨过 0 再切回扫光分支 —— 表现就是「切换一句时先整句全亮一下，然后又从头扫」。
-            // 所以 progress == 0 应当照常走扫光分支：底板是暗的、高亮宽度为 0，只显示暗色整句。
             if (!isLyric || !MediaController.IsLyricScanEnabled)
             {
                 foreach (var run in runs)
@@ -388,15 +309,6 @@ namespace NotchPeninsula
             paint.Color = paint.Color.WithAlpha(targetAlpha);
         }
 
-        /// <summary>
-        /// 画一句歌词（含可选的译文第二行）。
-        ///
-        ///  传的是「整块文字（原文 + 译文）的竖向中心基线」：没有译文时就是原文基线，
-        /// 与改造前的行为完全一致；有译文时原文上移半格、译文下移半格，两行以原来的基线为轴心上下分开。
-        /// 译文复用调用方那支画笔（字体 run 缓存与原文共用，不额外占缓存槽），
-        /// 颜色改成次级灰、字号交给画布缩放 —— 直接改 TextSize 会让缓存里的宽度度量失效。
-        /// </summary>
-
         private static void DrawLyricLine(SKCanvas canvas, string text, string translation, float x, float y,
             SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
@@ -419,8 +331,6 @@ namespace NotchPeninsula
             paint.Color = savedColor;
         }
 
-        /// <summary>硬件占用模块在组合模式下的占宽（CPU 组 + 16px + RAM 组）。</summary>
-
         private static float MeasureHardwareBlockWidth()
         {
             float cpuLabelW = _tagTextPaint.MeasureText("CPU");
@@ -433,39 +343,20 @@ namespace NotchPeninsula
             return cpuGroupW + 16f + ramGroupW;
         }
 
-        /// <summary>
-        /// 媒体模块在组合模式下的占宽（缩略图 + 文本 + 间距 + 频谱）。
-        ///
-        /// 不封顶（原先的 CompositeMediaMaxWidth 已删除）：媒体控制器长度全放开，
-        /// 文本按真实内容计宽，超出部分只受 MAX_ISLAND_WIDTH 约束（而它已放宽到 1920）。
-        /// 组合模式总宽仍由 GetCompositeWidth 收口，且插件行预算是「总长上限 − 原生总宽」，
-        /// 所以本值变大只会让岛体变长、不会把插件挤没（前提是原生总宽还没吃满总长上限）。
-        /// </summary>
-
         private static float MeasureMediaBlockWidth(MediaController? media)
         {
-            // 一律用兜底测量：组合模式的岛体长度按这个值裁，缺字歌词被量窄会让长句被遮罩截断。
             float textWidth = (!string.IsNullOrEmpty(media?.CurrentLyric) && MediaController.IsLyricsEnabled)
                 ? MeasureTextWithFallback(media!.CurrentLyric)
                 : (string.IsNullOrEmpty(media?.Artist)
                     ? MeasureTextWithFallback(media?.Title)
                     : MeasureTextWithFallback(media!.Artist) + MeasureTextWithFallback(media.Title) + 15f);
 
-            // 译文第二行若更宽，按它计宽（与折叠态的自适应宽度口径一致）
             if (IsTranslationLineVisible(media))
                 textWidth = Math.Max(textWidth, MeasureTextWithFallback(media!.CurrentLyricTranslation) * LYRIC_TRANS_SCALE);
 
             float thumbW = media?.Thumbnail != null ? 32f : 0f;
             return thumbW + textWidth + 12f + 21.2f;
         }
-
-        /// <summary>
-        /// 组合模式总宽：按「内容顺序表」把原生模块与插件组件依次累加，与 Renderer.Draw 的混排保持一致。
-        ///
-        /// 插件组件不是无条件计入的：先单独量出一整行「原生模块」的总宽，据此定出插件行的宽度预算
-        /// （岛体总长上限 − 原生总宽），再按同一预算规则决定哪些组件能完整显示。
-        /// 放不下的组件既不计宽也不绘制 —— 与「内容显示不全就不显示」保持一致。
-        /// </summary>
 
         public static float GetCompositeWidth(MediaController media)
         {
@@ -476,37 +367,18 @@ namespace NotchPeninsula
             // 第一趟：只量原生模块，定出插件行还能用多少宽度
             SetPluginRowBudget(MAX_ISLAND_WIDTH - MeasureCompositeWidth(media, includePlugins: false));
 
-            // 第二趟：含插件的总宽（放行结果已写进 _pluginVisible，SumPluginRowWidth 会按它过滤）
             return Math.Clamp(MeasureCompositeWidth(media, includePlugins: true), 60f, MAX_ISLAND_WIDTH);
         }
-
-        /// <summary>
-        /// 组合模式下「一整行原生模块」的总宽（不含任何插件组件）。
-        /// 宿主用它给插件行定宽度预算：岛体总长上限 − 这个值 = 插件行可用的空间。
-        /// 只是一串宽度相加，没有副作用，可以安全地在定预算时先调一次。
-        /// </summary>
 
         public static float GetCompositeNativeWidth(MediaController media)
             => CompositeModeEnabled ? MeasureCompositeWidth(media, includePlugins: false) : 0f;
 
-        /// <summary>
-        /// 组合模式宽度累加本体。 为 false 时跳过插件组件组，
-        /// 专门用来量「原生模块总宽」，好给插件行定预算。
-        /// </summary>
-
-        /// <summary>
-        /// 待机模式选「空白」时岛体的固定宽度：这一档没有内容可量，给一个空胶囊的尺寸
-        /// （比组合宽度 60px 的下限稍宽，单独看才不像一个点）。
-        /// </summary>
         private const float STANDBY_BLANK_WIDTH = 96f;
 
         private static float MeasureCompositeWidth(MediaController media, bool includePlugins)
         {
-            // 待机模式：岛上只保留所选的那一样，宽度也只按它量（插件行一并退出）——
-            // 岛体因此向中间收拢到内容自身的宽度，而不是留着默认那几块拼出来的空壳。
             if (StandbyActive)
             {
-                // 空白（以及选了折叠媒体但当前没有媒体时的退化态）：固定宽度的空胶囊
                 if (StandbyScene == 2) return STANDBY_BLANK_WIDTH;
 
                 float own = StandbyScene switch
@@ -530,11 +402,7 @@ namespace NotchPeninsula
             }
 
             var order = Plugins.PluginManager.Instance.Host.ContentOrder;
-            // 顺序表的插件 ID 集合，供结尾兜底去重（只补「没进表」的插件，已入表的绝不重复计宽）；
             // 第一趟（只量原生）用不到它，直接跳过。
-            // 用缓存而不是每帧 new：ContentOrder 返回的是宿主内部那个快照数组，
-            // 只有用户真的改过排序才会换新引用 —— 引用判等即可安全复用
-            // （组合模式 60FPS 下每帧一个 HashSet + 内部桶数组是纯浪费）。
             var orderSet = includePlugins ? GetOrderSet(order) : null;
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;
 
@@ -566,7 +434,6 @@ namespace NotchPeninsula
             if (!clockHandled && CompShowDateTime) AddModule(_cachedTimeWidth + 12f + _cachedDateWidth);
             if (!hardwareHandled && CompShowHardware) AddModule(MeasureHardwareBlockWidth());
             if (!mediaHandled && CompShowMedia && media != null && media.IsActive) AddModule(MeasureMediaBlockWidth(media));
-            // 插件兜底：只补「不在顺序表里」的插件宽度（与 Draw 的未绘制兜底一致），已入表的已被主循环累计，绝不重复
             if (includePlugins) AddModule(SumPluginRowWidthNotIn(orderSet!));
 
             width += 16f; // 右侧边距与 Draw 中每模块尾距(16px)对齐，避免最后一个模块被裁切 6px
@@ -574,15 +441,9 @@ namespace NotchPeninsula
             return width;
         }
 
-        // 内容顺序表的去重集合缓存：只在宿主换出新快照数组时重建。
-        // 建成后集合只被读（SumPluginRowWidthNotIn 只做 Contains），因此无需加锁。
         private static HashSet<string>? _orderSetCache;
         private static IReadOnlyList<string>? _orderSetSource;
 
-        /// <summary>
-        /// 取「内容顺序表」的插件 Id 集合（大小写不敏感），按快照引用缓存。
-        /// 宿主 ContentOrder 返回的是内部快照数组，顺序不变时引用不变，因此可以零成本命中。
-        /// </summary>
         private static HashSet<string> GetOrderSet(IReadOnlyList<string> order)
         {
             var cached = _orderSetCache;
@@ -594,15 +455,11 @@ namespace NotchPeninsula
             return cached;
         }
 
-        // 媒体激活时刷新「当前显示文本 / 歌词 / 叠化动画」的缓存。
-        // 只在歌曲、歌词或译文真的变了的时候重算，渲染路径每帧调用也不会产生额外开销。
         private static void UpdateMediaState(MediaController media)
         {
             string liveTrans = media.CurrentLyricTranslation ?? "";
             if (_lastMediaTitle != media.Title || _lastMediaArtist != media.Artist || _lastLyric != media.CurrentLyric || _lastLyricTrans != liveTrans)
             {
-                // 换歌：整块歌词状态强制重载。_prevLyric 是叠化动画的「淡出层」，
-                // 不清掉的话上一首的最后一句会被带到新歌的第一帧上 —— 切歌残留的视觉来源。
                 bool songChanged = _lastMediaTitle != media.Title || _lastMediaArtist != media.Artist;
                 if (songChanged) { _prevLyric = ""; _prevLyricTrans = ""; }
 
@@ -621,7 +478,6 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    // 原文没变、只有译文姗姗来迟（异步抓到的翻译 LRC）：直接换上，不触发叠化，
                     // 否则整行会为了一个「补上的小字」白抖 350ms。
                     _lastLyricTrans = liveTrans;
                 }
@@ -640,7 +496,6 @@ namespace NotchPeninsula
                 _cachedMediaTextHeight = metrics.Descent - metrics.Ascent;
             }
 
-            // 纯数学计算动画插值 (0.0 -> 1.0，周期约 350ms)，零 GC 分配
             if (_lyricAnimProgress < 1f)
             {
                 _lyricAnimProgress = (float)(DateTime.Now - _lyricChangeTime).TotalSeconds / 0.35f;
@@ -648,8 +503,6 @@ namespace NotchPeninsula
             }
         }
 
-        // 时间日期缓存：与媒体是否激活无关，组合模式 / 待机每帧都保证就绪。
-        // 启动即播放音乐或媒体全程激活时，之前时钟会因缓存一直为空而「消失」，现改为始终照常跳分钟。
         private static void UpdateClockCache()
         {
         var now = DateTime.Now;

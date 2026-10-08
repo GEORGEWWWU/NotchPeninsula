@@ -8,50 +8,28 @@ namespace NotchPeninsula
     public partial class ConsoleWindow
     {
         // ---- 插件中心：把 DLL 拖进来即导入 ----
-        //
-        // 交互：从资源管理器把 *.dll 拖到「插件中心」右侧的内容区，松手即走 PluginManager.Import()。
-        // 拖动经过时内容区立刻亮起一层蓝色反馈 + 提示「松开鼠标以导入插件 DLL」，让用户明确知道「这里能放」。
-        // 反馈是直接亮 / 直接灭的静态高亮，不带任何淡入淡出或呼吸动画（也没有定时器）。
-        //
-        // 为什么要 IDropTarget 而不是 WM_DROPFILES：后者只在松手那一刻投递一次消息，
-        // 拖动过程中窗口收不到任何通知，做不了「拖过来就高亮」这类悬停反馈。两者的取舍与
-        // PluginWindow 里那套完全一致（挂上 IDropTarget 后 WM_DROPFILES 就不再投递，二选一）。
 
-        /// <summary>本轮拖放中解析出的 DLL 路径（DragEnter 解析一次，Drop 时直接取用）。</summary>
         private readonly List<string> _pluginDropDlls = new();
 
-        /// <summary>光标是否正停在右侧拖放区内 —— 为 true 时内容区整体亮起蓝色反馈。</summary>
         private bool _pluginDropHovering;
 
-        /// <summary>OLE 那边持有的引用：不存一份就会被 GC 掉，拖放回调随之失效。</summary>
         private Win32.IDropTarget? _pluginDropTarget;
 
-        /// <summary>最近一次拖入导入的结果（空串 = 没有可提示的）。画在列表卡右上角。</summary>
         private string _pluginHint = "";
 
         private bool _pluginHintIsError;
 
-        /// <summary>
-        /// 右侧拖放区（DIP 坐标）= 「我的插件」页签右侧内容区整体。
-        /// 左侧 0..200 是页签栏，不属于「右边区域」，不参与拖放。
-        /// 渲染高亮与命中判定共用本方法，改一处即两处同时生效。
-        /// </summary>
         private static SKRect GetPluginDropZone()
             => new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + 12f, WIDTH - CONTENT_RM, HEIGHT - 20f);
 
         // 登记 / 注销
 
-        /// <summary>
-        /// 把设置窗口登记成 OLE 拖入目标。只登记一次；失败也只是「插件中心不能拖入」，
-        /// 不影响窗口的任何既有功能，所以整段包在 try 里（与 NotchWindow 的做法一致）。
-        /// </summary>
         private void SetupPluginDropTarget()
         {
             try
             {
                 if (_pluginDropTarget != null || _hwnd == IntPtr.Zero) return;
 
-                // RegisterDragDrop 的硬性前提：本线程已完成 OLE 初始化
                 if (!Win32.EnsureOleInitialized())
                 {
                     Logger.Warn("[PluginCenter] OLE 不可用，拖入 DLL 已禁用");
@@ -75,7 +53,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>窗口销毁前必须注销，否则 OLE 还捏着一个指向已死窗口的接口。</summary>
         private void RevokePluginDropTarget()
         {
             if (_pluginDropTarget == null) return;
@@ -83,12 +60,6 @@ namespace NotchPeninsula
             try { Win32.RevokeDragDrop(_hwnd); } catch { /* 窗口已销毁 */ }
         }
 
-        // 拖放回调（由 ConsoleDropTarget 转发）
-
-        /// <summary>
-        /// 拖入项第一次进入窗口。只认「带文件系统路径的 *.dll」—— 其它内容（网页文字、位图流、
-        /// exe/zip 之类）在这里直接拒绝，回 DROPEFFECT_NONE 让系统显示禁止光标。
-        /// </summary>
         internal bool HandlePluginDragEnter(ComTypes.IDataObject? dataObj, Win32.POINT screenPt)
         {
             _pluginHint = "";          // 新一次拖入开始，上一次的结果提示先清掉
@@ -105,29 +76,20 @@ namespace NotchPeninsula
             return UpdatePluginDropHover(screenPt);
         }
 
-        /// <summary>
-        /// 鼠标在窗口内移动（高频）。OLE 只在「进入窗口」那一刻调一次 DragEnter ——
-        /// 用户若从侧边栏或窗口边缘滑进来，那一下的落点还不在右侧内容区里；之后鼠标再怎么移过来，
-        /// 都不会有第二次 DragEnter。所以这里必须持续重判，否则表现就是「怎么拖都不接受」。
-        /// </summary>
         internal bool HandlePluginDragOver(Win32.POINT screenPt)
         {
             if (_pluginDropDlls.Count == 0) return false;
             return UpdatePluginDropHover(screenPt);
         }
 
-        /// <summary>鼠标拖出窗口 / 拖放被取消：收起高亮，避免「上一次的蓝色」粘在这一回上。</summary>
         internal void HandlePluginDragLeave()
         {
             _pluginDropDlls.Clear();
             SetPluginDropHovering(false);
         }
 
-        /// <summary>用户在窗口内松手。落点在右侧内容区且拖的是 DLL 才真正导入。</summary>
         internal bool HandlePluginDrop(Win32.POINT screenPt)
         {
-            // 补一次命中：OLE 只在鼠标移动或修饰键变化时才调 DragOver，
-            //    挪到位就立刻松手的话可能一次 DragOver 都没有 —— 那样即便落点明明在内容区里，
             //    也会因为「这一轮从没被接受过」而白扔。
             bool accepted = _pluginDropDlls.Count > 0 && UpdatePluginDropHover(screenPt);
 
@@ -142,7 +104,6 @@ namespace NotchPeninsula
 
         // 悬停判定与动画
 
-        /// <summary>把拖放的屏幕物理坐标换算成窗口客户区 DIP 坐标（与鼠标点击同一套口径）。</summary>
         private bool TryScreenToClientDips(Win32.POINT screenPt, out float x, out float y)
         {
             x = 0; y = 0;
@@ -153,7 +114,6 @@ namespace NotchPeninsula
             return true;
         }
 
-        /// <summary>按当前落点重算悬停态：只有「插件页 + 落在右侧内容区」才算进入拖放区。</summary>
         private bool UpdatePluginDropHover(Win32.POINT screenPt)
         {
             bool hover = false;
@@ -173,7 +133,6 @@ namespace NotchPeninsula
 
         // 导入
 
-        /// <summary>把拖入的 DLL 逐个交给 PluginManager.Import()，并把结果记成列表卡右上角的提示。</summary>
         private void ImportPluginDlls(List<string> dlls)
         {
             try
@@ -190,8 +149,6 @@ namespace NotchPeninsula
                     Logger.Info($"[PluginCenter] 拖入导入 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
-                // 成功不再写提示：列表里当场就多了一行，状态行没必要再复述一遍。
-                // 只有失败才提示（红字），把 Bot 返回的具体原因带出来，不抹掉排查线索。
                 if (okCount == dlls.Count)
                     _pluginHint = "";
                 else if (okCount > 0)
@@ -203,8 +160,6 @@ namespace NotchPeninsula
 
                 ResetPluginHover();
                 RefreshPluginView();
-                // 有失败就弹「插件加载失败」引导窗（版本不匹配是绝大多数失败的原因）；
-                // 具体的失败原因仍留在状态行红字与日志里。这里传 render:false，重绘交给下面这一次。
                 if (okCount != dlls.Count) ShowPluginLoadFailedDialog(render: false);
                 Render();
             }
@@ -215,13 +170,6 @@ namespace NotchPeninsula
         }
     }
 
-/// <summary>
-/// 设置窗口的 OLE 拖入目标（IDropTarget）：把系统发来的四个拖放回调转给 ConsoleWindow 处理。
-///
-/// 为什么单独拆一个类而不让 ConsoleWindow 直接实现：接口方法必须是 public，
-/// 塞进 ConsoleWindow 会让它表面上看多出一堆拖放公开 API；这个类是 internal，
-/// 那些方法也就只在本程序集内可见。做法与 PluginWindow 的 WindowDropTarget 完全一致。
-/// </summary>
 internal sealed class ConsoleDropTarget : Win32.IDropTarget
 {
     private readonly ConsoleWindow _window;

@@ -13,12 +13,8 @@ namespace NotchPeninsula
     {
         private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(8) };
 
-        /// <summary>被用户点过「不再提醒」的版本号（形如 1.9.0，不含 NPS-v 前缀）。</summary>
         private const string SkipVersionValueName = "SkippedUpdateVersion";
 
-        /// <summary>
-        /// 读取用户「不再提醒」的版本号。空串表示没有跳过任何版本。
-        /// </summary>
         public static string GetSkippedVersion()
         {
             try
@@ -33,10 +29,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>
-        /// 记下「不再提醒」的版本号。只对这一个版本生效：之后出现更新的版本（版本号不同）会照常
-        /// 弹窗，所以老版本用户不会被永久静音。
-        /// </summary>
         public static void MarkVersionSkipped(string version)
         {
             if (string.IsNullOrEmpty(version)) return;
@@ -72,8 +64,6 @@ namespace NotchPeninsula
 
                     if (latestVersion > currentVersion)
                     {
-                        // 「不再提醒」只针对被点过的那一个版本：版本号相同才跳过，
-                        // 一旦有更新的版本出现（latestVersionStr 变了）就照常提醒。
                         var skipped = GetSkippedVersion();
                         if (!string.IsNullOrEmpty(skipped) && skipped == latestVersionStr)
                         {
@@ -133,7 +123,6 @@ namespace NotchPeninsula
         private const float BTN_GAP = 12f;
         private const int BTN_COUNT = 3;
 
-        /// <summary>第 index 个底部按钮的矩形（0=前往下载 1=不再提醒 2=取消）。</summary>
         private static SKRect GetButtonRect(int index)
         {
             float total = BTN_WIDTH * BTN_COUNT + BTN_GAP * (BTN_COUNT - 1);
@@ -201,13 +190,11 @@ namespace NotchPeninsula
             if (_iconBitmap != null) return;
             try
             {
-                // 磁盘优先、exe 内嵌兜底：单文件发布时这个 ico 可能不在磁盘上（exe 被单独拷走）
                 using (var iconStream = DataResources.OpenRead("NPS_NotchPeninsula-logo.ico"))
                     if (iconStream != null) _iconBitmap = SKBitmap.Decode(iconStream);
 
                 if (_iconBitmap == null)
                 {
-                    // using：Icon 持有 HICON，必须确定性释放（本方法由 `_iconBitmap != null` 守卫，
                     // 但解码失败时守卫不成立，会重复进入本分支）。
                     using var sysIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
                     if (sysIcon != null)
@@ -258,10 +245,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>
-        /// 窗口过程的异常兜底：WndProc 是最外层回调，异常逃出去会直接终结进程。
-        /// 记日志后吞掉，坏的只是这一次交互。注册窗口类时挂的是这个方法。
-        /// </summary>
         private IntPtr WndProcSafe(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             try
@@ -283,7 +266,6 @@ namespace NotchPeninsula
                     int x = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
                     int y = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
 
-                    // 命中判定与绘制共用 GetButtonRect，避免两边各写一套坐标
                     int hit = -1;
                     for (int i = 0; i < BTN_COUNT; i++)
                         if (GetButtonRect(i).Contains(x, y)) { hit = i; break; }
@@ -306,11 +288,9 @@ namespace NotchPeninsula
                     int clickY = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                     if (_hoveredButton == 0)
                     {
-                        // using：启动浏览器后立刻释放 Process 包装对象，不影响浏览器本身
                         using (Process.Start(new ProcessStartInfo { FileName = "https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest", UseShellExecute = true })) { }
                         Win32.DestroyWindow(hwnd);
                     }
-                    // 不再提醒：只跳过当前这个版本，写入注册表后关窗（更新版本出现时仍会提示）
                     else if (_hoveredButton == 1)
                     {
                         UpdateManager.MarkVersionSkipped(_version);
@@ -360,7 +340,6 @@ namespace NotchPeninsula
             // 4. 更新内容 (滚动视窗区)
             float contentStartY = 240f;
             canvas.Save();
-            // 限制绘制范围，超出 CONTENT_BOX_HEIGHT 的内容将被自动剪裁隐藏
             canvas.ClipRect(new SKRect(30, contentStartY, WIDTH - 30, contentStartY + CONTENT_BOX_HEIGHT));
             // 根据滚轮状态向上偏移画布
             canvas.Translate(0, -_scrollY);
@@ -383,7 +362,6 @@ namespace NotchPeninsula
             UpdateWindow(surface.PeekPixels());
         }
 
-        /// <summary>画一个底部按钮。几何来自 GetButtonRect，与命中判定同源。</summary>
         private void DrawButton(SKCanvas canvas, int index, string text, bool primary)
         {
             var rect = GetButtonRect(index);
@@ -392,7 +370,6 @@ namespace NotchPeninsula
             if (primary)
                 _dynamicFill.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
             else
-                // 次级按钮有两个（不再提醒 / 取消），hover 色比原来的 25 略提亮，否则挨着看不出哪个被悬停
                 _dynamicFill.Color = hovered ? new SKColor(255, 255, 255, 42) : new SKColor(255, 255, 255, 10);
 
             canvas.DrawRoundRect(rect, 6, 6, _dynamicFill);

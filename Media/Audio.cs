@@ -1,11 +1,7 @@
-using System;
 using NAudio.CoreAudioApi;
 
 namespace NotchPeninsula;
 
-/// <summary>
-/// 内部音频接口
-/// </summary>
 internal interface IAudioController : IDisposable
 {
     float GetVolume();
@@ -13,9 +9,6 @@ internal interface IAudioController : IDisposable
     void Mute(bool mute);
 }
 
-/// <summary>
-/// NAudio 底层适配
-/// </summary>
 internal sealed class NaudioAdapter : IAudioController
 {
     private readonly MMDevice _device;
@@ -38,9 +31,6 @@ internal sealed class NaudioAdapter : IAudioController
     public void Dispose() => _device.Dispose();
 }
 
-/// <summary>
-/// 工厂入口
-/// </summary>
 internal static class AudioNative
 {
     public static IAudioController Create() => new NaudioAdapter();

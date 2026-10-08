@@ -14,10 +14,6 @@ namespace NotchPeninsula
             _valStrCache[index] = index == 6 ? $"{_customValues[index]:F2} x" : $"{(int)_customValues[index]} px";
         }
 
-        // 应用“消息通知内容”模式（0=缩略默认，1=紧凑，2=完整）
-        // 完整模式：强制消息通知尺寸不小于容纳应用名的最小值，并把当前用户尺寸快照保存，便于切回时恢复；
-        // 缩略/紧凑模式：尺寸均恢复为用户设定的值（紧凑的弹窗尺寸与缩略一致）。
-
         private void ApplyToastContentMode(int modeIndex)
         {
             if (modeIndex == 2) // 完整
@@ -65,13 +61,6 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
-        // ---- 个性化中心三张卡的纵向版式（渲染与命中同源，卡间一律 14）----
-        //   主题卡(12..74)：标题 + 副标题 + 右侧主题分段器（卡高 = 16 + 分段器 30 + 16）
-        //   背景透明度卡(88..166)：独立成卡、不写标题，卡里就是「标签 + 滑轨 + 刻度文案」
-        //   尺寸卡(180..328)：全局折叠态高度 / 底部圆角 / 消息通知弹出高度 / 视觉比例
-        // 卡高只由「内容 + 上下等宽留白」推出来：主题卡的分段器上下各 16，透明度卡的
-        //   标签行顶到刻度文案底各留 ~13 —— 别再按「把上一张卡剩下的地方填满」来调高度，
-        //   分离出独立卡片后就该收紧到内容本身（多出来的就是白边）。
         private const float THEME_CARD_Y = 12f;
 
         private const float THEME_CARD_H = 62f;
@@ -82,22 +71,16 @@ namespace NotchPeninsula
 
         private const float SIZE_CARD_Y = OPACITY_CARD_Y + OPACITY_CARD_H + 14f;  // 180
 
-        /// <summary>主题分段器（黑 / 白 / 系统）的位置与尺寸：右对齐，与显示设置的分段器同款。
-        /// 右边不能贴着卡片边框 —— 用 CONTENT_TEXT_RM（卡片内文字的右边界）而不是 CONTENT_RM。</summary>
         private const float THEME_SEG_W = 150f;
 
         private const float THEME_SEG_X = WIDTH - CONTENT_TEXT_RM - THEME_SEG_W;   // 422
 
-        /// <summary>分段器与左侧两行文字垂直居中（卡片内偏移 16，卡高 62 = 16 + 30 + 16）。</summary>
         private const float THEME_SEG_Y = 28f;
 
-        /// <summary>背景透明度滑轨相对卡片顶部的偏移（渲染与命中同源）。</summary>
         private const float OPACITY_SLIDER_DY = 44f;
 
         // 个性化中心各行控件的 Y 坐标（index → 行）：
-        //   尺寸卡（SIZE_CARD_Y）：3 全局折叠态高度 / 7 底部圆角 / 5 消息通知弹出高度 / 6 视觉比例
         // 这四项合并成一张卡，卡高 = 12 + 行数×34。
-        // 行序必须与 DrawMultiCard 的调用严格对应 —— 漏一处就会把控件画到卡片外面。
         private float GetBtnY(int index)
         {
             return index switch
@@ -110,11 +93,6 @@ namespace NotchPeninsula
             };
         }
 
-        /// <summary>
-        /// 弹出文件对话框挑选字体文件，选中后热替换灵动岛全部文本字体，并把路径写入注册表实现记忆化。
-        /// 加载失败时不做任何改动，只在卡片副标题上提示原因。
-        /// 走的是传统 Win32 对话框（见 ShowOpenFileDialog），不会把外壳组件拉进进程。
-        /// </summary>
         private void PickCustomFont()
         {
             try
@@ -143,8 +121,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>恢复系统字体（等价于从未选择过自定义字体），并清空注册表里的记忆。</summary>
-
         private void ResetCustomFont()
         {
             FontConfig.ResetToSystemFont();
@@ -155,24 +131,16 @@ namespace NotchPeninsula
 
         // ---- 消息提示音 ----
 
-        /// <summary>
-        /// 应用提示音选项。索引 0 = 无；1..N = data\sound 里的第 i 个音频；
-        /// ToastSoundConfig.CustomIndex = 「浏览音频…」（弹文件对话框挑自定义文件）。
-        ///
-        /// 选中即持久化。只有在不处于静音档时才试听一下 —— 否则用户每次切换都白响一声很烦。
-        /// </summary>
         private void ApplyToastSound(int index)
         {
             if (index < 0 || index >= ToastSoundConfig.OptionCount) return;
 
-            // 「浏览音频…」不是一次「选择」，而是打开文件对话框；挑完由 PickToastSound 自己收尾
             if (index == ToastSoundConfig.CustomIndex) { PickToastSound(); return; }
 
             ToastSoundConfig.SelectedIndex = index;
 
             if (index == 0)
             {
-                // 切到「无」时把自定义路径与内置音身份一起清掉：避免残留一条指向旧文件的记忆
                 ToastSoundConfig.CustomPath = "";
                 ToastSoundConfig.SelectedKey = "";
                 ToastSoundConfig.PersistSelection();
@@ -182,13 +150,9 @@ namespace NotchPeninsula
             else
             {
                 // 记下这条内置音的文件名身份。只存位置索引的话，
-                //    目录里增删一个 wav 就会让用户的选择悄悄换成另一个音。
                 ToastSoundConfig.SelectedKey = ToastSoundConfig.Builtins[index - ToastSoundConfig.BuiltinOffset].FileName;
                 ToastSoundConfig.PersistSelection();
                 _soundHint = "";
-                // 顺手把提示音开关打开 —— 用户主动选了音源，意图就是要听。
-                // 现在第 4 行整体由父开关「消息提示音」置灰（见 IsRowEnabled），
-                //    所以正常路径下走到这里时开关必然已开，这段只是一层保险。
                 if (!ToastSoundConfig.IsEnabled)
                 {
                     ToastSoundConfig.IsEnabled = true;
@@ -198,7 +162,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>弹文件对话框挑选自定义提示音。校验不过就只在副标题上红字提示，不改动当前选择。</summary>
         private void PickToastSound()
         {
             try
@@ -213,7 +176,6 @@ namespace NotchPeninsula
                     ToastSoundConfig.SelectedKey = ""; // 自定义项没有「内置文件名身份」
                     ToastSoundConfig.PersistSelection();
                     // 同上：选了音源就把开关打开，否则用户会以为功能坏了
-                    // （同样只是保险 —— 第 4 行在父开关关闭时是整体置灰的）
                     if (!ToastSoundConfig.IsEnabled)
                     {
                         ToastSoundConfig.IsEnabled = true;
@@ -224,7 +186,6 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    // 失败时保持原选择不动，只提示原因（与字体选择的失败语义一致）
                     _soundHint = why;
                     Logger.Warn($"[提示音] 音频不可用：{why} — {picked}");
                 }
@@ -238,14 +199,12 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>重置提示音：关掉开关、回到「无」、音量回默认、清掉注册表里的自定义路径并停掉队列。</summary>
         private void ResetToastSound()
         {
             ToastSoundConfig.IsEnabled = false;
             ToastSoundConfig.SelectedIndex = 0;
             ToastSoundConfig.CustomPath = "";
             ToastSoundConfig.SelectedKey = ""; // 内置音的文件名身份也要一起清
-            // 必须用 DefaultVolumePercent，不能写 VolumeOptions[1]（那是 10，与出厂默认是两回事）
             ToastSoundConfig.VolumePercent = ToastSoundConfig.DefaultVolumePercent;
             Program.SaveSetting("ToastSoundEnabled", 0);
             ToastSoundConfig.PersistSelection(); // 索引 / 文件名身份 / 自定义路径三者一次写回
@@ -255,7 +214,6 @@ namespace NotchPeninsula
             Render();
         }
 
-        /// <summary>试听当前选中的提示音。路径失效时不响，只把原因写到副标题。</summary>
         private void PreviewToastSound()
         {
             try
@@ -264,9 +222,6 @@ namespace NotchPeninsula
                 if (!src.IsValid)
                 {
                     // 只有「显式点了试听」才值得提示；切到「无」时静默即可。
-                    // 原因必须按当前选中的那一项去问：内置项要看内置音本身（磁盘上的文件
-                    //    或 exe 内嵌资源），不能拿 CustomPath 去套 —— 那样内置音缺失时会糊上
-                    //    「尚未选择音频文件」这种完全对不上的文案（见 DescribeUnavailable）。
                     if (ToastSoundConfig.SelectedIndex != 0)
                         _soundHint = ToastSoundConfig.DescribeUnavailable();
                     Render();
@@ -286,7 +241,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>设置播放音量档位并持久化（不试听，避免连点下拉时连续响个不停）。</summary>
         private void ApplyToastSoundVolume(int index)
         {
             if (index < 0 || index >= ToastSoundConfig.VolumeOptions.Length) return;
@@ -296,20 +250,7 @@ namespace NotchPeninsula
         }
 
         // ---- 媒体设置页「全局快捷键」的录制 ----
-        //    自绘框没有原生 EDIT，录制得自己收键：点了键位框之后，下一次按下的按键组合就是新键位。
-        //    出口有三条：按下合法组合（写回并落盘）、Esc（放弃，保留原键位）、Backspace（清空这一条）。
 
-        /// <summary>
-        /// 录制态收键。返回 true 表示这次按键已经被吃掉，消息链不用再往下传。
-        ///
-        /// 规则：
-        ///   裸修饰键（Ctrl / Alt / Shift / Win 左右分身）不算一次输入，继续等主键 ——
-        ///       否则用户手指刚压下去就被当成「录完了」，录到的永远是 Ctrl 本身。
-        ///   Esc 取消（保留原键位，与原生编辑框的语义一致）；
-        ///   Backspace 清空这一条（留空 = 这个动作没有全局快捷键），改完也是一样结束录制；
-        ///   组合不合法（没搭配修饰键 / 与别的动作撞车 / 系统里被占用）时留在录制态让用户重按，
-        ///       原因挂到卡片副标题上。
-        /// </summary>
         private bool HandleHotkeyRecording(int vk)
         {
             if (_hotkeyRecordingIndex < 0) return false;
@@ -323,8 +264,6 @@ namespace NotchPeninsula
 
             if (vk == Win32.VK_ESCAPE) { CancelHotkeyRecording(); return true; }
 
-            // Backspace = 清空这一条（留空表示这个动作没有全局快捷键），和 Esc 一样结束录制。
-            //    放在修饰键状态计算之前：清空不关心当时有没有按着 Ctrl / Alt。
             if (vk == Win32.VK_BACK)
             {
                 MediaHotkeys.ClearBinding(_hotkeyRecordingIndex);
@@ -333,7 +272,6 @@ namespace NotchPeninsula
                 return true;
             }
 
-            // 修饰键的实时状态直接问系统：自己记按下/抬起会被焦点切换、Alt+Tab 弄脏。
             uint mods = 0;
             if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
             if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
@@ -355,19 +293,15 @@ namespace NotchPeninsula
             return true;
         }
 
-        /// <summary>录制成功收尾：退出录制态并把热键按开关重新装上。</summary>
         private void EndHotkeyRecording()
         {
             int edited = _hotkeyRecordingIndex;
             _hotkeyRecordingIndex = -1;
             MediaHotkeys.ResumeRegistration();
-            // 录制期间刻意不注册，所以「这组键被别的程序占着」只能在这一刻才知道 ——
-            //    只把属于刚改的这一条的失败挂到卡片副标题上，别把别的行的旧毛病也算到它头上。
             _hotkeyHint = MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError : "";
             Render();
         }
 
-        /// <summary>放弃录制：退出录制态、清掉提示、键位保持原样。</summary>
         private void CancelHotkeyRecording()
         {
             if (_hotkeyRecordingIndex < 0) return;

@@ -1,4 +1,3 @@
-using System;
 using System.Management;
 using System.Runtime.InteropServices;
 
@@ -48,9 +47,6 @@ internal static class BrightnessManager
         return _lastSimulatedPercent;
     }
 
-    /// <summary>
-    /// 设置 GPU Gamma 模拟亮度（percent: 5~100）
-    /// </summary>
     public static void SetSimulated(int percent)
     {
         percent = Math.Clamp(percent, 5, 100);

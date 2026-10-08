@@ -1,71 +1,21 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using SkiaSharp;
 
 namespace NotchPeninsula
 {
-    /// <summary>
-    /// 歌词 / 歌名 / 歌手等"任意语言文本"的缺字兜底层（仅服务于默认系统字体）。
-    ///
-    /// 背景：默认字体 Microsoft YaHei UI 只含中文 + 拉丁 + 西里尔，韩文（谚文）几乎全缺，
-    /// 日文假名虽勉强收录却用的是中文字形。缺的字过去会落到 Segoe UI Emoji —— 那里同样没有，
-    /// 最终画出方块。
-    ///
-    /// 本类把"缺字 → 该用哪套字体"的判定交给系统字体服务（SKFontManager.MatchCharacter），
-    /// 由 Windows 自己回答"这个码点该用哪套已安装字体"。这是唯一能正确覆盖
-    /// 韩 / 日 / 俄 / 泰 / 阿拉伯 / 希伯来 / 天城文…… 的做法：硬编码字体族名既覆盖不全，
-    /// 又会在用户机器上没装那套字体时退化——更糟的是 FromFamilyName 找不到族时会
-    /// 静默返回默认字体，继续画方块。
-    ///
-    /// 性能与内存纪律（常驻渲染路径的硬约束）：
-    ///   • 决定只在码点首次出现时解析一次，之后走 _perCp 字典命中，全是引用比较；
-    ///     歌词每个码点正常只出现一次，因此稳态 60FPS 下本类几乎不被触碰。
-    ///   • 不做任何后台预热、不建常驻表：字典条目随真实歌词增长，一首多语言歌最多几十条。
-    ///   • 解析失败时为负缓存（记 null），保证同一个码点绝不会被反复询问系统字体服务。
-    ///   • 字体面一律以弱引用持有、绝不手动 Dispose：MatchCharacter / FromFamilyName
-    ///     返回的对象所有权归调用方 —— SkiaSharp 2.88.8 的 SKObject 维护一张「native 指针 → 托管对象」
-    ///     全局注册表 + 引用计数，只有终结器或 Dispose 才会把计数放掉。本类若用 static 字段强引用
-    ///     它们，对象就永远可达、终结器永不运行 → 引用计数永不归零 = 永久泄漏。
-    ///     所以缓存值只是 WeakReference{T}：不可达即被 GC 终结器回收，既无泄漏，
-    ///     也彻底避开「手动 Dispose 掉别人（FontConfig / 静态画笔）还在用的共享字体面」这种
-    ///     use-after-dispose —— 2.x 的实例注册表会让同一 native 指针返回同一个托管对象，这个坑很实在。
-    ///
-    /// 与自定义字体的关系（优先级铁律）：
-    ///   用户选了自定义字体 ⇒ 用户已经明确表达了自己要的那套字面，
-    ///   此时本类完全不参与，由 Renderer 沿用原有的「基础字体 → 系统字体 → Emoji」链路。
-    /// </summary>
     internal static class LyricsFont
     {
-        /// <summary>
-        /// 码点 → 该用哪套字体面。值为 null 表示「系统也给不出」（负缓存）。
-        /// 值必须是弱引用：本字典是 static 的，一旦强引用字体面，那些对象就永远可达、
-        /// 终结器永不运行，SkiaSharp 的 native 引用计数便永不归零 —— 即永久泄漏。
-        /// </summary>
         private static readonly Dictionary<int, WeakReference<SKTypeface>?> _perCp = new(96);
 
-        /// <summary>
-        /// _perCp 的 FIFO 顺序，只用于容量兜底。
-        /// 与 _perCp 的键集始终一一对应（只在新增键时入队），因此不会无界增长。
-        /// </summary>
         private static readonly Queue<int> _cpOrder = new(96);
 
-        /// <summary>码点缓存条目上限。每个键只是个 int，很便宜；这个上限只防极端输入。</summary>
         private const int PerCpCap = 512;
 
-        /// <summary>上次解析时使用的基础字体（引用比较即可识别换字体），换字体后所有决定一律重算。</summary>
         private static SKTypeface? _baseFace;
 
-        /// <summary>整串文本 → 排版宽度缓存（同一句歌词每帧都会被测量，这里保证只算一次）。</summary>
         private static readonly Dictionary<string, float> _widths = new(24);
         private static readonly Queue<string> _widthOrder = new(24);
         private const int WidthCacheCap = 64;
 
-        /// <summary>
-        /// 该文本是否需要走本兜底层。判定极廉价：只要有一个码点在基础字体里没有字形，
-        /// 就说明这段文本超出了默认字体的覆盖范围（韩文歌、夹杂谚文的日文歌、泰文歌……）。
-        /// 纯中文 / 纯英文歌曲在第一次扫描后即被判定为 false，渲染路径零额外成本。
-        /// </summary>
         internal static bool NeedsFallback(string text, SKTypeface baseTypeface)
         {
             for (int i = 0; i < text.Length; i++)
@@ -76,21 +26,14 @@ namespace NotchPeninsula
                     cp = char.ConvertToUtf32(text[i], text[i + 1]);
                     i++;
                 }
-                // 控制字符与不可见修饰符（变体选择符 / 零宽连字）交给原有 Emoji 链路，不算缺字
                 if (cp < 0x20 || cp == 0xFE0F || cp == 0xFE0E || cp == 0x200D || cp == 0x20E3) continue;
                 if (baseTypeface.GetGlyph(cp) == 0) return true;
             }
             return false;
         }
 
-        /// <summary>
-        /// 解析一个在基础字体里缺字形的码点该交给哪套字体。
-        /// 返回 null 表示系统也给不出能画这个字的字体（此时调用方沿用原有的 Emoji 兜底，行为与改动前一致）。
-        /// </summary>
         internal static SKTypeface? Resolve(int cp, SKTypeface baseTypeface)
         {
-            // 基础字体变了（用户换字体 / 恢复系统字体）⇒ 全部决定作废重算。
-            // 绝大多数调用里 ReferenceEquals 直接成立，连 FamilyName 拼接都不做。
             if (!ReferenceEquals(baseTypeface, _baseFace))
             {
                 _baseFace = baseTypeface;
@@ -104,7 +47,6 @@ namespace NotchPeninsula
             {
                 if (cached == null) return null;                      // 负缓存命中
                 if (cached.TryGetTarget(out var alive)) return alive; // 正缓存命中
-                // 弱引用已被 GC 回收：落到下面重新解析。字体面本身已由终结器放掉，没有任何泄漏。
             }
 
             var face = Lookup(cp, baseTypeface);
@@ -118,15 +60,6 @@ namespace NotchPeninsula
             return face;
         }
 
-        /// <summary>
-        /// 写入码点缓存（ 为 null 即负缓存）。两条纪律：
-        ///
-        /// ① 只存弱引用，绝不 Dispose —— 见类注释：SkiaSharp 2.x 的实例注册表可能让
-        /// MatchCharacter / FromFamilyName 返回同一个托管对象，手动 Dispose
-        /// 会让别处手里的对象变成已释放状态。弱引用把回收交给 GC 的终结器，天然安全。
-        /// ② 键已存在时不重复入队 —— 弱引用失效不会移除键，若每次重解析都入队，
-        /// _cpOrder 就会成为新的无界增长点；只在真正新增键时入队可保证两者一一对应。
-        /// </summary>
         private static void Store(int cp, SKTypeface? face)
         {
             if (!_perCp.ContainsKey(cp))
@@ -142,27 +75,15 @@ namespace NotchPeninsula
                 _perCp[cp] = new WeakReference<SKTypeface>(face);
         }
 
-        /// <summary>
-        /// 向系统字体服务询问「这个码点该用哪套字体」，并对结果做字形校验。
-        ///
-        /// 校验不可省略：MatchCharacter 在少数情况下会返回一个并不含该字形的面
-        /// （任务栏 / 浏览器过去正是这样拿到错误结果而画出方块）。拿到结果后自己再确认一次
-        /// SKTypeface.GetGlyph 有值，有值才采纳。
-        /// </summary>
         private static SKTypeface? Lookup(int cp, SKTypeface baseTypeface)
         {
-            // ① 首选：带上当前字体族作提示，让系统在"与基础字体的风格关系"上做最优选择
             SKTypeface? hit = Match(cp, baseTypeface.FamilyName);
             if (hit != null) return hit;
 
-            // ② 次选：不带族名提示，让系统在全字体集里挑。中文机器上这条路能拿到韩文 / 泰文等，
             //    而带族名提示时系统偶尔会失败。
             hit = Match(cp, null);
             if (hit != null) return hit;
 
-            // ③ 末选：枚举已安装字体族逐个问。这一步必然命中（用户机器上总有能画韩文的字体），
-            //    只有当整个系统确实没有任何字体覆盖该码点时才会走空 —— 那是真无解，交给 Emoji 兜底。
-            //    每个字体族只在"基础字体给不出答案的新码点"上被遍历一次，随后进负缓存，不会反复执行。
             try
             {
                 foreach (var family in SKFontManager.Default.GetFontFamilies())
@@ -171,7 +92,6 @@ namespace NotchPeninsula
                     using var candidate = SKTypeface.FromFamilyName(family);
                     if (candidate == null || candidate.GetGlyph(cp) == 0) continue;
 
-                    // 用族名再向系统取一份"可长期持有"的面（上面的 candidate 会被 using 释放）。
                     // 顺手要求一个更贴近正文的常规字重，避免风格跳脱。
                     var kept = SKTypeface.FromFamilyName(family);
                     if (kept != null && kept.GetGlyph(cp) != 0) return kept;
@@ -185,7 +105,6 @@ namespace NotchPeninsula
             return null;
         }
 
-        /// <summary>向系统询问一次并做字形校验；familyName 为 null 表示不给提示。</summary>
         private static SKTypeface? Match(int cp, string? familyName)
         {
             try
@@ -199,11 +118,6 @@ namespace NotchPeninsula
             return null;
         }
 
-        /// <summary>
-        /// 整串文本的排版宽度（带缓存）。
-        /// 单码点逐次 MeasureText 求和会丢失字距调整，行宽会失真；
-        /// 而同一句歌词每个渲染帧都要测量，所以必须缓存 —— 稳定期 60FPS 零重算、零分配。
-        /// </summary>
         internal static float MeasureText(string text, SKPaint paint)
         {
             if (_widths.TryGetValue(text, out float w)) return w;

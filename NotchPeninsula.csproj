@@ -14,7 +14,17 @@
 		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 
 	<Version>1.9.5</Version>
+	<!-- 工作站 GC + 并行回收：桌面小进程不该用服务器 GC（每核一套堆，纯浪费） -->
+	<ServerGarbageCollection>false</ServerGarbageCollection>
+	<ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+	<!-- 段落归还操作系统，不留在待命列表里占着提交内存 -->
+	<RetainVMGarbageCollection>false</RetainVMGarbageCollection>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- 让 GC 主动收紧堆（越大越省内存，代价是回收更频繁）。5 = 官方建议的起步档 -->
+		<RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<!-- 新增的资源在这里引入 -->

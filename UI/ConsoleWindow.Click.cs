@@ -10,14 +10,8 @@ namespace NotchPeninsula
     public partial class ConsoleWindow
     {
         // 鼠标左键按下：整窗点击分派。
-        //
-        // 这是一条顺序敏感的 if / else if 链：先匹配到的分支执行，后面的不再看。
-        //    越靠前的分支优先级越高（关闭按钮 > 最小化 > 标题栏拖拽 > 收下拉 > 切页签 > 卡片控件…）。
-        //    调整任何分支的位置都等于改行为，所以整条链保持平铺，不要拆散。
         private void OnLeftButtonDown(IntPtr hwnd, int clickY)
         {
-            // 录制态：除了「再点那个正在录的框」，任何一次左键都先收工（键位保持原样）。
-            //    这里不 return —— 这次点击该走哪个分支照走，用户点别处时手感不会「粘」在录制上。
             if (_hotkeyRecordingIndex >= 0 && _hoveredHotkeyRow != _hotkeyRecordingIndex)
                 CancelHotkeyRecording();
 
@@ -57,9 +51,6 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1 && _hoveredDisplayModeIndex != -1)
             {
-                // 显示模式：点「待机模式」立刻收拢、点「普通模式」立刻展开。
-                // 持久化（StandbyActive）：用户在设置里选的模式要能跨重启保留，与显示内容场景一个口径。
-                // 岛宽的收拢 / 展开交给既有的宽度弹簧（_targetWidth → _currentWidth）平滑过渡。
                 bool wantStandby = _hoveredDisplayModeIndex == 0;
                 if (Renderer.StandbyActive != wantStandby)
                 {
@@ -70,8 +61,6 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1 && _hoveredStandbySceneIndex != -1)
             {
-                // 待机模式显示内容：只改设置，不影响「当前是否处于待机」——
-                // 待机中的话下一帧就按新场景渲染，待机外则等下次进入时生效。
                 Renderer.StandbyScene = _hoveredStandbySceneIndex;
                 Program.SaveSetting("StandbyScene", Renderer.StandbyScene);
                 Render();
@@ -85,8 +74,6 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1 && _pageScrollbarHovered)
             {
-                // 拖动整页滚动条把页面跳到点击处（滚轮优先层不用管：那条由光标位置决定，
-                // 见 OnMouseMove 的 tab 1 段 —— 点滚动条时 OnMouseMove 已把优先级刷成整页）
                 float pageMax = GetDisplayPageMaxScroll();
                 GetPageScrollbarLayout(out float top, out float trackH);
                 float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f;
@@ -100,7 +87,6 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1 && _listScrollbarHovered)
             {
-                // 拖动「显示内容」列表滚动条把列表跳到点击处（滚轮优先层见 OnMouseMove 的 tab 1 段）
                 GetDisplayListLayout(out int visibleRows, out int maxFirstRow);
                 if (maxFirstRow > 0 && visibleRows > 0)
                 {
@@ -152,33 +138,23 @@ namespace NotchPeninsula
                 Render();
             }
             // 消息提示音：开关 / 下拉 / 音量下拉 / 两个按钮
-            //    （必须排在剪贴板、字体等通用开关分支之前，否则会被后者抢先吃掉）
             else if (_soundToggleHovered)
             {
                 ToastSoundConfig.IsEnabled = !ToastSoundConfig.IsEnabled;
                 Program.SaveSetting("ToastSoundEnabled", ToastSoundConfig.IsEnabled ? 1 : 0);
-                // 关闭时把还在排队的提示音清掉，避免「开关已经关了、耳朵里还在响」
                 if (!ToastSoundConfig.IsEnabled)
                 {
                     ToastSoundPlayer.ClearQueue();
-                    // 第 4 行整行是这条开关的附属：关掉它，附属设置行立刻置灰、不吃指针，
-                    //    所以这时还开着的浮层（提示音下拉 / 音量下拉）必须一起收掉，
-                    //    否则会留下一个「盖在禁用区域上、却还能点」的浮窗。
                     CloseAllDropdowns();
                 }
                 Render();
             }
             // 行 4 的四个控件都要求父开关「消息提示音」已打开
-            //    （判据与绘制侧置灰、命中侧不吃指针同源，见 ToastSoundConfig.IsRowEnabled）
             else if (_toastSoundDropdownHovered && ToastSoundConfig.IsRowEnabled)
             {
                 CloseAllDropdowns();
-                // 每次展开都重扫一遍目录：新丢进 data\sound 的文件不用重启就能看到。
-                // RefreshBuiltins 内部会顺手把当前选择「按文件名身份」重新对齐一次
-                // （增删 wav 造成的位置漂移 / 索引越界都在那里自愈），所以这里不用再补。
                 ToastSoundConfig.RefreshBuiltins();
                 _toastSoundDropdownOpen = true;
-                // 展开时把滚动位置定到「当前选中项可见」处；之后滚动完全交给滚轮，
                 // 绘制与命中都不再抢回选中项（那是「滚不动」的元凶）。
                 ScrollToastSoundMenuToSelected();
                 Render();
@@ -219,7 +195,6 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 2 && _appDropdownHovered)
             {
-                // 展开时现取一次活动会话列表，保证「所有 SMTC 活动」是最新的
                 _appOptions = MediaController.Instance?.GetAvailableAppIds() ?? Array.Empty<string>();
                 CloseAllDropdowns();
                 _appDropdownOpen = true;
@@ -242,7 +217,6 @@ namespace NotchPeninsula
                     float[] defaultVals = { 125f, 29f, 250f, 35f, 260f, 55f, 1.0f, 12f };
                     _customValues[updateIdx] = defaultVals[updateIdx];
 
-                    // 完整模式重置消息通知尺寸时，同样拦截至完整模式最小限制，避免缩得放不下应用名
                     if (Renderer.IsToastFullMode)
                     {
                         if (updateIdx == 4 && _customValues[4] < Renderer.FULL_TOAST_MIN_WIDTH) _customValues[4] = Renderer.FULL_TOAST_MIN_WIDTH;
@@ -268,13 +242,10 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 数值变动时才更新字符串缓存，避免渲染循环产生 GC 垃圾
                 UpdateValueString(updateIdx);
 
-                // index 1（原「垂直高度」）已合并进 index 3「全局折叠态高度」，不再有处理器
                 if (updateIdx == 0) { Renderer.STANDBY_WIDTH = _customValues[0]; Program.SaveSetting("Custom_StandbyW", _customValues[0]); }
                 else if (updateIdx == 2) { Renderer.MEDIA_WIDTH = _customValues[2]; Program.SaveSetting("Custom_MediaW", _customValues[2]); }
-                // 全局折叠态高度：写回原媒体控制的键（Custom_MediaH），与 LoadSettings 的读取口径一致
                 else if (updateIdx == 3) { Renderer.MEDIA_HEIGHT = _customValues[3]; Program.SaveSetting("Custom_MediaH", _customValues[3]); }
                 else if (updateIdx == 4) { Renderer.TOAST_WIDTH = _customValues[4]; Program.SaveSetting("Custom_ToastW", _customValues[4]); }
                 else if (updateIdx == 5) { Renderer.TOAST_HEIGHT = _customValues[5]; Program.SaveSetting("Custom_ToastH", _customValues[5]); }
@@ -306,7 +277,6 @@ namespace NotchPeninsula
                 ];
                 try
                 {
-                    // .NET 5+ 环境下，调用浏览器打开网页必须指定 UseShellExecute = true
                     Process.Start(new ProcessStartInfo
                     {
                         FileName = urls[_hoveredLinkIndex],
@@ -369,8 +339,6 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 2 && _scanToggleHovered)
             {
-                // 逐字歌词的唯一开关：逐字与整行推进是同一条链的两种驱动（逐字优先、逐字不可用时
-                // 自动回退卡拉 OK 的整行扫光，见 MediaController.ComputeScanProgress），所以只需要这一个开关。
                 MediaController.IsLyricScanEnabled = !MediaController.IsLyricScanEnabled;
                 Program.SaveSetting("LyricScanEnabled", MediaController.IsLyricScanEnabled ? 1 : 0);
                 Render();
@@ -391,18 +359,14 @@ namespace NotchPeninsula
                 _hotkeyHint = "";
                 MediaHotkeys.SetEnabled(!MediaHotkeys.IsEnabled);
                 // 开启时若有键位被别的程序占着，把原因挂到卡片副标题上：
-                //    用户至少要知道「哪一条装了但没生效」，否则会一直以为是宿主没响应。
                 if (MediaHotkeys.IsEnabled) _hotkeyHint = MediaHotkeys.LastError;
                 Render();
             }
             else if (_selectedTab == 2 && _hoveredHotkeyRow >= 0)
             {
                 _hotkeyHint = "";
-                // 录制期间先把热键全撤下来：否则用户按下的恰好就是当前键位时，
-                //    系统会直接触发那个动作 —— 「按一下看看会录成什么」变成「真的切了一首歌」。
                 MediaHotkeys.SuspendRegistration();
                 _hotkeyRecordingIndex = _hoveredHotkeyRow;
-                // 焦点必须收进本窗口，否则 WM_KEYDOWN 根本不会派发过来（能看到框闪却录不进东西）
                 if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
                 Render();
             }
@@ -422,7 +386,6 @@ namespace NotchPeninsula
             }
             else if (_pauseHideToggleHovered && NotchWindow.IsAutoHideEnabled)
             {
-                // 需总开关已开启（穿透模式不影响）。三个模式之间不互斥，可任意组合。
                 NotchWindow.IsPauseAutoHideEnabled = !NotchWindow.IsPauseAutoHideEnabled;
                 Program.SaveSetting("PauseAutoHide", NotchWindow.IsPauseAutoHideEnabled ? 1 : 0);
                 Render();
@@ -437,7 +400,6 @@ namespace NotchPeninsula
             else if (_mediaExpToggleHovered)
             {
                 Renderer.MediaInteractionMode = Renderer.MediaInteractionMode == 1 ? 0 : 1;
-                // 关闭展开交互时强制收起媒体面板（面板开合统一走 NotchWindow 的那套管理）
                 if (Renderer.MediaInteractionMode == 0) NotchWindow.CloseMediaPanel();
                 Program.SaveSetting("MediaInteractionMode", Renderer.MediaInteractionMode);
                 Render();
@@ -445,8 +407,6 @@ namespace NotchPeninsula
             else if (_appLaunchToggleHovered)
             {
                 // 双击封面跳转开关：关掉后双击封面完全不消费、不做事；
-                //    已缓存的窗口句柄留在 MediaAppLauncher 里（几十字节），
-                //    重新打开时下一次接管刷新就会继续采样，不需要清缓存。
                 MediaController.IsAppLaunchEnabled = !MediaController.IsAppLaunchEnabled;
                 Program.SaveSetting("MediaAppLaunchEnabled", MediaController.IsAppLaunchEnabled ? 1 : 0);
                 Render();
@@ -460,7 +420,6 @@ namespace NotchPeninsula
             }
             else if (_clipboardToggleHovered)
             {
-                // 剪贴板链接检测开关（关闭后正在展示的链接会由渲染循环立即收起）
                 NotchWindow.IsClipboardEnabled = !NotchWindow.IsClipboardEnabled;
                 Program.SaveSetting("ClipboardEnabled", NotchWindow.IsClipboardEnabled ? 1 : 0);
                 Render();
@@ -482,10 +441,6 @@ namespace NotchPeninsula
                 Render();
             }
             // ---- 显示内容列表 ----
-            // 顺序项同时含内置模块与插件，统一走 PluginManager 那张顺序表 ——
-            // 所以这里不需要（也不该）再区分「原生模块」与「插件」两套逻辑。
-            // 待机模式下这一栏整条置灰不吃指针（命中侧已经拦掉，这里再挡一道，防止切到待机那一瞬间
-            // 还挂着上一帧的悬停下标 —— 那一下点击会改到「普通模式显示什么」，与当前界面不符）。
             else if (_selectedTab == 1 && !Renderer.StandbyActive
                 && (_hoveredDisplayRow != -1 || _hoveredDisplayMoveUp != -1 || _hoveredDisplayMoveDown != -1))
             {
@@ -493,13 +448,11 @@ namespace NotchPeninsula
 
                 if (_hoveredDisplayRow != -1 && _hoveredDisplayRow < displayItems.Count)
                 {
-                    // 勾选 / 取消勾选：内置模块写 CompShow*，插件走启用 / 禁用
                     var item = displayItems[_hoveredDisplayRow];
                     PluginManager.Instance.SetDisplayed(item.Key, !item.IsShown);
                 }
                 else
                 {
-                    // 上 / 下移动（与相邻行换位，持久化后灵动岛下一帧即生效）
                     int rowIdx = _hoveredDisplayMoveUp != -1 ? _hoveredDisplayMoveUp : _hoveredDisplayMoveDown;
                     if (rowIdx >= 0 && rowIdx < displayItems.Count)
                     {
@@ -515,7 +468,6 @@ namespace NotchPeninsula
             {
                 if (_marketDialog == MarketDialog.LoadFailed)
                 {
-                    // 加载失败提示：只有一颗「好的」，关闭叉 / 点按钮 / 点弹窗外都是关窗
                     if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
                     else
                     {
@@ -531,7 +483,6 @@ namespace NotchPeninsula
                         case 0: ImportPluginDll(); break;
                         case 1: PluginManager.Instance.OpenPluginsFolder(); break;
                         case 2:
-                            // 插件市场：与点侧边栏那项走同一条路（关掉市场弹窗/下拉、留一次失败重试的机会），
                             //    省得用户自己找到左栏去切页签。
                             _selectedTab = 7;
                             _dropdownOpen = false;
@@ -557,8 +508,6 @@ namespace NotchPeninsula
                 }
                 else if (_hoveredPluginRemove != -1)
                 {
-                    // 直接卸载，不再弹二次确认：卸载只是把文件挪进 plugins\_recycle（可手动找回），
-                    // 不是不可逆操作，为它多插一步确认只会让「管理插件」这件事变累。
                     var pe = GetPluginAt(_hoveredPluginRemove);
                     if (pe != null)
                     {
@@ -574,7 +523,6 @@ namespace NotchPeninsula
             {
                 if (_marketDialog == MarketDialog.LoadFailed)
                 {
-                    // 加载失败提示：只有一颗「好的」，关闭叉 / 点按钮 / 点弹窗外都是关窗
                     if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
                     else
                     {
@@ -585,8 +533,6 @@ namespace NotchPeninsula
                 }
                 else if (_marketDialogIndex != -1)
                 {
-                    // 弹窗打开（只剩详情 / 评分两种）：关闭按钮 / 弹窗外 → 关闭；
-                    //   评分弹窗的星星 → 提交评分。弹窗内部其它区域不响应。
                     var mp = GetMarketAt(_marketDialogIndex);
                     if (mp == null) { CloseMarketDialog(true); }
                     else if (_hoveredDialogClose)
@@ -608,7 +554,6 @@ namespace NotchPeninsula
                 }
                 else if (_marketCategoryOpen)
                 {
-                    // 分类菜单展开：选中项 → 应用筛选；其余任意点击 → 收起
                     if (_hoveredMarketCategoryIndex >= 0 && _hoveredMarketCategoryIndex < MarketCategories.Length)
                     {
                         string key = MarketCategories[_hoveredMarketCategoryIndex].Key;
@@ -651,15 +596,10 @@ namespace NotchPeninsula
                 }
                 else if (IsInMarketSearchBox())               // 搜索框：聚焦，交给 WM_CHAR / IME 输入
                 {
-                    // 保险：把键盘焦点收进本窗口，否则窗口没焦点时 WM_CHAR 根本不会派发过来，
                     //    用户能看到光标却打不出字。
                     if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
-                    // 点哪儿光标落哪儿：按下时定位插入点、锚点对齐（此刻还没有选区），
-                    //    接着按住拖才拉出选区（拖动在 OnMouseMove 的 tab 7 段，与原生编辑框同一手感）。
                     if (TryGetCursorClientPos(out int sx, out _)) _marketSearchCaret = MarketSearchIndexAtX(sx);
                     _marketSearchSelAnchor = _marketSearchCaret;
-                    // 冻结可视窗口起点（此刻 dragging 还是 false，取到的是实时值）：拖选期间窗口不再
-                    //    跟着插入点滚动，否则「窗口动 → 命中变 → 插入点跳」会让选区自己抖起来。
                     _marketSearchViewFrozen = MarketSearchViewStart();
                     _marketSearchDragging = true;
                     _marketSearchFocused = true;
@@ -673,8 +613,6 @@ namespace NotchPeninsula
                 }
                 else if (_hoveredMarketUninstall != -1)
                 {
-                    // 同样直接卸载：与「我的插件」列表里那个「卸载」是同一件事、同一个后果
-                    // （文件挪进 plugins\_recycle，可手动找回），两边保持一致的交互，
                     // 不要一边弹确认、一边直接执行。
                     if (_marketSearchFocused) { _marketSearchFocused = false; }
                     var mp = GetMarketAt(_hoveredMarketUninstall);
@@ -693,7 +631,6 @@ namespace NotchPeninsula
                     if (_marketSearchFocused) { _marketSearchFocused = false; Render(); }
                 }
             }
-            // 注：插件位置的 ← / → 已移除，排序统一走「显示设置 → 显示内容」。
         }
     }
 }

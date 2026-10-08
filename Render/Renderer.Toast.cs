@@ -7,43 +7,22 @@ namespace NotchPeninsula
 {
     public static partial class Renderer
     {
-        /// <summary>
-        /// Toast 文本右边界与渐隐遮罩起点之间的兜底余量（逻辑像素）。
-        ///
-        /// 宽度公式与 Draw 里的排版是两套独立计算：文字宽由 BuildTextRuns 分 run 累加，
-        /// 绘制时又按 run 逐段画（跨 run 的 kerning 会丢一点），再加上岛体宽度是弹簧动画、
-        /// 可能稳定在目标值下方零点几像素 —— 余量取 0 时就会出现「刚好卡在遮罩边缘」：
-        /// 文字既显示不全（末尾被渐隐吃掉），又因为缓存宽度认为放得下而不触发加宽。
-        /// </summary>
         private const float TOAST_TEXT_MARGIN = 8f;
 
-        /// <summary>完整模式右上角「现在」的预留宽度，必须与 Draw 里 toastMaxTextRight -= 36f 一致。</summary>
-
         private const float TOAST_FULL_MODE_RIGHT_RESERVE = 36f;
-
-        // 计算Toast消息自适应宽度，限制最大宽度（与岛体总长上限一致）
 
         public static float GetToastAutoWidth()
         {
             float maxTextW = IsToastFullMode
                 ? Math.Max(_cachedToastTitleWidth, Math.Max(_cachedToastBodyWidth, _cachedToastAppNameWidth))
                 : Math.Max(_cachedToastTitleWidth, _cachedToastBodyWidth);
-            // 68 = 左侧 chrome（14 左边距 + 28 图标 + 10 间距）+ 右侧 16 内边距，
-            // 与 Draw 里 toastTextX / toastMaxTextRight 的取值严格对应，改一处必须同步另一处。
             float w = maxTextW + 68f;
-            // 完整模式右上角要放「现在」：Draw 里让了 36px，这里必须一起让，
-            //    否则文本右边界永远比遮罩起点多出 36px —— 每行末尾都会被渐隐截掉一截。
             if (IsToastFullMode) w += TOAST_FULL_MODE_RIGHT_RESERVE;
-            // 紧凑模式：左侧文本之外还需为右侧双行信息（现在 + 应用名）预留空间。
-            // 取「固定预留」与「实测占宽」的较大者：应用名较长时按实测值预留，
-            // 否则右侧信息会实际压进左侧消息文字里，把消息尾巴挤到遮罩下面。
             if (IsToastCompactMode) w += Math.Max(COMPACT_RIGHT_WIDTH, _cachedToastCompactRightWidth);
-            // 兜底余量：保证文本右边界不会正好落在遮罩起点上（见 TOAST_TEXT_MARGIN 注释）
             w += TOAST_TEXT_MARGIN;
             return Math.Min(Math.Max(TOAST_WIDTH, w), MAX_ISLAND_WIDTH);
         }
 
-        // 剪贴板链接面板自适应宽度：媒体控制器同款基准尺寸，链接过长时按文本加宽，
         //    封顶宽度与消息通知弹窗的最大长度保持一致
 
         private const float CLIPBOARD_EXTRA_WIDTH = 10f; // 计算宽度之外的视觉呼吸量，避免文本贴边
@@ -55,8 +34,6 @@ namespace NotchPeninsula
             return Math.Min(Math.Max(MEDIA_WIDTH, w), MAX_ISLAND_WIDTH);
         }
 
-        // 「打开」按钮命中判定：本帧未绘制则热区为空，天然不会在收起后误触发
-
         public static bool HitClipboardOpen(float x, float y)
             => _clipboardOpenHit.Width > 0f && _clipboardOpenHit.Contains(x, y);
 
@@ -67,21 +44,16 @@ namespace NotchPeninsula
             BuildTextRuns(_lastClipboardUrl, _textPaint, _semiBoldTypeface, _cachedClipboardRuns, out _cachedClipboardTextWidth);
         }
 
-        // 剪贴板链接面板：左「链接图标」+ 中间链接 + 右「打开」按钮（尺寸与媒体控制器同款）
-
         private static void DrawClipboard(SKCanvas canvas, string url, float left, float right, float currentHeight, float textOffsetY)
         {
             EnsureClipboardTextCache(url);
 
-            // 左侧「链接」图标：细线条矢量路径，颜色跟随主题的纯黑 / 纯白。
-            // （原先是 data/image/clipboard.png 位图 + 圆角裁切，现改为矢量直绘：任意 DPI 都锐利、
             //   不再有位图缩放的毛边，也不再需要裁切路径。）
             float iconSize = 20f;
             float iconX = left + 14f;
             float iconY = (currentHeight - iconSize) / 2f + textOffsetY;
             DrawSvgPath(canvas, _clipboardLinkPaint, iconX, iconY, _clipboardLinkPath, iconSize / ClipboardIconCanvas);
 
-            // 右侧「打开」按钮布局（先算坐标，按钮本体在文本之后绘制，保证永远压在最上层不被遮挡）
             float btnSize = 22f;
             float btnRight = right - 14f;
             float btnLeft = btnRight - btnSize;
@@ -89,8 +61,6 @@ namespace NotchPeninsula
             _clipboardOpenHit = new SKRect(btnLeft - 4f, btnTop - 3f, btnRight + 4f, btnTop + btnSize + 3f);
 
             // 中间链接文本（单行垂直居中）。
-            // 关键保护：把文本严格裁剪在 [textX, btnLeft-10] 区域内，超长只渐隐截断文字，
-            // 绝不绘制到按钮热区上 —— 任何岛体宽度（含弹簧动画过程中）都不会遮挡「打开」按钮。
             float textX = iconX + iconSize + 10f;
             float textRightLimit = btnLeft - 10f;
             float textY = currentHeight / 2f + _textPaint.TextSize * 0.36f + textOffsetY;
@@ -115,7 +85,6 @@ namespace NotchPeninsula
             }
             canvas.Restore(); // 结束文本裁剪区
 
-            // 按钮最后绘制：即使动画中途岛体宽度暂时不足，按钮也完整可见可点
             DrawSvgPath(canvas, _clipboardOpenPaint, btnLeft, btnTop, _clipboardOpenPath, btnSize / ClipboardIconCanvas);
         }
 
@@ -138,13 +107,8 @@ namespace NotchPeninsula
         private static float _cachedToastBodyWidth = 0f;
 
         private static float _cachedToastAppNameWidth = 0f;
-        // 紧凑模式右侧双行信息（“现在”+ 应用名，小号字体）的真实占宽，随 toast 一起缓存。
-        //    GetToastAutoWidth 用它来预留右侧空间 —— 只写死 COMPACT_RIGHT_WIDTH 的话，
-        //    应用名一长（如“Windows 安全中心”）右侧就会实际吃进左侧消息文字，尾巴被遮罩截掉。
 
         private static float _cachedToastCompactRightWidth = 0f;
-
-        // 剪贴板链接面板专用缓存（只在链接变化 / 换字体时重建一次，稳态零重算）
 
         private static readonly List<(string Text, SKTypeface Type, float X)> _cachedClipboardRuns = new();
 
@@ -154,8 +118,6 @@ namespace NotchPeninsula
 
         private static SKRect _clipboardOpenHit;   // 本帧「打开」按钮命中区，帧首作废
 
-        // Toast 通知整层绘制（图标 / 标题 / 正文 / 紧凑与完整模式的双行信息）。
-        // 由 Draw() 在主流程中调用；调用方负责随后的 3 次 Restore 与提前 return。
         private static void DrawToastLayer(SKCanvas canvas, ToastData toast, float left, float right, float currentHeight)
         {
             if (_lastToastId != toast.NotificationId)
@@ -170,8 +132,6 @@ namespace NotchPeninsula
                 BuildTextRuns(_cachedToastBody, _bodyPaint, _normalTypeface, _cachedToastBodyRuns, out _cachedToastBodyWidth);
                 BuildTextRuns(_cachedToastAppName, _bodyPaint, _normalTypeface, _cachedToastAppNameRuns, out _cachedToastAppNameWidth);
 
-                // 紧凑模式右侧那块双行信息的真实占宽（与下面绘制用的画笔、文案、字号完全一致），
-                //    供 GetToastAutoWidth 预留宽度使用，保证左侧消息文字永远放得下。
                 _cachedToastCompactRightWidth = Math.Max(
                     _compactTimePaint.MeasureText("现在"),
                     _compactAppPaint.MeasureText(string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName));
@@ -184,8 +144,6 @@ namespace NotchPeninsula
 
             EnsureIconsLoaded();
 
-            // 发送端自带的自定义图标优先（HTTP 消息 / 插件提醒，见 ToastIconProvider）；
-            // 没带或还没解析完（异步）就退回原有的 QQ → 默认图标判定。
             SKBitmap? targetIcon = toast.CustomIcon;
 
             if (targetIcon == null &&
@@ -228,7 +186,6 @@ namespace NotchPeninsula
             float toastMaxTextRight = right - 16f;
             if (IsToastFullMode) toastMaxTextRight -= 36f; // 完整模式右上角需预留“现在”的空间
 
-            // 紧凑模式：右侧文本块的真实左边缘（“现在”与应用名两行的最大宽者），遮罩与溢出判断都紧贴它
             float compactNowWidth = 0f, compactAppW = 0f, compactRightLeft = 0f;
             if (IsToastCompactMode)
             {
@@ -273,7 +230,6 @@ namespace NotchPeninsula
                 canvas.DrawText("现在", right - 16f - nowWidth, line1Y, _bodyPaint);
             }
 
-            // 渲染发送者标题：自动在常规字体与 Emoji 字体间热切换
             // 完整模式在第2行，缩略模式在第1行
             float senderY = IsToastFullMode ? line2Y : line1Y;
             foreach (var run in _cachedToastSenderRuns)
@@ -307,7 +263,6 @@ namespace NotchPeninsula
             if (textOverflow)
             {
                 float fadeWidth = 15f;
-                // 紧凑模式下遮罩紧贴右侧文本真实左边缘，其余模式按统一文本右边界
                 float fadeStart = IsToastCompactMode ? compactRightLeft - fadeWidth : toastMaxTextRight - fadeWidth;
 
                 canvas.Save();
@@ -316,16 +271,13 @@ namespace NotchPeninsula
                 canvas.DrawRect(0, 0, 1, 1, _fadePaint);
                 canvas.Restore();
 
-                // 紧凑模式在左侧文本与右侧信息接触处用遮罩过渡，其余模式则覆盖超出右边界的文字
                 if (!IsToastCompactMode)
                     canvas.DrawRect(toastMaxTextRight, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
             }
 
-            // 紧凑模式：右侧靠边显示双行信息（右上“现在”纯色、右下应用名灰色，均小号右对齐）
             if (IsToastCompactMode)
             {
                 string compactAppName = string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName;
-                // 先铺与窗口背景同色的实心色块，从右侧文本真实左边缘延伸到右缘，与渐变遮罩衔接，保证左侧长内容不会透到这两行信息上
                 canvas.DrawRect(compactRightLeft, 0f, right - 16f, currentHeight, _bgPaint);
                 canvas.DrawText("现在", right - 16f - compactNowWidth, line1Y, _compactTimePaint);
                 canvas.DrawText(compactAppName, right - 16f - compactAppW, line2Y, _compactAppPaint);

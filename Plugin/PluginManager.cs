@@ -7,41 +7,27 @@ using Microsoft.Win32;
 
 namespace NotchPeninsula.Plugins;
 
-/// <summary>插件运行状态。</summary>
 public enum PluginState
 {
-    /// <summary>未加载（禁用 / 已卸载）。</summary>
     NotLoaded,
-    /// <summary>已成功加载并初始化。</summary>
     Loaded,
-    /// <summary>加载失败（DLL 损坏、缺少依赖、初始化抛异常等）。</summary>
     Failed
 }
 
-/// <summary>一个插件的运行时描述。</summary>
 public sealed class PluginEntry
 {
-    /// <summary>相对 plugins 根的稳定标识（持久化用）。</summary>
     public string Key { get; init; } = "";
-    /// <summary>入口 DLL 绝对路径。</summary>
     public string DllPath { get; set; } = "";
-    /// <summary>是否目录型布局。</summary>
     public bool IsFolderLayout { get; init; }
-    /// <summary>插件所在目录。</summary>
     public string RootDir { get; init; } = "";
 
     public string Id { get; internal set; } = "";
     public string DisplayName { get; set; } = "";
     public string Version { get; internal set; } = "";
-    /// <summary>作者（插件没实现 INotchPlugin.Author 时退回程序集元数据，可能为空）。</summary>
     public string Author { get; internal set; } = "";
     public PluginState State { get; internal set; } = PluginState.NotLoaded;
     public string? Error { get; internal set; }
 
-    /// <summary>
-    /// 上一次成功加载时读到的显示名（由 PluginManager 从名字缓存里填）。
-    /// 禁用 / 加载失败时 DisplayName 是空的，靠它兜住 —— 否则列表只能显示 DLL 文件名。
-    /// </summary>
     internal string CachedName { get; set; } = "";
 
     public bool IsEnabled => State == PluginState.Loaded;
@@ -50,10 +36,6 @@ public sealed class PluginEntry
     internal PluginLoadContext? Context;
     internal string? ShadowDir;
 
-    /// <summary>
-    /// 列表展示用的名称：加载中 → 插件声明的 DisplayName；未加载 → 上次缓存的名字；
-    /// 都没有（从没成功加载过）→ 退回 DLL 文件名（去掉扩展名）。
-    /// </summary>
     public string FriendlyName
     {
         get
@@ -65,22 +47,8 @@ public sealed class PluginEntry
     }
 }
 
-/// <summary>
-/// 插件运行时管理器（单例）。
-///
-/// 职责：
-///   1. 扫描 plugins 目录并维护可管理列表；
-///   2. 用「影子拷贝 + 可回收 AssemblyLoadContext」加载 / 卸载 / 热重载 DLL；
-///   3. 持久化每个插件的启用 / 禁用状态；
-///   4. 向 UI 暴露 Changed 事件。
-///
-/// 为什么用影子拷贝：直接加载用户目录里的 DLL 会被进程持有文件句柄，
-/// 覆盖升级或热更新时会出现“文件被占用”。先把 DLL（目录型含依赖）复制到临时目录再加载，
-/// 原文件就始终可以被替换；同时可回收 ALC 允许卸载旧代码。
-/// </summary>
 public sealed class PluginManager
 {
-    /// <summary>官网插件市场地址</summary>
     public const string MarketplaceUrl = "https://nps.georgewu.top/market";
 
     private const string RegistryBase = @"SOFTWARE\NotchPeninsula";
@@ -96,49 +64,30 @@ public sealed class PluginManager
     private readonly PluginHost _host = new();
     private readonly List<PluginEntry> _entries = new();
     private readonly HashSet<string> _disabled = new(StringComparer.OrdinalIgnoreCase);
-    // 「已加载但不显示」的插件（存 Key）：显示设置里取消勾选只把它从岛上收起，
     // 插件照常运行（不卸载、不禁用），下次启动也保持不显示。
-    // 与 _disabled 是两件独立的事：_disabled = 不跑；_hidden = 跑但不显示。
-    // 两者联动是单向的：启用会自动取消隐藏（启用即要显示），取消勾选显示则绝不动启用状态。
     private readonly HashSet<string> _hidden = new(StringComparer.OrdinalIgnoreCase);
-    // 插件显示顺序（存 Key，即相对 plugins 根的稳定标识）：持久化在注册表，决定灵动岛上的排列位置。
-    // 为什么不用 pluginId：pluginId 只有「加载成功」后才知道，插件一旦被禁用/加载失败就查不到，
-    // 会导致顺序位丢失、甚至只剩一个启用插件时排序按钮全部失效。Key 是磁盘上的稳定标识，与运行状态无关。
     private readonly List<string> _order = new();
-    // 构造时从注册表读回的原始条目（可能是早期版本写入的 pluginId 格式），首次 EnsureOrder 时迁移成 Key
     private readonly List<string> _rawOrder = new();
     private bool _orderMigrated;
     private readonly object _lock = new();
 
-    // 插件显示名缓存（Key → DisplayName），持久化在注册表。
-    //
-    // 为什么必须缓存：DisplayName 只有「真正加载插件」时才知道（要实例化 INotchPlugin 才读得到），
-    // 而禁用 / 加载失败的插件是不会加载的 —— 于是插件中心只能退回 DLL 文件名，
-    // 显示成「NpsMediaMixer_20261001133637」这种，用户根本认不出是哪个插件。
-    // 缓存最后一次成功加载时读到的名字，禁用后照常显示「媒体混音器」。
     private readonly Dictionary<string, string> _nameCache = new(StringComparer.OrdinalIgnoreCase);
 
     public PluginHost Host => _host;
 
-    // 变更序号：任何「发现 / 加载 / 卸载 / 启用状态 / 排序 / 加载失败」都会自增。
-    // 设置面板用它做缓存判据 —— 插件列表与行内文案原本是每次渲染都重建，
     // 有了这个序号就能只在真变了的时候重建一次。
     private int _changeVersion;
 
-    // 「显示内容」列表的缓存（判据见 DisplayItems 属性）：UI 每帧访问它，不缓存就是每帧一次 List 分配。
     private readonly object _displayItemsLock = new();
     private IReadOnlyList<DisplayItem>? _displayItemsCache;
     private int _displayItemsVersion = -1;
 
-    /// <summary>注册表变更序号（单调递增，只在 Changed 触发前自增）。</summary>
     public int ChangeVersion => System.Threading.Volatile.Read(ref _changeVersion);
     public string PluginsRoot { get; }
     public IReadOnlyList<PluginEntry> Entries { get { lock (_lock) return _entries.ToArray(); } }
 
-    /// <summary>插件列表 / 状态发生变化时触发（UI 订阅后刷新即可）。</summary>
     public event Action? Changed;
 
-    /// <summary>插件显示顺序（Key 列表），持久化在注册表。</summary>
     public IReadOnlyList<string> Order { get { lock (_lock) return _order.ToArray(); } }
 
     private PluginManager()
@@ -152,7 +101,6 @@ public sealed class PluginManager
 
     // ---- 生命周期 ----
 
-    /// <summary>程序启动时调用：清临时影子目录 → 发现插件 → 自动加载已启用的插件。</summary>
     public void Initialize()
     {
         try
@@ -160,14 +108,10 @@ public sealed class PluginManager
             CleanShadowRoot();
             Directory.CreateDirectory(PluginsRoot);
             Refresh();
-            // 顺序表还原发生在 Load() 内部第一次 EnsureOrder()（见 Load 里的调用）：
-            // 那时 Refresh() 已经把所有插件（含禁用/加载失败的）都登记进 _entries，
-            // 所以保存的顺序能按 Key 原样还原，与「插件是否加载成功」无关。
             foreach (var e in Entries)
                 if (!_disabled.Contains(e.Key) && e.State != PluginState.Loaded)
                     Load(e);
 
-            // 把本次加载出来的插件补进顺序表并注入宿主，灵动岛据此排列插件位置
             EnsureOrder();
             PushOrderToHost();
 
@@ -180,7 +124,6 @@ public sealed class PluginManager
         }
     }
 
-    /// <summary>重新扫描 plugins 目录（保留已加载项的状态）。</summary>
     public void Refresh()
     {
         var sources = PluginLoader.Discover(PluginsRoot);
@@ -211,8 +154,6 @@ public sealed class PluginManager
             _entries.Clear();
             _entries.AddRange(fresh);
 
-            // 缓存名统一回填：新发现的条目、以及早于本次缓存建立的老条目都在这里补上。
-            // 拿不到缓存（从没成功加载过）就保持空，FriendlyName 会退回 DLL 文件名。
             foreach (var e in _entries)
                 if (string.IsNullOrEmpty(e.CachedName) && _nameCache.TryGetValue(e.Key, out var cached))
                     e.CachedName = cached;
@@ -224,56 +165,24 @@ public sealed class PluginManager
         lock (_lock) return _entries.FirstOrDefault(e => string.Equals(e.Key, key, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>
-    /// 该插件是否处于禁用状态（在禁用清单里）。
-    ///
-    /// 「禁用」与「未安装」是两回事：禁用的插件文件仍留在 plugins 目录里，只是不加载运行 ——
-    /// 所以它的 Version / Author / DisplayName 都读不到（只有名字有缓存），状态一律是 NotLoaded。
-    /// 市场页据此把「已安装但被禁用」的那一行置灰，与「本机根本没有」区分开。
-    /// </summary>
     public bool IsDisabled(PluginEntry? e)
     {
         if (e == null || string.IsNullOrEmpty(e.Key)) return false;
         lock (_lock) return _disabled.Contains(e.Key);
     }
 
-    // ---- 插件显示顺序（决定插件内容在灵动岛上的排列位置） ----
-
-    /// <summary>「显示内容」列表里的一行（显示设置页据此渲染复选框与左右移动按钮）。</summary>
     public sealed class DisplayItem
     {
-        /// <summary>顺序项标识：内置模块为 builtin.*，插件为 PluginEntry.Key。</summary>
         public string Key { get; init; } = "";
         public string Name { get; init; } = "";
-        /// <summary>
-        /// 当前是否显示在灵动岛上：内置模块 = CompShow*，插件 = 已加载且未被隐藏。
-        /// 插件这里为 false 有两种原因：没跑（禁用 / 加载失败），或跑着但被用户取消了显示。
-        /// </summary>
         public bool IsShown { get; init; }
-        /// <summary>是否内置模块（时间日期 / 硬件占用 / 媒体控制器），UI 用它加「（内置）」标记。</summary>
         public bool IsBuiltin { get; init; }
     }
 
-    /// <summary>
-    /// 「显示内容」列表：内置模块（时间日期 / 硬件占用 / 媒体控制器）+ 全部插件，
-    /// 严格按显示顺序表排列 —— 这就是灵动岛上内容的排列次序。
-    ///
-    /// 向下兼容：读的就是老版本那张顺序表（注册表 Plugins_Order），
-    /// 内置模块与插件的 Key 混排在同一张表里，所以升级后用户此前调好的插件位置会原样带过来，
-    /// 只是入口从「插件中心」搬到了「显示设置」。表里没有的内容（老版本从未排过序的插件）
-    /// 由 EnsureOrder 追加到末尾；老版本用 pluginId 写下的历史顺序也在那里迁移成 Key。
-    ///
-    /// 未勾选的插件（跑着但被用户取消显示）也在列表里（复选框空着），用户才能在同一处把它勾回来。
-    /// 已经不在磁盘上的残留顺序项、以及禁用 / 加载失败的插件都直接跳过 —— 后者没有可显示的内容，
-    /// 也不该占用排序落点（重新启用后按它在顺序表里的原位置回到列表）。
-    /// </summary>
     public IReadOnlyList<DisplayItem> DisplayItems
     {
         get
         {
-            // 缓存判据 = ChangeVersion：任何「发现 / 加载 / 卸载 / 启用状态 / 排序 / 显隐 / 加载失败」
-            // 都会自增它（改 CompShow* 的 SetDisplayed 也 RaiseChanged），所以不必再单独比对内置开关。
-            // 不缓存的话，「显示内容」页每帧都要 new List + 逐项 new DisplayItem（还叠着 16ms 悬停动画）。
             int version = ChangeVersion;
             lock (_displayItemsLock)
             {
@@ -294,13 +203,8 @@ public sealed class PluginManager
                     }
 
                     var e = FindEntryByKeyOrId(key);
-                    // 失效残留（插件已从磁盘移除）与「禁用 / 加载失败」的插件都不进这张列表：
-                    // 后者在插件中心已经被藏起来，只在显示设置里留一行空复选框没有意义，
-                    // 还会让用户在排序时碰上"点一下没动"的落点。重新启用后自动回到原位。
                     if (e == null || string.IsNullOrEmpty(e.Key)) continue;
                     if (e.State != PluginState.Loaded) continue;
-                    // 不占岛体位的内容（任务栏组件）在这里跳过：插件照常加载运行，只是不进这张排序表，
-                    // 顺序位照旧留在 _order 里（以后若要恢复排序，去掉这个判定即可）。见 IgnoresDisplayOrder。
                     if (IgnoresDisplayOrder(e)) continue;
                     list.Add(new DisplayItem
                     {
@@ -310,9 +214,6 @@ public sealed class PluginManager
                     });
                 }
 
-                // 兜底：内置模块一行都不能少。正常路径下 EnsureOrder 已把它们补进表里，但那个调用
-                // 只发生在 Initialize() 里，万一初始化没跑（plugins 目录异常 / 抛错），显示设置页
-                // 仍要有「时间日期 / 硬件占用 / 空白」可点，否则用户彻底没入口把时钟勾回来。
                 foreach (var b in BuiltinWidgets.Default)
                     if (!list.Any(x => string.Equals(x.Key, b, StringComparison.OrdinalIgnoreCase)))
                         list.Add(new DisplayItem { Key = b, Name = BuiltinName(b), IsShown = IsBuiltinDisplayed(b), IsBuiltin = true });
@@ -329,25 +230,15 @@ public sealed class PluginManager
         }
     }
 
-    /// <summary>
-    /// 该插件是否不参与「显示内容」排序 —— 依旧加载运行，只是不出现在显示设置那张列表里。
-    ///
-    /// 目前只有任务栏组件（NpsTaskbarWidget）走这条：它把内容画在挂在任务栏上的自有窗口里，
-    /// 岛体上没有对应组件，列进排序表既排不出效果，又白占一个落点。
-    /// 按插件标识识别（Key 是 plugins 下的相对路径，Id 是插件自报的 pluginId），插件无需改代码；
-    /// 两侧都用「包含」匹配，插件换了目录布局、或者文件名带上版本号后缀也照样认得出。
-    /// </summary>
     private static bool IgnoresDisplayOrder(PluginEntry e)
     {
         const string marker = "taskbarwidget";
         return ContainsMarker(e.Key, marker) || ContainsMarker(e.Id, marker);
     }
 
-    /// <summary>不区分大小写的包含判定（Key 与 pluginId 的命名习惯不统一）。</summary>
     private static bool ContainsMarker(string? value, string marker)
         => !string.IsNullOrEmpty(value) && value.Contains(marker, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>内置模块的中文名（与显示设置页的文案一致）。调用方需持有 _lock。</summary>
     private static string BuiltinName(string key)
     {
         if (string.Equals(key, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return "时间日期";
@@ -355,14 +246,6 @@ public sealed class PluginManager
         return "媒体控制器(含频谱)";
     }
 
-    /// <summary>
-    /// 勾选 / 取消勾选某个顺序项并持久化。
-    ///
-    /// 内置模块写 CompShow*，插件写「隐藏清单」——与插件中心的开关不是同一件事：
-    ///   勾选插件 = 要看到它 → 顺带启用（没跑就没法显示），会退出隐藏清单；
-    ///   取消勾选插件 = 只从岛上收起，不禁用、不卸载，插件继续在后台跑；
-    ///   反向由 SetEnabled 兜：启用会自动取消隐藏，禁用则天然不显示。
-    /// </summary>
     public void SetDisplayed(string key, bool shown)
     {
         if (string.IsNullOrEmpty(key)) return;
@@ -393,13 +276,11 @@ public sealed class PluginManager
 
         if (shown)
         {
-            // 勾上显示 = 用户要看到它。插件没在跑就先跑起来（SetEnabled 内部会把它移出隐藏清单）
             if (e.State != PluginState.Loaded) { SetEnabled(e, true); return; }
             if (!_hidden.Remove(e.Key)) return; // 本来就显示着，什么都不用做
         }
         else
         {
-            // 只收起显示：不动启用状态（插件继续运行，下次启动也保持收起）
             if (!_hidden.Add(e.Key)) return;
         }
 
@@ -408,10 +289,6 @@ public sealed class PluginManager
         RaiseChanged();
     }
 
-    /// <summary>
-    /// 该顺序项能否朝指定方向移动（delta = -1 上移 / +1 下移）。
-    /// 跳过失效的残留项（插件已移除），所以「视觉上相邻的两行」永远是彼此的落点。
-    /// </summary>
     public bool CanMoveDisplay(string key, int delta)
     {
         if (string.IsNullOrEmpty(key)) return false;
@@ -422,10 +299,6 @@ public sealed class PluginManager
         }
     }
 
-    /// <summary>
-    /// 把顺序项朝指定方向与相邻项交换位置并持久化，灵动岛下一帧即生效。
-    /// 内置模块与插件走同一条路径 —— 它们本来就在同一张顺序表里。
-    /// </summary>
     public bool MoveDisplay(string key, int delta)
     {
         if (string.IsNullOrEmpty(key)) return false;
@@ -449,11 +322,9 @@ public sealed class PluginManager
         return true;
     }
 
-    /// <summary>顺序项在顺序表里的下标；不在表里返回 -1。调用方需持有 _lock。</summary>
     private int IndexOfOrder(string key)
         => _order.FindIndex(x => string.Equals(x, key, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>idx 朝 delta 方向第一个「列表里真的会显示出来」的位置；没有则返回 -1。调用方需持有 _lock。</summary>
     private int FindMoveTargetLocked(int idx, int delta)
     {
         for (int t = idx + delta; t >= 0 && t < _order.Count; t += delta)
@@ -461,24 +332,15 @@ public sealed class PluginManager
         return -1;
     }
 
-    /// <summary>该顺序项会不会出现在「显示内容」列表里。调用方需持有 _lock。</summary>
     private bool IsListedLocked(string key)
         => BuiltinWidgets.IsBuiltin(key) || IsListedPluginLocked(key);
 
-    /// <summary>
-    /// 插件是否出现在「显示内容」列表里 —— 要求它当前真的在运行（已加载）。
-    /// 禁用 / 加载失败的插件既不出现在列表里，也不参与排序：它们在列表里本来就没有行，
-    /// 若仍当作「可落点」，用户点箭头时看起来「点了一下什么都没动」。
-    /// 顺序位本身在 _order 里保留，重新启用后回到原位。
-    /// 调用方需持有 _lock。
-    /// </summary>
     private bool IsListedPluginLocked(string key)
     {
         var e = FindEntryByKeyOrId(key);
         return e != null && e.State == PluginState.Loaded && !IgnoresDisplayOrder(e);
     }
 
-    /// <summary>原生模块当前是否勾选显示（与显示设置页的复选框、渲染器的绘制门控同源）。</summary>
     private static bool IsBuiltinDisplayed(string id)
     {
         if (string.Equals(id, BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase)) return Renderer.CompShowDateTime;
@@ -486,24 +348,16 @@ public sealed class PluginManager
         return Renderer.CompShowMedia; // 媒体控制器
     }
 
-    /// <summary>
-    /// 把发现到的插件补进顺序表：首次调用时先把注册表里的历史顺序迁移成 Key，
-    /// 之后把尚未登记顺序的插件按发现顺序追加到末尾。
-    /// </summary>
     private void EnsureOrder()
     {
         bool changed = false;
         lock (_lock)
         {
-            // ① 迁移历史数据：早期版本写的是 pluginId，这里按「Key 优先、Id 兜底」还原成 Key
             if (!_orderMigrated)
             {
                 _orderMigrated = true;
                 foreach (var raw in _rawOrder)
                 {
-                    // 原生模块（builtin.clock / hardware / media）不在 _entries 里，必须原样保留。
-                    // 此前这里只按插件条目查找，三个原生模块被整批丢弃，紧接着第 ② 步又把它们
-                    // 补回最前面，用户调好的插件位置每次重启都被冲掉（调好的 #1 重启后回到 #4）。
                     if (Plugins.BuiltinWidgets.IsBuiltin(raw))
                     {
                         if (!ContainsOrder(raw)) { _order.Add(raw); changed = true; }
@@ -519,8 +373,6 @@ public sealed class PluginManager
                 _rawOrder.Clear();
             }
 
-            // ② 原生模块（时间日期 / 硬件 / 媒体）默认排在所有插件之前 —— 与引入顺序表之前的表现一致。
-            //    只有顺序表里完全找不到它们时才补，避免覆盖用户已经调过的位置。
             var missingBuiltin = new List<string>(Plugins.BuiltinWidgets.Default.Length);
             foreach (var b in Plugins.BuiltinWidgets.Default)
                 if (!ContainsOrder(b)) missingBuiltin.Add(b);
@@ -542,7 +394,6 @@ public sealed class PluginManager
         if (changed) SaveOrderList();
     }
 
-    /// <summary>按 Key 查找；找不到再按已加载插件的 pluginId 查找（兼容旧顺序数据）。调用方需持有 _lock。</summary>
     private PluginEntry? FindEntryByKeyOrId(string value)
     {
         foreach (var e in _entries)
@@ -552,12 +403,6 @@ public sealed class PluginManager
         return null;
     }
 
-    /// <summary>
-    /// 把顺序表注入宿主：原生模块（builtin.*）原样传递，插件则把 Key 换成 pluginId。
-    /// 未加载（禁用 / 失败）的插件不输出，但其顺序位在表里保留，启用后自动回到原位。
-    /// 被隐藏的插件同样不进顺序表，而是单独交给 PluginHost.SetHiddenPlugins，宿主据此把它的
-    /// 组件从 Widgets 里滤掉，插件照常运行、只是不在岛上。
-    /// </summary>
     private void PushOrderToHost()
     {
         string[] ids;
@@ -636,25 +481,15 @@ public sealed class PluginManager
 
     // ---- 加载 / 卸载 / 热重载 ----
 
-    /// <summary>加载一个插件。返回是否成功。</summary>
     public bool Load(PluginEntry e) => Load(e, dedupSameId: false);
 
-    /// <summary>
-    /// 加载一个插件。返回是否成功。
-    ///  = 加载成功时顺带移除磁盘上同 Id 的其他副本（导入升级用，
-    /// 见 RemoveSameIdDuplicates）；启动时对既有插件的常规加载传 false。
-    /// </summary>
     private bool Load(PluginEntry e, bool dedupSameId)
     {
         if (e.State == PluginState.Loaded) return true;
 
-        // shadow / ctx 必须声明在 try 之外：C# 局部变量的作用域是整个 try 块，catch 块看不到
-        // try 内声明的变量，失败路径就没法回收它们（这正是原先的泄漏点）。
         string? shadow = null;
         PluginLoadContext? ctx = null;
 
-        // 重试一个此前加载失败的条目时，先彻底拆掉上一次残留的 ALC 与影子目录，
-        // 否则下面的 e.Context = ctx 会把旧 ALC 直接覆盖成游离对象（永不 Unload）。
         if (e.Context != null)
         {
             var staleShadow = e.ShadowDir;
@@ -689,19 +524,13 @@ public sealed class PluginManager
             e.ShadowDir = shadow;
             e.Instance = plugin;
 
-            // 元数据字符串必须复制到宿主堆：插件返回的是 loader heap 上的常量，
-            // 宿主长期持有会导致该 ALC 无法回收（详见 PluginHost.DetachString）
             e.Id = PluginHost.DetachString(plugin.Id);
             e.DisplayName = PluginHost.DetachString(plugin.DisplayName);
             e.Version = PluginHost.DetachString(plugin.Version);
             e.Author = PluginHost.DetachString(ReadAuthor(plugin, asm));
 
-            // 记下显示名（持久化）：插件被禁用 / 卸载后 DisplayName 就会被清掉，
-            // 这份缓存让插件中心仍能显示「媒体混音器」而不是「NpsMediaMixer_20261001133637」。
             CacheName(e);
 
-        // 同 Id 的旧版本在这里就被移除，必须早于下面的 _host.RegisterPlugin：宿主按 pluginId
-        // 记账，两份同 Id 同时注册会互相覆盖；而且卸载旧版本时的 UnregisterPlugin(id)
         // 会把新版本刚登记进来的组件 / 设置页一并摘掉。
             if (dedupSameId) RemoveSameIdDuplicates(e);
 
@@ -723,11 +552,8 @@ public sealed class PluginManager
                     if (le != null) Logger.Error($"[PluginManager] 类型加载失败: {le.Message}");
 
             // 失败清理：把已经建起来的加载上下文与影子目录收干净。
-            // 不清理的后果 —— 影子目录残留到下次启动；而失败点若在 plugin.Initialize，
-            // e.Context 已赋值，那个 Failed 条目会一直强引用 ALC，永远回收不掉（每次启动重试再漏一份）。
             if (e.Context != null)
             {
-                // e.Context 已赋值 ⇒ 插件已（部分）注册进宿主，走完整拆解（Dispose + 注销 + Unload + 清字段）
                 try { Teardown(e); } catch { }
             }
             else
@@ -745,18 +571,6 @@ public sealed class PluginManager
         }
     }
 
-    /// <summary>
-    /// 移除与  同 Id 的其他副本（不同文件名的旧版本）：
-    /// 卸载 → 文件移入回收站 → 摘掉顺序项，并把旧版本在显示顺序表里的位置让给新版本
-    /// （否则升级后插件会掉到列表末尾）。
-    ///
-    /// 只在导入时调用：用户导入同 Id 插件即为升级，旧版本留着毫无意义 —— 两者无法共存，
-    /// 宿主按 pluginId 记账，同时注册会互相覆盖。启动时对磁盘上既有插件的常规加载不走这里，
-    /// 避免程序自己悄悄搬走用户的文件。
-    ///
-    /// 只认「加载过」的条目：PluginEntry.Id 是加载成功后才有的，
-    /// 从未加载成功的副本（禁用 / 加载失败）识别不出来，仍留在列表里由用户手动移除。
-    /// </summary>
     private void RemoveSameIdDuplicates(PluginEntry loaded)
     {
         List<PluginEntry>? dups = null;
@@ -792,19 +606,14 @@ public sealed class PluginManager
         if (relocated) SaveOrderList();
     }
 
-    /// <summary>卸载插件：让插件释放资源 → 摘除全部注册物 → 卸载 ALC → 回收影子目录。</summary>
     public void Unload(PluginEntry e)
     {
         var shadow = e.ShadowDir;
         e.ShadowDir = null;
 
-        // 整个「释放 + 注销 + 卸载」都在独立栈帧里完成（见 Teardown）。
-        // 这样本方法（下面要执行 GC 循环）的栈帧里不会残留任何插件对象引用。
         var weak = Teardown(e);
         if (weak != null)
         {
-            // 必须在同步 GC 之前：渲染侧的静态字段（组件数组 / 详情页 / 命中区）平时要等到
-            // 下一帧才发现版本号变化，此刻它们还钉着插件对象，WaitForUnload 必然判「未被回收」。
             Renderer.InvalidatePluginSnapshot();
             WaitForUnload(weak, e.Key);
         }
@@ -814,13 +623,6 @@ public sealed class PluginManager
         RaiseChanged();
     }
 
-    /// <summary>
-    /// 程序退出前的收尾：让每个已加载的插件释放资源、摘除宿主登记、卸载 ALC。
-    ///
-    /// 与 Unload 的区别是不做 GC / 终结器轮次验证 —— 进程马上就要退出，
-    /// 验证 ALC 是否真被回收既无意义也没时间；这里只保证「插件的 Dispose 与宿主注销都执行过」，
-    /// 插件自己开的线程 / 句柄 / 连接 / 临时文件因此有机会被正常收掉，而不是整块丢给进程终止。
-    /// </summary>
     public void ShutdownAll()
     {
         foreach (var e in Entries)
@@ -837,14 +639,6 @@ public sealed class PluginManager
         }
     }
 
-    /// <summary>
-    /// 完成插件的资源释放、宿主注销与 ALC 卸载，只把 WeakReference 交回调用方。
-    ///
-    /// 这是热重载最容易踩的坑：可回收 ALC 要求「卸载后没有任何强引用指向它」。
-    /// 如果调用方（做 GC 的那个方法）的局部变量里还留着插件实例 / 加载上下文，
-    /// ——哪怕已经把字段置空——在未优化的 Debug 构建中这些局部变量会存活到方法结束，
-    /// ALC 就永远回收不掉。所以必须让持有强引用的栈帧提前销毁。
-    /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private WeakReference? Teardown(PluginEntry e)
     {
@@ -857,13 +651,7 @@ public sealed class PluginManager
         e.State = PluginState.NotLoaded;
         e.Error = null;
 
-        // 1) 先给插件一个主动释放资源的机会（实现 IDisposable 即可，非强制）。
-        // 顺序不能反：必须先挂上「正在卸载」标记，再调插件的 Dispose()。因为 Dispose() 里完全
-        // 可能再调 ScheduleRefresh / CreateWindow，也可能有刷新回调正在别的线程上飞。
-        // 若先 Dispose、后 UnregisterPlugin，那时新建的登记条目会落在已被摘掉的 key 上，
-        // 再没人遍历到它：定时器一直跑 → 回调委托 → 插件类型 → Assembly → ALC 永不回收，
         // 正是日志里「加载上下文暂未被回收」的根因。
-        // 标记由 finally 保证解除，否则插件再次启用时会被自己的旧标记拒之门外。
         if (!string.IsNullOrEmpty(id)) _host.SetUnregistering(id, true);
         try
         {
@@ -873,7 +661,6 @@ public sealed class PluginManager
                 catch (Exception ex) { Logger.Error($"[PluginManager] 插件 Dispose 异常: {e.Key}", ex); }
             }
 
-            // 2) 摘除宿主中该插件的全部登记引用（组件 / 设置页 / 刷新句柄 / 窗口 / 设置事件）
             if (!string.IsNullOrEmpty(id)) _host.UnregisterPlugin(id);
         }
         finally
@@ -883,13 +670,11 @@ public sealed class PluginManager
 
         if (ctx == null) return null;
 
-        // 3) 卸载加载上下文：可回收 ALC 需要 GC + 终结器轮次才会真正释放
         var weak = new WeakReference(ctx, trackResurrection: true);
         ctx.Unload();
         return weak;
     }
 
-    /// <summary>只持有弱引用，反复 GC 直到加载上下文被回收。</summary>
     private static void WaitForUnload(WeakReference weak, string key)
     {
         for (int i = 0; i < 10 && weak.IsAlive; i++)
@@ -899,10 +684,7 @@ public sealed class PluginManager
             Thread.Sleep(10);
         }
 
-        // 宿主侧能摘的引用在 UnregisterPlugin 里已经全摘了——组件 / 设置页 / 刷新句柄 / 窗口回调 /
-        // 详情页快照 / 跨 ALC 字符串，一个不留。所以走到这里基本只剩插件自己持有的根：静态字段、
         // 没退订的事件、没结束的线程或定时器、闭包捕获。
-        // 这不是「程序坏了」：ALC 会在后续任意一次 GC 时回收，只是这份旧程序集多留一会儿。
         if (weak.IsAlive)
         {
             Logger.Warn($"[PluginManager] {key} 的加载上下文暂未被回收：宿主侧引用已全部摘除，"
@@ -910,7 +692,6 @@ public sealed class PluginManager
         }
     }
 
-    /// <summary>热重载：卸载后重新读取磁盘上的 DLL（可先在外部替换 DLL 再点重载）。</summary>
     public bool Reload(PluginEntry e)
     {
         Unload(e);
@@ -923,14 +704,6 @@ public sealed class PluginManager
         return Load(fresh);
     }
 
-    /// <summary>
-    /// 启用 / 禁用插件（持久化）。
-    ///
-    /// 与「显示」（SetDisplayed）的联动是单向的：
-    ///   启用 → 自动取消隐藏（用户打开开关就是要用它）；
-    ///   禁用 → 插件被卸载，自然不显示，隐藏清单不用动（下次启用会自动显示）。
-    /// 反方向不动：取消勾选显示绝不禁用插件。
-    /// </summary>
     public void SetEnabled(PluginEntry e, bool enabled)
     {
         if (enabled)
@@ -938,13 +711,11 @@ public sealed class PluginManager
             _disabled.Remove(e.Key);
             SaveDisabledList();
 
-            // 「启用插件自动显示」：把隐藏标记摘掉，否则插件跑起来了岛上却还是看不到
             if (_hidden.Remove(e.Key)) SaveHiddenList();
 
             Refresh();
             var fresh = Find(e.Key) ?? e;
             if (fresh.State != PluginState.Loaded) Load(fresh);
-            // Load 内部已经推过一次顺序；这里再推一次是为了覆盖「本来就已加载、只是被隐藏」这条路径
             PushOrderToHost();
         }
         else
@@ -959,13 +730,6 @@ public sealed class PluginManager
 
     // ---- 导入 / 移除 / 打开目录 ----
 
-    /// <summary>
-    /// 把外部 DLL 复制进 plugins 目录并尝试加载。若不是合法插件则回滚删除。
-    ///
-    /// 同 Id 的插件视为「升级」，旧版本会被自动移除（卸载 + 文件移入 _recycle，可手动找回）：
-    /// 同名文件走时间戳改名，不同文件名/目录的副本由 RemoveSameIdDuplicates 在加载时清理，
-    /// 旧版本的显示顺序位让给新版本。
-    /// </summary>
     public (bool Ok, string Message) Import(string dllPath)
     {
         try
@@ -984,10 +748,8 @@ public sealed class PluginManager
             var e = Find(Path.GetFileName(target));
             if (e == null) { TryDelete(target); return (false, "导入失败：无法识别插件"); }
 
-            // dedupSameId：加载成功即证明这是合法插件，此时按 Id 摘掉磁盘上的旧版本
             if (Load(e, dedupSameId: true)) return (true, $"已导入并加载：{e.FriendlyName}");
 
-            // 根本不是插件 → 回滚；是插件但初始化失败 → 保留以便排查
             if (e.Error == NoPluginError)
             {
                 TryDelete(target);
@@ -1004,12 +766,10 @@ public sealed class PluginManager
         }
     }
 
-    /// <summary>移除插件：先卸载，再把文件/目录移入 plugins/_recycle 回收站（不直接删除，可手动找回）。</summary>
     public void Remove(PluginEntry e)
     {
         Unload(e);
 
-        // 插件已移出 plugins 目录 → 从显示顺序表里彻底摘掉，避免残留顺序位占位
         lock (_lock)
         {
             _order.RemoveAll(x => string.Equals(x, e.Key, StringComparison.OrdinalIgnoreCase));
@@ -1017,7 +777,6 @@ public sealed class PluginManager
         }
         SaveOrderList();
 
-        // 隐藏清单同理：文件都没了，标记留着只会在将来重名插件上莫名其妙地生效
         if (_hidden.Remove(e.Key)) SaveHiddenList();
 
         try
@@ -1041,7 +800,6 @@ public sealed class PluginManager
         RaiseChanged();
     }
 
-    /// <summary>用资源管理器打开插件目录。</summary>
     public void OpenPluginsFolder()
     {
         try
@@ -1052,7 +810,6 @@ public sealed class PluginManager
         catch (Exception ex) { Logger.Error("[PluginManager] 打开插件目录失败", ex); }
     }
 
-    /// <summary>打开官网插件市场。</summary>
     public void OpenMarketplace()
     {
         try { Process.Start(new ProcessStartInfo(MarketplaceUrl) { UseShellExecute = true }); }
@@ -1061,11 +818,6 @@ public sealed class PluginManager
 
     // ---- 内部工具 ----
 
-    /// <summary>
-    /// 取插件作者：优先插件自己声明的 INotchPlugin.Author，
-    /// 为空（老插件没实现该成员）时退回程序集的 AssemblyCompany 元数据（csproj 的 Authors/Company）。
-    /// 取作者失败绝不能让插件加载失败，所以两条路径都各自兜住异常。
-    /// </summary>
     private static string ReadAuthor(INotchPlugin plugin, Assembly asm)
     {
         try
@@ -1090,7 +842,6 @@ public sealed class PluginManager
         return null;
     }
 
-    /// <summary>构建影子拷贝目录（目录型复制整个目录的关键文件，单文件型只复制该 DLL）。</summary>
     private string CreateShadowCopy(PluginEntry e)
     {
         var dir = Path.Combine(ShadowRoot, Guid.NewGuid().ToString("N"));
@@ -1158,11 +909,6 @@ public sealed class PluginManager
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件禁用清单失败", ex); }
     }
 
-    // ---- 显示名缓存（Key → DisplayName）：禁用 / 加载失败的插件靠它显示真名而不是文件名 ----
-    //
-    // 存储格式：每条一行 "Key\tDisplayName"，行内分隔用 Tab —— 插件名里可能有空格 / 括号，
-    // 用空格或逗号都会截错；Tab 是唯一几乎不会出现在插件名里的字符。
-
     private void LoadNameCache()
     {
         try
@@ -1195,7 +941,6 @@ public sealed class PluginManager
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件显示名缓存失败", ex); }
     }
 
-    /// <summary>把刚加载出来的插件显示名记进缓存（变了才写注册表）。调用方需在 _lock 外或已持有均可。</summary>
     private void CacheName(PluginEntry e)
     {
         if (string.IsNullOrEmpty(e.Key) || string.IsNullOrWhiteSpace(e.DisplayName)) return;
@@ -1208,8 +953,6 @@ public sealed class PluginManager
         }
         SaveNameCache();
     }
-
-    // ---- 显示状态持久化（隐藏清单：插件照常运行，只是不出现在岛上） ----
 
     private void LoadHiddenList()
     {
@@ -1234,15 +977,6 @@ public sealed class PluginManager
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件隐藏清单失败", ex); }
     }
 
-    /// <summary>
-    /// exe 所在目录：插件必须放在 exe 同级 plugins\，所以这里要的是进程可执行文件的位置，
-    /// 而不是「程序集所在目录」。
-    ///
-    /// 实测（单文件发布 PublishSingleFile + IncludeNativeLibrariesForSelfExtract）：
-    /// AppContext.BaseDirectory 仍然是 exe 所在目录，只有原生库被解压到 %TEMP%\.net\；
-    /// 再打开 IncludeAllContentForSelfExtract 时它才变成临时解压目录。
-    /// 这里走 Environment.ProcessPath 是为了「无论哪种打包方式都对」，且 dotnet run /
-    /// dotnet xxx.dll 时 ProcessPath 是 dotnet.exe，故保留回退分支。
     private static string GetAppDirectory()
     {
         var exe = Environment.ProcessPath;
@@ -1256,11 +990,6 @@ public sealed class PluginManager
     }
 }
 
-/// <summary>
-/// 插件加载上下文：可回收（isCollectible: true），以便卸载旧版本代码。
-/// 依赖解析策略：主程序/系统已加载的程序集一律交回默认上下文（保证 INotchPlugin 类型唯一），
-/// 其余从影子目录加载。
-/// </summary>
 internal sealed class PluginLoadContext : AssemblyLoadContext
 {
     private readonly string _dir;

@@ -1,54 +1,32 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
-using System.Threading.Tasks;
 using SkiaSharp;
 
 namespace NotchPeninsula
 {
-    /// <summary>
-    /// 把「图标描述」解析成可直接绘制的 SKBitmap，供 HTTP 消息 / 插件提醒自定义图标。
-    ///
-    /// 支持四种写法，按前缀自动识别：
     ///   1. 内置别名      "qq" / "windows"（见 ResolveBuiltin）
     ///   2. 图片链接      "https://host/a.png" / "http://host/a.png"
-    ///   3. 内联图        "data:image/png;base64,xxxx" 或纯 base64 串
     ///   4. 本地文件路径  "C:\icons\a.png" / "/path/a.png"（也接受 file:// 前缀）
-    ///
-    /// 任何一步失败都返回 null，调用方回退到默认的 Toast 图标。
-    /// 解析结果按「描述串」缓存，同一条消息反复推送不会重复下载 / 解码。
-    /// 全部方法都可以安全地在后台线程调用。
-    /// </summary>
     public static class ToastIconProvider
     {
-        // 岛上只画 28px，留 4x 余量足够；再大纯属浪费内存
         private const int MAX_EDGE = 112;
 
         // 防呆上限：发送端塞一张几十 MB 的图不至于把进程撑爆
         private const long MAX_BYTES = 4L * 1024 * 1024;
         private const int MAX_BASE64_CHARS = 6 * 1024 * 1024;
 
-        // 缓存条目上限。单张 112×112 约 50KB，24 条 ≈ 1.2MB，可以忽略。
         private const int MAX_CACHE_ENTRIES = 24;
 
-        // 被淘汰的位图不当场 Dispose（可能正被某个还没消失的 ToastData 拿着绘制），
-        // 先在这里排队，队列超过这个数才释放最老的那张 —— 等到那一步时它早已不在任何
-        // Toast 的绘制路径上。与 MediaController.RetiredThumbKeep 是同一个取舍。
         private const int PENDING_DISPOSE_KEEP = 8;
 
         private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(3) };
         private static readonly object _lock = new();
 
-        // 值允许为 null：表示「这个描述解析失败」，避免同一条坏消息每次都重试一遍
         private static readonly Dictionary<string, SKBitmap?> _cache = new(StringComparer.Ordinal);
         private static readonly Queue<string> _cacheOrder = new();
 
-        // 已淘汰、等窗口过去再释放的位图（只在 _lock 内读写）
         private static readonly Queue<SKBitmap> _pendingDispose = new();
 
-        // 别名里文件名不规则的那几个；其余按 data/image/<别名>-icon|logo.<ext> 约定自动找
-        // （"qq" 就是靠这条约定命中 qq-icon.png）
         private static readonly Dictionary<string, string> _aliasFiles = new(StringComparer.OrdinalIgnoreCase)
         {
             ["windows"] = "wintoast-icon.png",
@@ -56,7 +34,6 @@ namespace NotchPeninsula
             ["default"] = "wintoast-icon.png",
         };
 
-        /// <summary>解析图标描述；失败返回 null。可安全地在后台线程调用。</summary>
         public static SKBitmap? Resolve(string? spec)
         {
             if (string.IsNullOrWhiteSpace(spec))
@@ -77,10 +54,6 @@ namespace NotchPeninsula
                 _cache[key] = bmp;
                 _cacheOrder.Enqueue(key);
 
-                // 淘汰时不当场 Dispose：这张位图可能正被某个还没消失的 ToastData 拿着绘制，
-                // 提前释放会变成 use-after-free。但也不能就这么丢给 GC 的终结器 ——
-                // 那要等一整轮 GC，被淘汰的图会一直占着原生内存，「淘汰」等于白做。
-                // 折中：挂进待回收队列，排到第 PENDING_DISPOSE_KEEP + 1 张时才释放最老的那张。
                 while (_cacheOrder.Count > MAX_CACHE_ENTRIES)
                 {
                     string oldest = _cacheOrder.Dequeue();
@@ -96,10 +69,6 @@ namespace NotchPeninsula
             return bmp;
         }
 
-        /// <summary>
-        /// 后台解析，成功时回调。用于「先把消息按默认图标弹出来，图标解析完再补上」——
-        /// 这样下载图片的耗时不会拖慢消息弹出，也不会拖慢 HTTP 响应。
-        /// </summary>
         public static void ResolveInBackground(string? spec, Action<SKBitmap> onResolved)
         {
             if (string.IsNullOrWhiteSpace(spec))
@@ -121,9 +90,6 @@ namespace NotchPeninsula
             });
         }
 
-        /// <summary>
-        /// 把图标描述压成一行短日志：base64 只报长度，绝不把图片本身写进日志（会撑爆 app.log）。
-        /// </summary>
         public static string Describe(string? spec)
         {
             if (string.IsNullOrWhiteSpace(spec))
@@ -175,9 +141,6 @@ namespace NotchPeninsula
                 if (path.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
                     path = new Uri(path).LocalPath;
 
-                // 历史包袱：HTTP 入口为修「非法转义」会把反斜杠统一加倍（见 Notify/Toast.cs）。
-                // 发送端若按标准 JSON 写 \\，解析出来就是双反斜杠路径，这里兜一下。
-                // 最省事的写法是直接用正斜杠（C:/icons/a.png），Windows 一样认。
                 if (!File.Exists(path) && path.Contains(@"\\"))
                     path = path.Replace(@"\\", @"\");
 
@@ -187,7 +150,6 @@ namespace NotchPeninsula
                     return DecodeScaled(fs);
                 }
 
-                // 5) 兜底：发送端直接把 base64 当字符串塞进来的情况
                 if (spec.Length >= 64 && IsLikelyBase64(spec))
                     return DecodeBase64(spec);
 
@@ -220,7 +182,6 @@ namespace NotchPeninsula
             if (file == null)
                 return null;
 
-            // 磁盘优先、exe 内嵌兜底：单文件发布时 data\image 可能不在磁盘上（exe 被单独拷走）
             using var fs = DataResources.OpenRead("data/image/" + file);
             if (fs == null)
                 return null;
@@ -228,10 +189,6 @@ namespace NotchPeninsula
             return DecodeScaled(fs);
         }
 
-        /// <summary>
-        /// 约定：data/image 下的「别名-icon.*」「别名-logo.*」都能直接用别名引用。
-        /// 想给某个 App 加内置图标，把 wechat-icon.png 丢进 data/image 即可，不用改代码。
-        /// </summary>
         private static string? FindAliasFile(string alias)
         {
             string[] kinds = ["-icon", "-logo", ""];
@@ -312,7 +269,6 @@ namespace NotchPeninsula
             return ScaleDown(raw);
         }
 
-        // 缩到 MAX_EDGE 以内再进缓存：一张 1024×1024 的 PNG 解出来是 4MB，
         // 而实际只画 28px，没必要常驻。
         private static SKBitmap ScaleDown(SKBitmap src)
         {

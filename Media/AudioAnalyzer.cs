@@ -4,28 +4,14 @@ using NAudio.Wave;
 
 namespace NotchPeninsula
 {
-    /// <summary>
-    /// 系统输出（WASAPI Loopback）实时频谱分析。
-    /// 其它程序以独占模式占用输出设备时，捕获流会被系统断开；这里用常驻看门狗轮询做健康检查
-    /// （单次约 0.04µs，基本免费）并在判定失效时限速重建捕获（单次约 7ms），同时订阅 Core Audio
-    /// 事件在音频环境变化时立即复核，因此恢复延迟通常在 1 个检查周期内。
-    ///
-    /// 另有一条独立的失效判据：切换系统默认输出设备（扬声器 ⇄ 耳机 ⇄ HDMI 等）。
-    /// 这种切换不会断开旧设备的 Loopback 流 —— 旧设备依然存在、依然在送静音帧，
-    /// 所以「流是否还活着」永远发现不了它，必须主动比对默认端点 ID，否则只能重启软件才生效。
-    /// </summary>
     public class AudioAnalyzer : IDisposable
     {
-        // 降采样后的目标采样率，Goertzel 只需在这个低采样率上跑
         private const int TargetSampleRate = 8000;
         // 看门狗健康检查周期
         private const int HealthCheckIntervalMs = 500;
         // 失效后重建捕获的最小间隔，避免长时间独占期间反复初始化
         private const int RestartAttemptIntervalMs = 1000;
-        // Loopback 捕获即使静音也会持续送帧，超过该时长没有数据即认为流已失效
         private const double DataSilenceTimeoutMs = 1500d;
-        // 兜底比对默认输出设备的周期：正常情况下 Core Audio 的默认设备变更通知是即时可靠的，
-        // 这个轮询只防「通知收不到」（订阅失败 / 驱动不上报），10s 一次 COM 查询的开销可以忽略。
         private const int DeviceProbeIntervalMs = 10000;
 
         private float[] _frontBars = new float[5];
@@ -47,11 +33,7 @@ namespace NotchPeninsula
         private long _lastDataTicks;              // 最后一次收到音频数据（含静音帧）的时间
 
         // ---- 默认输出设备跟踪 ----
-        // 当前捕获实际绑定在哪个输出端点上（构造捕获前记录，见 TryStartCapture 注释）。
         private volatile string _capturedDeviceId = "";
-        // 默认输出设备「可能变了」的序号：收到 Core Audio 通知、或兜底轮询到点时 +1。
-        // 用递增序号而不是 bool 标记，是为了让「读取序号 → 查询设备 → 记录已查」之间的竞态
-        // 不会吞掉一次变更：中途又来一次通知会把序号再推高，下一轮自然还会重新查。
         private int _deviceChangeEpoch;
         private int _deviceCheckedEpoch;
 
@@ -66,7 +48,6 @@ namespace NotchPeninsula
         private readonly SessionEventsHandler _sessionEvents;
         private MMDeviceEnumerator? _enumerator;
         private AudioEndpointVolume? _endpointVolume; // 需持有引用，否则音量回调会被回收
-        // 音量回调必须存成具名字段：lambda 退不掉，一旦本类生命周期内重复订阅就会累积
         private AudioEndpointVolumeNotificationDelegate? _volumeNotificationHandler;
         private bool _systemEventsSubscribed;         // 订阅幂等守卫（见 SubscribeSystemEvents）
         private AudioSessionControl? _sessionControl; // 需持有引用，会话断开回调依赖它
@@ -82,13 +63,9 @@ namespace NotchPeninsula
             TryStartCapture(); // 首次就被独占占用也没关系，看门狗会持续补救
 
             // 常驻看门狗：健康时只做极廉价的检查，失效时才重建捕获。
-            // 由 Dispose()（程序退出流程）通过 CancellationToken 停止。
             _watchdogTask = Task.Factory.StartNew(WatchdogLoop, TaskCreationOptions.LongRunning);
         }
 
-        /// <summary>
-        /// 停止看门狗并释放捕获与 Core Audio 订阅。供程序退出流程调用，可重复调用。
-        /// </summary>
         public void Dispose()
         {
             if (_disposed) return;
@@ -104,7 +81,6 @@ namespace NotchPeninsula
                 _sessionControl = null;
                 ReleaseCapture();
 
-                // 先退订音量回调再放掉端点：委托持有 this，留着会让本对象多活一轮
                 if (_endpointVolume != null && _volumeNotificationHandler != null)
                 {
                     try { _endpointVolume.OnVolumeNotification -= _volumeNotificationHandler; } catch { }
@@ -138,8 +114,6 @@ namespace NotchPeninsula
                 try
                 {
                     // 先记下「现在」的默认输出设备，再构造捕获。
-                    // 顺序不能反：WasapiLoopbackCapture() 内部会自己再查一次默认端点并绑定它，
-                    // 所以构造之后记录的 ID 可能比实际绑定的更新 —— 那样设备切换就会被漏判
                     // （记的是新设备、绑的是旧设备，一比对反而「一致」）。
                     // 反过来先记录则只会偏旧，最多多重建一次，是安全的方向。
                     _capturedDeviceId = TryGetDefaultRenderDeviceId();
@@ -152,9 +126,6 @@ namespace NotchPeninsula
                 }
                 catch (Exception ex)
                 {
-                    // 独占占用期间会按退避反复重试（实测最快 1 次/秒、单次会话能刷上千行），
-                    // 所以重试失败走去重通道：10s 窗口内只留第一行 + 一行「重复 N 次」。
-                    // 首次失败仍然记 Error 带完整异常 —— 那条是"到底为什么不行"的关键证据。
                     if (isRetry) Logger.DebugThrottled("音频捕获仍未就绪（按退避重试中，同类消息已折叠）");
                     else Logger.Error("音频捕获初始化失败，可能被独占占用或无音频设备", ex);
 
@@ -169,7 +140,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>释放旧捕获（幂等），供恢复流程重新初始化。</summary>
         private void ReleaseCapture()
         {
             WasapiLoopbackCapture? capture;
@@ -197,7 +167,6 @@ namespace NotchPeninsula
             }
 
             // 旧会话随捕获一并销毁：先摘掉事件订阅再丢引用。
-            // （切换输出设备后重建会走到这里，不摘的话每次重建都会在已消失的会话上留一份订阅。）
             var session = _sessionControl;
             _sessionControl = null;
             if (session != null)
@@ -206,16 +175,8 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>
-        /// 由 Core Audio 事件回调或渲染层调用：请求立即复核捕获状态。
-        /// 释放/重建固定在看门狗线程上执行，避免在 COM 回调线程里做耗时操作。
-        /// </summary>
         public void EnsureCaptureAlive() => RequestCheck();
 
-        /// <summary>
-        /// 唤醒看门狗；Dispose 之后（进程正在退出）静默忽略，避免唤起已释放的同步原语——
-        /// 调用方有渲染线程与 COM 回调线程，异常外逸会终止进程。
-        /// </summary>
         private void RequestCheck()
         {
             if (_disposed) return;
@@ -230,30 +191,16 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>
-        /// 捕获流本身是否健康。不含「默认输出设备是否被切换」这一条 ——
-        /// 那一条单独判定（见 IsCapturedDeviceStillDefault），
-        /// 因为它必须优先于重建限速，不能和流失效混在一起被限速吃掉。
-        /// </summary>
         private bool IsCaptureAlive()
         {
             var capture = _capture;
             if (capture == null) return false;
             if (capture.CaptureState is CaptureState.Stopped or CaptureState.Stopping) return false;
 
-            // Loopback 持续送帧（静音时送静音帧），长时间收不到数据说明流已被系统悄悄断开
             long silenceMs = (DateTime.UtcNow.Ticks - Volatile.Read(ref _lastDataTicks)) / TimeSpan.TicksPerMillisecond;
             return silenceMs < DataSilenceTimeoutMs;
         }
 
-        /// <summary>
-        /// 默认输出设备是否仍是当前捕获绑定的那一个。
-        /// 平时零开销：没有变更通知就直接返回 true，不做任何 COM 查询；
-        /// 只有序号被推进（收到通知 / 兜底轮询到点）后才真的去查一次默认端点。
-        ///
-        /// 调用它会「消费」掉当前序号，所以调用方必须保证：返回 false 时一定会真的去重建。
-        /// 否则这次变更判定就被吃掉了，要等下一个通知 / 10s 兜底轮询才会再发现。
-        /// </summary>
         private bool IsCapturedDeviceStillDefault()
         {
             int epoch = Volatile.Read(ref _deviceChangeEpoch);
@@ -262,14 +209,11 @@ namespace NotchPeninsula
             string current = TryGetDefaultRenderDeviceId();
             Volatile.Write(ref _deviceCheckedEpoch, epoch);
 
-            // 查不到（无输出设备 / 枚举器失效）时不要误判成「设备变了」，
-            // 否则会退化成每秒重建一次的循环；这种情况交给静音超时去兜底。
             if (current.Length == 0) return true;
 
             return string.Equals(current, _capturedDeviceId, StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>读取当前默认输出（渲染）端点 ID；失败返回空串。</summary>
         private string TryGetDefaultRenderDeviceId()
         {
             try
@@ -277,35 +221,22 @@ namespace NotchPeninsula
                 var enumerator = _enumerator;
                 if (enumerator == null) return "";
 
-                // 只取 ID，用完即弃；这个 MMDevice 包装对象不交给任何长生命周期使用者
                 using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 return device.ID ?? "";
             }
             catch (Exception)
             {
-                // 设备被独占 / 移除时这条会跟着看门狗按秒重试，同样走去重通道
                 Logger.DebugThrottled("读取默认输出设备失败（同类消息已折叠）");
                 return "";
             }
         }
 
-        /// <summary>
-        /// 收到「默认输出设备变更」通知：推进序号并唤醒看门狗立即复核。
-        /// 注意这里不直接判定「变了」—— 只改「通信」角色时默认端点其实没动，
-        /// 交给看门狗真去查一次 ID 后再决定要不要重建，避免无谓地打断一次捕获。
-        /// </summary>
         private void OnDefaultRenderDeviceChanged()
         {
             Interlocked.Increment(ref _deviceChangeEpoch);
             EnsureCaptureAlive();
         }
 
-        /// <summary>
-        /// 常驻看门狗：健康时每 500ms 做一次约 0.04µs 的检查（外加每 10s 一次默认设备比对）；
-        /// 判定失效后重建捕获（约 7ms/次），重建之间至少间隔 RestartAttemptIntervalMs；
-        /// 被 Core Audio 事件唤醒时跳过限速立即重建；默认输出设备被切换时同样跳过限速——
-        /// 那是低频的用户操作，不需要也不能等（等的话这次判定就被限速吃掉了）。
-        /// </summary>
         private void WatchdogLoop()
         {
             bool recovering = false;
@@ -320,17 +251,12 @@ namespace NotchPeninsula
                     _checkSignal.Reset();
                     if (_shutdownToken.IsCancellationRequested) break; // 退出前不再动捕获
 
-                    // 兜底轮询：万一默认设备变更通知没送到，也保证 10s 内一定能发现切换
                     if (DateTime.UtcNow.Ticks >= nextDeviceProbeTicks)
                     {
                         Interlocked.Increment(ref _deviceChangeEpoch);
                         nextDeviceProbeTicks = DateTime.UtcNow.Ticks + DeviceProbeIntervalMs * TimeSpan.TicksPerMillisecond;
                     }
 
-                    // 两条独立的失效理由：① 默认输出设备被切换 ② 捕获流本身断了。
-                    // ① 必须单独拿出来判定 —— 旧设备的 Loopback 在切换后往往还活着，
-                    //    只看 ② 永远发现不了切换；而且 ① 一旦成立就必须重建，
-                    //    不能被下面的限速 continue 掉（否则这次判定被消费、白等一轮）。
                     bool deviceChanged = !IsCapturedDeviceStillDefault();
 
                     if (!deviceChanged && IsCaptureAlive())
@@ -361,8 +287,6 @@ namespace NotchPeninsula
                 }
                 catch (Exception ex)
                 {
-                    // 单轮异常绝不能让看门狗退出：Task 内的未观察异常会被静默吞掉，
-                    // 看门狗一死频谱就永久失效且无人知晓。丢弃当前捕获后继续下一轮。
                     Logger.Error("音频看门狗检查异常，已丢弃当前捕获并继续运行", ex);
                     ReleaseCapture();
                     Thread.Sleep(HealthCheckIntervalMs); // 异常持续时避免变成紧循环
@@ -387,8 +311,6 @@ namespace NotchPeninsula
 
         private void SubscribeSystemEvents()
         {
-            // 幂等守卫：本方法只在构造时调用一次，但不得依赖这个事实 ——
-            // 旧 enumerator 只在 Dispose 里反注册一次，多订阅一份就多漏一份回调与引用。
             // 失败时不置位，保留"下次再试"的能力。
             if (_systemEventsSubscribed) return;
 
@@ -399,7 +321,6 @@ namespace NotchPeninsula
 
                 var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var volume = device.AudioEndpointVolume;
-                // 具名委托（而非匿名 lambda）：Dispose 时要能 -= 退订
                 _volumeNotificationHandler = _ => EnsureCaptureAlive();
                 volume.OnVolumeNotification += _volumeNotificationHandler;
 
@@ -413,7 +334,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>找到本进程在默认输出设备上的捕获会话，订阅其断开事件（独占抢占时会通知）。</summary>
         private void RegisterSessionEvents()
         {
             try
@@ -421,12 +341,6 @@ namespace NotchPeninsula
                 var enumerator = _enumerator;
                 if (enumerator == null) return;
 
-                // using：device 是真正的 COM 包装对象（IMMDevice），用完必须确定性释放。
-                // 本方法是捕获重建路径上最高频的 COM 分配点（独占占用时最快 1 次/秒、切设备、
-                // 看门狗恢复都会走），之前只靠 RCW 终结器兜底 = 每次重建都留一批待 GC 的 COM 垃圾。
-                // 同一文件里 TryGetDefaultRenderDeviceId 早就用了 using，只有这处漏了。
-                // 注：AudioSessionManager 与 AudioSessionControl 都不实现 IDisposable（NAudio 的投影如此），
-                //     所以只有 device 能确定性释放，其余仍由 RCW 终结器负责。
                 using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var sessions = device.AudioSessionManager.Sessions;
                 uint pid = (uint)Environment.ProcessId;
@@ -436,8 +350,6 @@ namespace NotchPeninsula
                     var session = sessions[i];
                     if (session.GetProcessID != pid) continue;
 
-                    // session 必须留着：既要在 ReleaseCapture 里做 UnRegisterEventClient，
-                    //    又要让 RegisterEventClient 挂上的回调持续有效 —— 它的寿命由 _sessionControl 持有。
                     session.RegisterEventClient(_sessionEvents);
                     _sessionControl = session;
                     return;
@@ -451,7 +363,6 @@ namespace NotchPeninsula
 
         private void OnSessionDisconnected(AudioSessionDisconnectReason reason)
         {
-            // 独占抢占 / 格式变更 / 设备移除 等都会走到这里，说明当前捕获已经作废
             Logger.Info($"音频会话已断开({reason})，等待设备释放后恢复");
             ClearBars();
             RequestCheck();
@@ -465,8 +376,6 @@ namespace NotchPeninsula
             public void OnPropertyValueChanged(string deviceId, PropertyKey key) => owner.EnsureCaptureAlive();
             public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
             {
-                // 只关心输出方向；role 不筛，因为这里只是「催一次复核」，
-                // 真正判定交给 owner 去比对端点 ID（只改通信设备时不会误重建）。
                 if (flow == DataFlow.Render) owner.OnDefaultRenderDeviceChanged();
             }
         }
@@ -488,14 +397,10 @@ namespace NotchPeninsula
         {
             _channels = format.Channels;
 
-            // 核心优化：极速降采样 (Decimation)。比如 48000Hz -> 取每 6 个样本中的 1 个 = 8000Hz
             _decimationFactor = Math.Max(1, format.SampleRate / TargetSampleRate);
             int actualSampleRate = format.SampleRate / _decimationFactor;
 
-            // 重新挑选 5 个最具代表性的律动频段，并进行巨大的高频能量补偿
-            // 1. 底鼓 (80Hz) 2. 军鼓/下盘 (250Hz) 3. 人声 (600Hz) 4. 乐器高频 (1500Hz) 5. 极高频/镲片 (3500Hz)
             float[] targetFreqs = { 80f, 250f, 600f, 1500f, 3500f };
-            // 补偿倍率：频率越高，现实中能量越小，需要强制放大视觉效果
             float[] weights = { 1.0f, 1.8f, 2.8f, 4.5f, 6.5f };
 
             for (int i = 0; i < 5; i++)
@@ -515,7 +420,6 @@ namespace NotchPeninsula
         {
             Volatile.Write(ref _lastDataTicks, DateTime.UtcNow.Ticks);
 
-            // WaveBuffer 提供 Zero-Copy 的方式直接把 byte[] 强转读作 float[]
             var buffer = new WaveBuffer(e.Buffer);
             int floatCount = e.BytesRecorded / 4;
 
@@ -533,7 +437,6 @@ namespace NotchPeninsula
                     s.q1 = q0;
                 }
 
-                // 每满 256 个降采样后的样本（约 32ms），计算一次能量输出
                 if (++_sampleCount >= 256)
                 {
                     float maxValThisFrame = 0f;
@@ -557,17 +460,14 @@ namespace NotchPeninsula
                     _sampleCount = 0;
 
                     // AGC 自动增益补偿核心逻辑
-                    // 1. 包络追踪 (Envelope Tracking)：快升慢降
                     if (maxValThisFrame > _currentPeak)
                         _currentPeak = maxValThisFrame; // 极速起跳 (Attack)：大音量瞬间压制，防爆音
                     else
                         _currentPeak *= 0.98f;          // 缓慢衰减 (Release)：音量减小时，倍率在1-2秒内优雅回升
 
-                    // 2. 划定底噪红线，防止在纯静音（0音量）时产生除以零，或者把主板电流底噪无限放大
                     float safePeak = Math.Max(_currentPeak, 0.02f);
 
                     // 3. 计算动态倍率：
-                    // 将最大放大倍数从 15f 提升到 25f，并将目标高度微调到 0.9f
                     float dynamicGain = Math.Clamp(0.9f / safePeak, 1f, 30f);
 
                     // 4. 应用动态增益，并进行最终裁剪

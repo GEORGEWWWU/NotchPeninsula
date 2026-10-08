@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 
 namespace NotchPeninsula
 {
@@ -49,9 +45,6 @@ namespace NotchPeninsula
         {
             try
             {
-                // PackageManager / Package 都是 WinRT 包装对象（底层 COM RCW + 原生资源）。
-                // 这里要枚举当前用户的全部已安装包，单次就能产出数百个包装对象 ——
-                // 不释放的话只能等 GC 终结器，高频点击通知会让 RCW 在两次 GC 之间持续累积。
                 var packageManager = new Windows.Management.Deployment.PackageManager();
                 try
                 {
@@ -105,13 +98,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>
-        /// 尽力确定性释放一个 WinRT / COM 包装对象。
-        ///
-        /// 用 as IDisposable 而不是 using：并非所有 WinRT 类型都投影出 IDisposable
-        /// （只有底层实现 IClosable 的才有），写死 using 会因类型不带该接口而编译不过。
-        /// 支持释放的当场释放，不支持的静默跳过。
-        /// </summary>
         private static void ReleaseWinRT(object? o)
         {
             try { (o as IDisposable)?.Dispose(); }
@@ -164,12 +150,9 @@ namespace NotchPeninsula
 
         private static (bool Success, string Message) TryLaunchViaCom(string aumid)
         {
-            // RCW（运行时可调用包装）不再使用后应显式释放，否则这个 COM 对象要等 GC 终结器
-            // 才断开与 ApplicationActivationManager 的连接（每次点击通知都会走一遍）。
             object? activatorRaw = null;
             try
             {
-                // Instantiate the COM coclass and cast to the interface to get correct signature (int/HRESULT)
                 activatorRaw = new ApplicationActivationManager();
                 var activator = (IApplicationActivationManager?)activatorRaw;
                 if (activator == null)
@@ -215,7 +198,6 @@ namespace NotchPeninsula
 
         #endregion
 
-        // Fallback: try to find a running process by app name and bring its main window to foreground
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -241,8 +223,6 @@ namespace NotchPeninsula
                     foreach (var p in procs)
                     {
                         // Process 持有原生进程句柄，必须确定性释放 ——
-                        // GetProcesses() 为系统里每个进程都建了一个对象，靠 GC 终结器回收
-                        // 会让句柄数在两次 GC 之间持续飙高（本方法每次"置前"都会调一次）。
                         try
                         {
                             if (p.MainWindowHandle == IntPtr.Zero)
@@ -271,7 +251,6 @@ namespace NotchPeninsula
                 }
                 finally
                 {
-                    // 提前 return 时，剩余尚未遍历到的 Process 也要释放
                     foreach (var rest in procs)
                     {
                         try { rest.Dispose(); } catch { }
@@ -287,10 +266,6 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>
-        /// 取进程名 / PID 的容错包装：进程可能在遍历途中退出，
-        /// 此时访问 ProcessName 会抛，而原实现是在 catch 里再读一次 ProcessName 打日志 —— 会二次抛。
-        /// </summary>
         private static string SafeProcessName(System.Diagnostics.Process p)
         {
             try { return p.ProcessName; } catch { return "(已退出)"; }
