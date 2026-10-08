@@ -227,9 +227,36 @@ node.publish("notify.myapp.done", {
 ## 六、常见问题
 
 **首次调用报 `连接断开` / 超时，或日志里一条 `入站握手失败`** —— 同一个根因：两侧都是 eager、发现即连，
-协议层要做一次连接去重、只保留其中一条连接；刚连上就立刻调用，有可能正好走在被关掉的那条上。
-这是协议层的连接去重行为，**调用方重试一次就行**（`notch_test.py` 里的 `call_retry` 就是这么做的 ——
-实测连续跑时大约 3/4 会中一次，重试之后 4/4 稳定通过）。
+协议层会做一次连接去重、只保留其中一条连接。
+
+关键是：**去重本身不花时间**——实测「建立」与「关闭」落在同一个瞬间。但 **「连接出现」早于「连接稳定」**：
+`connections()` 刚变成非空的那一刻，去重还没生效，此时调用就可能走在被关掉的那条上。
+
+所以对策是「等稳定 + 重试」两道：
+
+```python
+# ① 等到连接集合连续 1 秒不再变化（变空也算稳定：下一次 call 会干净地重新拨一次）
+def wait_settled(hold=1.0, timeout=6.0):
+    deadline, last, since = time.monotonic() + timeout, None, None
+    while time.monotonic() < deadline:
+        cur = tuple(sorted(node.connections()))
+        now = time.monotonic()
+        if cur != last:
+            last, since = cur, now
+        elif since is not None and now - since >= hold:
+            return
+        time.sleep(0.1)
+
+# ② 首调再重试一次兜底
+for i in range(3):
+    r = node.call("notchpeninsula", "ping", {}, timeout=10)
+    if not r.is_error:
+        break
+    time.sleep(1.0)
+```
+
+`notch_test.py` 里就是 `wait_settled` + `call_retry` 这两道（实测只有其中一道时会偶发失败，
+两道齐了连续跑 4 次全过）。节点侧的 `eager` 策略是这个「本机软件」角色的定位，不要为了躲它改成 `lazy`。
 
 **失败不是 `is_error`** —— 工具失败返回 `{"ok": false, "error": "…"}`，而 `is_error` 一直是 `false`。判失败请看 `structured.ok`。
 

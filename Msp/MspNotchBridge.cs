@@ -118,11 +118,14 @@ public static class MspNotchBridge
     //   灵动岛只会同步地回一个结果，用不到；宣告了自己不实现的模式反而是撒谎。
     //
     //   ⚠️ eager 的已知代价（写给以后想改成 lazy 的人）：两侧都 eager 时双方会互相拨号，
-    //   协议层按 node_id 字典序去重、只保留规范方向，另一条被关掉；对端「连上就立刻调用」
-    //   有可能正好走在被关掉的那条上，表现成「连接断开」或超时（实测连续跑时 2/3 中招）。
+    //   协议层按 node_id 字典序去重、只保留规范方向的那条，另一条被关掉。
+    //   **去重本身不花时间** —— 实测「建立」与「关闭」落在同一个瞬间；但「连接出现」早于
+    //   「连接稳定」，所以对端若在 connections() 刚非空时立刻调用，请求就可能走在被关掉的
+    //   那条上，表现成「连接断开」或超时。
     //   这是协议层的连接去重行为，**不是本节点能绕开的**：lazy 看似能躲掉，但那会让本节点
     //   退化成「只接受拨入」，不符合这个「本机软件」角色的定位。
-    //   正确做法是对端首调重试一次（见 NPS_MSP.md 的常见问题）。
+    //   对端的正确做法是「等连接稳定 + 首调重试」（notch_test.py 的 wait_settled / call_retry，
+    //   以及 NPS_MSP.md 的常见问题）。
     private static readonly Preset LocalSoftware = new(
         Name: "LOCAL_SOFTWARE",
         Discovery: new HashSet<string> { "directory" },                      // 扫描共享目录，看得见别人

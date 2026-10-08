@@ -142,20 +142,24 @@ def main() -> int:
     node.start()
 
     def call_retry(tool: str, args: dict | None = None, attempts: int = 3, timeout: float = 20.0):
-        """首次调用带重试。
+        """首次调用带重试（wait_settled 之外的兜底）。
 
-        两侧都是 eager，协议层要做一次连接去重、只保留规范方向的那条连接；对端「连上就立刻
-        调用」有可能正好走在被关掉的那条上，报「连接断开」或超时。这是协议层的连接去重行为，
-        **不是节点的问题**（节点是 eager 的「本机软件」角色，这个策略不能改），调用方重试一次
-        就走通了。重试过会打一行 note —— 不藏起来，免得真出问题时有东西被悄悄吞掉。
+        两侧都 eager，协议层要做一次连接去重、只保留规范方向的那条连接；对端「连上就立刻
+        调用」有可能正好走在被关掉的那条上，报「连接断开」或超时。**去重本身不花时间**
+        （实测建立与关闭落在同一个瞬间），但「连接出现」早于「连接稳定」—— 所以两道保险：
+        先 wait_settled 等连接集合不再变化，这里再对首调重试一次。
+        这是协议层的连接去重行为，**不是节点的问题**（节点是 eager 的「本机软件」角色，
+        这个策略不能改）。重试过会打一行 note —— 不藏起来，免得真问题被悄悄吞掉。
         """
         res = None
+        last_err = ""
         for i in range(1, attempts + 1):
             res = node.call(NOTCH_ID, tool, args or {}, timeout=timeout)
             if not res.is_error:
                 if i > 1:
-                    print(f"        （首次调用撞上连接去重，第 {i} 次才通：{tool}）", flush=True)
+                    print(f"        （首次调用失败「{last_err}」，第 {i} 次才通：{tool}）", flush=True)
                 return res
+            last_err = res.error
             time.sleep(1.0)
         return res
 
@@ -170,6 +174,29 @@ def main() -> int:
                                      "③ 两侧共享目录一致（~/.msp/nodes）")
             return 1
         check(True, "发现并连接", f"peers={node.connections()}")
+
+        # 等连接**稳定**，而不是只等它出现。
+        #
+        # 两侧都 eager：连接一建立，协议层立刻做一次连接去重、关掉其中一条 ——
+        # 实测「+」（建立）与「-」（关闭）落在**同一个瞬间**，去重本身不需要时间。
+        # 但 `connections()` 非空这个条件会在去重生效**之前**就成立，此时若马上调用，
+        # 请求正好走在被关掉的那条上，报「连接断开」或超时。
+        # 所以这里等「连接集合连续 hold 秒不再变化」再往下走（集合变空也算稳定：
+        # 下一次 call 的 ensure_connected 会干净地重新拨一次）。
+        def wait_settled(hold: float = 1.0, timeout: float = 6.0) -> None:
+            deadline = time.monotonic() + timeout
+            last, since = None, None
+            while time.monotonic() < deadline:
+                cur = tuple(sorted(node.connections()))
+                now = time.monotonic()
+                if cur != last:
+                    last, since = cur, now
+                elif since is not None and now - since >= hold:
+                    return
+                time.sleep(0.1)
+
+        wait_settled()
+        print(f"        （连接稳定后 peers={node.connections()}）", flush=True)
 
         peer = node.peer(NOTCH_ID)
 
