@@ -165,6 +165,8 @@ public sealed class ReminderData
 {
     public string Title { get; init; } = "";
     public string Body { get; init; } = "";
+    /// <summary>来源标签（可选）：通知左上角那一栏。不给就是「插件提醒」（插件既有行为不变）。</summary>
+    public string? Source { get; init; }
     public string? IconPath { get; init; }
     public TimeSpan Duration { get; init; } = TimeSpan.FromSeconds(4);
     public Action? OnClick { get; init; }

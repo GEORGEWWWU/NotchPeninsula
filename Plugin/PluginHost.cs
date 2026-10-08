@@ -253,7 +253,9 @@ public sealed class PluginHost
 
         var toast = new ToastData
         {
-            AppName = "插件提醒",
+            // 来源标签：调用方给了就用它（MSP 接入用它标出对端节点 id / 调用方给的 kind），
+            // 没给则保持原文案 —— 插件调用方的显示一个字节都不变。
+            AppName = string.IsNullOrWhiteSpace(reminder.Source) ? "插件提醒" : DetachString(reminder.Source),
             Title = DetachString(reminder.Title),
             Body = DetachString(reminder.Body),
             ProcessName = "PluginReminder",

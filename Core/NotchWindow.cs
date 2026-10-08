@@ -425,6 +425,10 @@ namespace NotchPeninsula
                 Error("释放托盘图标失败", ex);
             }
 
+            // MSP 节点先下线：撤下 ~/.msp/nodes 里的声明文件，此后不再接对端调用；
+            // 不撤的话对端要等 30 秒租约过期才发现我们走了。Stop() 幂等。
+            try { MspNotchBridge.Stop(); } catch (Exception ex) { Error("停止 MSP 节点失败", ex); }
+
             try { _instanceForExit?.ShutdownResources(); }
             catch (Exception ex) { Error("释放窗口资源失败", ex); }
 

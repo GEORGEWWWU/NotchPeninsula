@@ -42,6 +42,9 @@ namespace NotchPeninsula
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsClipboardEnabled = (int)key.GetValue("ClipboardEnabled", 1) != 0;
+                    // MSP 接入（实验性）：默认关闭 —— 打开它会监听一个本地端口，让本机任何 MSP
+                    // 程序都能弹通知、读控系统媒体，属于对外暴露的接口面。
+                    MspNotchBridge.IsEnabled = (int)key.GetValue("MspEnabled", 0) != 0;
                     NotchWindow.IsTopmostEnabled = (int)key.GetValue("TopmostEnabled", 1) != 0;
                     int toastContentMode = (int)key.GetValue("ToastContentMode", 1); // 0=缩略, 1=紧凑, 2=完整
                     Renderer.IsToastFullMode = toastContentMode == 2;
@@ -228,7 +231,21 @@ namespace NotchPeninsula
                         }
                     }
                 };
+                // 原生 MSP 接入（实验性，默认关）：失败不致命，MSP 起不来不该拖垮灵动岛本体。
+                if (MspNotchBridge.IsEnabled)
+                {
+                    try { MspNotchBridge.Start(); }
+                    catch (Exception ex) { Logger.Error("[MSP] 节点启动失败", ex); }
+                }
+                else
+                {
+                    Logger.Info("[MSP] 未启用（设置 → 通用设置 → MSP 接入）");
+                }
+
                 window.Run();
+
+                // 消息循环自己结束（注销 / 关机，而非托盘「退出」那条 Environment.Exit 路径）时补一次下线。
+                try { MspNotchBridge.Stop(); } catch (Exception ex) { Logger.Error("[MSP] 节点停止失败", ex); }
             }; // 离开作用域时，Mutex 的 Dispose() 被自动调用，绝无句柄泄露
         }
     }

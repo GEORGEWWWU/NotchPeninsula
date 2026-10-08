@@ -113,9 +113,7 @@ namespace NotchPeninsula
                                 using (var reader = new System.IO.StreamReader(ctx.Request.InputStream))
                                     rawJson = await reader.ReadToEndAsync();
 
-                                rawJson = rawJson.Replace("\\", "\\\\").Replace("\\\\\"", "\\\"");
-
-                                using var doc = System.Text.Json.JsonDocument.Parse(rawJson);
+                                using var doc = ParseBody(rawJson);
                                 var root = doc.RootElement;
 
                                 string appName = root.TryGetProperty("kind", out var k) ? k.GetString() ?? "手机消息" : "手机消息";
@@ -180,6 +178,23 @@ namespace NotchPeninsula
             try { listener.Stop(); } catch { }
             try { listener.Close(); } catch { }
             Logger.Info("[HTTP接口] 本地监听已停止");
+        }
+
+        // 解析 HTTP 请求体。**先按合法 JSON 直接解析**：标准转义（\uXXXX / \n / \"）必须原样交给
+        // 解析器 —— 以前无条件把每个反斜杠翻倍，于是 Python json.dumps 默认转义的「MSP测试」
+        // 会变成字面文本 MSP\u6d4b\u8bd5。只有解析失败（发送端发了 \N 这类非法转义）才退回
+        // 原来那套暴力修复；仍然失败就往上抛记 500，与修复前对待坏输入的行为完全一致。
+        private static System.Text.Json.JsonDocument ParseBody(string rawJson)
+        {
+            try
+            {
+                return System.Text.Json.JsonDocument.Parse(rawJson);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                string repaired = rawJson.Replace("\\", "\\\\").Replace("\\\\\"", "\\\"");
+                return System.Text.Json.JsonDocument.Parse(repaired);
+            }
         }
 
         private static string ReadStringProp(System.Text.Json.JsonElement root, string name)

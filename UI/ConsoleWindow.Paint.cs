@@ -45,6 +45,13 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 
+        // 「实验性」小标签用（见 DrawInlineBadge）：颜色每次画时现设，深色 / 浅色外观下都读得清
+        private static readonly SKPaint _badgeTextPaint = new SKPaint { TextSize = 10.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+
+        private static readonly SKPaint _badgeBgPaint = new SKPaint { IsAntialias = true };
+
+        private static readonly SKPaint _badgeShadowPaint = new SKPaint { IsAntialias = true };
+
         private static readonly SKPaint _marketTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 
         private static readonly SKPaint _titleTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 12.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };

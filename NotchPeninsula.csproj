@@ -84,6 +84,8 @@
 		<PackageReference Include="NAudio.Core" Version="2.2.1" />
 		<PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
         <PackageReference Include="System.Management" Version="10.0.12" />
+		<!-- MSP（Model Sensing Protocol）原生接入：把灵动岛暴露为 MSP 节点 -->
+		<PackageReference Include="ModelSensingProtocol" Version="0.1.0-alpha.1" />
 	</ItemGroup>
 
 </Project>
