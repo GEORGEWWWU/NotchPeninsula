@@ -141,10 +141,7 @@ namespace NotchPeninsula
                                 using (var reader = new System.IO.StreamReader(ctx.Request.InputStream))
                                     rawJson = await reader.ReadToEndAsync();
 
-                                // 暴力修复非法的反斜杠转义（解决 \N 报错问题），兼容严格的 JSON 解析
-                                rawJson = rawJson.Replace("\\", "\\\\").Replace("\\\\\"", "\\\"");
-
-                                using var doc = System.Text.Json.JsonDocument.Parse(rawJson);
+                                using var doc = ParseBody(rawJson);
                                 var root = doc.RootElement;
 
                                 string appName = root.TryGetProperty("kind", out var k) ? k.GetString() ?? "手机消息" : "手机消息";
@@ -223,6 +220,32 @@ namespace NotchPeninsula
             try { listener.Stop(); } catch { }
             try { listener.Close(); } catch { }
             Logger.Info("[HTTP接口] 本地监听已停止");
+        }
+
+        /// <summary>
+        /// 解析 HTTP 请求体（手机推送过来的 JSON）。
+        ///
+        /// **先按合法 JSON 直接解析**：发送端绝大多数发的都是标准 JSON，而标准的
+        /// <c>\uXXXX</c> / <c>\n</c> / <c>\"</c> 转义必须原样交给解析器。以前这里是无条件
+        /// 把每个反斜杠翻倍，于是「默认转义非 ASCII」的客户端（Python 的 json.dumps、
+        /// Go 等）发来的「MSP测试」会被解析成字面文本 MSP\u6d4b\u8bd5 显示在岛上。
+        ///
+        /// 只有**解析失败**时（有些发送端会发 <c>\N</c> 这种非法转义）才退回原来那套
+        /// 「把反斜杠全部转义」的暴力修复，尽量把这条件丢出去的消息救回来；仍然失败就把
+        /// 异常往上抛，由调用方记 500 —— 与修复前对待坏输入的行为完全一致。
+        /// </summary>
+        private static System.Text.Json.JsonDocument ParseBody(string rawJson)
+        {
+            try
+            {
+                return System.Text.Json.JsonDocument.Parse(rawJson);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // 复原老行为：先把每个 \ 变成 \\，再把 \\" 还原成 \"（否则字符串会被提前截断）。
+                string repaired = rawJson.Replace("\\", "\\\\").Replace("\\\\\"", "\\\"");
+                return System.Text.Json.JsonDocument.Parse(repaired);
+            }
         }
 
         /// <summary>
