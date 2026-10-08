@@ -518,33 +518,6 @@ namespace NotchPeninsula
                         if (!inside) CloseMarketDialog(true);
                     }
                 }
-                else if (_marketDialog == MarketDialog.ConfirmRemoveLocal)
-                {
-                    // 本地卸载确认弹窗打开：交互与市场确认弹窗同一套 —— 关闭按钮 / 弹窗外 → 关闭；
-                    //   「卸载」执行后关弹窗，「取消」只关弹窗。弹窗开着时底下列表不吃点击。
-                    if (_dialogRemoveEntry == null) { CloseMarketDialog(true); }
-                    else if (_hoveredDialogClose) { CloseMarketDialog(true); }
-                    else if (_hoveredDialogButton == 0)
-                    {
-                        var pe = _dialogRemoveEntry;   // 先摘出来：CloseMarketDialog 会清空字段
-                        CloseMarketDialog();
-                        if (pe != null)
-                        {
-                            PluginManager.Instance.Remove(pe);
-                            ResetPluginHover();
-                            RefreshPluginView();
-                        }
-                        Render();
-                    }
-                    else if (_hoveredDialogButton == 1) { CloseMarketDialog(true); }
-                    else
-                    {
-                        // 点弹窗内其它位置：不关。点弹窗外：关。
-                        bool inside = TryGetCursorClientPos(out int px, out int py)
-                            && GetCurrentDialogRect().Contains(px, py);
-                        if (!inside) CloseMarketDialog(true);
-                    }
-                }
                 else if (_hoveredPluginAction != -1)
                 {
                     switch (_hoveredPluginAction)
@@ -578,13 +551,14 @@ namespace NotchPeninsula
                 }
                 else if (_hoveredPluginRemove != -1)
                 {
-                    // 卸载是破坏性操作，先弹确认窗（复用市场的确认弹窗模板，目标换成本地插件）
+                    // 直接卸载，不再弹二次确认：卸载只是把文件挪进 plugins\_recycle（可手动找回），
+                    // 不是不可逆操作，为它多插一步确认只会让「管理插件」这件事变累。
                     var pe = GetPluginAt(_hoveredPluginRemove);
                     if (pe != null)
                     {
-                        _marketDialog = MarketDialog.ConfirmRemoveLocal;
-                        _dialogRemoveEntry = pe;
-                        _hoveredDialogButton = -1;
+                        PluginManager.Instance.Remove(pe);
+                        ResetPluginHover();
+                        RefreshPluginView();
                         Render();
                     }
                 }
@@ -605,20 +579,11 @@ namespace NotchPeninsula
                 }
                 else if (_marketDialogIndex != -1)
                 {
-                    // 弹窗打开：关闭按钮 / 弹窗外 → 关闭；卸载确认的按钮 → 执行或取消；
+                    // 弹窗打开（只剩详情 / 评分两种）：关闭按钮 / 弹窗外 → 关闭；
                     //   评分弹窗的星星 → 提交评分。弹窗内部其它区域不响应。
                     var mp = GetMarketAt(_marketDialogIndex);
                     if (mp == null) { CloseMarketDialog(true); }
                     else if (_hoveredDialogClose)
-                    {
-                        CloseMarketDialog(true);
-                    }
-                    else if (_marketDialog == MarketDialog.ConfirmUninstall && _hoveredDialogButton == 0)
-                    {
-                        UninstallMarketPlugin(mp);      // 内部会刷新列表 + Render
-                        CloseMarketDialog(true);
-                    }
-                    else if (_marketDialog == MarketDialog.ConfirmUninstall && _hoveredDialogButton == 1)
                     {
                         CloseMarketDialog(true);
                     }
@@ -702,16 +667,12 @@ namespace NotchPeninsula
                 }
                 else if (_hoveredMarketUninstall != -1)
                 {
-                    // 卸载是破坏性操作，先弹确认窗（同一个模板弹窗，内容自定义）
+                    // 同样直接卸载：与「我的插件」列表里那个「卸载」是同一件事、同一个后果
+                    // （文件挪进 plugins\_recycle，可手动找回），两边保持一致的交互，
+                    // 不要一边弹确认、一边直接执行。
                     if (_marketSearchFocused) { _marketSearchFocused = false; }
                     var mp = GetMarketAt(_hoveredMarketUninstall);
-                    if (mp != null)
-                    {
-                        _marketDialog = MarketDialog.ConfirmUninstall;
-                        _marketDialogIndex = _hoveredMarketUninstall;
-                        _hoveredDialogButton = -1;
-                        Render();
-                    }
+                    if (mp != null) UninstallMarketPlugin(mp);   // 内部会刷新列表 + Render
                 }
                 else if (_hoveredMarketDetail != -1)
                 {

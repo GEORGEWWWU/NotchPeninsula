@@ -287,9 +287,11 @@ namespace NotchPeninsula
         // 文本按「整数秒」为键缓存：拖动是 60FPS 路径，绝不允许每帧 ToString
         private int _shownSec = -1, _shownTotal = -1;
 
-        // SMTC 采样快照：每帧最多一次 COM 采样（200ms 节流，换歌后立即补采），歌词 / 进度条 / 总时长共用同一份
+        // SMTC 采样快照：歌词 / 进度条 / 总时长三处共用同一份（由后台采样时钟写入，见 SampleSmtcTick）。
+        // 渲染线程只读这份快照，一次 COM 都不打 —— 这也意味着下面这些字段是「后台线程写、渲染线程读」，
+        // 所以取值时都以整块快照为单位（同一拍采到的 Position / Duration / LastUpdatedTime 一起换掉）。
         private const double SmtcProbeIntervalSec = 0.2;
-        private DateTime _smtcProbeAt = DateTime.MinValue;
+        private DateTime _smtcProbeAt = DateTime.MinValue;   // 只由后台采样时钟读写
         private TimeSpan _smtcPos = TimeSpan.Zero;
         private TimeSpan _smtcDuration = TimeSpan.Zero;
 
@@ -312,6 +314,30 @@ namespace NotchPeninsula
         // 自由跑表的虚拟时间轴。
         private bool _smtcHasLastUpdated;   // 本份快照的 LastUpdatedTime 是否可信
         private DateTime _smtcLastUpdatedUtc; // 上一份快照的 LastUpdatedTime（UTC）
+
+        // ---- 后台 SMTC 采样时钟（全类唯一的 COM 调用点） ----
+        //
+        // 为什么必须单独开一条后台时钟：GetTimelineProperties / GetPlaybackInfo 这两个调用
+        // 在部分播放器上会阻塞几十毫秒到数秒 —— 换歌瞬间的汽水音乐、以及刚被切走、
+        // 提供方已经不响应的那个旧会话尤其明显。它们原本跑在渲染线程上（见 UpdateLyrics），
+        // 于是整块岛体跟着一起冻住：不解冻就不出帧，解冻后的第一帧位置已经跳到当前进度 ——
+        // 表现就是「切歌时整个灵动岛卡死（卡多久不固定）」以及「解冻后歌词直接跳到半句」。
+        //
+        // 现在采样全部落在后台线程，渲染线程只读这里留下的快照，一次 COM 都不打。
+        // 两条节流互不影响：当前会话 200ms 一采（换歌时 _forceResync 置位则立刻补采），
+        // 后台会话 1 秒一采。
+        private System.Threading.Timer? _smtcSampler;
+        private const int SmtcSamplerTickMs = 50;   // 采样节拍：50ms 一跳，真正的采样仍按上面两条节流
+        private int _smtcSampleVersion;             // 后台写 / 渲染线程读 → 一律 Volatile / Interlocked
+        private int _consumedSampleVersion;         // 渲染线程上次消费到的版本号
+        private int _sampling;                      // 采样重入闸（见 SampleSmtcTick）
+        private DateTime _suspendedProbeAt = DateTime.MinValue;   // 后台线程独占
+
+        /// <summary>后台会话（退到后台仍在放的那首）本拍是否在播放 —— 后台采样器写、渲染线程读。</summary>
+        private readonly bool[] _suspendedPlaying = new bool[RecentSongSlots];
+
+        /// <summary>后台会话那几次 COM 调用是否已经失败（播放器退出）—— 后台置位，渲染线程据此注销登记。</summary>
+        private readonly bool[] _suspendedDead = new bool[RecentSongSlots];
 
         public float TimelineProgress => Duration > TimeSpan.Zero
             ? Math.Clamp((float)(_timelinePos.TotalSeconds / Duration.TotalSeconds), 0f, 1f) : 0f;
@@ -486,7 +512,166 @@ namespace NotchPeninsula
         public MediaController()
         {
             Instance = this;
+            StartSmtcSampler();
             _ = InitializeAsync();
+        }
+
+        /// <summary>启动后台采样时钟。回调是实例方法，退出时必须 Dispose（见 StopSmtcSampler）。</summary>
+        private void StartSmtcSampler()
+        {
+            _smtcSampler ??= new System.Threading.Timer(_ => SampleSmtcTick(), null,
+                SmtcSamplerTickMs, SmtcSamplerTickMs);
+        }
+
+        /// <summary>
+        /// 停掉后台采样时钟（退出路径）。
+        /// Timer.Dispose 只是「不再调度」：已经在跑的那一拍会跑完，而它读的都是本对象自己的字段，
+        /// 对象还被 Timer 的注册钉着，所以不存在「回调撞上已释放资源」的问题。
+        /// </summary>
+        private void StopSmtcSampler()
+        {
+            try { _smtcSampler?.Dispose(); } catch { }
+            _smtcSampler = null;
+        }
+
+        /// <summary>
+        /// 后台采样一拍（跑在线程池线程上，绝不在渲染线程里执行）。
+        ///
+        /// 当前会话按 200ms 节流；_forceResync（换歌 / 换会话）置位时立刻补采，好让切歌后的
+        /// 首次硬对齐不被推迟到下一个周期。后台会话的播放状态按 1 秒节流。
+        ///
+        /// 整个方法自己兜异常：Timer 回调里漏出去的异常会直接把进程带走。
+        /// </summary>
+        private void SampleSmtcTick()
+        {
+            // 重入闸：Timer 不会等上一拍跑完，而某一拍真卡住（不规范的播放器能在 COM 上挂几秒）时
+            // 回调会在队列里堆积，解冻后连着打十几次同样的调用。丢弃重叠的那几拍是安全的 ——
+            // 下一次采样本来就会把最新状态取回来。
+            if (System.Threading.Interlocked.Exchange(ref _sampling, 1) == 1) return;
+            try
+            {
+                var now = DateTime.UtcNow;
+
+                if (_forceResync || (now - _smtcProbeAt).TotalSeconds >= SmtcProbeIntervalSec)
+                {
+                    _smtcProbeAt = now;
+                    SampleCurrentSession();
+                    System.Threading.Volatile.Write(ref _smtcSampleVersion, _smtcSampleVersion + 1);
+                }
+
+                if ((now - _suspendedProbeAt).TotalSeconds >= 1)
+                {
+                    _suspendedProbeAt = now;
+                    SampleSuspendedSessions();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"SMTC 后台采样异常: {ex.Message}");
+            }
+            finally
+            {
+                System.Threading.Interlocked.Exchange(ref _sampling, 0);
+            }
+        }
+
+        /// <summary>
+        /// 采样当前会话的时间轴与播放状态 —— 全类唯一的 COM 调用点，只允许从这里进来。
+        /// 两段各自兜异常：不规范的媒体源会在会话消失的瞬间抛 COM 断开异常，
+        /// 那时只是「这一拍没读到」，绝不能把标题 / 模式判定一起打掉。
+        /// </summary>
+        private void SampleCurrentSession()
+        {
+            var session = _currentSession;
+            if (session == null) return;
+
+            try
+            {
+                var t = session.GetTimelineProperties();
+                _smtcPos = t.Position;
+
+                // 总长取两级兜底，因为各家播放器「把总长填在哪一栏」并不统一：
+                //   1. EndTime     —— 规范字段，大多数播放器（QQ 音乐 / Spotify / 浏览器）填这里
+                //   2. MaxSeekTime —— 少数播放器只填可 seek 上界，EndTime 恒为 0（有总长但不写规范栏）
+                //   3. 都没有 → 0    —— 进度条画不出来，但「已播放 mm:ss」照样能走真实 SMTC 值
+                // 判据是 > 0 而不是 >= 0：TimeSpan.Zero 与「没上报」在 API 上无法区分，一律当没给。
+                // MaxSeekTime 只是「能拖到哪」的上界，理论上可能略大于实际总长 ——
+                // 宁可比例略不准（进度条短一点点），也不要总时长整个缺失（进度条直接消失）。
+                _smtcDuration = t.EndTime > TimeSpan.Zero ? t.EndTime
+                    : t.MaxSeekTime > TimeSpan.Zero ? t.MaxSeekTime
+                    : TimeSpan.Zero;
+
+                // LastUpdatedTime 一并采下来（见字段声明处：Position 是「截至 LastUpdatedTime」的快照，
+                // 实时位置要自己用 now - LastUpdatedTime 外推）。
+                // 判据：DateTimeOffset 的默认值（MinValue / 0001-01-01）说明播放器根本不上报这个字段，
+                // 那种情况下外推没有基准，必须退回虚拟跑表。
+                var lu = t.LastUpdatedTime;
+                _smtcHasLastUpdated = lu > DateTimeOffset.UnixEpoch;
+                _smtcLastUpdatedUtc = _smtcHasLastUpdated ? lu.UtcDateTime : DateTime.MinValue;
+            }
+            catch
+            {
+                _smtcPos = TimeSpan.Zero;
+                _smtcDuration = TimeSpan.Zero;
+                _smtcHasLastUpdated = false;
+                _smtcLastUpdatedUtc = DateTime.MinValue;
+                // 故意不动 _isPlaying：这次采样失败只说明「没读到」，不代表「暂停了」。
+                // 把它按暂停处理会让进度条凭空冻住一帧；保留旧值更接近真实状态。
+            }
+            // 没有端到端时长（网易云 / 酷狗等）：强制对齐标记留着也没用，就地消费掉，
+            // 让采样稳定回到 200ms 节流 —— 否则它会每拍都触发一次补采，等于没节流。
+            // （判据读的是刚采下来的 _smtcDuration，所以必须放在上面那段之后。）
+            if (_smtcDuration <= TimeSpan.Zero) _forceResync = false;
+
+            // 顺带校准播放状态。为什么必须在采样点做、不能只靠 PlaybackInfoChanged 事件：
+            //   时间轴外推要乘上「现在是不是在播放」（暂停时外推量必须为 0），所以 _isPlaying
+            //   一旦过期，外推方向就错 —— 暂停了还按播放涨，或播着却冻住。
+            //   而事件并不可靠：部分播放器暂停/续播根本不发 PlaybackInfoChanged；
+            //   通用媒体模式下这条事件还会先绕一圈 UpdateSession（内部有 await + COM），
+            //   等它落到 _isPlaying 已是几百毫秒之后。
+            //   这里每 200ms 用一次轻量 GetPlaybackInfo 就地校准，迟到问题从根上消失。
+            try
+            {
+                var info = session.GetPlaybackInfo();
+                if (info != null)
+                    _isPlaying = info.PlaybackStatus
+                        == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 采样后台会话（退到后台仍在放的那首）的播放状态。
+        ///
+        /// 这一步原来也在渲染线程上（AdvanceSuspendedTimeline 里直接 GetPlaybackInfo）——
+        /// 而被切走的那个会话恰恰是最容易阻塞的：切歌瞬间旧会话正在退出，
+        /// 它的提供方可能已经不响应了，一次调用就能把岛体冻住几百毫秒。
+        /// 现在只在这里取状态，渲染线程读 _suspendedPlaying / _suspendedDead 两个缓存。
+        /// </summary>
+        private void SampleSuspendedSessions()
+        {
+            for (int i = 0; i < RecentSongSlots; i++)
+            {
+                var session = _slotSessions[i];
+                if (session == null)
+                {
+                    _suspendedPlaying[i] = false;
+                    _suspendedDead[i] = false;
+                    continue;
+                }
+
+                try
+                {
+                    _suspendedPlaying[i] = session.GetPlaybackInfo()?.PlaybackStatus
+                        == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+                    _suspendedDead[i] = false;
+                }
+                catch
+                {
+                    _suspendedPlaying[i] = false;
+                    _suspendedDead[i] = true;   // 播放器已退出，交给渲染线程注销登记
+                }
+            }
         }
 
         private async Task InitializeAsync()
@@ -515,6 +700,8 @@ namespace NotchPeninsula
         /// </summary>
         public void Shutdown()
         {
+            _shuttingDownMedia = true;
+            StopSmtcSampler();
             try { _justSoloLyric.Stop(); } catch { }
             try { SetThumbnail(null); } catch { }
         }
@@ -563,7 +750,53 @@ namespace NotchPeninsula
         private static bool IsManualLockActive =>
             IsMediaControlEnabled && TargetPlatform == "other" && IsManualSessionMatch && ManualSessionAppId.Length > 0;
 
+        // 接管目标重挑的「合并闸」（见 UpdateSession 的注释）：
+        //   0 → 闲；1 → 正在跑。期间到达的事件只把 _sessionUpdatePending 置位，不并发第二份。
+        private int _updatingSession;
+        private volatile bool _sessionUpdatePending;
+
+        /// <summary>退出路径置位：让合并闸里的「再补一遍」循环不再空转。</summary>
+        private volatile bool _shuttingDownMedia;
+
+        /// <summary>
+        /// 重挑接管目标 + 刷新属性。
+        ///
+        /// ⚠️ 必须走这道「合并闸」，不能让事件直接调 UpdateSessionCore：
+        /// 系统里每一个会话的 PlaybackInfoChanged 都挂在 OnPlaybackInfoChanged 上（见 SyncPlaybackWatchers），
+        /// 而切歌 / 弹会员窗这类时刻，汽水音乐会连着甩出一串播放状态与元数据事件 —— 每个事件都来一遍
+        /// 全量刷新，而每次刷新内部要**逐个会话**打一次阻塞的 GetPlaybackInfo（选「谁在放」用）。
+        /// 结果是：N 个事件 × M 个会话 的阻塞 COM 调用在**同一时刻**铺开，把线程池占满；
+        /// 渲染节拍那时还在线程池上（见 NotchWindow._renderThread 的注释），于是岛体整块冻住 ——
+        /// 这正是「别的软件弹个窗，我的灵动岛就卡死」的机制。
+        ///
+        /// 现在同时只允许一个在跑；期间到达的事件只记一个「还要再刷一次」，跑完再补一遍就够
+        /// （大家要的都是最终状态，中间的每一拍都没有独立价值）。
+        /// </summary>
         private async Task UpdateSession(GlobalSystemMediaTransportControlsSessionManager manager)
+        {
+            if (Interlocked.Exchange(ref _updatingSession, 1) == 1)
+            {
+                _sessionUpdatePending = true;
+                return;
+            }
+
+            try
+            {
+                do
+                {
+                    _sessionUpdatePending = false;
+                    await UpdateSessionCore(manager);
+                }
+                while (_sessionUpdatePending && !_shuttingDownMedia);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _updatingSession, 0);
+            }
+        }
+
+        /// <summary>UpdateSession 的执行体（原样搬来，只改了名字）。</summary>
+        private async Task UpdateSessionCore(GlobalSystemMediaTransportControlsSessionManager manager)
         {
             GlobalSystemMediaTransportControlsSession? newSession = null;
 
@@ -1167,7 +1400,10 @@ namespace NotchPeninsula
 
             _titleRetryCount++;
             _titleRetryNextAt = now + TitleRetryInterval;
-            _ = RefreshProperties();
+            // 必须挪到线程池上执行：RefreshPropertiesCore 在第一个 await 之前是同步跑的，
+            // 里面那次 TryGetMediaPropertiesAsync 的「发起」动作会落在调用线程上 ——
+            // 从渲染线程直接调，就是在渲染线程上打一次 COM（卡顿的来源之一）。
+            _ = Task.Run(RefreshProperties);
         }
 
         private static readonly string[] BrowserVideoSuffixes =
@@ -1429,7 +1665,9 @@ namespace NotchPeninsula
             if (!TryBeginLyricRetry()) return;
 
             Logger.Debug($"取词失败，第 {_lyricRetryCount} 次重试（{owner.Title} / {owner.Artist}）");
-            _ = RetryFetchAsync(owner.Title, owner.Artist);
+            // Task.Run：RetryFetchAsync 的第一个动作是 CurrentTimelineSeconds()（打 COM 读总长），
+            // 它在第一个 await 之前同步执行 —— 直接调就是在渲染线程上打 COM。
+            _ = Task.Run(() => RetryFetchAsync(owner.Title, owner.Artist));
         }
 
         /// <summary>重试取词链：只补歌词与封面，不碰时间轴、不重绑槽位。</summary>
@@ -3119,37 +3357,151 @@ namespace NotchPeninsula
         /// 渲染层的扫光依旧是「整行总宽 × 进度」，不需要知道自己拿到的是哪一种驱动。
         /// 于是「这首歌没有逐字数据」不会退化成不扫光，而只是自动降级成整行均匀扫光。
         ///
-        /// position 传的是原始播放位置（不含起唱提前量）。
-        /// 两条分支对这份提前量的处理不同：逐字分支直接用它（yrc 字级时间戳就是真实起唱时刻），
-        /// 整行分支才自行叠上 0.6s + LyricDelayOffset（整行 lrc 时间戳普遍偏晚，需要一点提前量）。
+        /// position 传的是原始播放位置。本行「从哪一刻开始算它已经上台」由 LineStartRaw 给出，
+        /// 而选行那边用的正是同一个值 —— 两处同源，本行上台那一刻进度必然正好是 0，
+        /// 让位那一刻也必然已经走满（见 LineStartRaw / LineYieldRaw 的说明）。
         /// </summary>
         private float ComputeScanProgress(int lineIndex, TimeSpan position)
         {
-            TimeSpan lineStart = _lyrics[lineIndex].Time;
+            double window = LineWindowSeconds(lineIndex);
+            float progress;
 
             // ① 逐字优先
-            if (_lyricWordTimings is { Length: > 0 } timings
-                && lineIndex < timings.Length
-                && timings[lineIndex] is { TotalChars: > 0 } wordTiming)
+            if (HasWordTiming(lineIndex) && _lyricWordTimings![lineIndex] is { } wordTiming)
             {
-                // 逐字时间轴的 EndMs 是相对 yrc 行首记的，而 position 是绝对播放位置。
-                // 折算时统一用「position − yrc 行首」：lrc 行首与 yrc 行首并不总是相等
-                // （网易云两侧系统性错位，见 LyricWordTiming.LineStartMs 的说明），
-                // 若按 lrc 行首去减，逐字扫光会整首偏快或偏慢，且偏差随行数累积。
-                return ComputeWordAlignedProgress(
-                    wordTiming, position.TotalMilliseconds - wordTiming.LineStartMs);
+                // 逐字时间轴的 EndMs 是相对 **yrc 行首** 记的，而 position 是绝对播放位置，
+                // 所以折算一律用「position + 用户补偿 − yrc 行首」。
+                // 选行用的 LineStartRaw 也是按 yrc 行首 + 同一份补偿推出来的（见那个方法的注释），
+                // 于是本行上台那一刻这个表达式正好是 0 —— 前半句不会被跳过、尾巴也不会被截断。
+                progress = ComputeWordAlignedProgress(
+                    wordTiming,
+                    position.TotalMilliseconds + LyricDelayOffset * 1000.0 - wordTiming.LineStartMs);
+            }
+            else if (window > 0)
+            {
+                // ② 逐字不可用 → 回退整行均匀扫光（本行已经上台多久 / 本行窗口）
+                progress = (float)((position - LineStartRaw(lineIndex)).TotalSeconds / window);
+            }
+            else
+            {
+                return 0f;
             }
 
-            // ② 逐字不可用 → 回退整行扫光（这里才加起唱提前量）
-            TimeSpan scanPos = position + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
-            TimeSpan endTime = lineIndex < _lyrics.Length - 1
-                ? _lyrics[lineIndex + 1].Time
-                : lineStart + TimeSpan.FromSeconds(4); // 末行没有下一句可依，按 4 秒估
-            double duration = (endTime - lineStart).TotalSeconds;
-            if (duration <= 0) return 0f;
+            // 行尾收口：距「本行让位的那一刻」不足 LyricLineFinishLead 时，把进度线性推向 1。
+            //
+            // 逐字数据未必覆盖到整行末尾 —— yrc 行尾与 lrc 的下一句行首并不总是对齐，部分源还会
+            // 系统性错位上百毫秒。少了这道收口，每句扫光都会在换行那一刻被切掉一截（「吞词」）。
+            // 收口只在最后这一小段生效，整行的扫光节奏完全不变，只是保证「换行前一定走满」。
+            //
+            // 判据用 LineYieldRaw（本行真正会显示到哪一刻）而不是「下一行的 lrc 时间戳」：
+            // 下一行带着自己的提前量提前上台，那个提前量会把本行的尾巴再吃掉一截，
+            // 用 lrc 时间戳算就会出现「逐字行后面跟着整行 lrc 时，逐字行只扫到 76%」。
+            double remain = (LineYieldRaw(lineIndex) - position).TotalSeconds;
+            if (remain <= LyricLineFinishLead)
+            {
+                // 收口不是「走到换行那一刻刚好 1」—— 渲染是 16ms 一帧，最后一帧落在哪儿不确定，
+                // 那样常常会停在 95%~99% 就被换行顶掉，看着仍然是「没扫完」。
+                // 所以提前 LyricLineFinishEarly 走满，换行前留一段实打实的 100%（约 7 帧）。
+                double span = LyricLineFinishLead - LyricLineFinishEarly;
+                float forced = (float)((LyricLineFinishLead - remain) / span);
+                progress = Math.Max(progress, Math.Clamp(forced, 0f, 1f));
+            }
 
-            return Math.Clamp((float)((scanPos - lineStart).TotalSeconds / duration), 0f, 1f);
+            return Math.Clamp(progress, 0f, 1f);
         }
+
+        /// <summary>
+        /// 本行上台的「真实播放位置」—— 选行与扫光共用的唯一时钟原点。两者必须同源：
+        /// 不同源就会出现「本行上台时扫光已经走掉半句」（前半句被跳过）或
+        /// 「本行还没走满就被下一行顶掉」（尾巴被吞）。
+        ///
+        /// 提前量的来源分两种，**都不是拍脑袋的常数**：
+        ///   · 逐字行（yrc）：直接用数据本身的差 —— yrc 行首就是这一行第一个字真正开口的时刻，
+        ///     它普遍比 lrc 行首早（网易云实测 170~650ms，lrc 那一栏填得偏晚）。
+        ///     拿这个差当提前量，本行就会在「该开口的那一刻」上台，扫光时钟正好归零。
+        ///     ⚠️ 这里曾经写死成 0（理由「字级时间戳就是真实起唱时刻，不该再叠补偿」）——
+        ///     那等于把逐字行推迟到 lrc 时刻才上台，而扫光时钟早已走过半个字表，
+        ///     表现就是网易云这类 yrc 行首偏早的源「前半句直接跳过、从中段往后扫」。
+        ///   · 整行 lrc：那一栏没有字级数据，只能用固定提前量 0.6s 近似。
+        ///
+        /// 用户自己的「歌词延迟补偿」两类行都照常叠加（显式旋钮，不该被自动提前量连坐）。
+        /// </summary>
+        private TimeSpan LineStartRaw(int lineIndex)
+            => _lyrics[lineIndex].Time - TimeSpan.FromSeconds(LineLeadSeconds(lineIndex));
+
+        /// <summary>本行被下一行顶掉的「真实播放位置」（末行没有下一句可依，按 LyricLastLineSeconds 估）。</summary>
+        private TimeSpan LineYieldRaw(int lineIndex)
+            => lineIndex < _lyrics.Length - 1
+                ? LineStartRaw(lineIndex + 1)
+                : LineStartRaw(lineIndex) + TimeSpan.FromSeconds(LyricLastLineSeconds);
+
+        /// <summary>本行的提前量（秒，正 = 提前上台）：逐字行走数据差，整行走固定 0.6s，再叠用户补偿并封顶。</summary>
+        private double LineLeadSeconds(int lineIndex)
+        {
+            double lead = 0.6;   // 整行 lrc：那一栏没有字级数据，只能用固定提前量近似
+            if (HasWordTiming(lineIndex) && _lyricWordTimings![lineIndex] is { } wordTiming)
+            {
+                // yrc 行首比 lrc 行首早多少，本行就该早多少上台。
+                // 反过来（yrc 比 lrc 晚）不反着推迟 —— 那只会让这一行比 lrc 时间还晚出现，没有意义。
+                lead = Math.Max(0,
+                    (_lyrics[lineIndex].Time - TimeSpan.FromMilliseconds(wordTiming.LineStartMs)).TotalSeconds);
+            }
+
+            return ClampLead(lead + LyricDelayOffset, lineIndex);
+        }
+
+        /// <summary>
+        /// 提前量的统一封顶 —— 只用两条**天然边界**，不用含糊的经验常数：
+        ///
+        ///   1. lead_i ≤ t_i：上台时刻不可能早于曲目开头（StartRaw 不能是负数）。
+        ///   2. lead_i ≤ t_i − t_{i−1}：上台时刻不可能早于上一行的上台时刻。
+        ///      少了这一条，副歌前的短促垫句 / 说唱快句（相邻两句只隔零点几秒）里，
+        ///      后一行会把前一行整个盖掉 —— 那一句一帧都不会出现。
+        ///
+        /// 为什么不额外压一个小上限（比如 0.6s）来「求稳」：提前量本身就是「lrc 行首比
+        /// 真实起唱晚多少」的度量，网易云这类源会晚到 1 秒以上。按下限压掉它，
+        /// 就等于把这一行推迟到 lrc 时刻才上台，而扫光时钟早已走过半句 ——
+        /// 前半句直接跳过。宁可让这一行早一点上台（它本来就是从这一刻开始唱的），
+        /// 也不能让扫光从中段开始。
+        /// </summary>
+        private double ClampLead(double lead, int lineIndex)
+        {
+            double t = _lyrics[lineIndex].Time.TotalSeconds;
+            double prevWindow = lineIndex > 0
+                ? t - _lyrics[lineIndex - 1].Time.TotalSeconds
+                : double.MaxValue;
+
+            double cap = Math.Min(t, prevWindow);
+            if (cap < 0) cap = 0;
+            if (Math.Abs(lead) > cap) lead = Math.Sign(lead) * cap;
+            return lead;
+        }
+
+        /// <summary>本行的窗口长度（本行起点 → 下一行起点；末行没有下一句可依，按 LyricLastLineSeconds 估）。</summary>
+        private double LineWindowSeconds(int lineIndex)
+        {
+            if (lineIndex < 0 || lineIndex >= _lyrics.Length) return 0;
+            TimeSpan start = _lyrics[lineIndex].Time;
+            TimeSpan end = lineIndex < _lyrics.Length - 1
+                ? _lyrics[lineIndex + 1].Time
+                : start + TimeSpan.FromSeconds(LyricLastLineSeconds);
+            return (end - start).TotalSeconds;
+        }
+
+        /// <summary>本行有没有可用的逐字（yrc）时间轴。</summary>
+        private bool HasWordTiming(int lineIndex)
+            => _lyricWordTimings is { Length: > 0 } timings
+               && lineIndex >= 0 && lineIndex < timings.Length
+               && timings[lineIndex] is { TotalChars: > 0 };
+
+        /// <summary>末行没有下一句可依，按这个时长估算它的窗口。</summary>
+        private const double LyricLastLineSeconds = 4.0;
+
+        /// <summary>行尾收口时长：距「本行让位」不足它时开始把扫光推向 1（见 ComputeScanProgress）。</summary>
+        private const double LyricLineFinishLead = 0.35;
+
+        /// <summary>行尾收口的提前量：扫光在这一小段之前就走满，换行前保证有一段 100% 的实拍。</summary>
+        private const double LyricLineFinishEarly = 0.12;
 
         /// <summary>
         /// 按逐字时间轴把「本行已经唱到哪」折算成 0~1 的扫光比例。仅在逐字数据可用时被
@@ -3259,64 +3611,13 @@ namespace NotchPeninsula
                 return;
             }
 
-            // 全帧唯一一次 SMTC 时间轴采样（200ms 节流，换歌后立即补采）：
-            //   歌词推进、进度条、总时长三处共用这份快照，杜绝每帧重复打 COM。
-            bool sampledNow = false;
-            if (_forceResync || (now - _smtcProbeAt).TotalSeconds >= SmtcProbeIntervalSec)
-            {
-                sampledNow = true;
-                _smtcProbeAt = now;
-                try
-                {
-                    var t = _currentSession.GetTimelineProperties();
-                    _smtcPos = t.Position;
-
-                    // 总长取两级兜底，因为各家播放器「把总长填在哪一栏」并不统一：
-                    //   1. EndTime     —— 规范字段，大多数播放器（QQ 音乐 / Spotify / 浏览器）填这里
-                    //   2. MaxSeekTime —— 少数播放器只填可 seek 上界，EndTime 恒为 0（有总长但不写规范栏）
-                    //   3. 都没有 → 0    —— 进度条画不出来，但「已播放 mm:ss」照样能走真实 SMTC 值
-                    // 判据是 > 0 而不是 >= 0：TimeSpan.Zero 与「没上报」在 API 上无法区分，一律当没给。
-                    // MaxSeekTime 只是「能拖到哪」的上界，理论上可能略大于实际总长 ——
-                    // 宁可比例略不准（进度条短一点点），也不要总时长整个缺失（进度条直接消失）。
-                    _smtcDuration = t.EndTime > TimeSpan.Zero ? t.EndTime
-                        : t.MaxSeekTime > TimeSpan.Zero ? t.MaxSeekTime
-                        : TimeSpan.Zero;
-
-                    // LastUpdatedTime 一并采下来（见字段声明处：Position 是「截至 LastUpdatedTime」的快照，
-                    // 实时位置要自己用 now - LastUpdatedTime 外推）。
-                    // 判据：DateTimeOffset 的默认值（MinValue / 0001-01-01）说明播放器根本不上报这个字段，
-                    // 那种情况下外推没有基准，必须退回虚拟跑表。
-                    var lu = t.LastUpdatedTime;
-                    _smtcHasLastUpdated = lu > DateTimeOffset.UnixEpoch;
-                    _smtcLastUpdatedUtc = _smtcHasLastUpdated ? lu.UtcDateTime : DateTime.MinValue;
-
-                    // 顺带校准播放状态。为什么必须在采样点做、不能只靠 PlaybackInfoChanged 事件：
-                    //   时间轴外推要乘上「现在是不是在播放」（暂停时外推量必须为 0），所以 _isPlaying
-                    //   一旦过期，外推方向就错 —— 暂停了还按播放涨，或播着却冻住。
-                    //   而事件并不可靠：部分播放器暂停/续播根本不发 PlaybackInfoChanged；
-                    //   通用媒体模式下这条事件还会先绕一圈 UpdateSession（内部有 await + COM），
-                    //   等它落到 _isPlaying 已是几百毫秒之后。
-                    //   这里每 200ms 用一次轻量 GetPlaybackInfo 就地校准，迟到问题从根上消失。
-                    //   代价可以忽略：GetPlaybackInfo 是会话对象上的本地状态读取，不额外产生
-                    //   网络/跨进程往返，而且和上面那次 GetTimelineProperties 是同一个会话对象。
-                    var info = _currentSession.GetPlaybackInfo();
-                    if (info != null)
-                        _isPlaying = info.PlaybackStatus
-                            == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
-                }
-                catch
-                {
-                    _smtcPos = TimeSpan.Zero;
-                    _smtcDuration = TimeSpan.Zero;
-                    _smtcHasLastUpdated = false;
-                    _smtcLastUpdatedUtc = DateTime.MinValue;
-                    // 故意不动 _isPlaying：这次采样失败只说明「没读到」，不代表「暂停了」。
-                    // 把它按暂停处理会让进度条凭空冻住一帧；保留旧值更接近真实状态。
-                }
-                // 没有端到端时长（网易云 / 酷狗等）：强制对齐标记留着也没用，就地消费掉，
-                // 让采样稳定回到 200ms 节流 —— 否则它会每帧都触发一次补采，等于没节流。
-                if (_smtcDuration <= TimeSpan.Zero) _forceResync = false;
-            }
+            // 时间轴快照已由后台采样时钟取好（见 SampleSmtcTick）：渲染线程一次 COM 都不打，
+            // 否则换歌瞬间那些会阻塞的 SMTC 调用会把整块岛体一起冻住。
+            // 这里只判断「后台是否刚采到一份新快照」—— 纠偏与跳变判定只在那一帧做，
+            // 因为采样是 200ms 一次、渲染是 16ms 一次，每帧都按同一份快照纠偏会把纠偏量放大十几倍。
+            int sampleVersion = System.Threading.Volatile.Read(ref _smtcSampleVersion);
+            bool sampledNow = sampleVersion != _consumedSampleVersion;
+            _consumedSampleVersion = sampleVersion;
 
             // 「检测到 SMTC 提供歌曲进度」= 端到端时长有效，不区分具体平台
             HasTimeline = _smtcDuration > TimeSpan.Zero;
@@ -3366,20 +3667,21 @@ namespace NotchPeninsula
             string found = "";
             string foundTrans = "";
             float progress = 0f;
-            // 选行用「补偿后」的位置：整行 lrc 时间戳普遍略晚于起唱，加一点提前量让高亮跟上人声。
-            // 但逐字扫光（yrc）不该用这份补偿 —— 字级时间戳本身已是真实起唱时刻，
-            // 再叠 0.6 秒会让扫光整首恒定超前，表现就是「扫光比人声快一点」。
-            // 所以扫光一律用原始位置，选行才用补偿后的位置（见 ComputeScanProgress 的两个参数）。
+            // 选行用的时刻必须与本行扫光用的时钟完全一致 —— 都走 LineStartRaw。
+            //
+            // 原实现是两套时钟：选行用「位置 + 0.6s + 用户补偿」，逐字扫光却用原始位置，
+            // 于是每一句的扫光都在走满之前就被下一行顶掉了 0.6 秒的尾巴（「吞词」）。
+            // 而把逐字行的提前量改成写死 0 又是另一个极端：网易云这类源的 yrc 行首比 lrc 行首
+            // 早约 0.5s，等到 lrc 时刻才上台时扫光时钟早已走过半个字表 ——
+            // 表现就是「前半句直接跳过、从中段往后扫」。所以提前量只能由数据本身给出。
             TimeSpan rawPosition = _recentSongs[_lyricSlot].Position;
-            TimeSpan compensatedPosition = rawPosition + TimeSpan.FromSeconds(0.6 + LyricDelayOffset);
             for (int i = _lyrics.Length - 1; i >= 0; i--)
             {
-                if (compensatedPosition >= _lyrics[i].Time)
+                if (rawPosition >= LineStartRaw(i))
                 {
                     found = _lyrics[i].Text;
                     foundTrans = _lyrics[i].Translation;
                     // 本句的扫光进度：逐字优先，逐字不可用则自动回退整行扫光（见 ComputeScanProgress）。
-                    // 传原始位置而不是补偿位置：逐字时间戳是真实起唱时刻，不需要那份提前量。
                     progress = ComputeScanProgress(i, rawPosition);
                     break;
                 }
@@ -3460,6 +3762,10 @@ namespace NotchPeninsula
         // 降速安全阀阈值：领先量已经超过它、且还在继续扩大 ⇒ 播放器上报的位置根本没在推进，
         // 放弃降速、恢复实时推进（否则会无限累积落后，见 AdvanceTimeline 里的说明）。
         private const double TimelineStallAheadSeconds = 1.2;
+
+        // 「领先降速」的适用上限：领先量超过它就认为「不是本地跑快了，而是播放器上报得晚」，
+        // 不再降速 —— 否则本地时钟（歌词与进度条的唯一时基）会一直落在人声后面。
+        private const double TimelineAheadMaxLeadSeconds = 0.6;
 
         /// <summary>
         /// 把本帧的 SMTC 快照外推成「此刻的真实 SMTC 位置」。
@@ -3598,6 +3904,23 @@ namespace NotchPeninsula
                     //    这时放弃降速、恢复按实时推进；位置仍单调不减，不会出现卡拉 OK 回退。
                     if (_timelineAhead && delta < _prevDelta && delta < -TimelineStallAheadSeconds)
                         _timelineAhead = false;
+
+                    // 降速只用来吃掉「本地采样间隙里多跑出去的那一点点」——
+                    // 200ms 一采 ⇒ 量级在零点几秒以内，这才是本地时钟自己的误差。
+                    //
+                    // 领先量已经超过 TimelineAheadMaxLead 时不再降速：那不是本地跑快了，
+                    // 而是播放器上报的位置本身就滞后于真实播放（部分播放器几秒才刷一次位置，
+                    // 上报的一定是「过去某一刻」的值）。此时继续按 0.8 倍推进，
+                    // 本地时钟就会一路落到实际音频后面，而整个歌词显示读的正是这个时钟 ——
+                    // 表现就是「这句歌词显示完了，下一句其实已经唱到一半」（迟钝），
+                    // 等偏差攒过 1.5 秒触发硬对齐时，就是「切到下句歌词，扫光直接跳到一半」。
+                    //
+                    // 为什么只有「提供时间轴进度」的播放器会中招：整段纠偏都挂在 hasTimeline 上，
+                    // 不上报总时长的播放器根本不进这里（位置纯靠本地跑表），所以它们一直是准的。
+                    //
+                    // 取舍：进度条可能比播放器自报的值早那么一点点（至多 TimelineAheadMaxLead）。
+                    // 宁可进度条略偏，也不能让歌词整体落在人声后面 —— 歌词是每一秒都在看的东西。
+                    if (_timelineAhead && delta < -TimelineAheadMaxLeadSeconds) _timelineAhead = false;
                 }
 
                 _prevDelta = delta;
@@ -3720,13 +4043,23 @@ namespace NotchPeninsula
         }
 
         // 退到后台的歌词会话：只要它还在放，就继续替它把进度写回自己的槽位，
-        // 切回来时歌词位置就是连续的。每秒采样一次，避免 60FPS 下每帧都打 COM 调用。
+        // 切回来时歌词位置就是连续的。每秒结算一次；播放状态由后台采样器取好
+        // （见 SampleSuspendedSessions），这里只读 _suspendedPlaying / _suspendedDead 两个缓存。
+        //
+        // 为什么不能在这里直接 GetPlaybackInfo：这一步原本就跑在渲染线程上，而被切走的那个
+        // 会话恰恰是最容易阻塞的（切歌瞬间旧会话正在退出，它的提供方可能已经不响应了），
+        // 一次调用就能把整块岛体冻住几百毫秒 —— 正是「切歌就卡死」的直接来源。
         private void AdvanceSuspendedTimeline(DateTime now)
         {
             for (int i = 0; i < RecentSongSlots; i++)
             {
                 var session = _slotSessions[i];
-                if (session == null) continue;
+                if (session == null)
+                {
+                    _suspendedPlaying[i] = false;
+                    _suspendedDead[i] = false;
+                    continue;
+                }
 
                 // 只在这个槽位登记的后台会话「就是台前正在播的那个软件」时才撤销登记：
                 // 它已经回到台前，交回 AdvanceTimeline 推进，不能再替它累加，否则会被加两次。
@@ -3739,6 +4072,8 @@ namespace NotchPeninsula
                 if (i == _lyricSlot && _recentSongs[i].AppId == _currentAppId)
                 {
                     _slotSessions[i] = null;
+                    _suspendedPlaying[i] = false;
+                    _suspendedDead[i] = false;
                     continue;
                 }
 
@@ -3749,17 +4084,16 @@ namespace NotchPeninsula
                 // 先打时间戳：即使这首歌处于暂停，也说明这个槽位「还在被跟踪」，进度依然可信
                 _recentSongs[i].TickedAt = now;
 
-                try
+                // 播放器已退出（后台那次采样抛了）→ 注销登记，放弃推算
+                if (_suspendedDead[i])
                 {
-                    if (session.GetPlaybackInfo()?.PlaybackStatus
-                        != GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing) continue;
-                }
-                catch
-                {
-                    _slotSessions[i] = null; // 播放器已退出，放弃推算
+                    _slotSessions[i] = null;
+                    _suspendedPlaying[i] = false;
+                    _suspendedDead[i] = false;
                     continue;
                 }
 
+                if (!_suspendedPlaying[i]) continue;
                 _recentSongs[i].Position += dt;
             }
         }

@@ -174,36 +174,39 @@ namespace NotchPeninsula
 
         // 条目：Icon 为 null 表示解析失败，RetryAt 是下次允许重试的时刻（成功后为 MaxValue）。
         // 缓存的位图永远不直接交给调用方（只给副本），所以淘汰 / 替换时可以安全地 Dispose。
-        private readonly record struct IconEntry(SKBitmap? Icon, int Misses, DateTime RetryAt);
+        // Resolving：已经有一个后台解析在跑（可能是几十毫秒，也可能在异常环境里慢得多）——
+        // 期间再来问就只回 null，绝不排队第二个。
+        private readonly record struct IconEntry(SKBitmap? Icon, int Misses, DateTime RetryAt, bool Resolving);
 
         private static readonly Dictionary<string, IconEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Queue<string> _cacheOrder = new();
         private static readonly object _gate = new();
 
-        /// <summary>取该会话程序的应用图标副本；解析不出来返回 null。</summary>
+        /// <summary>
+        /// 取该会话程序的应用图标副本；解析不出来（或还在解析）返回 null。
+        ///
+        /// ⚠️ 本方法会被**渲染线程**每帧调用（MediaController.UpdateCover → SetAppIcon），
+        /// 所以这里只做「查缓存」，解析一律排到线程池上：
+        /// 解析要枚举系统进程表并逐个取映像路径，实测在 AUMID 匹配不上（例如汽水音乐的 AUMID
+        /// 就是字面量「汽水音乐」）时会把整张表扫一遍，遇到个别进程能卡住好几秒 ——
+        /// 挂在渲染线程上就是「切歌必卡 8 秒」。解析完成后写回缓存，
+        /// 下一帧 UpdateCover 自然会把图标取走（它每帧都会调 SetAppIcon）。
+        /// </summary>
         public static SKBitmap? Get(string? aumid)
         {
             if (string.IsNullOrWhiteSpace(aumid)) return null;
 
-            // 整个缓存决策（含解析）都在锁内：Get 只在换歌 / 属性刷新时被调，解析也就几毫秒，
-            // 换来的是「同一时刻只有一个线程在解析」，顺带根治并发解析下换图的竞态。
             lock (_gate)
             {
-                bool known = _cache.TryGetValue(aumid, out var hit);
-                if (known)
+                if (_cache.TryGetValue(aumid, out var hit))
                 {
                     if (hit.Icon != null) return hit.Icon.Copy();
-                    if (DateTime.UtcNow < hit.RetryAt) return null; // 退避冷却中
+                    // 解析中，或者还在退避冷却里：直接回 null，不打扰任何人
+                    if (hit.Resolving || DateTime.UtcNow < hit.RetryAt) return null;
+
+                    _cache[aumid] = hit with { Resolving = true };   // 先占位再排队，避免并发重复解析
                 }
-
-                var icon = Resolve(aumid);
-
-                // 只在这个 AUMID「本轮第一次」失败时留痕：下次用户报「拿不到 logo」时，
-                // 日志里能直接看到是哪个程序、省的又只能靠猜。退避重试期间不重复刷。
-                if (icon == null && (!known || hit.Misses == 0))
-                    Logger.Debug($"应用图标解析失败，{MissRetryBaseSeconds:F0}s 后重试：AUMID=[{aumid}]");
-
-                if (!known)
+                else
                 {
                     _cacheOrder.Enqueue(aumid);
                     while (_cacheOrder.Count > CacheCap)
@@ -211,23 +214,45 @@ namespace NotchPeninsula
                         string oldest = _cacheOrder.Dequeue();
                         if (_cache.Remove(oldest, out var evicted)) evicted.Icon?.Dispose();
                     }
+                    _cache[aumid] = new IconEntry(null, 0, DateTime.UtcNow.AddSeconds(MissRetryBaseSeconds), true);
                 }
-                else if (hit.Icon is { } stale && !ReferenceEquals(stale, icon))
-                {
-                    stale.Dispose(); // 覆盖旧条目：那张图已无人持有（Get 只发副本），放掉原生内存
-                }
-
-                if (icon != null)
-                {
-                    _cache[aumid] = new IconEntry(icon, 0, DateTime.MaxValue);
-                    return icon.Copy();
-                }
-
-                int misses = known ? hit.Misses + 1 : 1;
-                double wait = Math.Min(MissRetryBaseSeconds * Math.Pow(2, misses - 1), MissRetryMaxSeconds);
-                _cache[aumid] = new IconEntry(null, misses, DateTime.UtcNow.AddSeconds(wait));
-                return null;
             }
+
+            StartResolve(aumid);
+            return null;
+        }
+
+        /// <summary>把解析排到线程池上（渲染线程只读缓存，永远不等它）。</summary>
+        private static void StartResolve(string aumid)
+        {
+            _ = Task.Run(() =>
+            {
+                SKBitmap? icon = null;
+                try { icon = Resolve(aumid); }
+                catch (Exception ex) { Logger.Debug($"应用图标解析异常（忽略）：{ex.Message}"); }
+
+                lock (_gate)
+                {
+                    bool known = _cache.TryGetValue(aumid, out var cur);
+
+                    if (icon != null)
+                    {
+                        if (known && cur.Icon is { } stale && !ReferenceEquals(stale, icon)) stale.Dispose();
+                        _cache[aumid] = new IconEntry(icon, 0, DateTime.MaxValue, false);
+                        return;
+                    }
+
+                    // 失败：记一笔失败次数并按次数退避（理由见 MissRetryBaseSeconds 的注释）
+                    int misses = known ? cur.Misses + 1 : 1;
+                    double wait = Math.Min(MissRetryBaseSeconds * Math.Pow(2, misses - 1), MissRetryMaxSeconds);
+                    _cache[aumid] = new IconEntry(null, misses, DateTime.UtcNow.AddSeconds(wait), false);
+
+                    // 只在这个 AUMID「本轮第一次」失败时留痕：下次用户报「拿不到 logo」时，
+                    // 日志里能直接看到是哪个程序，省的又只能靠猜。退避重试期间不重复刷。
+                    if (!known || cur.Misses == 0)
+                        Logger.Debug($"应用图标解析失败，{wait:F0}s 后重试：AUMID=[{aumid}]");
+                }
+            });
         }
 
         private static SKBitmap? Resolve(string aumid)
@@ -255,13 +280,17 @@ namespace NotchPeninsula
                 if (ShellIcon.Load("shell:AppsFolder\\" + aumid, IconPixels) is { } fromPackage) return fromPackage;
             }
 
-            // 3) 按 AUMID 推出应用名 → 进程表里找同名 exe
-            string exe = FindExeByAumid(aumid);
+            // 3) / 4) 进程表兜底：**只取一趟快照**给两级共用。
+            //    原来是两级各自 Process.GetProcesses() + 逐个 MainModule —— 等于把整张表扫两遍，
+            //    也就是实测那 8 秒（两趟 × 约 4 秒）的来源。
+            var procs = SnapshotProcesses();
+
+            string exe = FindExeByAumid(procs, aumid);
             diag += $"L3={(exe.Length == 0 ? "没找到进程" : exe)}; ";
             if (exe.Length > 0 && ShellIcon.Load(exe, IconPixels) is { } fromExe) return fromExe;
 
             // 4) 词元重叠兜底（exe 名与 AUMID 毫无字面关系时，比如中文 exe 名 + 反向域名 AUMID）
-            string byToken = FindExeByTokenOverlap(aumid);
+            string byToken = FindExeByTokenOverlap(procs, aumid);
             diag += $"L4={(byToken.Length == 0 ? "没找到/被判并列" : byToken)}; ";
             if (byToken.Length > 0 && ShellIcon.Load(byToken, IconPixels) is { } fromToken) return fromToken;
 
@@ -270,43 +299,82 @@ namespace NotchPeninsula
             return null;
         }
 
+        /// <summary>进程表快照里的一项：映像完整路径 + 由路径推导出的进程名。</summary>
+        private readonly record struct ProcCandidate(string Path, string Name);
+
         /// <summary>
-        /// 按可执行文件名找该应用的 exe 路径。命中优先级：归一化后完全同名 > 互相包含（取匹配得最长的那个）。
-        /// 顺序不保证时「谁先被枚举到就算谁」会让长得像同一家的应用互相串图标，所以要显式排序。
+        /// 进程表快照（映像路径 + 进程名）。
+        ///
+        /// ⚠️ 只用 `p.Id`，**不碰 `p.ProcessName` / `p.MainModule`**：
+        /// .NET 里这两个成员在拿不到快速通道时会各自去做一次「全系统进程快照」
+        /// （NtQuerySystemInformation），而这里是**逐个进程**调用的 —— 318 个进程 × 每次一次全系统快照，
+        /// 实测就是 4 秒量级；而图标解析在 AUMID 匹配不上时会走两级兜底 = 扫两遍 = 8 秒。
+        /// 进程名直接由映像路径推导（本来打分也是拿路径名比的），零额外代价。
         /// </summary>
-        private static string FindExeByAumid(string aumid)
+        private static List<ProcCandidate> SnapshotProcesses()
         {
-            string wanted = Normalize(ProbeName(aumid));
-            if (wanted.Length < 3) return "";
+            var list = new List<ProcCandidate>(256);
 
             Process[] all;
-            try { all = Process.GetProcesses(); }
-            catch { return ""; }
-
-            string? exact = null;
-            string? partial = null;
-            int partialLength = 0;
+            try { all = Process.GetProcesses(); }   // 一次性快照，本身很快
+            catch { return list; }
 
             try
             {
+                var budget = System.Diagnostics.Stopwatch.StartNew();
                 foreach (var p in all)
                 {
-                    string path = TryGetPath(p);
+                    // 时间预算：正常一遍 10ms 以内，超了就放弃剩下的进程。
+                    // 这是硬保险 —— 图标顶多不显示，绝不允许任何环境变化把它变成秒级卡顿。
+                    if (budget.ElapsedMilliseconds > SnapshotBudgetMs)
+                    {
+                        Logger.Debug($"应用图标：进程表扫描超出 {SnapshotBudgetMs}ms 预算，提前收工（AUMID 可能匹配不到）");
+                        break;
+                    }
+
+                    int pid;
+                    try { pid = p.Id; } catch { continue; }
+
+                    string path = Win32.TryGetProcessImagePath(pid);
                     if (path.Length == 0) continue;
 
-                    bool isExact = false, isPartial = false;
-                    int best = 0;
-
-                    ScoreMatch(Normalize(p.ProcessName), wanted, ref isExact, ref isPartial, ref best);
-                    ScoreMatch(Normalize(Path.GetFileNameWithoutExtension(path)), wanted, ref isExact, ref isPartial, ref best);
-
-                    if (isExact) { exact = path; break; }
-                    if (isPartial && best > partialLength) { partialLength = best; partial = path; }
+                    list.Add(new ProcCandidate(path, Path.GetFileNameWithoutExtension(path)));
                 }
             }
             finally
             {
                 foreach (var p in all) p.Dispose();
+            }
+
+            return list;
+        }
+
+        /// <summary>进程表扫描的时间预算（毫秒）。正常一遍 10ms 以内，这个值只是防线。</summary>
+        private const int SnapshotBudgetMs = 250;
+
+        /// <summary>
+        /// 按可执行文件名找该应用的 exe 路径。命中优先级：归一化后完全同名 > 互相包含（取匹配得最长的那个）。
+        /// 顺序不保证时「谁先被枚举到就算谁」会让长得像同一家的应用互相串图标，所以要显式排序。
+        /// </summary>
+        private static string FindExeByAumid(List<ProcCandidate> procs, string aumid)
+        {
+            string wanted = Normalize(ProbeName(aumid));
+            if (wanted.Length < 3) return "";
+
+            string? exact = null;
+            string? partial = null;
+            int partialLength = 0;
+
+            foreach (var p in procs)
+            {
+                bool isExact = false, isPartial = false;
+                int best = 0;
+
+                ScoreMatch(Normalize(p.Name), wanted, ref isExact, ref isPartial, ref best);
+                ScoreMatch(Normalize(Path.GetFileNameWithoutExtension(p.Path)), wanted, ref isExact, ref isPartial, ref best);
+
+                if (isExact) { exact = p.Path; break; }
+                if (isPartial && best > partialLength) { partialLength = best; partial = p.Path; }
             }
 
             return exact ?? partial ?? "";
@@ -333,56 +401,42 @@ namespace NotchPeninsula
         /// Program Files\bilibili\哔哩哔哩.exe 共享目录名词元 bilibili。
         /// 并列最高分直接放弃：宁可没有图标，也不能挂上别的程序的图标。
         /// </summary>
-        private static string FindExeByTokenOverlap(string aumid)
+        private static string FindExeByTokenOverlap(List<ProcCandidate> procs, string aumid)
         {
             var wanted = Tokenize(aumid);
             if (wanted.Count == 0) return "";
-
-            Process[] all;
-            try { all = Process.GetProcesses(); }
-            catch { return ""; }
 
             string best = "";
             int bestScore = 0;
             bool tied = false;
 
-            try
+            foreach (var p in procs)
             {
-                foreach (var p in all)
+                var tokens = Tokenize(p.Name);
+                tokens.UnionWith(Tokenize(Path.GetFileNameWithoutExtension(p.Path)));
+                string? folder = Path.GetDirectoryName(p.Path);
+                if (!string.IsNullOrEmpty(folder)) tokens.UnionWith(Tokenize(Path.GetFileName(folder)));
+
+                int score = 0;
+                bool strong = false; // 命中的词元里有没有一个「够特别」的（够长且不是通用词）
+                foreach (string token in tokens)
                 {
-                    string path = TryGetPath(p);
-                    if (path.Length == 0) continue;
-
-                    var tokens = Tokenize(p.ProcessName);
-                    tokens.UnionWith(Tokenize(Path.GetFileNameWithoutExtension(path)));
-                    string? folder = Path.GetDirectoryName(path);
-                    if (!string.IsNullOrEmpty(folder)) tokens.UnionWith(Tokenize(Path.GetFileName(folder)));
-
-                    int score = 0;
-                    bool strong = false; // 命中的词元里有没有一个「够特别」的（够长且不是通用词）
-                    foreach (string token in tokens)
-                    {
-                        if (!wanted.Contains(token)) continue;
-                        score++;
-                        if (token.Length >= 5 && !GenericTokens.Contains(token)) strong = true;
-                    }
-
-                    // 只有一个共同词元时，它必须足够特别才算数（洛雪音乐靠 music + desktop 两个词元命中）
-                    if (score == 0 || (score == 1 && !strong)) continue;
-
-                    if (score > bestScore) { bestScore = score; best = path; tied = false; }
-                    // 只有「分数相同、但不是同一个 exe」才算并列。
-                    //    同一个应用常常同时跑多个进程（Electron / Chromium 的主进程 + 渲染进程 + GPU 进程…），
-                    //    它们的可执行文件路径完全一样 —— 那只是重复，不是并列。
-                    //    以前这里无条件判 tied，于是这类多进程应用会永远拿不到图标
-                    //    （实测：哔哩哔哩 PC 版 com.bilibili.bilibiliPC，日志里稳定复现）。
-                    else if (score == bestScore && !string.Equals(path, best, StringComparison.OrdinalIgnoreCase))
-                        tied = true;
+                    if (!wanted.Contains(token)) continue;
+                    score++;
+                    if (token.Length >= 5 && !GenericTokens.Contains(token)) strong = true;
                 }
-            }
-            finally
-            {
-                foreach (var p in all) p.Dispose();
+
+                // 只有一个共同词元时，它必须足够特别才算数（洛雪音乐靠 music + desktop 两个词元命中）
+                if (score == 0 || (score == 1 && !strong)) continue;
+
+                if (score > bestScore) { bestScore = score; best = p.Path; tied = false; }
+                // 只有「分数相同、但不是同一个 exe」才算并列。
+                //    同一个应用常常同时跑多个进程（Electron / Chromium 的主进程 + 渲染进程 + GPU 进程…），
+                //    它们的可执行文件路径完全一样 —— 那只是重复，不是并列。
+                //    以前这里无条件判 tied，于是这类多进程应用会永远拿不到图标
+                //    （实测：哔哩哔哩 PC 版 com.bilibili.bilibiliPC，日志里稳定复现）。
+                else if (score == bestScore && !string.Equals(p.Path, best, StringComparison.OrdinalIgnoreCase))
+                    tied = true;
             }
 
             return tied ? "" : best;
@@ -453,13 +507,6 @@ namespace NotchPeninsula
             }
 
             return set;
-        }
-
-        /// <summary>读某进程的 exe 完整路径；受保护 / 位数不匹配 / 已退出的进程读不到，一律返回空串。</summary>
-        private static string TryGetPath(Process p)
-        {
-            try { return p.MainModule?.FileName ?? ""; }
-            catch { return ""; }
         }
     }
 }

@@ -520,12 +520,7 @@ namespace NotchPeninsula
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
 
-                        if (_marketDialog == MarketDialog.ConfirmUninstall)
-                        {
-                            for (int b = 0; b < 2; b++)
-                                if (GetMarketDialogButtonRect(rect, b).Contains(x, y)) newHoveredDialogButton = b;
-                        }
-                        else if (_marketDialog == MarketDialog.Rate && _rateMine <= 0 && !_rateLoading)
+                        if (_marketDialog == MarketDialog.Rate && _rateMine <= 0 && !_rateLoading)
                         {
                             // 星星悬停 → 实时预览分值（半星粒度）。
                             // 右半边必须 +1.0 而不是 +0.5：写成 floor(rel)+0.5 时，
@@ -578,25 +573,18 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 6) // 我的插件
             {
-                if (_marketDialog == MarketDialog.ConfirmRemoveLocal || _marketDialog == MarketDialog.LoadFailed)
+                if (_marketDialog == MarketDialog.LoadFailed)
                 {
                     // 弹窗打开：只算关闭按钮（命中框外扩 4px）与弹窗内的按钮，底下列表完全不吃悬停
                     // —— 与市场弹窗（tab 7）同一套规矩。加载失败提示只有一颗居中按钮。
+                    // （卸载 / 重载都不再有确认弹窗，这里只剩这一种 —— 见 Click.cs。）
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
                     {
                         var close = GetMarketDialogCloseRect(rect);
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
-                        if (_marketDialog == MarketDialog.LoadFailed)
-                        {
-                            if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
-                        }
-                        else
-                        {
-                            for (int b = 0; b < 2; b++)
-                                if (GetMarketDialogButtonRect(rect, b).Contains(x, y)) newHoveredDialogButton = b;
-                        }
+                        if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
                     }
                 }
                 else

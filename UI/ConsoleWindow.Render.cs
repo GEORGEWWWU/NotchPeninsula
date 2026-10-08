@@ -396,12 +396,14 @@ namespace NotchPeninsula
                 else _dynamicFillPaint.Color = hot ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                 canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
                 float tw = _uiTextPaint.MeasureText(label);
-                if (!enabled) _uiTextPaint.Color = Neutral(110);
+                // 蓝底白字：浅色外观下 _fgColor 是纯黑，压在蓝底上几乎看不清（深色外观下本来就是白，
+                // 所以这里写死白色对两套外观都正确）。置灰态走灰色文字 + 极淡底，不参与这条规则。
+                _uiTextPaint.Color = enabled ? SKColors.White : Neutral(110);
                 canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + SOUND_BTN_Y + 17, _uiTextPaint);
                 // 恢复色必须是 _uiTextPaint 的基准色 _fgColor，不能写 (240,240,240)：
                 //    这一行之后还要画「剪贴板链接检测」「切换灵动岛字体」两张卡的标题，
-                //    残留的 240 会把它们一起压暗（置灰态下必现，因为 enabled=false 才会走这里）。
-                if (!enabled) _uiTextPaint.Color = _fgColor;
+                //    残留的 240 会把它们一起压暗（置灰态下必现）。
+                _uiTextPaint.Color = _fgColor;
             }
 
             DrawSoundButton(_soundPreviewHovered, "试听", SOUND_PREVIEW_X, SOUND_BTN_W, soundReady);
@@ -434,7 +436,9 @@ namespace NotchPeninsula
                 _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                 canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
                 float tw = _uiTextPaint.MeasureText(label);
+                _uiTextPaint.Color = SKColors.White;   // 蓝底白字（浅色外观下 _fgColor 是黑的，压蓝底看不清）
                 canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + FONT_BTN_Y + 18, _uiTextPaint);
+                _uiTextPaint.Color = _fgColor;
             }
 
             DrawFontButton(_fontPickHovered, "选择字体", FONT_PICK_X, FONT_PICK_W);
@@ -1335,7 +1339,9 @@ namespace NotchPeninsula
                 _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                 canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
                 float tw = _uiTextPaint.MeasureText(label);
+                _uiTextPaint.Color = SKColors.White;   // 蓝底白字（浅色外观下 _fgColor 是黑的，压蓝底看不清）
                 canvas.DrawText(label, bx + (bw - tw) / 2f, by + 17, _uiTextPaint);
+                _uiTextPaint.Color = _fgColor;
             }
 
             DrawPluginButton(0, "导入 DLL", CONTENT_TEXT_X, topY + 60, 96);
@@ -1491,16 +1497,11 @@ namespace NotchPeninsula
                 _uiTextPaint.Color = _fgColor;
             }
 
-            // ── 弹窗（卸载确认 / 加载失败提示，与市场那套同一模板，画在卡片与拖入高亮之上）──
+            // ── 弹窗（加载失败提示，与市场那套同一模板，画在卡片与拖入高亮之上）──
+            // 卸载 / 重载都不再有确认弹窗（见 Click.cs）：它们只挪文件、不做不可逆的事。
             if (_marketDialog == MarketDialog.LoadFailed)
             {
                 DrawLoadFailedDialog(canvas);
-            }
-            else if (_marketDialog == MarketDialog.ConfirmRemoveLocal)
-            {
-                // 条目失效（刷新过列表 / 别处已卸载）：直接收掉，别画一个指向空气的弹窗
-                if (_dialogRemoveEntry == null) CloseMarketDialog();
-                else DrawRemoveLocalDialog(canvas);
             }
         }
 
@@ -1905,7 +1906,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 弹窗头部：左上标题（超宽截断，带 Emoji 回退）+ 右上关闭按钮（悬停加粗变亮）。
-        /// 返回正文起始 y —— 四种弹窗（详情 / 评分 / 市场卸载确认 / 本地卸载确认）共用这一段，
+        /// 返回正文起始 y —— 三种弹窗（详情 / 评分 / 加载失败）共用这一段，
         /// 样式一致靠它保证，别在各自的分支里再抄一遍。
         /// </summary>
         private float DrawDialogHeader(SKCanvas canvas, SKRect rect, string title)
@@ -1938,9 +1939,9 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 市场弹窗总入口：详情 / 评分 / 卸载确认共用头部模板（见 DrawDialogHeader），
-        /// 正文按类型分派。圆角与描边沿用原来那套（_menuBg + _menuBorder）。
-        /// 注：本地插件（「我的插件」页签）的卸载确认走 DrawRemoveLocalDialog，目标不是市场条目。
+        /// 市场弹窗总入口：详情 / 评分共用头部模板（见 DrawDialogHeader），正文按类型分派。
+        /// 圆角与描边沿用原来那套（_menuBg + _menuBorder）。
+        /// 注：卸载不再有确认弹窗（只挪文件、不做不可逆的事，见 Click.cs）。
         /// </summary>
         private void DrawMarketDialog(SKCanvas canvas, MarketPlugin mp)
         {
@@ -1953,7 +1954,6 @@ namespace NotchPeninsula
             string title = _marketDialog switch
             {
                 MarketDialog.Rate => $"评价「{mp.Name}」",
-                MarketDialog.ConfirmUninstall => "确认卸载",
                 _ => mp.Name,
             };
 
@@ -1963,7 +1963,6 @@ namespace NotchPeninsula
             {
                 case MarketDialog.Detail: DrawDialogDetail(canvas, rect, mp, bodyY); break;
                 case MarketDialog.Rate: DrawDialogRate(canvas, rect, mp, bodyY); break;
-                case MarketDialog.ConfirmUninstall: DrawDialogConfirm(canvas, rect, mp, bodyY); break;
             }
         }
 
@@ -2097,57 +2096,14 @@ namespace NotchPeninsula
             return p;
         }
 
-        // 卸载确认正文：两行说明 + 按钮行
-        private void DrawDialogConfirm(SKCanvas canvas, SKRect rect, MarketPlugin mp, float y)
-        {
-            var local = MatchLocalPlugin(mp);
-            string line1 = $"确定要卸载「{mp.Name}」吗？";
-            string line2 = local != null ? $"本地版本 v{local.Version} 将被移入 plugins\\_recycle，可手动找回。"
-                : "本机没有安装这个插件。";
-            _subTextPaint.Color = Neutral(200);
-            canvas.DrawText(TruncateText(line1, _subTextPaint, DialogInnerW), rect.Left + DialogPad, y + 12, _subTextPaint);
-            _subTextPaint.Color = Neutral(150);
-            canvas.DrawText(TruncateText(line2, _subTextPaint, DialogInnerW), rect.Left + DialogPad, y + 12 + DialogLineH, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
-
-            DrawDialogButton(canvas, rect, 0, "卸载", true, _hoveredDialogButton == 0);
-            DrawDialogButton(canvas, rect, 1, "取消", false, _hoveredDialogButton == 1);
-        }
-
-        /// <summary>
-        /// 「我的插件」列表的卸载确认正文：与市场确认弹窗同一模板，只是目标换成宿主侧的本地条目
-        /// （名称 / 版本直接取 PluginEntry，不再走一遍市场匹配 —— 这个页签本来就没有市场上下文）。
-        /// </summary>
-        private void DrawRemoveLocalDialog(SKCanvas canvas)
-        {
-            var pe = _dialogRemoveEntry!;
-            var rect = GetConfirmDialogRect();
-            canvas.DrawRoundRect(rect, 8, 8, _menuBg);
-            canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
-
-            float bodyY = DrawDialogHeader(canvas, rect, "确认卸载");
-            string line1 = $"确定要卸载「{pe.FriendlyName}」吗？";
-            string line2 = pe.Version.Length > 0
-                ? $"v{pe.Version} 将被移入 plugins\\_recycle，可手动找回。"
-                : "插件文件将被移入 plugins\\_recycle，可手动找回。";
-            _subTextPaint.Color = Neutral(200);
-            canvas.DrawText(TruncateText(line1, _subTextPaint, DialogInnerW), rect.Left + DialogPad, bodyY + 12, _subTextPaint);
-            _subTextPaint.Color = Neutral(150);
-            canvas.DrawText(TruncateText(line2, _subTextPaint, DialogInnerW), rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
-
-            DrawDialogButton(canvas, rect, 0, "卸载", true, _hoveredDialogButton == 0);
-            DrawDialogButton(canvas, rect, 1, "取消", false, _hoveredDialogButton == 1);
-        }
-
         /// <summary>
         /// 加载失败提示弹窗：标题 + 两行正文 + 一颗居中的「好的」。
-        /// 与确认弹窗同模板，只是按钮从「危险主操作 + 取消」简化成单按钮 —— 纯告知，
-        /// 没有可取消的动作，关闭叉 / 点外部 / 点按钮都是关窗（见 Click.cs 两个页签的分支）。
+        /// 纯告知，没有可取消的动作，关闭叉 / 点外部 / 点按钮都是关窗（见 Click.cs 两个页签的分支）。
+        /// （这是插件相关唯一的弹窗 —— 卸载 / 重载都不再确认，见 Click.cs。）
         /// </summary>
         private void DrawLoadFailedDialog(SKCanvas canvas)
         {
-            var rect = GetConfirmDialogRect();
+            var rect = GetNoticeDialogRect();
             canvas.DrawRoundRect(rect, 8, 8, _menuBg);
             canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
 
@@ -2165,24 +2121,6 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
             _uiTextPaint.Color = SKColors.White;
             DrawCenteredButtonLabel(canvas, "好的", btn, _uiTextPaint);
-        }
-
-        /// <summary>弹窗按钮：primary = 蓝底白字（危险动作用红），否则灰底。</summary>
-        private void DrawDialogButton(SKCanvas canvas, SKRect rect, int index, string label, bool primary, bool hovered)
-        {
-            var r = GetMarketDialogButtonRect(rect, index);
-            if (primary)
-            {
-                _dynamicFillPaint.Color = hovered ? new SKColor(196, 60, 60) : new SKColor(176, 50, 50);
-                _uiTextPaint.Color = SKColors.White;
-            }
-            else
-            {
-                _dynamicFillPaint.Color = hovered ? Overlay(30) : Overlay(15);
-                _uiTextPaint.Color = _fgColor;
-            }
-            canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-            DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
         }
 
         // 各页签展开的下拉浮层（媒体平台 / 匹配方式 / 目标软件 / 通知内容 / 目标显示器）

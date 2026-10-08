@@ -32,7 +32,14 @@ namespace NotchPeninsula
         private readonly MediaController _media;
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
-        private readonly Timer _renderTimer;
+
+        // ---- 渲染线程 ----
+        // 为什么不用 System.Timers.Timer：它的回调跑在**线程池**上。而本进程里有大量会阻塞的
+        // 阻塞型 COM 调用（SMTC 的 GetTimelineProperties / GetPlaybackInfo —— 部分播放器
+        // 在切歌、弹会员窗口这类繁忙时刻能把线程挂住数秒）。线程池线程一旦被成片占住，
+        // 「下一帧」的回调就排在后面等调度 —— 岛体表现为整块冻住，而音乐照常在放。
+        // 渲染节拍必须有自己的线程：别人的卡顿只能拖慢别人，拖不动岛体。
+        private Thread? _renderThread;
         private readonly Win32.WndProc _wndProcDelegate;
 
         /// <summary>岛体的 OLE 拖入目标（详情页拖放用）。同时是 CCW 的强引用持有者，掉了可能被 GC 回收。</summary>
@@ -377,11 +384,20 @@ namespace NotchPeninsula
             InstanceHandle = _hwnd;
             // 让岛体也能接文件拖放：右键展开的插件详情页靠它实现「拖入 / 拖出」
             SetupIslandDropTarget();
-            // 将定时器提速至 16ms (~60FPS)，保障 Q弹 动画的丝滑度
-            _renderTimer = new Timer(16);
-            // 具名方法而非 lambda：才能在退出时 -= 退订（lambda 会把 this 钉在计时器上）
-            _renderTimer.Elapsed += OnRenderTick;
-            _renderTimer.Start();
+            // 渲染循环：独立线程 + 16ms 节拍（理由见 _renderThread 处）。
+            // 具名方法而不是 lambda：线程要能被命名、能在退出时观察（IsBackground 保证进程退出不被它拖住）。
+            _renderThread = new Thread(RenderThreadLoop)
+            {
+                IsBackground = true,
+                Name = "NPS-Render",
+                // 略高于普通线程：岛体的 60FPS 不能被后台的采样 / 网络链挤掉。
+                // 不到 Highest —— 系统级实时优先级会让整机都跟着卡。
+                Priority = ThreadPriority.AboveNormal
+            };
+            _renderThread.Start();
+            // 置顶保活：独立定时器（不在渲染线程上，见 EnsureTopmostAlive）
+            _topmostTimer = new System.Threading.Timer(
+                _ => EnsureTopmostAlive(), null, TOPMOST_KEEPALIVE_MS, TOPMOST_KEEPALIVE_MS);
 
             // 托盘图标与右键菜单（自绘纯色菜单，见 TrayMenuWindow）
             // 1. 先实例化托盘对象，防止闭包捕获到未初始化的变量
@@ -424,11 +440,64 @@ namespace NotchPeninsula
             _audioWatchTimer.Start();
         }
 
-        /// <summary>渲染时钟（16ms）。具名方法：退出时能 -= 退订。</summary>
-        private void OnRenderTick(object? sender, System.Timers.ElapsedEventArgs e)
+        // ---- 渲染线程主体 ----
+        /// <summary>帧间隔（毫秒）—— 60FPS。</summary>
+        private const int FrameIntervalMs = 16;
+
+        /// <summary>两帧之间空闲多久算「停顿」：比 16ms 多出这么多就记一行日志。</summary>
+        private const int FrameIdleWarnMs = 120;
+
+        private long _lastFrameEndMs = -1;
+        private long _lastPauseLogMs;
+
+        /// <summary>
+        /// 渲染线程：固定 16ms 节拍画岛体。
+        ///
+        /// 分段计时与停顿日志的分工（排查卡死的唯一凭据，别删）：
+        ///   · 「[渲染卡顿] 单帧 Nms —— 歌词/采样 a · 绘制 b · 提交 c」由 RenderLoop 写：
+        ///     本帧**自己**花掉的时间太久 —— 说明渲染线程里有人在等（阻塞调用、插件代码）。
+        ///   · 「[渲染停顿] 距上一帧 Nms」由本方法写：帧间空闲异常长，而本帧自身并不慢 ——
+        ///     说明**不是**本帧干的，而是这一帧迟迟没被调度（CPU 被抢 / 系统繁忙）。
+        ///     本线程是专用线程，所以运维上再出现这一条就只剩「整机 CPU 挤爆」这一种解释。
+        /// </summary>
+        private void RenderThreadLoop()
         {
-            RenderLoop();
-            EnsureTopmostAlive();
+            var clock = Stopwatch.StartNew();
+            long nextTick = 0;
+
+            while (!_shuttingDown)
+            {
+                long frameStart = clock.ElapsedMilliseconds;
+                if (_lastFrameEndMs >= 0)
+                {
+                    long idle = frameStart - _lastFrameEndMs;
+                    if (idle >= FrameIdleWarnMs && frameStart - _lastPauseLogMs >= 1000)
+                    {
+                        _lastPauseLogMs = frameStart;
+                        Warn($"[渲染停顿] 距上一帧 {idle}ms，而本帧自身并不慢 —— "
+                            + "不是渲染线程被占用（那会同时出现 [渲染卡顿]），而是它迟迟没被调度");
+                    }
+                }
+
+                RenderLoop();   // 内部自带帧内分段计时，超阈值写 [渲染卡顿]
+
+                long frameEnd = clock.ElapsedMilliseconds;
+                _lastFrameEndMs = frameEnd;
+
+                // 下一拍 = 16ms 网格。落后了就把网格拉回当前时刻 —— **不追帧**：
+                // 追帧会在一次停顿之后连着补画好几帧，观感反而是二次顿挫。
+                nextTick += FrameIntervalMs;
+                long remain;
+                while (!_shuttingDown && (remain = nextTick - clock.ElapsedMilliseconds) > 0)
+                {
+                    // 富余多就让出 CPU；最后几毫秒改成忙等 ——
+                    // Thread.Sleep(1) 的实际粒度取决于系统定时器分辨率（可能是 15.6ms），
+                    // 全交给它对齐 16ms 网格会把帧率压到 30 上下。
+                    if (remain > 4) Thread.Sleep(1);
+                    else Thread.Yield();
+                }
+                if (nextTick < clock.ElapsedMilliseconds) nextTick = clock.ElapsedMilliseconds;
+            }
         }
 
         // 置顶保活：WS_EX_TOPMOST 只是窗口的一个样式位，Windows 并不替我们看守 topmost 组内部的次序。
@@ -438,28 +507,46 @@ namespace NotchPeninsula
         // （那次 SetWindowPos 把它重新提到了组首）。这里按固定间隔补同样的调用，省掉手工那一步。
 
         private const int TOPMOST_KEEPALIVE_MS = 2000;
-        private long _lastTopmostKeepAlive;
+        private System.Threading.Timer? _topmostTimer;
+        private int _topmostKeepAliveRunning;
 
+        /// <summary>
+        /// 补一次置顶。
+        ///
+        /// ⚠️ 必须跑在**独立定时器的线程池线程**上，绝不能放回渲染线程（曾经由渲染 tick 每次调用）：
+        /// `SetWindowPos(HWND_TOPMOST)` 要改动全局 Z 序，当系统里正有别的置顶窗口在出现 / 消失
+        /// （别的播放器弹会员窗、任务栏组件、托盘菜单…）时，这个调用会去等窗口管理器与对方线程，
+        /// 可能挂住几十毫秒到几秒 —— 挂在渲染线程上就是「别的软件一弹窗，我的灵动岛就冻住」。
+        /// 放在这里：就算它卡住，也只是这一拍迟到（重入闸会丢弃重叠的下一拍），岛体照常出帧。
+        /// </summary>
         private void EnsureTopmostAlive()
         {
-            if (!IsTopmostEnabled || _hwnd == IntPtr.Zero) return;
+            if (_shuttingDown || !IsTopmostEnabled || _hwnd == IntPtr.Zero) return;
+            if (Interlocked.Exchange(ref _topmostKeepAliveRunning, 1) == 1) return;
 
-            long now = Environment.TickCount64;
-            if (now - _lastTopmostKeepAlive < TOPMOST_KEEPALIVE_MS) return;
-            _lastTopmostKeepAlive = now;
-
-            // 用户正在操作本进程的其它窗口（设置窗口 / 插件窗口）时不动 Z 序：
-            // 那些窗口与岛矩形重叠，把岛提到最前会让点击落到岛身上，设置窗口就点不动了。
-            IntPtr foreground = Win32.GetForegroundWindow();
-            if (foreground != IntPtr.Zero && foreground != _hwnd)
+            try
             {
-                _ = Win32.GetWindowThreadProcessId(foreground, out uint pid);
-                if (pid == (uint)Environment.ProcessId) return;
-            }
+                // 用户正在操作本进程的其它窗口（设置窗口 / 插件窗口）时不动 Z 序：
+                // 那些窗口与岛矩形重叠，把岛提到最前会让点击落到岛身上，设置窗口就点不动了。
+                IntPtr foreground = Win32.GetForegroundWindow();
+                if (foreground != IntPtr.Zero && foreground != _hwnd)
+                {
+                    _ = Win32.GetWindowThreadProcessId(foreground, out uint pid);
+                    if (pid == (uint)Environment.ProcessId) return;
+                }
 
-            // SWP_NOACTIVATE 必带：补 Z 序不能顺手把焦点从用户正在用的窗口抢过来。
-            Win32.SetWindowPos(_hwnd, Win32.HWND_TOPMOST, 0, 0, 0, 0,
-                Win32.SWP_NOMOVE_NOSIZE | Win32.SWP_NOACTIVATE);
+                // SWP_NOACTIVATE 必带：补 Z 序不能顺手把焦点从用户正在用的窗口抢过来。
+                Win32.SetWindowPos(_hwnd, Win32.HWND_TOPMOST, 0, 0, 0, 0,
+                    Win32.SWP_NOMOVE_NOSIZE | Win32.SWP_NOACTIVATE);
+            }
+            catch (Exception ex)
+            {
+                Debug($"置顶保活异常（忽略）: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _topmostKeepAliveRunning, 0);
+            }
         }
 
         /// <summary>系统音量看门狗（500ms）。具名方法：退出时能 -= 退订。</summary>
@@ -507,15 +594,18 @@ namespace NotchPeninsula
         /// </summary>
         private void ShutdownResources()
         {
-            // 1) 渲染时钟：置位退出标记 → 停表 → 退订 → Dispose
+            // 1) 渲染线程：置退出标记 → 等它自己收尾（最长 500ms，超时不硬杀 ——
+            //    它是后台线程，进程退出不会等它，这里只是尽量让它把最后一帧收干净）
             _shuttingDown = true;
             try
             {
-                _renderTimer.Elapsed -= OnRenderTick;
-                _renderTimer.Stop();
-                _renderTimer.Dispose();
+                var t = _renderThread;
+                if (t != null && !t.Join(500)) Warn("[渲染线程] 退出前未在 500ms 内收尾，交给进程终止兜底");
             }
             catch { }
+
+            // 1b) 置顶保活定时器
+            try { _topmostTimer?.Dispose(); _topmostTimer = null; } catch { }
 
             // 2) 系统音量看门狗
             try
@@ -1393,6 +1483,12 @@ namespace NotchPeninsula
             }
 
             // ---- 4. 渲染调用更新 ----
+            // 卡顿自检的计时起点。岛体的「卡死」只可能有一个来源 —— 渲染线程被谁挡住了，
+            // 但那一段藏着几十个调用，光看现象只能猜（本次「切歌卡死」就是这样：
+            // 躲在 UpdateLyrics 里的 SMTC COM 调用肉眼看不见）。分三段计时后一眼能定位。
+            long tFrameStart = Environment.TickCount64;
+            long tLyricDone = tFrameStart, tDrawDone = tFrameStart;
+
             var canvas = _renderSurface!.Canvas;
             canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
 
@@ -1415,9 +1511,11 @@ namespace NotchPeninsula
                 canvas.Scale(_dpiScale);
 
                 _media.UpdateLyrics(); // 更新歌词
+                tLyricDone = Environment.TickCount64;
 
                 // 传入 currentHeight 和 _currentToast
                 Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha, isClipboardActive ? _clipboardUrl : null);
+                tDrawDone = Environment.TickCount64;
 
                 // 恢复原始矩阵状态
                 canvas.Restore();
@@ -1432,6 +1530,17 @@ namespace NotchPeninsula
             }
 
             UpdateWindow();
+
+            // 卡顿自检：整帧超过阈值就把三段耗时落一条 WARN（一秒最多一条，避免刷屏）。
+            // 只有「岛体真的卡住了」才会出现这一行，平时完全静音。
+            long tFrameEnd = Environment.TickCount64;
+            long frameMs = tFrameEnd - tFrameStart;
+            if (frameMs >= FrameStallLogMs && tFrameEnd - _lastStallLogTick >= 1000)
+            {
+                _lastStallLogTick = tFrameEnd;
+                Warn($"[渲染卡顿] 单帧 {frameMs}ms —— 歌词/采样 {tLyricDone - tFrameStart}ms"
+                    + $" · 绘制 {tDrawDone - tLyricDone}ms · 提交 {tFrameEnd - tDrawDone}ms");
+            }
             }
             finally
             {
@@ -1439,6 +1548,12 @@ namespace NotchPeninsula
                 System.Threading.Interlocked.Exchange(ref _isRendering, 0);
             }
         }
+
+        /// <summary>单帧超过它就记一条卡顿日志（正常帧 16ms 上下，120ms 已是肉眼可见的顿挫）。</summary>
+        private const long FrameStallLogMs = 120;
+
+        /// <summary>上一条卡顿日志的时刻，用于限流（Environment.TickCount64）。</summary>
+        private long _lastStallLogTick;
 
         // 把 LyricServer 的 12 个频段（低频→高频）按区间取峰值压缩为渲染层的 5 根柱。
         // 返回复用缓冲以避免每帧分配；调用方只有 RenderLoop，且它由 _isRendering 保证串行执行，
@@ -1632,7 +1747,7 @@ namespace NotchPeninsula
         /// <summary>
         /// 在岛体上发起一次系统拖放（详情页把条目「拖出去」时用）。阻塞到用户松手或按 Esc 取消。
         ///
-        /// 这个方法会在主线程里进入 OLE 的模态循环，但宿主的渲染是独立计时器驱动的（见 _renderTimer），
+        /// 这个方法会在主线程里进入 OLE 的模态循环，但宿主的渲染由独立的渲染线程驱动（见 _renderThread），
         /// 所以这段时间岛体动画照常，不会卡死。
         /// </summary>
         public static bool StartFileDragOnIsland(IReadOnlyList<string> paths, bool allowMove = false)

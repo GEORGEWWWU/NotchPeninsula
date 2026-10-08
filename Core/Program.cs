@@ -238,6 +238,17 @@ namespace NotchPeninsula
                 // 支持多屏幕不同缩放自动适应
                 SetProcessDpiAwarenessContext(new IntPtr(-4));
 
+                // 线程池下限兜底：本进程有一批「会阻塞的 COM 调用」（SMTC 的 GetTimelineProperties /
+                // GetPlaybackInfo / TryGetMediaPropertiesAsync），部分播放器在切歌、弹会员窗这类时刻
+                // 能把调用线程挂住好几秒。而通知轮询 / 音量看门狗 / 插件定时器 / 托盘菜单都跑在线程池上 ——
+                // 一旦被几笔卡住的调用占满，它们就集体迟滞。把下限抬到 2×CPU（至少 16），
+                // 让「几笔卡住的调用」再也吃不掉整池。
+                // 注意：这是兜底、不是修复 —— 真正的修复是「渲染节拍不再依赖线程池」
+                //（见 NotchWindow._renderThread）与「接管重挑的合并闸」（见 MediaController.UpdateSession）。
+                int minWorkers = Math.Max(16, Environment.ProcessorCount * 2);
+                ThreadPool.GetMinThreads(out int curWorkers, out int curIo);
+                if (curWorkers < minWorkers) ThreadPool.SetMinThreads(minWorkers, curIo);
+
                 if (args.Length > 0 && args[0] == "-debug")
                 {
                     _isDebugMode = true;

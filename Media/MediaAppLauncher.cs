@@ -354,16 +354,11 @@ namespace NotchPeninsula
         /// <summary>从指定进程读它的 exe 完整路径；进程已退出 / 无权限读到时返回 null。</summary>
         private static string? TryGetProcessImagePath(uint pid)
         {
-            try
-            {
-                using var p = Process.GetProcessById((int)pid);
-                string? path = p.MainModule?.FileName;
-                return !string.IsNullOrEmpty(path) && File.Exists(path) ? path : null;
-            }
-            catch
-            {
-                return null;
-            }
+            // 走 Win32 那条廉价通道，不用 Process.MainModule —— 后者要开 PROCESS_VM_READ 并枚举
+            // 目标进程的模块表，碰上繁忙 / 被保护 / 正在退出的进程会阻塞（实测全表扫一遍要 4 秒）。
+            // 这条路径在「双击封面跳转应用」时跑在 UI 线程上，卡住就是整窗口假死。
+            string path = Win32.TryGetProcessImagePath((int)pid);
+            return path.Length > 0 && File.Exists(path) ? path : null;
         }
 
         /// <summary>
@@ -392,8 +387,9 @@ namespace NotchPeninsula
                     if (!string.Equals(candidates[i].ProcessName, exeName, StringComparison.OrdinalIgnoreCase)) continue;
                     try
                     {
-                        string? path = candidates[i].MainModule?.FileName;
-                        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                        int pid = candidates[i].Id;
+                        string path = Win32.TryGetProcessImagePath(pid);   // 同上：不用 MainModule
+                        if (path.Length > 0 && File.Exists(path))
                         {
                             exePath = path;
                             return true;

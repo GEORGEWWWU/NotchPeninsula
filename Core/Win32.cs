@@ -535,6 +535,61 @@ namespace NotchPeninsula
         [DllImport("kernel32.dll")]
         public static extern uint GetCurrentThreadId();
 
+        // ---- 进程映像路径 ----
+        //
+        // 为什么需要这一组：`Process.MainModule` 在 .NET 上要为目标进程开 PROCESS_VM_READ 并
+        // **枚举它的模块表**，遇到被保护 / 繁忙 / 正在退出的进程会长时间阻塞 ——
+        // 实测「把系统里所有进程都过一遍」要 4 秒左右（有杀软时更久），
+        // 而这个动作在「AUMID 匹配不上」时会跑两遍（见 AppIconProvider 的诊断日志），
+        // 于是每换一首歌就冻住 8 秒（2026-10-08 用户实测的「切歌必卡」就是这个）。
+        //
+        // QueryFullProcessImageName 只读映像路径本身，句柄只要 PROCESS_QUERY_LIMITED_INFORMATION，
+        // 对绝大多数进程（含受保护进程）都能拿到，且是微秒级、不阻塞。
+
+        public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool QueryFullProcessImageNameW(IntPtr hProcess, uint dwFlags,
+                                                              StringBuilder lpExeName, ref int lpdwSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        /// <summary>
+        /// 取某个进程的映像完整路径；取不到（进程已退出 / 权限不足）返回空串。
+        /// 绝不阻塞：不用 Process.MainModule，理由见上面那段注释。
+        /// </summary>
+        public static string TryGetProcessImagePath(int pid)
+        {
+            if (pid <= 0) return "";
+
+            IntPtr h = IntPtr.Zero;
+            try
+            {
+                h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+                if (h == IntPtr.Zero) return "";
+
+                int size = 1024;   // 单位是字符
+                var sb = new StringBuilder(size);
+                if (!QueryFullProcessImageNameW(h, 0, sb, ref size)) return "";
+                return sb.ToString();
+            }
+            catch
+            {
+                return "";
+            }
+            finally
+            {
+                if (h != IntPtr.Zero)
+                {
+                    try { CloseHandle(h); } catch { }
+                }
+            }
+        }
+
         /// <summary>
         /// 把自己的输入队列临时挂到另一个线程上 —— 前台锁（foreground lock）会拒绝跨线程的
         /// SetForegroundWindow，挂上之后再调用就能通过。用完必须立刻解挂（调用方用 finally 保证）。

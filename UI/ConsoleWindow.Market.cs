@@ -211,18 +211,17 @@ namespace NotchPeninsula
         private int _marketScroll;                       // 市场列表滚动首行（绝对条目下标）
 
         // 弹窗（同一套外观：左上标题 + 右上关闭按钮 + 可选正文/按钮行）
-        //   详情 / 评分 / 卸载确认 / 本地插件卸载确认 / 加载失败提示五种弹窗互斥，同一时刻最多一个。
-        //   ConfirmRemoveLocal 是「我的插件」列表的卸载确认：目标不是市场条目而是本地
-        //   PluginEntry（存 _dialogRemoveEntry），矩形与交互复用市场确认弹窗同一套模板。
+        //   详情 / 评分 / 加载失败提示三种弹窗互斥，同一时刻最多一个。
+        //   卸载（市场里的与「我的插件」列表里的那一个）都没有确认弹窗 —— 它只是把插件文件
+        //   挪进 plugins\_recycle（可手动找回），不是不可逆操作，弹一次确认只是多一步操作。
         //   LoadFailed 是纯告知（导入 / 安装失败时给「确认宿主是最新版 + QQ 群下载」的引导），
         //   只有一颗「好的」，两个页签都要能画出来。
-        private enum MarketDialog { None, Detail, Rate, ConfirmUninstall, ConfirmRemoveLocal, LoadFailed }
+        private enum MarketDialog { None, Detail, Rate, LoadFailed }
 
         private MarketDialog _marketDialog = MarketDialog.None;
         private int _marketDialogIndex = -1;             // 弹窗对应的市场条目下标
-        private PluginEntry? _dialogRemoveEntry;         // ConfirmRemoveLocal 弹窗对应的本地插件
         private bool _hoveredDialogClose;                // 弹窗右上角 ❌ 是否悬停
-        private int _hoveredDialogButton = -1;           // 弹窗内按钮：0 = 主按钮，1 = 取消
+        private int _hoveredDialogButton = -1;           // 弹窗内按钮：0 = 主按钮（加载失败提示的「好的」）
 
         // 评分弹窗状态（进入时向服务端要一次「我评过没有」）
         private double _rateStars;                       // 0..5，鼠标预览中的分值（半星为 .5）
@@ -244,7 +243,6 @@ namespace NotchPeninsula
             if (_marketDialog == MarketDialog.None && _marketDialogIndex == -1) return;
             _marketDialog = MarketDialog.None;
             _marketDialogIndex = -1;
-            _dialogRemoveEntry = null;
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
             _rateStatus = "";
@@ -267,7 +265,6 @@ namespace NotchPeninsula
             // 市场那条路进来时没有市场条目：下标复位，渲染 / 命中靠 GetCurrentDialogRect
             //    单独回答 LoadFailed 的矩形（见那里的注释）。
             _marketDialogIndex = -1;
-            _dialogRemoveEntry = null;
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
             if (render) Render();
@@ -617,14 +614,6 @@ namespace NotchPeninsula
         private static SKRect GetMarketDialogCloseRect(SKRect popup)
             => new SKRect(popup.Right - DialogPad - 18f, popup.Top + 8f, popup.Right - DialogPad, popup.Top + 8f + 18f);
 
-        /// <summary>弹窗内按钮矩形。index：0 = 主按钮（右），1 = 取消（主按钮左侧）。</summary>
-        private static SKRect GetMarketDialogButtonRect(SKRect popup, int index)
-        {
-            float y = popup.Bottom - 6f - DialogBtnH - 12f;
-            float x0 = index == 0 ? popup.Right - DialogPad - DialogBtnW : popup.Right - DialogPad - DialogBtnW * 2 - 8f;
-            return new SKRect(x0, y, x0 + DialogBtnW, y + DialogBtnH);
-        }
-
         /// <summary>评分弹窗里五颗星的行矩形（与 DrawDialogRate 的排版共用同一套偏移）。</summary>
         private static SKRect GetRateStarsRect(SKRect popup)
         {
@@ -651,13 +640,12 @@ namespace NotchPeninsula
         /// </summary>
         private static SKRect GetRateDialogRect() => GetMarketDialogRect(4f, false);
 
-        /// <summary>卸载确认弹窗矩形：标题 + 两行正文 + 按钮行。（加载失败提示同款高度）</summary>
-        private static SKRect GetConfirmDialogRect() => GetMarketDialogRect(2f, true);
+        /// <summary>单按钮告知弹窗（插件加载失败提示）的矩形：标题 + 两行正文 + 按钮行。</summary>
+        private static SKRect GetNoticeDialogRect() => GetMarketDialogRect(2f, true);
 
         /// <summary>
         /// 单按钮告知弹窗里那颗按钮的矩形：水平居中。
-        /// 与 GetMarketDialogButtonRect 的「右对齐主按钮 + 左取消」不同 —— 没有可取消的动作时，
-        /// 居中的单按钮才是用户期待的位置（Windows 消息框也是居中）。
+        /// 没有可取消的动作时，居中的单按钮才是用户期待的位置（Windows 消息框也是居中）。
         /// </summary>
         private static SKRect GetDialogSingleButtonRect(SKRect popup)
         {
@@ -669,16 +657,15 @@ namespace NotchPeninsula
         /// <summary>当前打开着的弹窗矩形（没有弹窗返回空）。渲染 / 命中 / 点击三处共用。</summary>
         private SKRect GetCurrentDialogRect()
         {
-            // 这两种弹窗都不依赖市场条目：本地卸载确认（目标在 _dialogRemoveEntry 里）与加载失败提示
-            if (_marketDialog == MarketDialog.ConfirmRemoveLocal || _marketDialog == MarketDialog.LoadFailed)
-                return GetConfirmDialogRect();
+            // 加载失败提示没有市场条目（下标恒为 -1），单独回答矩形
+            if (_marketDialog == MarketDialog.LoadFailed) return GetNoticeDialogRect();
+
             var mp = GetMarketAt(_marketDialogIndex);
             if (mp == null) return SKRect.Empty;
             return _marketDialog switch
             {
                 MarketDialog.Detail => GetMarketDetailRect(mp),
                 MarketDialog.Rate => GetRateDialogRect(),
-                MarketDialog.ConfirmUninstall => GetConfirmDialogRect(),
                 _ => SKRect.Empty,
             };
         }
