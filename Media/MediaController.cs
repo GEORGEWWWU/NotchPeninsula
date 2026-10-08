@@ -438,6 +438,10 @@ namespace NotchPeninsula
         /// 换上「当前会话那个程序」的应用图标。
         /// 同一个程序的图标已经在位时直接返回 —— 视频模式下每次属性刷新都会走到这里，
         /// 没有这道闸就会反复新建 / 释放原生位图（AppIconProvider 只发副本，那个副本由我们持有）。
+        ///
+        /// 图标拿不到时（异步解析未完成 / 这个客户端根本解析不出图标，例如 AUMID 是纯中文的汽水音乐）
+        /// **什么都不做，绝不用 null 覆盖当前封面** —— 覆盖掉就会露出那张蓝色兜底图。
+        /// 宁可继续显示上一张封面，等解析成功（或网络封面）再换。
         /// </summary>
         private void SetAppIcon()
         {
@@ -446,8 +450,10 @@ namespace NotchPeninsula
             if (_appIconKey.Length > 0 && string.Equals(_appIconKey, _currentAppId, StringComparison.Ordinal)) return;
 
             var icon = AppIconProvider.Get(_currentAppId);
+            if (icon == null) return;      // 没图标：保持当前那张，别清空
+
             SetThumbnail(icon);            // 内部会把 _appIconKey 清空，所以这一步必须排在下面那行之前
-            if (icon != null) _appIconKey = _currentAppId;
+            _appIconKey = _currentAppId;
         }
 
         /// <summary>
@@ -499,13 +505,6 @@ namespace NotchPeninsula
         private int _musicModeMisses;
         private const int MusicModeMissGrace = 3;
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
-        // 「当前展示会话的原始标题里带 B 站网页后缀」—— 判据是 "_哔哩哔哩_bilibili"。
-        // 必须在 CleanBrowserTitle 之前判定：清理会把这个后缀抹掉，清完标题里就再也找不到它。
-        // 用途：封面改用该会话自带的那张（视频封面），而不是应用 / 浏览器图标。
-        //    它优先于「无歌手就只显示应用 logo」这条通用规则（见 UpdateCover 的 preferSessionCover）。
-        // 按会话存续：会话切换时重置（见 UpdateSession），同一会话内一旦判出就不再翻回
-        //    （见 RefreshPropertiesCore，站内切集时标题会经过不带后缀的中间态）。
-        private bool _isBilibiliBrowserSession;
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
         private readonly JustSoloLyricClient _justSoloLyric = new();
 
@@ -930,7 +929,6 @@ namespace NotchPeninsula
                 Title = "No Media";
                 Artist = "";
                 _isPlaying = false;
-                _isBilibiliBrowserSession = false;
                 _externalCoverAppId = "";
                 _externalCoverTitle = "";
                 SetThumbnail(null);
@@ -1046,9 +1044,9 @@ namespace NotchPeninsula
         // 「会话自带的封面优先」的播放器（AUMID 关键字，包含匹配，中英文都收 ——
         // 部分国产客户端用中文 AUMID）。
         //
-        // 这些播放器都会通过 SMTC 一并给出当前正在播放的那张封面，它比「按歌名 + 歌手去曲库搜出来的图」
-        // 更准：冷门歌、带别名的外文歌、翻唱版本在曲库里容易匹配失败或匹配到别的版本。
-        // 其余软件保持既有封面链（网络搜索封面 → 应用图标），一个字节不动。
+        // ⚠️ 现在已不再参与判定：本地 SMTC 缩略图对所有会话一律优先（见 UpdateCover 的 preferSessionCover）。
+        // 名单连同 IsSmtcCoverPreferredAppId 一起留着，是为了万一要收回去「只对名单里的播放器优先」时
+        // 能直接拿回来 —— 现在没有任何调用点。
         private static readonly string[] SmtcCoverPreferredIds =
         [
             "cloudmusic", "netease",   // 网易云音乐
@@ -1133,14 +1131,6 @@ namespace NotchPeninsula
                     // 唯一的预处理是浏览器：网页标题里的「正在播放: 歌名 - 歌手」要拆成歌名 + 歌手。
                     string smtcTitle = props.Title ?? "";
                     string smtcArtist = props.Artist ?? "";
-                    // 平台后缀必须在清理之前判：CleanBrowserTitle 会把 "_哔哩哔哩_bilibili" 抹掉，
-                    //    清完之后标题里就再也找不到它了。
-                    // 粘性：一旦判出过就保持为 true，不再翻回 —— 站内切集 / 切下一条时标题会经历
-                    //    「旧标题 → 中间态 → 新标题」，中途那一拍可能不带后缀；若就此翻回 false，
-                    //    封面会退回应用图标，而且之后未必再有刷新来纠正。
-                    // 只在会话真的消失时才重置（见 UpdateSession 的 else 分支）。
-                    if (IsBilibiliTitle(smtcTitle)) _isBilibiliBrowserSession = true;
-
                     if (_isBrowserSession)
                     {
                         smtcTitle = CleanBrowserTitle(smtcTitle, out smtcArtist);
@@ -1262,10 +1252,10 @@ namespace NotchPeninsula
         /// 选封面。视频模式 → 该程序自己的应用图标；音乐模式 → 外部封面 → 应用图标兜底。
         ///
         /// 外部封面有两条来源，都是异步补上，在它到达之前先用应用图标顶着：
-        ///   1. 会话自带封面（FetchSmtcCoverAsync）：只给 SmtcCoverPreferredIds 里的平台用，
-        ///      由 allowSessionCover 放行 —— 属性刷新时传「本会话确实带了图」，兜底重试时传 true（未知，试一次）。
-        ///      取到的就是正在播放的那张图，比曲库搜索更准；
-        ///   2. 网络搜索封面（FetchCoverAsync）：其余情况、以及上面那条取不到时的既有通路。
+        ///   1. 会话自带封面（FetchSmtcCoverAsync）：**对所有会话优先**（本地 SMTC 缩略图，不走网络，
+        ///      比按歌名 + 歌手去曲库搜又快又准），由 allowSessionCover 放行 ——
+        ///      属性刷新时传「本会话确实带了图」，兜底重试时传 true（未知，试一次）；
+        ///   2. 网络搜索封面（FetchCoverAsync）：会话没给图（或读取 / 解码失败）时的既有通路。
         ///
         /// 读取节奏：每一首曲目至少发起一次；同一曲目的重试按 SessionCoverRetryInterval 节流
         /// （兜底重试每帧都会走到这里）。
@@ -1289,22 +1279,22 @@ namespace NotchPeninsula
                 && string.Equals(_externalCoverAppId, _trackAppId, StringComparison.Ordinal);
             if (coverInPlace) return;
 
-            // 会话自带封面的两类来源（其余情况保持既有链路：网络搜索封面 → 应用图标）：
-            //   ① 音乐模式 + SmtcCoverPreferredIds 里的播放器 —— 图就是当前这首歌的专辑封面；
-            //   ② 原标题带 "_哔哩哔哩_bilibili" 的网页视频 —— 视频模式也走：SMTC 给的是视频封面，
-            //      比浏览器图标有信息量。这一条优先于「无歌手只显示应用 logo」的通用规则。
-            //   ③ justsolo 无条件走 —— 它给的就是本机正在播的那首的原图（本地 SMTC 拿，不走网络搜索），
-            //      所以哪怕这一拍没拿到歌手（会被判成视频模式）也该用它的缩略图；
-            //      真拿不到时不记账，随后的网络封面链路照常接管（见 FetchSmtcCoverAsync）。
-            bool preferSessionCover = _isJustSoloSession
-                || (_isMusicMode ? IsSmtcCoverPreferredAppId(_currentAppId) : _isBilibiliBrowserSession);
+            // 会话自带封面（本地 SMTC 缩略图）一律优先于网络搜索封面 —— 会话已经把图递到手上了，
+            // 直接解码就能上屏，不必等「按歌名 + 歌手去曲库搜」的那一次网络请求（这条正是加载慢的来源）。
+            // 拿不到（会话没给图 / 解码失败）时不记账，随后的网络封面链路照常接管（见 FetchSmtcCoverAsync），
+            // 所以最差也只是回到原来的行为。名单 SmtcCoverPreferredIds 已不再参与判定（保留以备回退）。
+            bool preferSessionCover = true;
 
-            // 外部封面还没就位（首次刷新，或屏上还挂着上一个会话的封面）：先用当前会话的应用图标顶住。
-            //    这一步同时保证「切会话时不会把上一个会话的封面留在屏上」——
-            //    会话封面优先的会话随后会把真正的封面换上来，拿不到也只是停在图标，不会留着别人的图。
-            SetAppIcon();
+            // 即将去取会话自带封面（本地 SMTC 缩略图，马上就到）时**不**抢先顶应用图标：
+            //    顶上去会把屏上还在的上一张封面换掉、新封面到了再换回来 —— 用户看到的就是切换瞬间封面闪一下；
+            //    图标还没解析出来时更糟（异步返回 null），直接就是那张蓝色兜底。
+            //    宁可让上一张封面多留一会儿：这就是「下一张没到就保持上一张」。
+            // 于是只有两种情况顶图标：① 本会话没带图（视频模式 / 只给标题的播放器，不会有新封面来了）；
+            //    ② 手上什么都没有（首次刷新、上一个会话的图已被清），免得一直空着。
+            bool willTrySessionCover = allowSessionCover && preferSessionCover;
+            if (!willTrySessionCover || Thumbnail == null) SetAppIcon();
 
-            if (!allowSessionCover || !preferSessionCover) return;
+            if (!willTrySessionCover) return;
 
             // 节流按曲目判：换歌是新事件，必须立刻能再试一次 —— 只看时间的话，连续切歌时
             // 后一首会被前一首的计时挡住，于是它连读都不读，封面直接停在上一首。
@@ -2114,7 +2104,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 取会话自带封面（SMTC 缩略图）并换上。只给 SmtcCoverPreferredIds 里的播放器用：
+        /// 取会话自带封面（SMTC 缩略图）并换上。对所有会话都优先尝试（本地就有图，不用等网络）：
         /// 这些客户端会把自己正在播放的那张封面通过 SMTC 一并给出，比按歌名 + 歌手去曲库搜更准。
         ///
         /// 拿不到（会话没给缩略图 / 流读不出来 / 解码失败）就什么都不做 ——
@@ -3032,7 +3022,9 @@ namespace NotchPeninsula
         ///
         /// 判据刻意收成这一个精确串（而不是原来的「含哔哩哔哩 / bilibili」）：后者太宽，
         /// B站客户端、以及歌名里恰好带这几个字的曲目都会被误判成网页视频。
-        /// 必须在 CleanBrowserTitle 之前调用 —— 清理会把这个后缀抹掉，清完之后标题里就再也找不到它了。
+        ///
+        /// ⚠️ 现在已无调用点：B 站网页视频的封面也走「本地 SMTC 缩略图优先」这条通用规则，
+        /// 那个粘性标志位删掉了，这里保留备用。
         /// </summary>
         private static bool IsBilibiliTitle(string title)
             => title.Contains("_哔哩哔哩_bilibili", StringComparison.Ordinal);
