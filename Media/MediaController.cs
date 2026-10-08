@@ -1269,6 +1269,7 @@ namespace NotchPeninsula
                 {
                     var transTable = BuildTransTable(transText);
                     int transCursor = 0;
+                    int transClaimed = -1;   // 已被某一行用作译文的条目下标，不允许再被别的行认领
                     var wordTable = IsLyricScanEnabled && yrcText.Length > 0
                         ? BuildYrcTable(yrcText, yrcTimingFirst)
                         : Array.Empty<(int StartMs, string Key, LyricWordTiming Timing)>();
@@ -1284,7 +1285,7 @@ namespace NotchPeninsula
                                 string text = line.Substring(idx + 1).Trim();
                                 if (!string.IsNullOrEmpty(text))
                                 {
-                                    string trans = LookupTrans(transTable, ts.Ticks, ref transCursor);
+                                    string trans = LookupTrans(transTable, ts.Ticks, ref transCursor, ref transClaimed);
                                     lines.Add((ts, text, trans));
                                     wordTimings?.Add(LookupWordTiming(wordTable, ref wordCursor, (int)ts.TotalMilliseconds, text));
                                 }
@@ -2057,17 +2058,25 @@ namespace NotchPeninsula
             return list.ToArray();
         }
 
-        private static string LookupTrans((long Ticks, string Text)[] table, long ticks, ref int cursor)
+        // 一条译文只能被一行认领：认领过（精确命中）的条目不再向后携带。
+        // 否则中文原句（上游译文表里没有它的条目）会把上一句外文歌词的译文一直挂在第二行，
+        // 直到下一句真正需要翻译时才被替换掉 —— 表现为「第二行残留」。
+        private static string LookupTrans((long Ticks, string Text)[] table, long ticks, ref int cursor, ref int claimed)
         {
             if (table.Length == 0) return "";
 
             while (cursor < table.Length && table[cursor].Ticks < ticks - TransMatchToleranceTicks) cursor++;
             if (cursor >= table.Length) return "";
 
-            // 精确 / 邻近命中
-            if (Math.Abs(table[cursor].Ticks - ticks) <= TransMatchToleranceTicks) return table[cursor].Text;
+            // 精确 / 邻近命中 → 认领
+            if (Math.Abs(table[cursor].Ticks - ticks) <= TransMatchToleranceTicks)
+            {
+                claimed = cursor;
+                return table[cursor].Text;
+            }
 
-            if (cursor > 0 && ticks - table[cursor - 1].Ticks <= TransCarryTicks) return table[cursor - 1].Text;
+            if (cursor > 0 && cursor - 1 != claimed && ticks - table[cursor - 1].Ticks <= TransCarryTicks)
+                return table[cursor - 1].Text;
 
             return "";
         }
