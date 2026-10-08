@@ -523,10 +523,10 @@ namespace NotchPeninsula
             // 行首由 CLIPBOARD_CARD_Y 派生 = 通知卡底 + 10，通知卡长高时自动跟着走
             DrawToggleCard(canvas, CLIPBOARD_CARD_Y, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
 
-            // MSP 信号总线（实验性）：把灵动岛暴露成本机 MSP 节点，外部程序可以弹通知、读控媒体。
+            // MSP 接入（实验性）：把灵动岛暴露成本机 MSP 节点，外部程序可以弹通知、读控媒体。
             // 默认关闭 —— 它会监听一个本地端口，是「对外接口面」，得用户自己点头。
             // 「实验性」走右上角的橙色小标签（badge），不占标题行。
-            DrawToggleCard(canvas, MSP_CARD_Y, "MSP 信号总线",
+            DrawToggleCard(canvas, MSP_CARD_Y, "MSP 接入",
                 "让本机 MSP 程序弹通知、读控媒体",
                 MspNotchBridge.IsEnabled, _mspToggleHovered, badge: "实验性");
 

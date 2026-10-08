@@ -10,15 +10,15 @@
     [1] 发现与连接        节点以 LOCAL_SOFTWARE 预设宣告，Python 侧能发现并连上
     [2] manifest 自省     两模式权限 + pub/sub/req/rep 四能力 + 四条已宣告信号
     [3] request-reply     ping / media_status 程序化往返（只读）
-    [4] 订阅 notify 总线  本脚本 publish notify.*，灵动岛应显示出来
-    [5] 点对点不上总线    notify **工具**必须不广播（否则跨节点回声），但仍要显示
+    [4] 订阅 notify 域的信号  本脚本 publish notify.*，灵动岛应显示出来
+    [5] 点对点不广播    notify **工具**必须不广播（否则跨节点回声），但仍要显示
     [6] 本机事件自动广播  经灵动岛本地 HTTP 接口投一条消息 → 应收到它广播的 notify.toast.raised
     [7] 媒体广播          仅 --media-toggle 才真实切换播放，且应收到 media.playback.changed
     [8] content block     notify 载荷的富内容通道：图标两种形态 / 无图标主路径 / 未知块宽容跳过
     [9] 不阻塞            notify 绝不能因为 Duration 长、或图标要联网下载而拖住调用方
 
 关于 [5]：[4] 和 [6] 是**广播**语义（无人点单的事件）；notify 工具是**点对点**语义
-（request-reply），它的效果不该再喷到总线上 —— 否则两个都接了总线的节点会互相转发到死。
+（request-reply），它的效果不该再喷到广播里 —— 否则两个都订阅了通知的节点会互相转发到死。
 详见 Msp/MspNotchBridge.cs 类注释里的「回声问题」。
 
 关于 [8]：载荷约定见 Msp/MspNotchBridge.cs 类注释与 README 的「MSP 信号路径」。
@@ -141,6 +141,24 @@ def main() -> int:
 
     node.start()
 
+    def call_retry(tool: str, args: dict | None = None, attempts: int = 3, timeout: float = 20.0):
+        """首次调用带重试。
+
+        两侧都是 eager，协议层要做一次连接去重、只保留规范方向的那条连接；对端「连上就立刻
+        调用」有可能正好走在被关掉的那条上，报「连接断开」或超时。这是协议层的连接去重行为，
+        **不是节点的问题**（节点是 eager 的「本机软件」角色，这个策略不能改），调用方重试一次
+        就走通了。重试过会打一行 note —— 不藏起来，免得真出问题时有东西被悄悄吞掉。
+        """
+        res = None
+        for i in range(1, attempts + 1):
+            res = node.call(NOTCH_ID, tool, args or {}, timeout=timeout)
+            if not res.is_error:
+                if i > 1:
+                    print(f"        （首次调用撞上连接去重，第 {i} 次才通：{tool}）", flush=True)
+                return res
+            time.sleep(1.0)
+        return res
+
     try:
         # ---------------- [1] 发现与连接 ----------------
         section("[1] 发现与连接")
@@ -148,7 +166,7 @@ def main() -> int:
         if not wait_for(lambda: NOTCH_ID in node.connections(), DISCOVER_TIMEOUT):
             check(False, "发现并连接", f"{DISCOVER_TIMEOUT:.0f}s 内未连上；"
                                      "请确认 ① NotchPeninsula 已启动，"
-                                     "② 「设置 → 通用设置 → MSP 信号总线（实验性）」已打开（默认是关的），"
+                                     "② 「设置 → 通用设置 → MSP 接入（实验性）」已打开（默认是关的），"
                                      "③ 两侧共享目录一致（~/.msp/nodes）")
             return 1
         check(True, "发现并连接", f"peers={node.connections()}")
@@ -174,7 +192,7 @@ def main() -> int:
 
         # ---------------- [3] request-reply ----------------
         section("[3] request-reply：ping / media_status")
-        r = node.call(NOTCH_ID, "ping", {})
+        r = call_retry("ping")
         if check(not r.is_error, "ping 无错", str(r.error if r.is_error else "")):
             info = r.unwrap() or {}
             check(info.get("preset") == "LOCAL_SOFTWARE", "预设 = LOCAL_SOFTWARE",
@@ -182,57 +200,57 @@ def main() -> int:
             check(sorted(info.get("capabilities") or []) == sorted(EXPECTED_CAPS), "ping 报告四能力",
                   f"capabilities={info.get('capabilities')}")
 
-        r = node.call(NOTCH_ID, "media_status", {})
+        r = call_retry("media_status")
         if check(not r.is_error, "media_status 无错", str(r.error if r.is_error else "")):
             print(f"         -> {r.unwrap()}", flush=True)
 
-        # ---------------- [4] 订阅 notify 总线 ----------------
-        section("[4] 订阅 notify 虚拟总线：publish notify.* → 灵动岛应显示")
-        probe_path = "notify.test.bus"
-        node.publish(probe_path, {"title": "总线订阅测试", "body": "这条来自 Python 的 notify.* 广播"})
+        # ---------------- [4] 订阅 notify 域的信号 ----------------
+        section("[4] 订阅 notify 域的信号：publish notify.* → 灵动岛应显示")
+        probe_path = "notify.test.display"
+        node.publish(probe_path, {"title": "订阅测试", "body": "这条来自 Python 的 notify.* 广播"})
         # 两级证据：MSP 侧「已受理」（载荷解析通过、请求接下），宿主侧「插件提醒已投递」（真进了展示通道）。
         # 措辞上是「受理」不是「显示」，因为投递走后台 —— 见 MspNotchBridge.ShowOnIsland。
-        needle = f"[MSP] 总线通知已受理：{probe_path}"
+        needle = f"[MSP] 对端通知已受理：{probe_path}"
         wait_for(lambda: log_contains(needle) is True, 8.0)  # 注意 `is True`：None 不能当已出现
         logged = log_contains(needle)
         if logged is None:
-            skip("总线通知已被受理 notify.test.bus", f"日志读不到：{log_path()}")
+            skip("对端通知已被受理 notify.test.display", f"日志读不到：{log_path()}")
         else:
-            check(bool(logged), "总线通知已被受理", "见 app.log 的 [MSP] 总线通知已受理")
+            check(bool(logged), "对端通知已被受理", "见 app.log 的 [MSP] 对端通知已受理")
         shown = wait_for(
-            lambda: log_contains("[PluginHost] 插件提醒已投递: 总线订阅测试") is True, 5.0
-        ) or log_contains("[PluginHost] 插件提醒已投递: 总线订阅测试")
+            lambda: log_contains("[PluginHost] 插件提醒已投递: 订阅测试") is True, 5.0
+        ) or log_contains("[PluginHost] 插件提醒已投递: 订阅测试")
         if shown is None:
-            skip("总线通知真的进了展示通道", f"日志读不到：{log_path()}")
+            skip("对端通知真的进了展示通道", f"日志读不到：{log_path()}")
         else:
-            check(bool(shown), "总线通知真的进了展示通道", "见 app.log 的 [PluginHost] 插件提醒已投递")
+            check(bool(shown), "对端通知真的进了展示通道", "见 app.log 的 [PluginHost] 插件提醒已投递")
         # 来源标签：这条 payload 没给 kind，来源应回退成发布者节点 id，而不是宿主写死的
         # 「插件提醒」—— 那正是给 ReminderData 加 Source 字段要解决的问题。
-        src = log_contains(f"{needle} ← py（总线订阅测试），来源: py")
+        src = log_contains(f"{needle} ← py（订阅测试），来源: py")
         if src is None:
             skip("无 kind 时来源回退到节点 id", f"日志读不到：{log_path()}")
         else:
             check(bool(src), "无 kind 时来源回退到节点 id（不是「插件提醒」）", "见 app.log 的「，来源: py」")
 
-        # ---------------- [5] 点对点不上总线 ----------------
+        # ---------------- [5] 点对点不广播 ----------------
         section("[5] 点对点：notify 工具应显示但**不**广播")
         r = node.call(NOTCH_ID, "notify", {
             "kind": "MSP",
             "title": "点对点测试",
-            "body": "这条只应显示在灵动岛上，不该出现在总线里",
+            "body": "这条只应显示在灵动岛上，不该出现在广播里",
         })
         check(not r.is_error, "notify 工具无错", str(r.error if r.is_error else ""))
         time.sleep(3.0)  # 留足广播往返的时间窗
         leaked = signals_named("notify.notchpeninsula.reminder.raised")
         check(not leaked, "notify 工具未广播 notify.notchpeninsula.reminder.raised",
               f"收到 {len(leaked)} 条（收到即为回声隐患）")
-        # 精确断言：总线上不该出现任何携带这次 notify 内容的信号。
+        # 精确断言：广播里不该出现任何携带这次 notify 内容的信号。
         # 这里**不能**断言「窗口内一条信号都没有」—— 这台机器上真实到达的系统通知
-        # 会合法地广播 notify.toast.raised，那是「本机事件自动上总线」的正常行为，
-        # 与本项要验的「点对点不上总线」无关，混在一起会变成随机失败。
+        # 会合法地广播 notify.toast.raised，那是「本机事件自动广播」的正常行为，
+        # 与本项要验的「点对点不广播」无关，混在一起会变成随机失败。
         echoed = [s for s in list(received)
                   if "点对点测试" in json.dumps(s.payload, ensure_ascii=False)]
-        check(not echoed, "notify 的内容没有出现在总线上",
+        check(not echoed, "notify 的内容没有出现在广播里",
               f"收到 {[s.path for s in echoed]}（出现即为回声隐患）")
         shown = log_contains("[PluginHost] 插件提醒已投递: 点对点测试")
         if shown is None:
@@ -244,7 +262,7 @@ def main() -> int:
         section("[6] 本机事件：本地 HTTP 推送 → 应广播 notify.toast.raised")
         marker = f"NPS-MSP-HTTP-{int(time.time())}"
         before = len(received)
-        if check(http_push(marker, "经灵动岛本地接口投递，应被它广播到 notify 总线"), "HTTP 推送成功"):
+        if check(http_push(marker, "经灵动岛本地接口投递，应被它广播到 notify 域"), "HTTP 推送成功"):
             hit = wait_for(
                 lambda: any(marker in json.dumps(s.payload, ensure_ascii=False)
                             for s in signals_named("notify.toast.raised")),
@@ -252,7 +270,7 @@ def main() -> int:
             )
             got = [s for s in signals_named("notify.toast.raised")
                    if marker in json.dumps(s.payload, ensure_ascii=False)]
-            check(hit, "收到 notify.toast.raised（本机事件自动上总线）",
+            check(hit, "收到 notify.toast.raised（本机事件自动广播）",
                   f"payload={got[0].payload if got else '无'}")
             if got:
                 check(got[0].source == NOTCH_ID, "信号 source 是灵动岛", f"source={got[0].source}")
@@ -389,31 +407,31 @@ def main() -> int:
         # 8.7 信号路径的正文兜底：title/body 都空时，拿 content 里第一个 text 块当正文
         probe = "notify.test.textonly"
         node.publish(probe, {"content": [{"type": "text", "text": "只有内容块的正文"}]})
-        needle = f"[MSP] 总线通知已受理：{probe}"
+        needle = f"[MSP] 对端通知已受理：{probe}"
         line = wait_for(lambda: log_contains(needle) is True, 8.0) or log_contains(needle)
         if line is None:
             skip("text 块兜底当正文", f"日志读不到：{log_path()}")
         else:
-            check(bool(line), "text 块兜底当正文（信号路径）", "见 app.log 的 [MSP] 总线通知已受理")
+            check(bool(line), "text 块兜底当正文（信号路径）", "见 app.log 的 [MSP] 对端通知已受理")
 
-        # 8.8 信号路径也能带图标（走总线，不走工具），且日志会记下图标描述
+        # 8.8 信号路径也能带图标（走广播，不走工具），且日志会记下图标描述
         probe = "notify.test.icon"
         node.publish(probe, {
-            "title": "CB-总线图标",
+            "title": "CB-广播图标",
             "content": [{"type": "resource_link", "uri": "qq"}],
         })
-        needle = f"[MSP] 总线通知已受理：{probe}"
+        needle = f"[MSP] 对端通知已受理：{probe}"
         line = wait_for(lambda: log_contains(needle) is True, 8.0) or log_contains(needle)
         if line is None:
             skip("信号路径带图标", f"日志读不到：{log_path()}")
         else:
-            check(log_contains(f"{needle} ← py（CB-总线图标），图标: qq"),
+            check(log_contains(f"{needle} ← py（CB-广播图标），来源: py，图标: qq"),
                   "信号路径的图标被识别并记进日志", "见 app.log")
 
         # 8.9 duration 容错：非法值不该让整条通知丢掉
         node.publish("notify.test.badduration", {"title": "CB-坏duration", "duration": "不是数字"})
-        line = wait_for(lambda: log_contains("[MSP] 总线通知已受理：notify.test.badduration") is True, 8.0) \
-            or log_contains("[MSP] 总线通知已受理：notify.test.badduration")
+        line = wait_for(lambda: log_contains("[MSP] 对端通知已受理：notify.test.badduration") is True, 8.0) \
+            or log_contains("[MSP] 对端通知已受理：notify.test.badduration")
         if line is None:
             skip("非法 duration 仍能显示", f"日志读不到：{log_path()}")
         else:
@@ -422,12 +440,12 @@ def main() -> int:
         # 8.10 来源标签：kind 就是「来源标识」，给了就用它，而不是一律显示节点 id
         probe = "notify.test.source"
         node.publish(probe, {"kind": "微信", "title": "CB-来源标签", "body": "来源应该显示微信"})
-        needle = f"[MSP] 总线通知已受理：{probe} ← py（CB-来源标签），来源: 微信"
+        needle = f"[MSP] 对端通知已受理：{probe} ← py（CB-来源标签），来源: 微信"
         line = wait_for(lambda: log_contains(needle) is True, 8.0) or log_contains(needle)
         if line is None:
-            skip("bus 的 kind 当来源标签", f"日志读不到：{log_path()}")
+            skip("广播的 kind 当来源标签", f"日志读不到：{log_path()}")
         else:
-            check(bool(line), "bus 的 kind 当来源标签（而不是节点 id）", "见 app.log 的「，来源: 微信」")
+            check(bool(line), "广播的 kind 当来源标签（而不是节点 id）", "见 app.log 的「，来源: 微信」")
 
         # ---------------- [9] 不阻塞 ----------------
         section("[9] notify 不阻塞调用方（Duration 长 / 图标要下载，都不得拖住 RPC）")

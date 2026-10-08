@@ -61,7 +61,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 | **自动隐藏** | 总开关「允许灵动岛自动隐藏」下三种模式**互相独立、可任意组合**：焦点离开时 / 暂停播放后 / 全屏应用时。**穿透模式下同样生效**（隐藏后点屏幕顶部那条细边即可唤回，也可用托盘菜单「唤回灵动岛」）；通知、媒体展开面板、插件详情页与剪贴板弹窗期间一律不隐藏 |
 | **待机模式** | 一键把岛体收成一条小胶囊。**待机内容三选一**：仅时间 / 空白 / 折叠媒体控制（选了媒体控制但当前没在播放时自动退化为空白）；进入与退出既可在**显示设置 → 显示模式**手动切换，也可打开「双击空白切换待机模式」后在岛上双击进出。是否处于待机是运行时状态，重启后回到普通模式 |
 | **交互** | 双击封面切回正在播放的应用（默认关闭，可在交互设置开启）；岛内右键按区域直达对应设置页；托盘菜单快捷控制 |
-| **MSP 信号总线**（实验性） | 原生接入 **MSP（Model Sensing Protocol）**，以自定义预设 `LOCAL_SOFTWARE` 把自己暴露成节点 `notchpeninsula`：共享目录**发现 + 宣告**都开、两种基础模式（request-reply / publish-subscribe）权限完整、pub/sub/req/rep 四能力齐全。对外提供 `ping` / `notify` / `media_status` / `media_control` 四个工具；把本机事件**广播**出去、并**订阅** `notify.**` 虚拟总线把对端通知显示在岛上。通知支持 **content block**（MCP 兼容），可用内嵌图或资源引用指定**可选图标**。**默认关闭**（它会监听一个本地端口、对外暴露通知与媒体能力），在**设置 → 通用设置**里打开。[详见集成文档](./NPS_MSP.md) |
+| **MSP 接入**（实验性） | 原生接入 **MSP（Model Sensing Protocol）**，以自定义预设 `LOCAL_SOFTWARE` 把自己暴露成节点 `notchpeninsula`：共享目录**发现 + 宣告**都开、两种基础模式（request-reply / publish-subscribe）权限完整、pub/sub/req/rep 四能力齐全。对外提供 `ping` / `notify` / `media_status` / `media_control` 四个工具；把本机事件**广播**出去、并**订阅** `notify.**` 把对端通知显示在岛上。通知支持 **content block**（MCP 兼容），可用内嵌图或资源引用指定**可选图标**。**默认关闭**（它会监听一个本地端口、对外暴露通知与媒体能力），在**设置 → 通用设置**里打开。[详见集成文档](./NPS_MSP.md) |
 
 ### 歌词 / 译文 / 封面获取顺序
 
@@ -102,13 +102,13 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 > 「这条到底是不是标准通知」。加一段应用名后语义变成「notify 域下、来源是 notchpeninsula 的提醒」——
 > 既说清私有归属，又仍落在 `notify.**` 里，对端一个过滤器就能全收。
 
-> 媒体广播只发**事件级**变化（换曲 / 播放态翻转），进度与歌词这类每 250ms 就动的量**不**上总线，
-> 否则一条总线会被进度条刷屏；要拿当前状态请直接调 `media_status` 工具。`media.*` 的信号**不走**
+> 媒体广播只发**事件级**变化（换曲 / 播放态翻转），进度与歌词这类每 250ms 就动的量**不**广播出去，
+> 否则广播会被进度条刷屏；要拿当前状态请直接调 `media_status` 工具。`media.*` 的信号**不走**
 > 下面那套 notify 形状，就是 `title` / `artist` / `app` / `playing` 这几个域字段。
 
 本节点**订阅** `notify.**`（任意深度）：对端按该前缀发布的信号都会在灵动岛上弹出来。
 **要广播就发到 `notify.<实体>.<动作>`；只想要这一台岛弹一下，就调 `notify` 工具** —— 后者是点对点，
-不上总线。两者不区分的话，两个都接了总线的节点会互相转发对方的通知，无限循环。
+不广播。两者不区分的话，两个都订阅了通知的节点会互相转发对方的通知，无限循环。
 
 **notify 载荷约定**（信号 payload 与 `notify` 工具形参共用一套形状）：
 
@@ -124,7 +124,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 
 - `title` / `body` 是**文本降级通道**，`content` 是**可选**富内容通道（MSP/MCP 的 content block，
   不认识的 `type` 一律跳过，不影响整条通知）。
-- `kind` 会显示成通知那一栏的「来源」标签：总线路径没给就回退成发布者节点 id，工具路径没给就是 `MSP`。
+- `kind` 会显示成通知那一栏的「来源」标签：广播路径没给就回退成发布者节点 id，工具路径没给就是 `MSP`。
 - **图标完全可选，而且「没有图标」才是主路径**：取第一个 `annotations.role == "icon"` 的
   `image` / `resource_link` 块；没有这个标记就直接拿第一个图像块；都没有就用默认图标。
 - **`notify` 绝不阻塞调用方**：`duration` 只决定通知停留多久，`duration: 60` 也是立刻返回
@@ -232,7 +232,7 @@ NotchPeninsula/
 │   ├── DropPayload.cs                # 从 OLE IDataObject 读出拖入的文件路径
 │   └── PluginDataBridge.cs           # 插件只读数据桥（媒体状态快照 / 系统通知 → 插件）
 ├── Msp/                              # MSP（Model Sensing Protocol）原生接入
-│   └── MspNotchBridge.cs             # 节点 notchpeninsula：工具 + 信号广播 + 订阅 notify 总线
+│   └── MspNotchBridge.cs             # 节点 notchpeninsula：工具 + 信号广播 + 订阅 notify 域的信号
 ├── data/image/                       # 通知内置图标（qq / windows）
 ├── data/sound/                       # 内置提示音（*.wav + sound.json 显示名覆盖）
 ├── NPS_PluginsAPI.md                 # 插件开发文档

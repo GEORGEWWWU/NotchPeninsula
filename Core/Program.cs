@@ -57,7 +57,7 @@ namespace NotchPeninsula
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     NotchWindow.IsClipboardEnabled = (int)key.GetValue("ClipboardEnabled", 1) != 0;
-                    // MSP 信号总线（实验性）：**默认关闭** —— 打开它会监听一个本地 TCP 端口，
+                    // MSP 接入（实验性）：**默认关闭** —— 打开它会监听一个本地 TCP 端口，
                     // 并让本机任何 MSP 节点都能弹通知、读控系统媒体，属于对外暴露的接口面。
                     MspNotchBridge.IsEnabled = (int)key.GetValue("MspEnabled", 0) != 0;
                     NotchWindow.IsTopmostEnabled = (int)key.GetValue("TopmostEnabled", 1) != 0;
@@ -312,7 +312,7 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    Logger.Info("[MSP] 信号总线未启用（设置 → 通用设置 → MSP 信号总线）");
+                    Logger.Info("[MSP] 未启用（设置 → 通用设置 → MSP 接入）");
                 }
 
                 window.Run();

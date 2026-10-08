@@ -11,8 +11,8 @@ namespace NotchPeninsula;
 ///   * **自定义预设 <c>LOCAL_SOFTWARE</c>**：共享目录的**发现 + 宣告**都开，两种基础模式
 ///     （<c>msp/request-reply</c> + <c>msp/publish-subscribe</c>）权限完整，四项能力
 ///     （pub / sub / req / rep）齐全，发现即连（eager）—— 否则收不到别人的广播。
-///   * **广播信号**：把灵动岛自己产生的事件发到总线上（系统通知 / 插件提醒 / 媒体变化）。
-///   * **订阅 notify 虚拟总线**：任何对端按约定前缀 <c>notify.**</c> 发布的信号，
+///   * **广播信号**：把灵动岛自己产生的事件发到广播里（系统通知 / 插件提醒 / 媒体变化）。
+///   * **订阅 notify 域的信号**：任何对端按约定前缀 <c>notify.**</c> 发布的信号，
 ///     都会在灵动岛上显示出来。
 ///
 /// 信号路径遵循 MSP 的「域优先」约定 <c>&lt;域&gt;.&lt;实体&gt;.&lt;动作&gt;</c>
@@ -34,13 +34,13 @@ namespace NotchPeninsula;
 /// </para>
 ///
 /// <para>
-/// <b>为什么要有「点对点」和「总线上」两套通知语义</b>（写给以后的维护者）：
+/// <b>为什么要有「点对点」和「广播里」两套通知语义</b>（写给以后的维护者）：
 /// <list type="bullet">
 ///   <item><c>notify</c> <b>工具</b>是 request-reply，点对点：让这一台灵动岛弹一下，
-///         不上总线。<b>不</b>广播的理由见下面的回声问题。</item>
+///         不广播。<b>不</b>广播的理由见下面的回声问题。</item>
 ///   <item>要广播给别人看，对端自己 <c>Publish("notify.&lt;实体&gt;.&lt;动作&gt;")</c> 就行 ——
 ///         那才是 pub-sub 该干的事。</item>
-///   <item>本机**自发**的事件（系统 Toast、插件提醒）无人点单，属于广播语义，自动上总线。</item>
+///   <item>本机**自发**的事件（系统 Toast、插件提醒）无人点单，属于广播语义，自动广播。</item>
 /// </list>
 /// </para>
 ///
@@ -80,9 +80,9 @@ namespace NotchPeninsula;
 /// </para>
 ///
 /// <para>
-/// <b>回声问题</b>：总线来的通知要显示，就得走 <c>PostReminder</c>；而 <c>PostReminder</c>
+/// <b>回声问题</b>：从对端收到的通知要显示，就得走 <c>PostReminder</c>；而 <c>PostReminder</c>
 /// 正好是「本机自发提醒」的广播触发点。若不加以区分，A 显示 → A 广播 → B 显示 → B 广播 →
-/// A 显示……两个都接了总线的节点会无限互转。这里用 <see cref="_suppressBroadcast"/>
+/// A 显示……两个都订阅了通知的节点会无限互转。这里用 <see cref="_suppressBroadcast"/>
 /// 在同一次同步调用内打断回程（<c>ReminderPosted</c> 是同步 <c>Invoke</c>，所以线程静态标志足够）。
 /// 另外已实测「节点自己 Publish 的信号不会回流触发自己的 On」，所以不存在本地自环。
 /// </para>
@@ -100,7 +100,7 @@ public static class MspNotchBridge
     public const string NodeId = "notchpeninsula";
 
     /// <summary>
-    /// 总开关（设置 → 通用设置 → MSP 信号总线，界面上标注为**实验性**）。**默认关闭。**
+    /// 总开关（设置 → 通用设置 → MSP 接入，界面上标注为**实验性**）。**默认关闭。**
     ///
     /// 为什么默认关：打开它会**监听一个本地 TCP 端口**，并让本机任何 MSP 节点都能弹通知、
     /// 读甚至控制系统媒体 —— 这是对外暴露的接口面，不该在用户不知情的情况下开着。
@@ -113,9 +113,16 @@ public static class MspNotchBridge
     // 对照内置预设看差异：
     //   LocalTool  = 发现[]      宣告[directory] 能力[pub,rep]        lazy   ← 只应答，看不见别人
     //   LocalAi    = 发现[directory] 宣告[directory] 能力[pub,sub,req,rep] eager ← 全模式（含 multi-round）
-    //   LOCAL_SOFTWARE（本预设）= 同 LocalAi 的发现/宣告/能力，但**只给两种基础模式**：
+    //   LOCAL_SOFTWARE（本预设）= 同 LocalAi 的发现/宣告/能力与 eager，但**只给两种基础模式**：
     //   不要 multi-round —— 那是给「工具反过来向调用方追问」的交互式场景用的，
     //   灵动岛只会同步地回一个结果，用不到；宣告了自己不实现的模式反而是撒谎。
+    //
+    //   ⚠️ eager 的已知代价（写给以后想改成 lazy 的人）：两侧都 eager 时双方会互相拨号，
+    //   协议层按 node_id 字典序去重、只保留规范方向，另一条被关掉；对端「连上就立刻调用」
+    //   有可能正好走在被关掉的那条上，表现成「连接断开」或超时（实测连续跑时 2/3 中招）。
+    //   这是协议层的连接去重行为，**不是本节点能绕开的**：lazy 看似能躲掉，但那会让本节点
+    //   退化成「只接受拨入」，不符合这个「本机软件」角色的定位。
+    //   正确做法是对端首调重试一次（见 NPS_MSP.md 的常见问题）。
     private static readonly Preset LocalSoftware = new(
         Name: "LOCAL_SOFTWARE",
         Discovery: new HashSet<string> { "directory" },                      // 扫描共享目录，看得见别人
@@ -132,8 +139,8 @@ public static class MspNotchBridge
     public const string SignalTrackChanged = "media.track.changed";
     public const string SignalPlaybackChanged = "media.playback.changed";
 
-    /// <summary>订阅的虚拟总线：notify 域下的**任意深度**（已实测 <c>**</c> 匹配 ≥1 段，<c>*</c> 只匹配 1 段）。</summary>
-    private const string NotifyBus = "notify.**";
+    /// <summary>订阅的过滤器：notify 域下的**任意深度**（已实测 <c>**</c> 匹配 ≥1 段，<c>*</c> 只匹配 1 段）。</summary>
+    private const string NotifySubscription = "notify.**";
 
     // ---- content block 里用来标记「这块是图标」的注解 ----
     // 取值约定见类注释：content 里第一个 role == "icon" 的 image / resource_link 块即图标。
@@ -161,7 +168,7 @@ public static class MspNotchBridge
     private static bool _mediaBaselineSet;
 
     /// <summary>
-    /// 「这条提醒别上总线」的抑制标志。<b>线程静态</b>：只在发起 PostReminder 的那次同步调用里有效，
+    /// 「这条提醒别广播出去」的抑制标志。<b>线程静态</b>：只在发起 PostReminder 的那次同步调用里有效，
     /// 别的线程同时在投递本机提醒时不受影响。详见类注释里的回声问题。
     /// </summary>
     [ThreadStatic] private static bool _suppressBroadcast;
@@ -181,9 +188,9 @@ public static class MspNotchBridge
             RegisterTools(node);
             DeclareSignals(node);
 
-            // 订阅 notify 虚拟总线。返回值是退订委托，但节点一停就整个作废，
+            // 订阅 notify 域的信号。返回值是退订委托，但节点一停就整个作废，
             // 而 Stop() 之后要么进程退出、要么丢掉整个 MspNode，不存在残留订阅，所以不存它。
-            node.On(NotifyBus, OnBusNotify);
+            node.On(NotifySubscription, OnPeerNotify);
 
             AttachHostEvents();
             node.Start();
@@ -254,7 +261,7 @@ public static class MspNotchBridge
         }
 
         IsEnabled = on;
-        Logger.Info($"[MSP] 用户{(on ? "开启" : "关闭")}了 MSP 信号总线");
+        Logger.Info($"[MSP] 用户{(on ? "开启" : "关闭")}了 MSP 接入");
     }
 
     // ---- 工具（request-reply 模式） ----
@@ -268,7 +275,7 @@ public static class MspNotchBridge
         // inputSchema 会把 content 留在 properties 里但不进 required，也就是「可选」。
         // 换成 lambda 的话 required 会误带上 content（实测），schema 就撒谎了。
         node.Tool("notify", (Func<string, string, string, List<JsonElement>, object>)Notify,
-            "在灵动岛顶部弹出一条通知。点对点，不广播到 notify 总线。"
+            "在灵动岛顶部弹出一条通知。点对点，不广播到 notify 域。"
             + "title/body 是文本；content 可选，是 MSP/MCP 的 content block 数组，"
             + "其中 annotations.role == \"icon\" 的 image / resource_link 块会被当作图标（不传就用默认图标）");
 
@@ -356,8 +363,8 @@ public static class MspNotchBridge
     /// <summary>宿主内部提醒（插件 PostReminder）→ 广播 <c>notify.notchpeninsula.reminder.raised</c>。</summary>
     private static void OnReminderPosted(ToastData toast)
     {
-        // 总线来的通知也走 PostReminder 去显示，但绝不能再广播回去 —— 否则两个都接了
-        // 总线的节点会互相把对方的通知无限转发下去。详见类注释的「回声问题」。
+        // 从对端收到的通知也走 PostReminder 去显示，但绝不能再广播回去 —— 否则两个都接了
+        // 通知的节点会互相把对方的通知无限转发下去。详见类注释的「回声问题」。
         if (_suppressBroadcast) return;
 
         Publish(SignalReminderRaised, new
@@ -372,7 +379,7 @@ public static class MspNotchBridge
     private static void OnMediaChanged(MediaSnapshot m)
     {
         // 这个回调在 250ms 采样线程上触发，而且签名里含歌词与进度 —— 也就是每秒可能好几次。
-        // 广播只关心事件级的变化：曲目换了、播放状态变了。进度一滴一滴地发会把总线刷屏，
+        // 广播只关心事件级的变化：曲目换了、播放状态变了。进度一滴一滴地发会把广播刷屏，
         // 所以这里自己再聚一次，只认「曲目键」和「播放态」两种跃迁。
         string trackKey = string.Concat(m.Title, "\u0001", m.Artist, "\u0001", m.AppId);
 
@@ -392,7 +399,7 @@ public static class MspNotchBridge
             _mediaBaselineSet = true;
         }
 
-        // 首帧只建立基线：程序刚起来 / 刚重启时不该往总线喷一条「媒体状态」。
+        // 首帧只建立基线：程序刚起来 / 刚重启时不该往广播里喷一条「媒体状态」。
         if (isBaseline) return;
 
         if (trackChanged)
@@ -418,10 +425,10 @@ public static class MspNotchBridge
         }
     }
 
-    // ---- 订阅 notify 虚拟总线 ----
+    // ---- 订阅 notify 域的信号 ----
 
     /// <summary>收到对端 <c>notify.*</c> 广播 → 在灵动岛上显示（不再转发，避免回声放大）。</summary>
-    private static void OnBusNotify(Signal sig)
+    private static void OnPeerNotify(Signal sig)
     {
         // 已实测自己 Publish 的信号不会回流到自己的 On；这里再兜一层，
         // 免得将来 SDK 改成「本地也派发」之后变成自环。
@@ -443,7 +450,7 @@ public static class MspNotchBridge
         // 措辞是「已受理」不是「已显示」：投递走后台（见 ShowOnIsland），
         // 这一行只保证请求被接下了、载荷解析没问题。真正落到岛上由宿主那行
         // [PluginHost] 插件提醒已投递 作证。
-        Logger.Info($"[MSP] 总线通知已受理：{sig.Path} ← {peer}（{title}）"
+        Logger.Info($"[MSP] 对端通知已受理：{sig.Path} ← {peer}（{title}）"
                     + $"，来源: {source}"
                     + $"，图标: {ToastIconProvider.Describe(n.IconSpec)}"
                     + (n.ExtraBlocks > 0 ? $"，另有 {n.ExtraBlocks} 个块未渲染" : ""));
@@ -653,7 +660,7 @@ public static class MspNotchBridge
 
     /// <summary>
     /// <c>notify</c> 工具。形参形状与 <c>notify.*</c> 信号 payload 一致 ——
-    /// 同一份约定，两个载体（点对点调用 / 总线广播）。
+    /// 同一份约定，两个载体（点对点调用 / 广播）。
     ///
     /// <b>content 必须是可选形参</b>（<c>= null</c>）：不带 content 的纯文本通知是最普遍的情况，
     /// 不能因为「现在支持块了」就要求调用方每次都给数组。
@@ -756,7 +763,7 @@ public static class MspNotchBridge
     private static readonly object _showGate = new();
 
     /// <summary>
-    /// 在灵动岛上显示一条提醒，且**不上总线**（点对点语义）。
+    /// 在灵动岛上显示一条提醒，且**不广播**（点对点语义）。
     ///
     /// <b>绝不在调用线程上同步执行宿主的展示链路。</b> 这是条不变量，不是「现在恰好很快」：
     /// <list type="bullet">

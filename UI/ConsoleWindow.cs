@@ -524,9 +524,9 @@ namespace NotchPeninsula
         ///    曾经就是因为剪贴板卡写死 400，而通知卡底从 390 长到 404，两卡直接叠在一起。</summary>
         private const float CLIPBOARD_CARD_Y = TOAST_CARD_BOTTOM + 10f;
 
-        // ---- ③ MSP 信号总线（实验性；剪贴板卡之后，间隙 10）----
+        // ---- ③ MSP 接入（实验性；剪贴板卡之后，间隙 10）----
 
-        /// <summary>MSP 信号总线卡行首 = 剪贴板卡行首 + 62 + 10（与全页「卡高 62 + 间隙 10」同一节奏）。
+        /// <summary>MSP 接入卡行首 = 剪贴板卡行首 + 62 + 10（与全页「卡高 62 + 间隙 10」同一节奏）。
         ///    和其它卡一样从上一张派生，别写死数字。
         ///    这张卡是本页最后一张单行卡，它之后只剩字体卡 —— 加卡后本页内容底边 =
         ///    FONT_CARD_Y + 62，必须 ≤ HEIGHT - TITLE_BAR_HEIGHT（现 620 ≤ 628）。</summary>
@@ -644,7 +644,7 @@ namespace NotchPeninsula
         private bool _topmostToggleHovered = false;
 
         private bool _clipboardToggleHovered = false; // 「剪贴板链接检测」（从交互设置搬到通用设置）
-        private bool _mspToggleHovered = false;       // 「MSP 信号总线（实验性）」
+        private bool _mspToggleHovered = false;       // 「MSP 接入（实验性）」
         // 灵动岛字体切换状态（字体本身由 FontConfig 统一持有）
 
         private bool _fontPickHovered = false;
