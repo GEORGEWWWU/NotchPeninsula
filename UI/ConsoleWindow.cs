@@ -524,10 +524,29 @@ namespace NotchPeninsula
         ///    曾经就是因为剪贴板卡写死 400，而通知卡底从 390 长到 404，两卡直接叠在一起。</summary>
         private const float CLIPBOARD_CARD_Y = TOAST_CARD_BOTTOM + 10f;
 
-        // ---- ③ 切换灵动岛字体（剪贴板卡之后，间隙 12）----
+        // ---- ③ MSP 信号总线（实验性；剪贴板卡之后，间隙 10）----
 
-        /// <summary>切换字体卡行首 = 剪贴板卡行首 + 62 + 12。</summary>
-        private const float FONT_CARD_Y = CLIPBOARD_CARD_Y + 62f + 12f;
+        /// <summary>MSP 信号总线卡行首 = 剪贴板卡行首 + 62 + 10（与全页「卡高 62 + 间隙 10」同一节奏）。
+        ///    和其它卡一样从上一张派生，别写死数字。
+        ///    这张卡是本页最后一张单行卡，它之后只剩字体卡 —— 加卡后本页内容底边 =
+        ///    FONT_CARD_Y + 62，必须 ≤ HEIGHT - TITLE_BAR_HEIGHT（现 620 ≤ 628）。</summary>
+        private const float MSP_CARD_Y = CLIPBOARD_CARD_Y + 62f + 10f;
+
+        // ---- 标题后面的「实验性」小标签（目前只有 MSP 卡用，见 DrawInlineBadge）----
+        //
+        //  位置是**跟着标题文字走的**（标题画完留一个缝就贴上去），不是钉在卡片右上角：
+        //  徽标和标题是一个整体，标题改字数它自己就跟着挪。
+        //  纵向按全页统一的「墨迹中线」对齐 —— 和开关、正文用的是同一套锚定方式
+        //  （标题基线 - TEXT_INK_MID_OFFSET），所以看起来和标题同一条基线。
+        private const float BADGE_H = 15f;
+        private const float BADGE_PAD_X = 7f;
+        private const float BADGE_RADIUS = 3f;
+        private const float BADGE_GAP_X = 8f;   // 与标题文字之间的缝
+
+        // ---- ④ 切换灵动岛字体（MSP 卡之后，间隙 10）----
+
+        /// <summary>切换字体卡行首 = MSP 卡行首 + 62 + 10。</summary>
+        private const float FONT_CARD_Y = MSP_CARD_Y + 62f + 10f;
 
         private const float FONT_BTN_H = 26f;          // 按钮高度
 
@@ -625,6 +644,7 @@ namespace NotchPeninsula
         private bool _topmostToggleHovered = false;
 
         private bool _clipboardToggleHovered = false; // 「剪贴板链接检测」（从交互设置搬到通用设置）
+        private bool _mspToggleHovered = false;       // 「MSP 信号总线（实验性）」
         // 灵动岛字体切换状态（字体本身由 FontConfig 统一持有）
 
         private bool _fontPickHovered = false;

@@ -571,6 +571,11 @@ namespace NotchPeninsula
                 Error("释放托盘图标失败", ex);
             }
 
+            // MSP 节点先下线：撤下 ~/.msp/nodes 里的声明文件，此后不再接任何对端调用。
+            // 不撤的话对端要等 30 秒租约过期才发现我们走了，这段时间会一直往一个
+            // 已经关掉的端口上连（见 Msp/MspNotchBridge.cs）。
+            try { MspNotchBridge.Stop(); } catch (Exception ex) { Error("停止 MSP 节点失败", ex); }
+
             // 释放本窗口持有的全部长期资源（定时器 / 渲染缓冲 / 托盘图标 / 监听器）。
             // 之前只摘了托盘图标就直接 Exit —— 靠进程终止兜底，等于把"没释放"这件事藏起来了。
             try { _instanceForExit?.ShutdownResources(); }

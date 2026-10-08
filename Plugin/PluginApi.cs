@@ -387,6 +387,14 @@ public sealed class ReminderData
 {
     public string Title { get; init; } = "";
     public string Body { get; init; } = "";
+
+    /// <summary>
+    /// 来源标签（可选）：显示在通知左上角那一栏，用来标出「这条是谁发的」。
+    /// 不给就是默认的「插件提醒」—— 插件调用方的既有行为完全不变。
+    /// MSP 接入用它标出对端节点 id / 调用方给的 kind，免得所有通知都顶着「插件提醒」。
+    /// </summary>
+    public string? Source { get; init; }
+
     public string? IconPath { get; init; }
     public TimeSpan Duration { get; init; } = TimeSpan.FromSeconds(4);
     public Action? OnClick { get; init; }

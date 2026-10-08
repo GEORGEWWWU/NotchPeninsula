@@ -127,6 +127,7 @@ namespace NotchPeninsula
             bool newAppLaunchToggleHovered = false; // 「双击媒体控制跳转应用」（媒体交互方式下面一格）
             bool newPassToggleHovered = false;
             bool newClipboardToggleHovered = false;
+            bool newMspToggleHovered = false; // 「MSP 信号总线（实验性）」
             bool newMonitorDropdownHovered = false;
             int newHoveredMonitorDropdownIndex = -1;
             bool newToastModeDropdownHovered = false;
@@ -242,6 +243,12 @@ namespace NotchPeninsula
                     && y >= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
                     && y <= TITLE_BAR_HEIGHT + CLIPBOARD_CARD_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
                     newClipboardToggleHovered = true;
+
+                // MSP 信号总线（= 卡片行首 MSP_CARD_Y + 开关位移 20..40）
+                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= TITLE_BAR_HEIGHT + MSP_CARD_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
+                    && y <= TITLE_BAR_HEIGHT + MSP_CARD_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
+                    newMspToggleHovered = true;
 
                 // 切换灵动岛字体：[选择字体…] 与 [重置] 两个按钮
                 if (y >= TITLE_BAR_HEIGHT + FONT_BTN_Y && y <= TITLE_BAR_HEIGHT + FONT_BTN_Y + FONT_BTN_H)
@@ -725,6 +732,7 @@ namespace NotchPeninsula
                 newSoundResetHovered != _soundResetHovered ||
                 newPassToggleHovered != _passToggleHovered ||
                 newClipboardToggleHovered != _clipboardToggleHovered ||
+                newMspToggleHovered != _mspToggleHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
@@ -786,6 +794,7 @@ namespace NotchPeninsula
                 _topmostToggleHovered = newTopmostToggleHovered;
                 _passToggleHovered = newPassToggleHovered;
                 _clipboardToggleHovered = newClipboardToggleHovered;
+            _mspToggleHovered = newMspToggleHovered;
                 _hoveredPluginAction = newHoveredPluginAction;
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;

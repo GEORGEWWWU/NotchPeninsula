@@ -76,6 +76,13 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 
+        // ---- 卡片右上角的「实验性」小标签（见 DrawCornerBadge）----
+        // 颜色每次画的时候现设：琥珀底 + 深棕字，深色 / 浅色两套外观下都读得清，
+        // 所以不必像 _cardBg 那样跟着 Neutral() 走。阴影单独一支，不和别的共享。
+        private static readonly SKPaint _badgeTextPaint = new SKPaint { TextSize = 10.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        private static readonly SKPaint _badgeBgPaint = new SKPaint { IsAntialias = true };
+        private static readonly SKPaint _badgeShadowPaint = new SKPaint { IsAntialias = true };
+
         /// <summary>
         /// 插件市场顶部两行（分类 / 搜索框 / 刷新 / 只看已安装 / 计数）专用画笔。
         /// 

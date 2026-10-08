@@ -35,12 +35,49 @@ namespace NotchPeninsula
         //
         // 版式统一：一张卡片就是「标题 + 一行副标题 + 右侧开关」，不允许再往下叠第三行小字。
         //    需要补充说明时把话压进副标题，或者写进 README —— 卡片里多出一层子标题会跟其他开关不一致。
-        private void DrawToggleCard(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
+        private void DrawToggleCard(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false, string? badge = null)
         {
             var cardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + yOffset, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + yOffset + 62);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
             DrawToggleRow(canvas, yOffset, title, sub, state, hovered, disabled);
+
+            // 徽标紧跟在标题文字后面，**不是**钉在卡片角上：它和标题是一个整体，
+            // 标题改字数时自己跟着挪。纵向按全页统一的「墨迹中线」对齐（和开关同一套锚定）。
+            if (!string.IsNullOrEmpty(badge))
+            {
+                float titleBaseline = TITLE_BAR_HEIGHT + yOffset
+                    + (sub.Length > 0 ? ROW_TEXT_BASELINE : ROW_TEXT_BASELINE_SINGLE);
+                float left = CONTENT_TEXT_X + _uiTextPaint.MeasureText(title) + BADGE_GAP_X;
+                DrawInlineBadge(canvas, left, titleBaseline - TEXT_INK_MID_OFFSET, badge!);
+            }
+        }
+
+        /// <summary>
+        /// 跟在标题后面的小标签（目前只有 MSP 那条「实验性」用）。
+        /// <paramref name="centerY"/> 是标签的**纵向中心**，由调用方按标题的墨迹中线算好传进来。
+        ///
+        /// 做成贴纸感：琥珀底圆角矩形 + 一层向下偏 1px 的半透明黑阴影。
+        /// 用琥珀黄而不是红 —— 红在这套界面里已经是「错误 / 失效」的语义（见提示音那条红色副标题），
+        /// 而实验性是「留意一下」，不是「出错了」。
+        /// </summary>
+        private void DrawInlineBadge(SKCanvas canvas, float left, float centerY, string text)
+        {
+            float w = _badgeTextPaint.MeasureText(text) + BADGE_PAD_X * 2f;
+            float top = centerY - BADGE_H / 2f;
+            var rect = new SKRect(left, top, left + w, top + BADGE_H);
+
+            _badgeShadowPaint.Color = new SKColor(0, 0, 0, 60);
+            canvas.DrawRoundRect(new SKRect(rect.Left, rect.Top + 1f, rect.Right, rect.Bottom + 1f),
+                BADGE_RADIUS, BADGE_RADIUS, _badgeShadowPaint);
+
+            _badgeBgPaint.Color = new SKColor(245, 180, 50);   // 琥珀
+            canvas.DrawRoundRect(rect, BADGE_RADIUS, BADGE_RADIUS, _badgeBgPaint);
+
+            _badgeTextPaint.Color = new SKColor(64, 42, 0);    // 深棕字，压在琥珀上
+            var fm = _badgeTextPaint.FontMetrics;
+            float baseline = rect.MidY - (fm.Ascent + fm.Descent) / 2f;
+            canvas.DrawText(text, rect.Left + BADGE_PAD_X, baseline, _badgeTextPaint);
         }
 
         // 只画「一行开关」的内容（标题 / 副标题 / 右侧开关），不画卡片底。
@@ -485,6 +522,13 @@ namespace NotchPeninsula
             // 剪贴板链接检测（从「交互设置」搬来 —— 它是个功能开关，不属于交互行为）
             // 行首由 CLIPBOARD_CARD_Y 派生 = 通知卡底 + 10，通知卡长高时自动跟着走
             DrawToggleCard(canvas, CLIPBOARD_CARD_Y, "剪贴板链接检测", "复制链接时在刘海中显示，可一键在默认浏览器打开", NotchWindow.IsClipboardEnabled, _clipboardToggleHovered);
+
+            // MSP 信号总线（实验性）：把灵动岛暴露成本机 MSP 节点，外部程序可以弹通知、读控媒体。
+            // 默认关闭 —— 它会监听一个本地端口，是「对外接口面」，得用户自己点头。
+            // 「实验性」走右上角的橙色小标签（badge），不占标题行。
+            DrawToggleCard(canvas, MSP_CARD_Y, "MSP 信号总线",
+                "让本机 MSP 程序弹通知、读控媒体",
+                MspNotchBridge.IsEnabled, _mspToggleHovered, badge: "实验性");
 
             // 切换灵动岛字体：选中字体文件后立即热替换岛内全部文本字体（默认系统字体，不做任何改动）
             var fontCard = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);

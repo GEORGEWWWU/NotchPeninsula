@@ -465,6 +465,14 @@ namespace NotchPeninsula
                 Program.SaveSetting("ClipboardEnabled", NotchWindow.IsClipboardEnabled ? 1 : 0);
                 Render();
             }
+            else if (_mspToggleHovered)
+            {
+                // MSP 信号总线（实验性）。立刻生效，不用重启 —— 打开失败会在 Enable 里把开关拨回来，
+                // 所以这里读 IsEnabled 拿到的就是真实状态，界面不会撒谎。
+                MspNotchBridge.Enable(!MspNotchBridge.IsEnabled);
+                Program.SaveSetting("MspEnabled", MspNotchBridge.IsEnabled ? 1 : 0);
+                Render();
+            }
             else if (_dropdownHovered)
             {
                 _dropdownOpen = true; Render();
