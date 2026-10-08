@@ -65,19 +65,47 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
+        // ---- 个性化中心三张卡的纵向版式（渲染与命中同源，卡间一律 14）----
+        //   主题卡(12..74)：标题 + 副标题 + 右侧主题分段器（卡高 = 16 + 分段器 30 + 16）
+        //   背景透明度卡(88..166)：独立成卡、不写标题，卡里就是「标签 + 滑轨 + 刻度文案」
+        //   尺寸卡(180..328)：全局折叠态高度 / 底部圆角 / 消息通知弹出高度 / 视觉比例
+        // 卡高只由「内容 + 上下等宽留白」推出来：主题卡的分段器上下各 16，透明度卡的
+        //   标签行顶到刻度文案底各留 ~13 —— 别再按「把上一张卡剩下的地方填满」来调高度，
+        //   分离出独立卡片后就该收紧到内容本身（多出来的就是白边）。
+        private const float THEME_CARD_Y = 12f;
+
+        private const float THEME_CARD_H = 62f;
+
+        private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + 14f;   // 88
+
+        private const float OPACITY_CARD_H = 78f;
+
+        private const float SIZE_CARD_Y = OPACITY_CARD_Y + OPACITY_CARD_H + 14f;  // 180
+
+        /// <summary>主题分段器（黑 / 白 / 系统）的位置与尺寸：右对齐，与显示设置的分段器同款。
+        /// 右边不能贴着卡片边框 —— 用 CONTENT_TEXT_RM（卡片内文字的右边界）而不是 CONTENT_RM。</summary>
+        private const float THEME_SEG_W = 150f;
+
+        private const float THEME_SEG_X = WIDTH - CONTENT_TEXT_RM - THEME_SEG_W;   // 422
+
+        /// <summary>分段器与左侧两行文字垂直居中（卡片内偏移 16，卡高 62 = 16 + 30 + 16）。</summary>
+        private const float THEME_SEG_Y = 28f;
+
+        /// <summary>背景透明度滑轨相对卡片顶部的偏移（渲染与命中同源）。</summary>
+        private const float OPACITY_SLIDER_DY = 44f;
+
         // 个性化中心各行控件的 Y 坐标（index → 行）：
-        //   尺寸卡（147）：3 全局折叠态高度 / 7 底部圆角 / 5 消息通知弹出高度 / 6 视觉比例
-        // 剩下这四项合并成一张卡（原来分三张，每张还要一层标题），卡高 = 12 + 行数×34。
+        //   尺寸卡（SIZE_CARD_Y）：3 全局折叠态高度 / 7 底部圆角 / 5 消息通知弹出高度 / 6 视觉比例
+        // 这四项合并成一张卡，卡高 = 12 + 行数×34。
         // 行序必须与 DrawMultiCard 的调用严格对应 —— 漏一处就会把控件画到卡片外面。
         private float GetBtnY(int index)
         {
             return index switch
             {
-                -1 => TITLE_BAR_HEIGHT + 35,
-                3 => TITLE_BAR_HEIGHT + 147 + 12,
-                7 => TITLE_BAR_HEIGHT + 147 + 12 + 34,
-                5 => TITLE_BAR_HEIGHT + 147 + 12 + 68,
-                6 => TITLE_BAR_HEIGHT + 147 + 12 + 102,
+                3 => TITLE_BAR_HEIGHT + SIZE_CARD_Y + 12,
+                7 => TITLE_BAR_HEIGHT + SIZE_CARD_Y + 12 + 34,
+                5 => TITLE_BAR_HEIGHT + SIZE_CARD_Y + 12 + 68,
+                6 => TITLE_BAR_HEIGHT + SIZE_CARD_Y + 12 + 102,
                 _ => 0
             };
         }

@@ -38,17 +38,14 @@ namespace NotchPeninsula
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             if (_selectedTab == 5)
             {
-                // 避免和下面的 rightX 冲突，改名为 themeRightX
-                float themeRightX = WIDTH - CONTENT_TEXT_RM;
-                float themeY = GetBtnY(-1);
+                // 主题分段器（黑 / 白 / 系统）：与绘制侧同一个 DrawSegmented，按段宽取段号
+                float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
+                if (y >= themeSegY && y <= themeSegY + SEG_H
+                    && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
+                    newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
 
-                // 主题按钮的三个胶囊热区
-                if (x >= themeRightX - 140 && x <= themeRightX - 100 && y >= themeY && y <= themeY + 24) newHoveredTheme = 0;
-                if (x >= themeRightX - 90 && x <= themeRightX - 50 && y >= themeY && y <= themeY + 24) newHoveredTheme = 1;
-                if (x >= themeRightX - 40 && x <= themeRightX && y >= themeY && y <= themeY + 24) newHoveredTheme = 2;
-
-                // 透明度滑块热区判定与拖拽滑动逻辑
-                float sliderY = TITLE_BAR_HEIGHT + 95;
+                // 透明度滑块热区判定与拖拽滑动逻辑（y 与绘制侧同一个 OPACITY_SLIDER_DY）
+                float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
                 float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
 

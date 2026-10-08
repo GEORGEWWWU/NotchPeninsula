@@ -1145,39 +1145,24 @@ namespace NotchPeninsula
             }
 
             // 绘制新增的主题卡片
-            float themeY = TITLE_BAR_HEIGHT + 12;
-            var themeRect = new SKRect(CONTENT_L, themeY, WIDTH - CONTENT_RM, themeY + 125);
-            canvas.DrawRoundRect(themeRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(themeRect, 6, 6, _cardBorder);
+            // ── 主题卡片：标题 + 右侧分段器（与「显示设置 → 显示模式」同款，一眼看出是可切换的 tab）──
+            float themeY = TITLE_BAR_HEIGHT + THEME_CARD_Y;
+            canvas.DrawRoundRect(new SKRect(CONTENT_L, themeY, WIDTH - CONTENT_RM, themeY + THEME_CARD_H), 6, 6, _cardBg);
+            canvas.DrawRoundRect(new SKRect(CONTENT_L, themeY, WIDTH - CONTENT_RM, themeY + THEME_CARD_H), 6, 6, _cardBorder);
 
             canvas.DrawText("刘海 / 灵动岛主题", CONTENT_TEXT_X, themeY + 26, _uiTextPaint);
             canvas.DrawText("背景与文本颜色自适应反转", CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
-            float themeRightX = WIDTH - CONTENT_TEXT_RM; // 变量隔离
-            float btnY = GetBtnY(-1);
+            DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
+                ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
 
-            void DrawThemeBtn(int index, string label, float leftOffset, float rightOffset)
-            {
-                bool isActive = Renderer.ThemeMode == index;
-                bool isHovered = _hoveredThemeIndex == index;
-                float btnWidth = leftOffset - rightOffset;
+            // ── 背景透明度卡片（独立一张、不写标题：卡里就是「标签 + 滑轨」）──
+            float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
+            canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBg);
+            canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBorder);
 
-                _dynamicFillPaint.Color = (isActive || isHovered) ? Overlay(30) : Overlay(15);
-                canvas.DrawRoundRect(new SKRect(themeRightX - leftOffset, btnY, themeRightX - rightOffset, btnY + 24), 4, 4, _dynamicFillPaint);
-
-                _dynamicTextPaint.Color = isActive ? new SKColor(0, 140, 240) : _fgColor;
-
-                // 根据文本真实长度在胶囊内部完美居中
-                float textWidth = _dynamicTextPaint.MeasureText(label);
-                float textX = themeRightX - leftOffset + (btnWidth - textWidth) / 2f;
-                canvas.DrawText(label, textX, btnY + 17, _dynamicTextPaint);
-            }
-
-            DrawThemeBtn(0, "黑", 140, 100);
-            DrawThemeBtn(1, "白", 90, 50);
-            DrawThemeBtn(2, "系统", 40, 0);
-            canvas.DrawText("背景透明度", CONTENT_TEXT_X, themeY + 75, _subTextPaint);
-            float sliderY = themeY + 95;
+            canvas.DrawText("背景透明度", CONTENT_TEXT_X, opaY + 26, _subTextPaint);
+            float sliderY = opaY + OPACITY_SLIDER_DY;
             float sliderX = CONTENT_TEXT_X;
             float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
             // 背景透明度滑轨
@@ -1210,7 +1195,7 @@ namespace NotchPeninsula
             // 「待机高度」与「媒体激活时高度」已合并为一个「全局折叠态高度」（index 3）：
             //    它同时管待机态、媒体折叠态与剪贴板面板的高度，值沿用原媒体控制存储的
             //    MEDIA_HEIGHT（注册表 Custom_MediaH），老用户的高度不会丢。
-            DrawMultiCard(147, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
+            DrawMultiCard(SIZE_CARD_Y, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
         }
 
         // 页签：我的插件（已安装插件列表，一个标题 + 一个列表；市场在独立页签）
