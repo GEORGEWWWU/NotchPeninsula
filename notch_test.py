@@ -27,9 +27,11 @@
 import base64
 import json
 import os
+import struct
 import sys
 import time
 import urllib.request
+import zlib
 
 from msp import MSPNode, Preset
 
@@ -101,6 +103,44 @@ def log_contains(needle: str) -> bool | None:
 
 def signals_named(path: str) -> list:
     return [s for s in list(received) if s.path == path]
+
+
+def png_problem(b64: str) -> str | None:
+    """把 base64 解回 PNG 并逐块校验，返回问题描述；None = 完好。
+
+    为什么要有这一项：只断言图像块的**形状**（type / mimeType / annotations）是不够的 ——
+    base64 中途被截断或改写时，形状照样对，消费方却解不出图。这类问题人眼看不出来，
+    必须真的解一次。返回的问题串会直接进断言说明，便于定位是 CRC 坏还是压缩流坏。
+    """
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except Exception as exc:  # noqa: BLE001
+        return f"base64 解码失败：{exc}"
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        return f"不是 PNG 头：{raw[:8].hex()}"
+    pos, idat, bad = 8, b"", []
+    try:
+        while pos < len(raw):
+            (ln,) = struct.unpack(">I", raw[pos:pos + 4])
+            ctype = raw[pos + 4:pos + 8].decode("latin1")
+            body = raw[pos + 8:pos + 8 + ln]
+            decl = struct.unpack(">I", raw[pos + 8 + ln:pos + 12 + ln])[0]
+            if (zlib.crc32(raw[pos + 4:pos + 8 + ln]) & 0xFFFFFFFF) != decl:
+                bad.append(ctype)
+            if ctype == "IDAT":
+                idat += body
+            if ctype == "IEND":
+                break
+            pos += 12 + ln
+        w, h = struct.unpack(">II", raw[16:24])
+        px = zlib.decompress(idat)
+    except Exception as exc:  # noqa: BLE001
+        return f"PNG 结构/压缩流损坏：{exc}"
+    if bad:
+        return f"CRC 不符的块：{bad}"
+    if len(px) != h * (1 + w * 4):
+        return f"像素流长度不符：{len(px)} != {h * (1 + w * 4)}"
+    return None
 
 
 def http_push(title: str, body: str, kind: str = "MSP测试") -> bool:
@@ -314,12 +354,11 @@ def main() -> int:
                 check(blk.get("type") == "image", "出站载荷带 image 图标块", f"content[0]={ {k: v for k, v in blk.items() if k != 'data'} }")
                 check((blk.get("annotations") or {}).get("role") == "icon", "该块标了 role=icon")
                 raw = blk.get("data") or ""
-                try:
-                    png = base64.b64decode(raw)
-                    is_png = png[:8] == b"\x89PNG\r\n\x1a\n"
-                except Exception:  # noqa: BLE001
-                    png, is_png = b"", False
-                check(is_png, "图标块是可解码的 PNG", f"{len(png)} 字节")
+                # 只验 8 字节 PNG 头是不够的：被截断或改写过的 base64 头照样是对的
+                # （实测过一串 IDAT 已损坏、zlib 解不开的，头却完好）。逐块校验 CRC + 解压像素流。
+                problem = png_problem(raw) if raw else "没有 data 字段"
+                check(problem is None, "出站图标 base64 能解回合法 PNG",
+                      f"{len(raw)} 字符 → {problem}")
 
         # ---------------- [7] 媒体广播（默认只测只读） ----------------
         section("[7] 媒体广播")
