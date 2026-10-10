@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.IO;
 using SkiaSharp;
 using Microsoft.Win32;
 
@@ -96,6 +97,7 @@ namespace NotchPeninsula
         private readonly SKPaint _text = new() { IsAntialias = true };
         private readonly SKPaint _imgPaint = new() { IsAntialias = true };
         private SKImage? _logoTileImg;
+        private SKBitmap? _logoBmp;                    // FromBitmap 的像素后端，随 image 一起释放
 
         // ═══════════════════════ 入口（含看门狗）═══════════════════════
 
@@ -626,6 +628,7 @@ namespace NotchPeninsula
         {
             _shadow?.Dispose(); _shadow = null;
             _logoTileImg?.Dispose(); _logoTileImg = null;
+            _logoBmp?.Dispose(); _logoBmp = null;
             _surface?.Dispose(); _surface = null;
             if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero) Win32.SelectObject(_memDc, _oldBitmap);
             if (_hBitmap != IntPtr.Zero) Win32.DeleteObject(_hBitmap);
@@ -825,45 +828,49 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 图标底色是渐变 —— Skia 的 paint.Color 在带 shader 时会被忽略，入场淡入就失效，
-        /// 所以整块图标**一次性烘成 SKImage**（只建一次），之后靠 DrawImage 的 paint alpha 做淡入。
+        /// 欢迎页 logo = 程序自己的 .ico（DataResources 磁盘优先→嵌入兜底）。
+        /// 本 ico 单帧 256×256 PNG（四角透明），把帧数据直接喂给 SKBitmap.Decode 即可。
+        /// 存成 SKImage 是为了让入场淡入走 DrawImage 的 paint alpha（带 shader 时 paint.Color 会被忽略）。
         /// </summary>
         private void BuildLogoTile()
         {
-            int s = Math.Max(8, (int)MathF.Round(56f * _dpi));
-            using var surf = SKSurface.Create(new SKImageInfo(s, s, SKColorType.Bgra8888, SKAlphaType.Premul));
-            if (surf == null) return;
-            var c = surf.Canvas;
-            c.Clear(SKColors.Transparent);
-
-            using (var sh = SKShader.CreateLinearGradient(
-                       new SKPoint(0, 0), new SKPoint(s, s),
-                       [new SKColor(64, 156, 255), new SKColor(94, 92, 230)], null, SKShaderTileMode.Clamp))
-            using (var p = new SKPaint { IsAntialias = true, Shader = sh })
+            try
             {
-                float r = 14f * _dpi;
-                c.DrawRoundRect(new SKRect(0, 0, s, s), r, r, p);
-            }
-
-            // 里面放一颗"灵动岛"：白胶囊 + 三根频谱条（和第 2 步的预览呼应）
-            float w = s * 0.5f, h = s * 0.19f, mx = s / 2f, my = s / 2f;
-            using (var wp = new SKPaint { IsAntialias = true, Color = new SKColor(255, 255, 255, 235) })
-                c.DrawRoundRect(new SKRect(mx - w / 2f, my - h / 2f, mx + w / 2f, my + h / 2f), h / 2f, h / 2f, wp);
-
-            float bw = MathF.Max(1.5f, w * 0.055f), gap = w * 0.10f;
-            float start = mx - (bw * 3f + gap * 2f) / 2f + bw / 2f;
-            using (var bp = new SKPaint { IsAntialias = true, Color = new SKColor(10, 132, 255, 225) })
-            {
-                for (int i = 0; i < 3; i++)
+                byte[] ico;
+                using (var s = DataResources.OpenRead("NPS_NotchPeninsula-logo.ico"))
                 {
-                    float bh = h * (0.34f + 0.26f * i);
-                    float bx = start + i * (bw + gap);
-                    c.DrawRoundRect(new SKRect(bx - bw / 2f, my - bh / 2f, bx + bw / 2f, my + bh / 2f),
-                        bw / 2f, bw / 2f, bp);
+                    if (s == null) return;
+                    using var ms = new MemoryStream();
+                    s.CopyTo(ms);
+                    ico = ms.ToArray();
                 }
-            }
 
-            _logoTileImg = surf.Snapshot();
+                SKBitmap? bmp = null;
+                if (ico.Length > 22 && ico[0] == 0 && ico[1] == 0 && ico[2] == 1 && ico[3] == 0)
+                {
+                    int cnt = BitConverter.ToUInt16(ico, 4);
+                    for (int i = 0; i < cnt; i++)                       // 逐帧找 PNG 帧，第一个就够
+                    {
+                        int off = 6 + i * 16;
+                        uint sz = BitConverter.ToUInt32(ico, off + 8);
+                        uint fo = BitConverter.ToUInt32(ico, off + 12);
+                        if (fo + sz > ico.Length || sz < 8) continue;
+                        if (ico[fo] == 0x89 && ico[fo + 1] == (byte)'P')
+                        {
+                            var frame = new byte[sz];
+                            Array.Copy(ico, (long)fo, frame, 0, (long)sz);
+                            bmp = SKBitmap.Decode(frame);
+                            if (bmp != null) break;
+                        }
+                    }
+                }
+                bmp ??= SKBitmap.Decode(ico);                           // 兜底：整个文件就是裸 PNG
+                if (bmp == null) return;
+
+                _logoBmp = bmp;
+                _logoTileImg = SKImage.FromBitmap(bmp);
+            }
+            catch { }
         }
 
         private void DrawAppearance(SKCanvas c)
