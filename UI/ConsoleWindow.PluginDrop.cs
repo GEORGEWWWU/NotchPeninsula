@@ -73,6 +73,18 @@ namespace NotchPeninsula
             }
             if (_pluginDropDlls.Count == 0) return false;
 
+            // 任意页签拖入都自动跳到插件中心：拖 DLL 进来就是奔着导入去的，
+            // 不然用户得先松手、再自己切页签。切页签的收尾跟点侧栏走同一套。
+            if (_selectedTab != 6)
+            {
+                _selectedTab = 6;
+                CloseMarketDialog();
+                _marketCategoryOpen = false;
+                _marketSearchFocused = false;
+                CloseAllDropdowns();
+                Render();   // 悬停态可能不变（false→false），SetPluginDropHovering 不会替这里重绘
+            }
+
             return UpdatePluginDropHover(screenPt);
         }
 

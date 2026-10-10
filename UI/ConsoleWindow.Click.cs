@@ -595,9 +595,34 @@ namespace NotchPeninsula
                     }
                     Render();
                 }
+                else if (_marketSortOpen)                     // 排序菜单展开：选中或点空处关闭
+                {
+                    if (_hoveredMarketSortIndex >= 0 && _hoveredMarketSortIndex < MarketSortOptions.Length)
+                    {
+                        _marketSortOpen = false;
+                        if (_hoveredMarketSortIndex != _marketSortIndex)
+                        {
+                            _marketSortIndex = _hoveredMarketSortIndex;
+                            RefreshMarketFilter();
+                        }
+                    }
+                    else
+                    {
+                        _marketSortOpen = false;
+                    }
+                    Render();
+                }
+                else if (_hoveredMarketSortIndex == -2)       // 排序下拉按钮
+                {
+                    _marketSortOpen = true;
+                    _marketCategoryOpen = false;
+                    _marketSearchFocused = false;
+                    Render();
+                }
                 else if (_hoveredMarketCategoryIndex == -2)   // 分类按钮
                 {
                     _marketCategoryOpen = true;
+                    _marketSortOpen = false;
                     _marketSearchFocused = false;
                     Render();
                 }

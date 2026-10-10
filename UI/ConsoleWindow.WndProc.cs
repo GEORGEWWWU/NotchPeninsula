@@ -126,6 +126,8 @@ namespace NotchPeninsula
             bool newSoundPreviewHovered = false;
             bool newSoundResetHovered = false;
             int newHoveredPluginAction = -1;
+            int newHoveredMarketSortIndex = -1;   // 市场排序：菜单内悬停项；-2 = 框本体
+            bool newHoveredMarketSortBox = false;
             int newHoveredPluginToggle = -1;
             int newHoveredPluginReload = -1;
             int newHoveredPluginRemove = -1;
@@ -241,14 +243,14 @@ namespace NotchPeninsula
                 }
 
                 float mdY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + page;
-                float mdX = WIDTH - CONTENT_RM - MONITOR_DD_W;
-                if (!_monitorDropdownOpen && x >= mdX && x <= WIDTH - CONTENT_RM && y >= mdY && y <= mdY + MONITOR_DD_H)
+                float mdX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
+                if (!_monitorDropdownOpen && x >= mdX && x <= DISPLAY_CTRL_RIGHT && y >= mdY && y <= mdY + MONITOR_DD_H)
                     newMonitorDropdownHovered = true;
 
                 if (_monitorDropdownOpen)
                 {
                     float listY = mdY + MONITOR_DD_H + 2f;
-                    if (x >= mdX && x <= WIDTH - CONTENT_RM && y >= listY && y < listY + _monitorOptions.Length * 26)
+                    if (x >= mdX && x <= DISPLAY_CTRL_RIGHT && y >= listY && y < listY + _monitorOptions.Length * 26)
                         newHoveredMonitorDropdownIndex = (int)((y - listY) / 26);
                 }
 
@@ -431,6 +433,9 @@ namespace NotchPeninsula
                     newMarketRefreshHovered = x >= MarketRefreshX && x <= MarketRefreshX + MarketRefreshW
                         && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
 
+                    newHoveredMarketSortBox = x >= MarketSortX && x <= MarketSortX + MarketSortW
+                        && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
+
                     newHoveredMarketChk = x >= MarketChkX - 4f
                         && x <= MarketChkLabelX + 64f
                         && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
@@ -447,6 +452,16 @@ namespace NotchPeninsula
                     }
                     if (overCatBtn && newHoveredMarketCategoryIndex == -1 && !_marketCategoryOpen)
                         newHoveredMarketCategoryIndex = -2;
+
+                    if (_marketSortOpen)
+                    {
+                        const float sortRowH = 26f;
+                        float sY = MarketStatusRowY + MarketControlH + 4;
+                        if (x >= MarketSortX && x <= MarketSortX + MarketSortW && y >= sY && y < sY + MarketSortOptions.Length * sortRowH)
+                            newHoveredMarketSortIndex = (int)((y - sY) / sortRowH);
+                    }
+                    if (newHoveredMarketSortBox && newHoveredMarketSortIndex == -1 && !_marketSortOpen)
+                        newHoveredMarketSortIndex = -2;
                 }
 
                 if (_marketDialog == MarketDialog.LoadFailed)
@@ -485,7 +500,7 @@ namespace NotchPeninsula
                         }
                     }
                 }
-                else if (!_marketCategoryOpen)
+                else if (!_marketCategoryOpen && !_marketSortOpen)
                 {
                     GetMarketListLayout(out int mRows, out int mMaxFirst);
                     _marketScroll = Math.Clamp(_marketScroll, 0, mMaxFirst);
@@ -643,6 +658,8 @@ namespace NotchPeninsula
                 newHoveredMarketCategoryIndex != _hoveredMarketCategoryIndex ||
                 newMarketSearchHovered != _marketSearchHovered ||
                 newMarketRefreshHovered != _hoveredMarketRefresh ||
+                newHoveredMarketSortIndex != _hoveredMarketSortIndex ||
+                newHoveredMarketSortBox != _hoveredMarketSortBox ||
                 newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered
                 )
             {
@@ -706,6 +723,8 @@ namespace NotchPeninsula
                 _hoveredMarketCategoryIndex = newHoveredMarketCategoryIndex;
                 _marketSearchHovered = newMarketSearchHovered;
                 _hoveredMarketRefresh = newMarketRefreshHovered;
+                _hoveredMarketSortIndex = newHoveredMarketSortIndex;
+                _hoveredMarketSortBox = newHoveredMarketSortBox;
                 _fontPickHovered = newFontPickHovered;
                 _fontResetHovered = newFontResetHovered;
 

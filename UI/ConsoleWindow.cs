@@ -56,9 +56,10 @@ namespace NotchPeninsula
 
         private const int DISPLAY_MAX_ROWS = 8;
 
-        // 列表卡上移：卡顶 = 四行行块底（TOGGLE_ROW_Y + ROW_H）再留 CARD_GAP。
-        // 因为行块顶也留 CARD_GAP（MONITOR_ROW_Y），两处同源 ⇒ 四行在两卡之间自动垂直居中。
-        private const float DISPLAY_CARD_Y = TOGGLE_ROW_Y + ROW_H + CARD_GAP;
+        // 列表卡顶 = 双击切换行控件实际底（ROW_ANCHOR_Y + TOGGLE_TRACK_H/2，比 ROW_H 槽位低 2px）
+        // 再留 CARD_GAP —— 槽位底只有 38，控制底在 +40，按槽位算间距会缩水成 8。
+        private const float DISPLAY_CARD_Y =
+            TOGGLE_ROW_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f + CARD_GAP;
 
         private const float DISPLAY_CARD_H = DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H;
 
@@ -87,7 +88,10 @@ namespace NotchPeninsula
 
         private const float STYLE_OPT_GAP = 20f;
 
-        private const float STYLE_OPT_X = 220f;
+        // 两选项框整组在卡内水平居中（组内间距 STYLE_OPT_GAP 保持不变，动的是整组不是框）。
+        private const float STYLE_GROUP_W = STYLE_OPT_W * 2f + STYLE_OPT_GAP;
+
+        private const float STYLE_OPT_X = CONTENT_L + ((WIDTH - CONTENT_RM - CONTENT_L) - STYLE_GROUP_W) / 2f;   // 227
 
         private const float ROW_H = 38f;
 
@@ -103,15 +107,19 @@ namespace NotchPeninsula
 
         private const float MODE_ROW_Y = MONITOR_ROW_Y + 44f;                   // 184
 
+        // 显示页控件右缘：与卡片文字同一右缩进（WIDTH - CONTENT_TEXT_RM）。
+        // 之前用 WIDTH - CONTENT_RM（顶着卡片边线），比开关 / 列表箭头凸出一截，整行看起来偏右。
+        private const float DISPLAY_CTRL_RIGHT = WIDTH - CONTENT_TEXT_RM;
+
         private const float MODE_SEG_W = 184f;                                  // 2 段 × 92
 
-        private const float MODE_SEG_X = WIDTH - CONTENT_RM - MODE_SEG_W;       // 404
+        private const float MODE_SEG_X = DISPLAY_CTRL_RIGHT - MODE_SEG_W;       // 388
 
         private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 228
 
         private const float SCENE_SEG_W = 240f;                                 // 3 段 = 70 / 70 / 100
 
-        private const float SCENE_SEG_X = WIDTH - CONTENT_RM - SCENE_SEG_W;     // 348
+        private const float SCENE_SEG_X = DISPLAY_CTRL_RIGHT - SCENE_SEG_W;     // 332
 
         private const float TOGGLE_ROW_Y = SCENE_ROW_Y + 33f;                   // 261
 
@@ -134,7 +142,7 @@ namespace NotchPeninsula
 
         private const float DISPLAY_ITEM_R = WIDTH - CONTENT_RM;
 
-        private const float DISPLAY_MOVE_PAD_R = 8f;
+        private const float DISPLAY_MOVE_PAD_R = 12f;   // 排序箭头槽右缩进：让箭头图形右缘落在 DISPLAY_CTRL_RIGHT（572）
 
         private const float DISPLAY_MOVE_DOWN_X = DISPLAY_ITEM_R - DISPLAY_MOVE_PAD_R - SORT_TRI_W;          // 562（槽 562..580）
 

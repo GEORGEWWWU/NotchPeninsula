@@ -44,6 +44,14 @@ namespace NotchPeninsula
         private bool _marketCategoryOpen;                    // 分类下拉展开态
         private int _hoveredMarketCategoryIndex = -1;        // 菜单内悬停项
 
+        // ── 排序下拉（状态行，刷新按钮左侧）──
+        //    官方插件无视排序关键字永远置顶；默认最热。
+        private static readonly string[] MarketSortOptions = { "最热", "评分", "最新", "名称" };
+        private int _marketSortIndex;                        // 0 = 最热
+        private bool _marketSortOpen;
+        private int _hoveredMarketSortIndex = -1;            // 菜单内悬停项；-2 = 框本体悬停
+        private bool _hoveredMarketSortBox;
+
         private string _marketSearch = "";
         private bool _marketSearchFocused;
         private bool _marketSearchHovered;
@@ -249,6 +257,10 @@ namespace NotchPeninsula
         private const float MarketBtn2X = MarketBtn3X - 6f - MarketBtnW;                // 458 卸载
         private const float MarketBtn1X = MarketBtn2X - 6f - MarketBtnW;                // 402 下载/更新/重装
 
+        // 排序下拉：贴着刷新按钮左侧，同一行高。
+        private const float MarketSortW = 76f;
+        private const float MarketSortX = MarketRefreshX - 10f - MarketSortW;           // 428
+
         private static readonly (string Key, string Name)[] MarketCategories =
         {
             ("all", "全部插件"),
@@ -283,9 +295,30 @@ namespace NotchPeninsula
                     continue;
                 _marketView.Add(mp);
             }
+
+            _marketView.Sort(CompareMarketPlugins);
             _marketScroll = 0;
             CloseMarketDialog();   // 过滤结果变了，原下标全部失效 —— 弹窗一起收掉
             ResetPluginHover();
+        }
+
+        // 排序比较器：官方插件无视关键字永远置顶（优先级最高），其余按所选关键字排。
+        private int CompareMarketPlugins(MarketPlugin a, MarketPlugin b)
+        {
+            int byOfficial = b.Official.CompareTo(a.Official);
+            if (byOfficial != 0) return byOfficial;
+
+            int r = _marketSortIndex switch
+            {
+                1 => (b.Rating, b.RatingCount).CompareTo((a.Rating, a.RatingCount)),   // 评分：同分看评分人数
+                2 => string.CompareOrdinal(b.Updated, a.Updated),                      // 最新：更新时间串倒排（ISO 式格式可直接比）
+                3 => string.Compare(a.Name, b.Name, StringComparison.CurrentCulture),  // 名称：本地化字典序
+                _ => b.Downloads.CompareTo(a.Downloads),                               // 最热：下载量
+            };
+            if (r != 0) return r;
+
+            int byName = string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);   // 平手兜底：保证顺序稳定
+            return byName != 0 ? byName : string.CompareOrdinal(a.Id, b.Id);
         }
 
         private void GetMarketListLayout(out int visibleRows, out int maxFirstRow)

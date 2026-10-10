@@ -193,6 +193,18 @@ namespace NotchPeninsula
         private int _sampling;                      // 采样重入闸（见 SampleSmtcTick）
         private DateTime _suspendedProbeAt = DateTime.MinValue;   // 后台线程独占
 
+        // 「僵尸会话」判定（见 Media/SessionValidity）：被判残留的 App 在会话选择里整体跳过，
+        // 直到它重新开始播放、或视频窗口回来。后台采样线程写、其余线程读 → volatile。
+        private volatile string _staleAppId = "";
+
+        private string _staleTitle = "";                       // 判残留时的标题，恢复检测拿它比对（后台线程独占）
+
+        private DateTime _staleProbeAt = DateTime.MinValue;    // 后台线程独占
+
+        // 残留判定的采样间隔：250ms × 迟滞 2 次 ≈ 0.5 秒出结果。
+        // 这段就是「关掉视频 → 岛体清空」的观感延迟；判定只在非播放态才跑，播放中零成本。
+        private const int StaleProbeIntervalMs = 250;
+
         private readonly bool[] _suspendedPlaying = new bool[RecentSongSlots];
 
         private readonly bool[] _suspendedDead = new bool[RecentSongSlots];
@@ -320,6 +332,15 @@ namespace NotchPeninsula
                     _suspendedProbeAt = now;
                     SampleSuspendedSessions();
                 }
+
+                // 残留判定必须独立于会话增删事件：客户端关视频时不产生任何 SMTC 通知，
+                // 光靠 SessionsChanged 永远发现不了这个假会话。
+                // 频率比暂停采样高一档：这段延迟直接等于「关掉视频到岛体清空」的观感延迟。
+                if ((now - _staleProbeAt).TotalMilliseconds >= StaleProbeIntervalMs)
+                {
+                    _staleProbeAt = now;
+                    CheckStaleSession();
+                }
             }
             catch (Exception ex)
             {
@@ -329,6 +350,91 @@ namespace NotchPeninsula
             {
                 System.Threading.Interlocked.Exchange(ref _sampling, 0);
             }
+        }
+
+        // 判定并忽略「僵尸会话」：客户端关了视频却不注销 SMTC 会话，系统媒体控件里就留着一个
+        // 点不动的假媒体。判据与实测数据见 Media/SessionValidity.cs。
+        // 这里只做「宿主内部忽略」，不去清系统会话（消费侧没有那个能力）。
+        private void CheckStaleSession()
+        {
+            if (!IsMediaControlEnabled)
+            {
+                // 媒体接管关掉后残留判定没有意义，顺手把状态清干净，免得下次开启时带着旧判定回来
+                if (_staleAppId.Length > 0)
+                {
+                    _staleAppId = "";
+                    _staleTitle = "";
+                    SessionValidity.Reset();
+                }
+                return;
+            }
+
+            var manager = _manager;
+            if (manager == null) return;
+
+            IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions;
+            try { sessions = manager.GetSessions(); }
+            catch { return; }
+
+            string staleId = _staleAppId;
+
+            if (staleId.Length > 0)
+            {
+                // 已判残留：只找「恢复」的证据
+                bool found = false;
+                bool alive = false;
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    var s = sessions[i];
+                    if (!string.Equals(s.SourceAppUserModelId, staleId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    found = true;
+                    try
+                    {
+                        alive = IsSessionPlaying(s)
+                            || (_staleTitle.Length > 0 && !SessionValidity.IsStale(staleId, _staleTitle));
+                    }
+                    catch { return; }   // 读不出来就维持现状，下一轮再判
+                    break;
+                }
+
+                if (found && !alive) return;   // 会话还在、也没恢复 → 继续忽略
+
+                // 又播起来了 / 窗口回来了 / 会话本身已消失 —— 三种都解除忽略
+                Logger.Debug($"[媒体] 残留会话恢复（{staleId}）");
+                _staleAppId = "";
+                _staleTitle = "";
+                SessionValidity.Reset();
+                if (_manager != null) _ = UpdateSession(_manager);
+                return;
+            }
+
+            // 未判残留：只看当前会话，播放中一律不判
+            var current = _currentSession;
+            if (current == null) return;
+
+            string appId = current.SourceAppUserModelId ?? "";
+            if (!SessionValidity.IsTrackedApp(appId)) return;
+            if (_trackTitle.Length == 0) return;
+
+            bool stale;
+            try
+            {
+                if (IsSessionPlaying(current))
+                {
+                    SessionValidity.NoteAlive(appId);
+                    return;
+                }
+                stale = SessionValidity.IsStale(appId, _trackTitle);
+            }
+            catch { return; }
+
+            if (!stale) return;
+
+            _staleAppId = appId;
+            _staleTitle = _trackTitle;
+            Logger.Debug($"[媒体] 判定会话残留（{appId}）→ 忽略，标题='{_trackTitle}'");
+            if (_manager != null) _ = UpdateSession(_manager);
         }
 
         private void SampleCurrentSession()
@@ -489,11 +595,14 @@ namespace NotchPeninsula
             GlobalSystemMediaTransportControlsSession? newSession = null;
 
             var sessions = manager.GetSessions();
+            // 判为残留的会话整体不参与：既不进候选，也不算「有媒体」——否则岛体仍会挂在假会话上
+            string staleId = _staleAppId;
             bool hasActiveSessions = false;
             for (int i = 0; i < sessions.Count; i++)
             {
                 string id = sessions[i].SourceAppUserModelId ?? "";
                 if (id.Length == 0 || IsGloballyBlockedApp(id)) continue;
+                if (staleId.Length > 0 && string.Equals(id, staleId, StringComparison.OrdinalIgnoreCase)) continue;
                 hasActiveSessions = true;
             }
             HasActiveSessions = hasActiveSessions;
@@ -510,6 +619,8 @@ namespace NotchPeninsula
                     {
                         string id = sessions[i].SourceAppUserModelId ?? "";
                         if (IsGloballyBlockedApp(id)) continue;
+                        // 手动锁定也要过这道闸，否则用户手选了 B站就再也没法摆脱那个假会话
+                        if (staleId.Length > 0 && string.Equals(id, staleId, StringComparison.OrdinalIgnoreCase)) continue;
                         if (string.Equals(id, ManualSessionAppId, StringComparison.OrdinalIgnoreCase))
                         {
                             newSession = sessions[i];
@@ -528,6 +639,7 @@ namespace NotchPeninsula
                         var s = sessions[i];
                         string id = s.SourceAppUserModelId ?? "";
                         if (id.Length == 0) continue;
+                        if (staleId.Length > 0 && string.Equals(id, staleId, StringComparison.OrdinalIgnoreCase)) continue;
 
                         int rank = SessionRank(id);
                         if (rank == 0) continue;                  // 不看好的会话，零成本跳过
@@ -1002,6 +1114,9 @@ namespace NotchPeninsula
 
         private async void OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
         {
+            // 残留状态下播放器只要有播放动作就得立刻响应，不必等 1 秒的轮询档
+            if (_staleAppId.Length > 0) CheckStaleSession();
+
             // 只刷属性会让界面停在那个已经暂停的会话上。
             if (_manager != null && IsMediaControlEnabled && TargetPlatform == "other" && !IsManualSessionMatch)
             {
