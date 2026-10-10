@@ -27,7 +27,7 @@ namespace NotchPeninsula
             float d = _tabSlideToY - _tabSlideFromY;
             float top = _tabSlideFromY + d * p;
 
-            canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + top, 170, TITLE_BAR_HEIGHT + top + TAB_ROW_H), 4, 4, _tabBgSelected);
+            canvas.DrawRoundRect(new SKRect(TAB_BOX_L, TITLE_BAR_HEIGHT + top, TAB_BOX_R, TITLE_BAR_HEIGHT + top + TAB_ROW_H), 4, 4, _tabBgSelected);
 
             // 蓝条以自身中线为中心对称外扩：中点最强、两端归零，所以起止两端没有跳变。
             // 幅度固定、与滑动距离无关，最大伸展时 20 + 10 = 30 仍稳稳落在 36 高的方块里。
@@ -35,7 +35,7 @@ namespace NotchPeninsula
             float mid = top + TAB_ROW_H * 0.5f;
             float half = (TAB_ROW_H * 0.5f - TAB_BAR_DY) + stretch * 0.5f;
 
-            canvas.DrawRoundRect(new SKRect(10, TITLE_BAR_HEIGHT + mid - half, 13, TITLE_BAR_HEIGHT + mid + half),
+            canvas.DrawRoundRect(new SKRect(TAB_BOX_L, TITLE_BAR_HEIGHT + mid - half, TAB_BOX_L + 3, TITLE_BAR_HEIGHT + mid + half),
                 1.5f, 1.5f, _tabIndicator);
         }
 
@@ -58,14 +58,26 @@ namespace NotchPeninsula
                 return;
             }
 
-            if (_tabSlideDst == _selectedTab) return;
+            if (_tabSlideDst != _selectedTab)
+            {
+                _tabSlideFromY += (_tabSlideToY - _tabSlideFromY) * TabEase(_tabSlideT);
+                _tabSlideToY = TabRowY(_selectedTab);
+                _tabSlideDst = _selectedTab;
+                _tabSlideStarted = Environment.TickCount64;
+                _tabSlideT = 0f;
+                Logger.Debug($"[侧边栏] 起滑 from={_tabSlideFromY:F0} to={_tabSlideToY:F0}");
+            }
 
-            _tabSlideFromY += (_tabSlideToY - _tabSlideFromY) * TabEase(_tabSlideT);
-            _tabSlideToY = TabRowY(_selectedTab);
-            _tabSlideDst = _selectedTab;
-            _tabSlideStarted = Environment.TickCount64;
-            _tabSlideT = 0f;
-            StartDisplayHoverAnim();                     // 借用列表行底那张 16ms 表，跑完自己停
+            // 进度**每帧按时钟现算**（不靠「拍了多少帧」累计）：掉帧、节拍晚到都只是少画几帧，
+            // 位置永远对；哪怕节拍彻底停了，下一次 Render 也会把它推到终点，不会把块悬在半路。
+            if (_tabSlideT < 1f)
+            {
+                _tabSlideT = Math.Clamp((Environment.TickCount64 - _tabSlideStarted) / TAB_SLIDE_MS, 0f, 1f);
+                if (_tabSlideT >= 1f)
+                    Logger.Debug($"[侧边栏] 滑完 → dst={_tabSlideDst} 实际用时 {Environment.TickCount64 - _tabSlideStarted}ms");
+                else
+                    StartDisplayHoverAnim();   // 还没走完：保证节拍在跑（幂等，重复调用无副作用）
+            }
         }
 
         // 画整张卡片底 + 一行开关内容。
@@ -206,24 +218,52 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(new SKRect(x, thumbY, x + 3, thumbY + thumbH), 1.5f, 1.5f, _dynamicFillPaint);
         }
 
-        // ---- 「显示内容」列表的行悬停动画 ----
-
+        // ---- 动画节拍（列表行悬停淡入 / 侧边栏选中块滑动，共用这一条）----
+        // 唯一来源：一条后台轻量线程，每 15ms 往窗口 Post 一条私有消息；UI 线程收到就画一帧。
+        //
+        // **不再用 SetTimer / WM_TIMER。** 那张表会静默停摆 —— 标志位说「在跑」而表其实已经没了、
+        // 定时器被同 id 顶掉、或者队列里一直有别的消息轮不到 WM_TIMER，任一种都表现为「动画僵住，
+        // 重开窗口才好」，而且没有任何报错。PostMessage + UI 线程渲染这条路是点一下页面就在用的，
+        // 不会被这类状态卡住，也拦不住它的原因能被日志看见。
+        //
+        // 线程里**只允许** PostMessage：不渲染、不碰 COM、不碰 Z 序（同 Renderer 那边的铁律）。
         private void StartDisplayHoverAnim()
         {
-            if (_displayHoverTimerOn || _hwnd == IntPtr.Zero) return;
-            if (Win32.SetTimer(_hwnd, DISPLAY_HOVER_TIMER_ID, DISPLAY_HOVER_TICK_MS, IntPtr.Zero) == IntPtr.Zero) return;
-            _displayHoverTimerOn = true;
-            // 系统默认 tick 15.625ms，不抬精度的话 16ms 会被取整成 ~31ms（32FPS）。
-            // 只在动画期间抬，停下就还回去。
-            Win32.TimeBeginPeriod(1);
+            lock (_animSync)
+            {
+                _animWant = true;                       // 幂等：正在跑就只是把「继续跑」再确认一次
+                if (_animThread != null || _hwnd == IntPtr.Zero) return;
+                _animThread = new Thread(AnimTickLoop) { IsBackground = true, Name = "NPS-ConsoleAnim" };
+                _animThread.Start();
+            }
         }
 
-        private void StopDisplayHoverAnim(IntPtr hwnd)
+        private void StopDisplayHoverAnim()
         {
-            if (!_displayHoverTimerOn) return;
-            Win32.KillTimer(hwnd, DISPLAY_HOVER_TIMER_ID);
-            _displayHoverTimerOn = false;
-            Win32.TimeEndPeriod(1);
+            lock (_animSync)
+            {
+                if (!_animWant && _animThread == null) return;
+                _animWant = false;                      // 表在 ≤15ms 内自己退出，这里不 Join（UI 线程不能等）
+            }
+        }
+
+        private void AnimTickLoop()
+        {
+            Win32.TimeBeginPeriod(1);                   // 15ms 的 Sleep 不至于被系统 tick 拉成 ~31ms
+            try
+            {
+                while (true)
+                {
+                    lock (_animSync) { if (!_animWant) { _animThread = null; return; } }
+                    Win32.PostMessage(_hwnd, WM_ANIM_TICK, IntPtr.Zero, IntPtr.Zero);
+                    Thread.Sleep(ANIM_TICK_MS);
+                }
+            }
+            finally
+            {
+                Win32.TimeEndPeriod(1);
+                lock (_animSync) { _animThread = null; }
+            }
         }
 
         private bool TickDisplayHoverAnim()
@@ -249,17 +289,15 @@ namespace NotchPeninsula
                 animating = true;
             }
 
-            // 侧边栏：选中块的滑动
-            if (_tabSlideT < 1f)
-            {
-                _tabSlideT = (Environment.TickCount64 - _tabSlideStarted) / TAB_SLIDE_MS;
-                if (_tabSlideT > 1f) _tabSlideT = 1f;
-                animating = true;
-            }
+            // 侧边栏：选中块的滑动 —— 进度由 SyncTabSlide 在每帧 Render 里按时钟推进，
+            // 这里只提供「还在滑」这个事实（别在这儿算 T，否则和渲染那侧的口径就分家了）。
+            if (_tabSlideT < 1f) animating = true;
 
             // 否则会停在 0.99 那种「差一点点」的状态上。
             Render();
-            return animating;
+            // Render() 里的 SyncTabSlide 可能刚好起了一段新滑动：按渲染**之后**的真实状态决定表留不留，
+            // 别拿渲染前算出的旧结论把它停掉 —— 那会让这段滑动永远走不完。
+            return animating || _tabSlideT < 1f;
         }
 
         private float GetDisplayHoverProgress(int row)

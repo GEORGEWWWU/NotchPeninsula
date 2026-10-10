@@ -16,16 +16,8 @@ namespace NotchPeninsula
             bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
             bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
 
-            // Tab Hover 判定：行首与行高和绘制同源（TabRowY / TAB_ROW_H），别写死数字
-            int newHoveredTab = -1;
-            if (x >= 10 && x <= 170)
-            {
-                for (int i = 0; i < SidebarTabY.Length; i++)
-                {
-                    float tabY = TITLE_BAR_HEIGHT + TabRowY(i);
-                    if (y >= tabY && y <= tabY + TAB_ROW_H) { newHoveredTab = i; break; }
-                }
-            }
+            // Tab Hover 判定：与绘制 / 光标共用一套几何（HitSidebarTab）
+            int newHoveredTab = HitSidebarTab(x, y);
 
             int newHoveredTheme = -1;
             int newHoveredOpacityIndex = -1;

@@ -131,13 +131,14 @@ namespace NotchPeninsula
 
         private const float SORT_TRI_W = 18f;             // 上下箭头槽的点击宽度（箭头本身只占槽中心 11×8）
 
-        // 15 而不是 16：系统默认 tick 是 15.625ms，请求 16ms 会被向上取整成 2 个 tick（≈31ms → 32FPS）。
-        // 15 落在 1 个 tick 内，即使 timeBeginPeriod 没生效也只有 ~15.6ms；生效时就是 ~15ms。
-        private const uint DISPLAY_HOVER_TICK_MS = 15;
+        // 动画一拍的间隔。15 而不是 16：系统默认 tick 是 15.625ms，16ms 会被向上取整成 2 个 tick
+        // （≈31ms → 32FPS）；15 落在 1 个 tick 内，动画期间抬了 timeBeginPeriod 就是 ~15ms。
+        private const int ANIM_TICK_MS = 15;
 
         private const float DISPLAY_HOVER_EASE = 0.35f;   // 每拍向目标靠拢的比例（指数缓出）
 
-        private static readonly IntPtr DISPLAY_HOVER_TIMER_ID = new IntPtr(0x4E51); // "NQ"
+        // 动画帧消息：后台节拍线程 Post，UI 线程处理（**不再用 SetTimer / WM_TIMER 驱动动画**）。
+        private const int WM_ANIM_TICK = 0x8000 + 0x53;
 
         private static readonly IntPtr SCROLLBAR_TIMER_ID = new IntPtr(0x4E52); // "NR"
 
@@ -153,6 +154,10 @@ namespace NotchPeninsula
 
         private const float TAB_ROW_H = 36f;          // 页签行高
 
+        private const float TAB_BOX_L = 10f;          // 页签选中块 / 悬停块的左右边界
+
+        private const float TAB_BOX_R = 170f;
+
         private const float TAB_BAR_DY = 8f;          // 蓝色竖条相对行首的上下内缩（竖条高 = 36 - 2×8）
 
         private const float TAB_SLIDE_MS = 200f;      // 选中块滑动的时长（太长就不跟手）
@@ -161,6 +166,18 @@ namespace NotchPeninsula
 
         private static float TabRowY(int index)
             => index >= 0 && index < SidebarTabY.Length ? SidebarTabY[index] : 0f;
+
+        /// <summary>侧边栏命中（画布 DIP 坐标）。绘制 / 悬停 / 光标三处都走它，别再各写一遍区间。</summary>
+        private static int HitSidebarTab(int x, int y)
+        {
+            if (x < TAB_BOX_L || x > TAB_BOX_R) return -1;
+            for (int i = 0; i < SidebarTabY.Length; i++)
+            {
+                float tabY = TITLE_BAR_HEIGHT + TabRowY(i);
+                if (y >= tabY && y <= tabY + TAB_ROW_H) return i;
+            }
+            return -1;
+        }
 
         private long _scrollBarShownAt;
 
@@ -533,7 +550,12 @@ namespace NotchPeninsula
 
         private readonly float[] _displayHoverAnim = new float[24];
 
-        private bool _displayHoverTimerOn = false;
+        // 动画节拍线程的状态：_animWant = 还有动画没跑完，表退出后置 null 好让下一次能重新拉起。
+        private readonly object _animSync = new();
+
+        private Thread? _animThread;
+
+        private bool _animWant;
 
         private readonly float[] _hintAnim = new float[8];
 
@@ -610,6 +632,8 @@ namespace NotchPeninsula
         private int _hoveredMonitorDropdownIndex = -1;
 
         private bool _isHoveringDisabledArea = false;
+
+        private static readonly IntPtr _hCursorHand = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_HAND);
 
         private static string[] _monitorOptions = GetInitialMonitorOptions();
 
@@ -925,17 +949,16 @@ namespace NotchPeninsula
                     }
                     break;
 
+                case WM_ANIM_TICK:
+                    // 动画帧（后台节拍线程 Post）：没有动画在跑时不会有任何空转。
+                    if (!TickDisplayHoverAnim()) StopDisplayHoverAnim();
+                    return IntPtr.Zero;
+
                 case Win32.WM_TIMER:
                     if (wParam == BACKDROP_REFRESH_TIMER_ID)
                     {
                         Win32.KillTimer(hwnd, BACKDROP_REFRESH_TIMER_ID);
                         RepairBackdropAfterActivate();
-                        return IntPtr.Zero;
-                    }
-                    if (wParam == DISPLAY_HOVER_TIMER_ID)
-                    {
-                        //    所以「没有动画在跑」时不会有任何空转的定时器。
-                        if (!TickDisplayHoverAnim()) StopDisplayHoverAnim(hwnd);
                         return IntPtr.Zero;
                     }
                     if (wParam == SCROLLBAR_TIMER_ID)
@@ -968,6 +991,7 @@ namespace NotchPeninsula
                     ApplyAppearance();
                     if (_isLightAppearance != wasLight)
                     {
+                        Logger.Debug($"[外观] 主题切换 → {(_isLightAppearance ? "浅色" : "深色")} sel={_selectedTab} slideT={_tabSlideT:F2}");
                         ReapplyBackdropMaterial();
                         ApplyBackdropPalette();
                         Render();
@@ -1126,9 +1150,9 @@ namespace NotchPeninsula
                         Win32.DestroyWindow(backdrop);
                     }
                     DisposeRenderBuffer();
-                    // 定时器本身随窗口一起消失，只是把这个标志归位：
-                    _displayHoverTimerOn = false;
-                    _marketHintTimerOn = false;   // 同上：市场提示的自动消失表也要归位
+                    // 节拍线程只认 _animWant，收到 false 就自己收工；_hwnd 已销毁，它 Post 到死句柄上也无害。
+                    StopDisplayHoverAnim();
+                    _marketHintTimerOn = false;   // 定时器随窗口一起消失，只是把标志归位：市场提示的自动消失
                     _scrollBarTimerOn = false;    // 同上：滚动条的淡出表
                     _scrollBarShownAt = 0;        // 下次打开窗口时滚动条从隐藏开始
                     Renderer.StandbyActiveChanged -= OnStandbyActiveChanged;
@@ -1136,10 +1160,19 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_SETCURSOR:
-                    if (_isHoveringDisabledArea && (Win32.Low32(lParam) & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
+                    if ((Win32.Low32(lParam) & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
                     {
-                        Win32.SetCursor(Win32.LoadCursor(IntPtr.Zero, (int)32648)); // 强制注入系统 NO (禁止) 指针
-                        return (IntPtr)1;
+                        if (_isHoveringDisabledArea)
+                        {
+                            Win32.SetCursor(Win32.LoadCursor(IntPtr.Zero, (int)32648)); // 强制注入系统 NO (禁止) 指针
+                            return (IntPtr)1;
+                        }
+                        // 侧边栏整行可点 → 手指型；其余位置照常交给系统（箭头）。
+                        if (TryGetCursorClientPos(out int curX, out int curY) && HitSidebarTab(curX, curY) >= 0)
+                        {
+                            Win32.SetCursor(_hCursorHand);
+                            return (IntPtr)1;
+                        }
                     }
                     break;
             }
