@@ -9,14 +9,15 @@ namespace NotchPeninsula
         private int _acrFrames;
         private bool _acrLogged;
 
-        // 亚克力背板：抓的是【整个画布框】，不是当前胶囊框。
+        // 亚克力背板：抓的是【整个画布框 ∩ 屏幕】，不是当前胶囊框。
         // 这样胶囊变大变小（悬停展开 / 待机↔媒体切换）时只挪源矩形，完全不用重抓 —— 尺寸变换期间的闪烁就没了。
-        // 渲染线程这里只写「要抓哪块」+ 取成品，真正的抓屏在 NPS-Backdrop 线程上（屏幕读取要 20ms 量级）。
+        // 渲染线程这里只写「要抓哪块」+「岛体占哪块」+ 取成品，真正的抓屏在 NPS-Backdrop 线程上（屏幕读取要 20ms 量级）。
         private void SyncIslandBackdrop()
         {
             if (!Renderer.IslandAcrylic || Renderer.FullHideAlpha < 0.5f)
             {
-                IslandBackdrop.SetTarget(0, 0, 0, 0, _hwnd);
+                IslandBackdrop.SetTarget(0, 0, 0, 0);
+                IslandBackdrop.ClearMask();
                 if (_acrylicOwned != null)
                 {
                     Renderer.AcrylicBackdrop = null;
@@ -38,10 +39,24 @@ namespace NotchPeninsula
             // 交矩形与胶囊尺寸无关 → 胶囊变大变小只挪源矩形，不重抓，尺寸变换期间不闪
             if (capW < 16 || capH < 16)
             {
-                IslandBackdrop.SetTarget(0, 0, 0, 0, _hwnd);
+                IslandBackdrop.SetTarget(0, 0, 0, 0);
+                IslandBackdrop.ClearMask();
                 return;
             }
-            IslandBackdrop.SetTarget(capX, capY, capW, capH, _hwnd);
+
+            // 胶囊在画布里的物理位置 → 换算成背板图像素（背板 = 交矩形 ÷ Downscale）。
+            // 画布 x 原点 = dstX，胶囊左边缘 = dstX + left·dpi，所以相对交矩形要再减 capX。
+            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+            float topY = 12f * _currentStyleProgress;
+            float k = IslandBackdrop.Downscale;
+            float srcL = (dstX + left * _dpiScale - capX) / k;
+            float srcT = (dstY + topY * _dpiScale - capY) / k;
+            float srcW = _currentWidth * _dpiScale / k;
+            float srcH = _currentHeight * _dpiScale / k;
+
+            // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
+            IslandBackdrop.SetMask(srcL, srcT, srcL + srcW, srcT + srcH);
+            IslandBackdrop.SetTarget(capX, capY, capW, capH);
 
             var fresh = IslandBackdrop.TakePending();
             if (fresh != null)
@@ -61,15 +76,6 @@ namespace NotchPeninsula
             if (_acrFrames == 120 && Renderer.AcrylicBackdrop == null)
                 Logger.Warn("[亚克力] 开启 120 帧仍未拿到背板（后台抓屏线程无产出）");
 
-            // 胶囊在画布里的物理位置 → 换算成背板图像素（背板 = 交矩形 ÷ Downscale）。
-            // 画布 x 原点 = dstX，胶囊左边缘 = dstX + left·dpi，所以相对交矩形要再减 capX。
-            float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-            float topY = 12f * _currentStyleProgress;
-            float k = IslandBackdrop.Downscale;
-            float srcL = (dstX + left * _dpiScale - capX) / k;
-            float srcT = (dstY + topY * _dpiScale - capY) / k;
-            float srcW = _currentWidth * _dpiScale / k;
-            float srcH = _currentHeight * _dpiScale / k;
             Renderer.AcrylicBackdropSrc = new SKRect(srcL, srcT, srcL + srcW, srcT + srcH);
         }
 

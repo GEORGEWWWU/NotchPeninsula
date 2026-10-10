@@ -33,7 +33,6 @@ namespace NotchPeninsula
 
         // ---- 渲染线程写入 ----
         private static volatile int _tx, _ty, _tw, _th;
-        private static IntPtr _hwnd;
         private static volatile bool _dirty;
         private static volatile bool _expire;
 
@@ -47,16 +46,46 @@ namespace NotchPeninsula
         private static bool _disabled;
         private static int _loggedX = int.MinValue, _loggedY = int.MinValue;
 
+        // 胶囊在背板图里的矩形（渲染线程每帧写 / 抓屏线程读）：用来把岛体自己那块抹掉。
+        // 不用锁：读到的最多是上一帧的矩形，擦除区再放几像素余量即可兜住。
+        private static volatile int _maskX0, _maskY0, _maskX1, _maskY1;
+
+        // 渲染线程：告诉抓屏线程「岛体占的是背板图里的哪一块」（图像像素坐标）
+        public static void SetMask(float x0, float y0, float x1, float y1)
+        {
+            int nx0 = (int)MathF.Floor(x0), ny0 = (int)MathF.Floor(y0);
+            int nx1 = (int)MathF.Ceiling(x1), ny1 = (int)MathF.Ceiling(y1);
+            bool moved = Math.Abs(nx1 - _maskX1) > 3 || Math.Abs(nx0 - _maskX0) > 3 || Math.Abs(ny1 - _maskY1) > 3;
+            _maskX0 = nx0; _maskY0 = ny0; _maskX1 = nx1; _maskY1 = ny1;
+
+            // 遮挡区在明显变化（展开/收起动画）→ 尽快用新矩形重抓一次，免得岛体边缘漏进模糊里；但要节流
+            if (moved)
+            {
+                long now = Environment.TickCount64;
+                if (now - _lastMaskWakeMs >= 150)
+                {
+                    _lastMaskWakeMs = now;
+                    _dirty = true;
+                    _work.Set();
+                }
+            }
+        }
+
+        private static long _lastMaskWakeMs;
+
+        public static void ClearMask() => _maskX0 = _maskY0 = _maskX1 = _maskY1 = 0;
+
+
         // ---- 交给渲染线程的成品（交换后由渲染线程释放）----
         private static SKImage? _pending;
 
         public static void Expire() { _expire = true; _dirty = true; _work.Set(); }
 
         // 渲染线程：告诉后台线程「要抓这块屏幕矩形」。矩形没变就不会重新抓。
-        public static void SetTarget(int x, int y, int w, int h, IntPtr hwnd)
+        public static void SetTarget(int x, int y, int w, int h)
         {
             if (x == _tx && y == _ty && w == _tw && h == _th) return;
-            _tx = x; _ty = y; _tw = w; _th = h; _hwnd = hwnd;
+            _tx = x; _ty = y; _tw = w; _th = h;
             _dirty = true;
             _work.Set();
         }
@@ -129,8 +158,11 @@ namespace NotchPeninsula
         private static bool Capture()
         {
             int w = _tw, h = _th, x = _tx, y = _ty;
-            IntPtr hwnd = _hwnd;
-            if (hwnd == IntPtr.Zero) return false;
+            if (w < 16 || h < 16) return false;
+
+            // 还不知道岛体占哪块 → 先别抓（不然会把岛体自己拍进去，画面会往涂层色糊成一坨）
+            int mx0 = _maskX0, my0 = _maskY0, mx1 = _maskX1, my1 = _maskY1;
+            if (mx1 <= mx0 || my1 <= my0) return false;
 
             int sw = Math.Max(1, (int)(w / Downscale));
             int sh = Math.Max(1, (int)(h / Downscale));
@@ -139,27 +171,23 @@ namespace NotchPeninsula
 
             IntPtr sdc = Win32.GetDC(IntPtr.Zero);
             if (sdc == IntPtr.Zero) return false;
-
-            bool excluded = false;
             try
             {
-                excluded = Win32.SetWindowDisplayAffinity(hwnd, Win32.WDA_EXCLUDEFROMCAPTURE);
-                if (!excluded)
-                {
-                    // 不支持就宁可没有亚克力 —— 硬抓会把岛体自己糊进去，画面会变成回声
-                    Warn("[IslandBackdrop] 系统不支持 WDA_EXCLUDEFROMCAPTURE，亚克力不可用");
-                    _disabled = true;
-                    return false;
-                }
                 // GDI 一步缩到 1/12，不经过全尺寸原图
                 Win32.SetStretchBltMode(_memDc, Win32.HALFTONE);
                 if (!Win32.StretchBlt(_memDc, 0, 0, sw, sh, sdc, x, y, w, h, Win32.SRCCOPY)) return false;
             }
             finally
             {
-                if (excluded) Win32.SetWindowDisplayAffinity(hwnd, Win32.WDA_NONE);
                 Win32.ReleaseDC(IntPtr.Zero, sdc);
             }
+
+            // ⚠️ 这里**不再用 SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)**。
+            // 它会让窗口在录屏/截图里「隐身」，而我们必须每 250ms 开关它一次（抓屏时开、抓完关）——
+            // 实测按这个节奏，OBS 一类的捕获端有 **11.5% 的帧看不到岛体**，观感就是「亚克力模式下灵动岛一直闪」。
+            // 改成：照抓（岛体在内），然后把岛体自己占的那块用**左右邻像素横向插值**抹掉 ——
+            // 岛体在屏幕顶部居中，同一行左右两侧就是它背后的那层（标题栏/壁纸），1/12 缩略 + 平滑后看不出差别。
+            EraseIsland(sw, sh, mx0, my0, mx1, my1);
 
             // ⚠️ 必须把 DIB 的 alpha 字节全部置 255。
             // StretchBlt/BitBlt 只写 BGR、**不写 alpha**（留下 0），而 SKImage.FromPixels 会把 a=0 当「全透明」——
@@ -210,6 +238,55 @@ namespace NotchPeninsula
                     + $"  背板中央平均 RGB=({(cnt == 0 ? -1 : ar / cnt)},{(cnt == 0 ? -1 : ag / cnt)},{(cnt == 0 ? -1 : ab / cnt)})");
             }
             return true;
+        }
+
+        // 把岛体自己占的那块（背板图坐标）用左右邻像素横向插值抹掉。
+        // 岛体在屏幕顶部居中，同一行左右两侧就是它背后的那层；1/12 缩略 + 平滑后完全看不出。
+        private static void EraseIsland(int sw, int sh, int x0, int y0, int x1, int y1)
+        {
+            // 余量：兜住「遮挡矩形比实际岛体晚一帧」的滞后（动画中胶囊在变宽变窄）
+            x0 -= 2; x1 += 2; y0 -= 1; y1 += 1;
+            if (x0 < 0) x0 = 0;
+            if (y0 < 0) y0 = 0;
+            if (x1 > sw) x1 = sw;
+            if (y1 > sh) y1 = sh;
+            if (x1 - x0 < 1 || y1 - y0 < 1) return;
+
+            int lx = x0 - 1, rx = x1;                    // 左右参考列（必须落在擦除区之外）
+            bool hasL = lx >= 0, hasR = rx < sw;
+            if (!hasL && !hasR) return;
+
+            for (int j = y0; j < y1; j++)
+            {
+                int row = j * sw * 4;
+                if (hasL && hasR)
+                {
+                    int pl = row + lx * 4, pr = row + rx * 4;
+                    int bL = Marshal.ReadByte(_pBits, pl), gL = Marshal.ReadByte(_pBits, pl + 1), rL = Marshal.ReadByte(_pBits, pl + 2);
+                    int bR = Marshal.ReadByte(_pBits, pr), gR = Marshal.ReadByte(_pBits, pr + 1), rR = Marshal.ReadByte(_pBits, pr + 2);
+                    float inv = 1f / (rx - lx);
+                    for (int i = x0; i < x1; i++)
+                    {
+                        float t = (i - lx) * inv;
+                        int p = row + i * 4;
+                        Marshal.WriteByte(_pBits, p, (byte)(bL + (bR - bL) * t));
+                        Marshal.WriteByte(_pBits, p + 1, (byte)(gL + (gR - gL) * t));
+                        Marshal.WriteByte(_pBits, p + 2, (byte)(rL + (rR - rL) * t));
+                    }
+                }
+                else
+                {
+                    int ps = row + (hasL ? lx : rx) * 4;
+                    byte b = Marshal.ReadByte(_pBits, ps), g = Marshal.ReadByte(_pBits, ps + 1), r = Marshal.ReadByte(_pBits, ps + 2);
+                    for (int i = x0; i < x1; i++)
+                    {
+                        int p = row + i * 4;
+                        Marshal.WriteByte(_pBits, p, b);
+                        Marshal.WriteByte(_pBits, p + 1, g);
+                        Marshal.WriteByte(_pBits, p + 2, r);
+                    }
+                }
+            }
         }
 
         private static void EnsureBuffer(int sw, int sh)
