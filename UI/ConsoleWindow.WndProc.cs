@@ -20,6 +20,7 @@ namespace NotchPeninsula
             int newHoveredTab = HitSidebarTab(x, y);
 
             int newHoveredTheme = -1;
+            int newHoveredMaterial = -1;
             int newHoveredOpacityIndex = -1;
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             if (_selectedTab == 5)
@@ -28,6 +29,11 @@ namespace NotchPeninsula
                 if (y >= themeSegY && y <= themeSegY + SEG_H
                     && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
                     newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
+
+                float matSegY = TITLE_BAR_HEIGHT + MAT_SEG_Y;
+                if (y >= matSegY && y <= matSegY + SEG_H
+                    && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
+                    newHoveredMaterial = Math.Min(1, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 2f)));
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
@@ -603,6 +609,7 @@ namespace NotchPeninsula
                 newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
                 newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
+                newHoveredMaterial != _hoveredMaterialIndex ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
@@ -660,6 +667,7 @@ namespace NotchPeninsula
                 _hoveredPlusIndex = newHoverPlus;
                 _hoveredResetIndex = newHoverReset;
                 _hoveredThemeIndex = newHoveredTheme;
+                _hoveredMaterialIndex = newHoveredMaterial;
                 _mediaExpToggleHovered = newMediaExpToggleHovered;
                 _appLaunchToggleHovered = newAppLaunchToggleHovered;
                 _hoveredOpacityIndex = newHoveredOpacityIndex;

@@ -18,7 +18,7 @@ namespace NotchPeninsula
         public string? HitTarget { get; set; }
     }
 
-    public class NotchWindow
+    public partial class NotchWindow
     {
         public bool clicked_info =true;
         public bool isToastActive;
@@ -1051,6 +1051,9 @@ namespace NotchPeninsula
             var canvas = _renderSurface!.Canvas;
             canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
 
+            // 亚克力背板：与胶囊同口径抓一次（几何没变就什么都不做），本帧绘制直接用
+            SyncIslandBackdrop();
+
             // 存档矩阵状态，避免缩放无限叠加
             // 关键是"回滚到基线"而不是"Restore 一次"：异常可能发生在 Draw 内部的第 N 级 save 之后，
             canvas.Save();
@@ -1294,7 +1297,8 @@ namespace NotchPeninsula
         }
 
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
-        {            switch (msg)
+        {
+            switch (msg)
             {
                 case Win32.WM_HOTKEY:
                     MediaHotkeys.Handle(Win32.Low32(wParam));
@@ -1303,6 +1307,7 @@ namespace NotchPeninsula
                 case Win32.WM_DESTROY:
                     MediaHotkeys.Detach();
                     RevokeIslandDropTarget();
+                    IslandBackdrop.Expire();   // 真正的释放留给渲染线程，别跨线程析构 SKImage
                     break;
 
                 case Win32.WM_SETCURSOR:

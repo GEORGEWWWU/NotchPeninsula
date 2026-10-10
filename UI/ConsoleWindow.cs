@@ -668,6 +668,8 @@ namespace NotchPeninsula
 
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
 
+        private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力
+
         private int _hoveredOpacityIndex = -1;
         // DPI 缩放相关
 

@@ -63,19 +63,26 @@ namespace NotchPeninsula
 
         private const float THEME_CARD_Y = 12f;
 
-        private const float THEME_CARD_H = 62f;
+        private const float THEME_CARD_H = 104f;   // 两行：主题配色 + 背景材质
 
-        private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + 14f;   // 88
+        private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + 14f;   // 130
 
         private const float OPACITY_CARD_H = 78f;
 
-        private const float SIZE_CARD_Y = OPACITY_CARD_Y + OPACITY_CARD_H + 14f;  // 180
+        private const float SIZE_CARD_Y = OPACITY_CARD_Y + OPACITY_CARD_H + 14f;  // 222
 
         private const float THEME_SEG_W = 150f;
 
         private const float THEME_SEG_X = WIDTH - CONTENT_TEXT_RM - THEME_SEG_W;   // 422
 
         private const float THEME_SEG_Y = 28f;
+
+        // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟
+        private const float MAT_SEG_W = THEME_SEG_W;
+
+        private const float MAT_SEG_X = THEME_SEG_X;
+
+        private const float MAT_SEG_Y = THEME_SEG_Y + 42f;   // 70
 
         private const float OPACITY_SLIDER_DY = 44f;
 

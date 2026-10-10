@@ -117,6 +117,12 @@ namespace NotchPeninsula
 
         public static bool StandbyToggleByDoubleClick { get; set; } = false;
 
+        // 灵动岛背景材质：true = 亚克力（胶囊内铺模糊后的真实桌面）
+        public static bool IslandAcrylic { get; set; } = false;
+
+        // 亚克力背板：已模糊好的桌面截图，由 NotchWindow 每帧喂进来（只允许渲染线程读写）
+        public static SKImage? AcrylicBackdrop { get; set; }
+
         public static int TargetMonitorIndex { get; set; } = 0; // 目标显示器索引
 
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
@@ -246,6 +252,18 @@ namespace NotchPeninsula
                 _bgPath.Close();
 
                 canvas.DrawPath(_bgPath, _bgPaint);
+
+                // 亚克力：胶囊内部先铺一层「模糊后的真实桌面像素」，再叠自绘涂层当色调。
+                // 背板由 NotchWindow 每帧喂进来（抓屏时岛体对自己隐身，所以拿到的就是背后那层）。
+                var backdrop = AcrylicBackdrop;
+                if (IslandAcrylic && backdrop != null)
+                {
+                    canvas.Save();
+                    canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
+                    canvas.DrawImage(backdrop,
+                        new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
+                    canvas.Restore();
+                }
 
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);

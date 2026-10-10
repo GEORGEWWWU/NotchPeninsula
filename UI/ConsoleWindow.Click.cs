@@ -259,7 +259,16 @@ namespace NotchPeninsula
                 Renderer.ThemeMode = _hoveredThemeIndex;
                 Renderer.ApplyThemeColors(); // 立即反转画笔颜色
                 Program.SaveSetting("ThemeMode", _hoveredThemeIndex);
+                NotchWindow.RequestAcrylicRebuild(); // 明暗换了，亚克力色调也要重贴
                 Render(); // 刷新控制台UI
+            }
+            else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
+            {
+                Renderer.IslandAcrylic = _hoveredMaterialIndex == 1;
+                Renderer.ApplyThemeColors(); // 岛体涂层厚度要跟着换
+                Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
+                Render();
             }
             else if (_selectedTab == 5 && _hoveredOpacityIndex != -1)
             {

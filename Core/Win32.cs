@@ -47,6 +47,7 @@ namespace NotchPeninsula
         public const int WM_LBUTTONUP = 0x0202;
         public const int WM_MOUSELEAVE = 0x02A3;
         public const int WM_SETCURSOR = 0x0020;
+        public const int WM_ERASEBKGND = 0x0014;
         public const int WM_CLOSE = 0x0010;
         public const int WM_SYSCOMMAND = 0x0112;
         public const int SC_MINIMIZE = 0xF020;
@@ -208,6 +209,7 @@ namespace NotchPeninsula
         public const int DWMWA_MICA_EFFECT = 1029;
         public const int DWMWCP_ROUND = 2;
         public const int DWMSBT_MAINWINDOW = 2;
+        public const int DWMSBT_TRANSIENTWINDOW = 3;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct WNDCLASS
@@ -356,6 +358,18 @@ namespace NotchPeninsula
         public static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect, int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
 
         [DllImport("gdi32.dll")]
+        public static extern bool BitBlt(IntPtr hdcDest, int x, int y, int w, int h, IntPtr hdcSrc, int sx, int sy, uint rop);
+
+        public const uint SRCCOPY = 0x00CC0020;
+
+        // 抓屏时让自己对捕获隐身（否则会把岛体自己糊进背板，形成回声）
+        public const uint WDA_NONE = 0x00000000;
+        public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
+
+        [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
 
         [DllImport("gdi32.dll")]
@@ -410,6 +424,7 @@ namespace NotchPeninsula
         public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
         public const uint SWP_NOMOVE_NOSIZE = 0x0001 | 0x0002;
+        public const uint SWP_NOZORDER = 0x0004;
         public const uint SWP_NOACTIVATE = 0x0010;
 
         [DllImport("user32.dll")]

@@ -67,7 +67,11 @@ namespace NotchPeninsula
             }
 
             // 预计算颜色，避免在渲染树中生成新对象
-            byte bgAlpha = (byte)(BgOpacityLevel * 255 / 4); // 计算5个档位对应的透明度值(0~255)
+            // 亚克力模式下岛体自绘涂层必须留出透光量，否则会把背后的模糊整个盖死；
+            // 上限收到 50%，滑到最左即「纯材质、无涂层」。
+            byte bgAlpha = IslandAcrylic
+                ? (byte)(BgOpacityLevel * 128 / 4)
+                : (byte)(BgOpacityLevel * 255 / 4);
             var baseBg = isLight ? SKColors.White : SKColors.Black;
             var bg = baseBg.WithAlpha(bgAlpha); // 只改变背景色的透明度，不影响内部元素
             _currentTextColor = isLight ? SKColors.Black : SKColors.White;
@@ -115,6 +119,10 @@ namespace NotchPeninsula
         // 全局复用池 (彻底实现 60FPS 零 GC 分配)
 
         private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
+
+        // 亚克力背板画笔：背板是 1/12 缩略图，绘制时靠线性放大 + 这层小高斯把它抹成大片模糊
+        private static readonly SKPaint _acrylicPaint = new()
+        { IsAntialias = true, ImageFilter = SKImageFilter.CreateBlur(2f, 2f) };
 
         private static readonly SKPaint _fallbackIconPaint = new() { Color = new SKColor(0, 120, 212), IsAntialias = true };
 

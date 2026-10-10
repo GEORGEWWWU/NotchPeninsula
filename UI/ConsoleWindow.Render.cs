@@ -1080,6 +1080,12 @@ namespace NotchPeninsula
             DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
                 ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
 
+            // 第二行：背景材质（独立选项，与主题配色互不影响）
+            canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + 68, _uiTextPaint);
+            canvas.DrawText("胶囊内模糊真实桌面背景", CONTENT_TEXT_X, themeY + 88, _subTextPaint);
+            DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
+                ["实体", "亚克力"], Renderer.IslandAcrylic ? 1 : 0, _hoveredMaterialIndex);
+
             float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
             canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBg);
             canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBorder);

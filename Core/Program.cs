@@ -79,6 +79,7 @@ namespace NotchPeninsula
                     Renderer.StandbyActive = (int)key.GetValue("StandbyActive", 0) != 0;
                     Renderer.TargetMonitorIndex = (int)key.GetValue("TargetMonitorIndex", 0);
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
+                    Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
 
                     // 本来就开着的，沿用注册表里的勾选状态。
                     // 不勾的话升级后媒体会整个消失。
@@ -130,6 +131,7 @@ namespace NotchPeninsula
             if (Renderer.ThemeMode == 2)
             {
                 Renderer.ApplyThemeColors();
+                NotchWindow.RequestAcrylicRebuild();   // 跟系统的明暗变了，亚克力色调跟着换
             }
         }
 
