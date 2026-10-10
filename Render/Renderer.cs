@@ -123,6 +123,10 @@ namespace NotchPeninsula
         // 亚克力背板：已模糊好的桌面截图，由 NotchWindow 每帧喂进来（只允许渲染线程读写）
         public static SKImage? AcrylicBackdrop { get; set; }
 
+        // 背板上「本轮胶囊」对应的源矩形（图像像素坐标）——
+        // 背板抓的是整个画布框，所以胶囊变大变小时只挪源矩形，不用重抓，避免闪烁
+        public static SKRect AcrylicBackdropSrc { get; set; }
+
         public static int TargetMonitorIndex { get; set; } = 0; // 目标显示器索引
 
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
@@ -251,19 +255,19 @@ namespace NotchPeninsula
                 _bgPath.ConicTo(islandRight, 0, islandRight - rTopX, 0, w);
                 _bgPath.Close();
 
-                canvas.DrawPath(_bgPath, _bgPaint);
-
-                // 亚克力：胶囊内部先铺一层「模糊后的真实桌面像素」，再叠自绘涂层当色调。
-                // 背板由 NotchWindow 每帧喂进来（抓屏时岛体对自己隐身，所以拿到的就是背后那层）。
+                // 亚克力：胶囊内先铺「模糊后的真实桌面像素」，再叠自绘涂层当色调。
+                // ⚠️ 顺序不能颠倒 —— 涂层必须画在模糊之上，否则会被背板整块盖掉（看起来就只剩"假玻璃"）。
                 var backdrop = AcrylicBackdrop;
                 if (IslandAcrylic && backdrop != null)
                 {
                     canvas.Save();
                     canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-                    canvas.DrawImage(backdrop,
+                    canvas.DrawImage(backdrop, AcrylicBackdropSrc,
                         new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
                     canvas.Restore();
                 }
+
+                canvas.DrawPath(_bgPath, _bgPaint);
 
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);

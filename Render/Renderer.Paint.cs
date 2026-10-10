@@ -67,10 +67,10 @@ namespace NotchPeninsula
             }
 
             // 预计算颜色，避免在渲染树中生成新对象
-            // 亚克力模式下岛体自绘涂层必须留出透光量，否则会把背后的模糊整个盖死；
-            // 上限收到 50%，滑到最左即「纯材质、无涂层」。
+            // 亚克力 = 模糊背板 + 上层的浅色/深色涂层（真实亚克力的"奶感"就来自这层）。
+            // 上限 140/255 ≈ 55%，与设置窗口那套亚克力色调（0x8C）同口径；档位滑到最左 = 纯模糊。
             byte bgAlpha = IslandAcrylic
-                ? (byte)(BgOpacityLevel * 128 / 4)
+                ? (byte)(BgOpacityLevel * 140 / 4)
                 : (byte)(BgOpacityLevel * 255 / 4);
             var baseBg = isLight ? SKColors.White : SKColors.Black;
             var bg = baseBg.WithAlpha(bgAlpha); // 只改变背景色的透明度，不影响内部元素
@@ -120,9 +120,11 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
 
-        // 亚克力背板画笔：背板是 1/12 缩略图，绘制时靠线性放大 + 这层小高斯把它抹成大片模糊
+        // 亚克力背板画笔。
+        // 这里**故意不带 ImageFilter** —— 每帧带高斯画一次会让 Skia 每帧开临时缓冲，帧率和内存都会崩。
+        // 模糊已经在抓到背板时一次性做完了（缩 1/12 + 小高斯），这里只需平滑放大。
         private static readonly SKPaint _acrylicPaint = new()
-        { IsAntialias = true, ImageFilter = SKImageFilter.CreateBlur(2f, 2f) };
+        { IsAntialias = true, FilterQuality = SKFilterQuality.Medium };
 
         private static readonly SKPaint _fallbackIconPaint = new() { Color = new SKColor(0, 120, 212), IsAntialias = true };
 

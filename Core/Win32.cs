@@ -360,6 +360,16 @@ namespace NotchPeninsula
         [DllImport("gdi32.dll")]
         public static extern bool BitBlt(IntPtr hdcDest, int x, int y, int w, int h, IntPtr hdcSrc, int sx, int sy, uint rop);
 
+        // 抓屏时直接由 GDI 缩到 1/k —— 绝不把整张原图搬进托管/原生堆
+        [DllImport("gdi32.dll")]
+        public static extern bool StretchBlt(IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest,
+            IntPtr hdcSrc, int xSrc, int ySrc, int wSrc, int hSrc, uint rop);
+
+        [DllImport("gdi32.dll")]
+        public static extern int SetStretchBltMode(IntPtr hdc, int mode);
+
+        public const int HALFTONE = 4;
+
         public const uint SRCCOPY = 0x00CC0020;
 
         // 抓屏时让自己对捕获隐身（否则会把岛体自己糊进背板，形成回声）

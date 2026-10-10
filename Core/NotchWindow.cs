@@ -1307,7 +1307,7 @@ namespace NotchPeninsula
                 case Win32.WM_DESTROY:
                     MediaHotkeys.Detach();
                     RevokeIslandDropTarget();
-                    IslandBackdrop.Expire();   // 真正的释放留给渲染线程，别跨线程析构 SKImage
+                    ShutdownIslandBackdrop();   // 停掉后台抓屏线程并释放它自己的 GDI 资源
                     break;
 
                 case Win32.WM_SETCURSOR:
