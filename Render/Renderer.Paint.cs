@@ -58,6 +58,8 @@ namespace NotchPeninsula
 
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
 
+        private static bool _acrylicLogged;
+
         public static void ApplyThemeColors() // 刷新颜色的方法
         {
             bool isLight = ThemeMode == 1;
@@ -70,8 +72,16 @@ namespace NotchPeninsula
             // 亚克力 = 模糊背板 + 上层的浅色/深色涂层（真实亚克力的"奶感"就来自这层）。
             // 上限 140/255 ≈ 55%，与设置窗口那套亚克力色调（0x8C）同口径；档位滑到最左 = 纯模糊。
             byte bgAlpha = IslandAcrylic
-                ? (byte)(BgOpacityLevel * 140 / 4)
-                : (byte)(BgOpacityLevel * 255 / 4);
+                ? (byte)Math.Clamp(BgOpacityLevel * 140 / 4, 0, 255)
+                : (byte)Math.Clamp(BgOpacityLevel * 255 / 4, 0, 255);
+
+            // 一次性诊断：材质开关一变就记一行 —— 排查「亚克力看不见」时第一时间看它
+            if (IslandAcrylic != _acrylicLogged)
+            {
+                _acrylicLogged = IslandAcrylic;
+                Logger.Info($"[亚克力] 材质={(IslandAcrylic ? "开" : "关")}  涂层alpha={bgAlpha}"
+                    + $"  档位={BgOpacityLevel}  主题={(isLight ? "浅" : "深")}  底色={(isLight ? "白" : "黑")}");
+            }
             var baseBg = isLight ? SKColors.White : SKColors.Black;
             var bg = baseBg.WithAlpha(bgAlpha); // 只改变背景色的透明度，不影响内部元素
             _currentTextColor = isLight ? SKColors.Black : SKColors.White;

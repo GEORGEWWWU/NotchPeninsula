@@ -6,6 +6,7 @@ namespace NotchPeninsula
     {
         // 渲染线程独占的一份背板引用：只有它能释放，避免和后台线程抢着析构
         private SKImage? _acrylicOwned;
+        private int _acrFrames;
 
         // 亚克力背板：抓的是【整个画布框】，不是当前胶囊框。
         // 这样胶囊变大变小（悬停展开 / 待机↔媒体切换）时只挪源矩形，完全不用重抓 —— 尺寸变换期间的闪烁就没了。
@@ -34,7 +35,14 @@ namespace NotchPeninsula
                 _acrylicOwned?.Dispose();
                 _acrylicOwned = fresh;
                 Renderer.AcrylicBackdrop = fresh;
+                if (_acrFrames == 0)
+                    Logger.Info($"[亚克力] 渲染侧拿到背板 {fresh.Width}x{fresh.Height}");
             }
+
+            // 开着一秒还没拿到背板 → 只报一次，说明后台线程没产出
+            _acrFrames++;
+            if (_acrFrames == 120 && Renderer.AcrylicBackdrop == null)
+                Logger.Warn("[亚克力] 开启 120 帧仍未拿到背板（后台抓屏线程无产出）");
 
             // 胶囊在画布里的位置：x 居中，y 平移了 topY（画布已整体 Translate，所以源矩形要加上 topY）
             const float k = IslandBackdrop.Downscale;

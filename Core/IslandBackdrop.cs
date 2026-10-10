@@ -41,6 +41,7 @@ namespace NotchPeninsula
         private static int _capW, _capH;
         private static long _lastMs;
         private static bool _disabled;
+        private static bool _loggedFirst;
 
         // ---- 交给渲染线程的成品（交换后由渲染线程释放）----
         private static SKImage? _pending;
@@ -167,9 +168,29 @@ namespace NotchPeninsula
             var img = smooth.Snapshot();
             if (img == null) return false;
 
-            // 旧的还没被渲染线程取走 → 直接丢掉它（那是我们自己产的，安全）
+            // 旧的那张还没被渲染线程取走 → 直接丢掉它（我们自己产的，安全）
             var stale = Interlocked.Exchange(ref _pending, img);
             stale?.Dispose();
+
+            if (!_loggedFirst)
+            {
+                _loggedFirst = true;
+                // 一次性诊断：把「胶囊正下方那块背板到底什么颜色」直接量出来 —— 白色/纯色就说明抓错了地方
+                int cw = Math.Max(1, sw / 3), chh = Math.Max(1, sh / 3);
+                long ar = 0, ag = 0, ab = 0; int cnt = 0;
+                var px = new SKPixmap();
+                if (img.PeekPixels(px))
+                {
+                    for (int j = sh / 3; j < sh / 3 + chh && j < sh; j++)
+                        for (int i = sw / 3; i < sw / 3 + cw && i < sw; i++)
+                        {
+                            var c = px.GetPixelColor(i, j);
+                            ar += c.Red; ag += c.Green; ab += c.Blue; cnt++;
+                        }
+                }
+                Info($"[亚克力] 首次抓屏 ok：屏幕矩形=({x},{y},{w},{h})  缩略图={sw}x{sh}"
+                    + $"  背板中央平均 RGB=({(cnt == 0 ? -1 : ar / cnt)},{(cnt == 0 ? -1 : ag / cnt)},{(cnt == 0 ? -1 : ab / cnt)})");
+            }
             return true;
         }
 
