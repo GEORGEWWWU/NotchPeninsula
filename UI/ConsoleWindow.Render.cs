@@ -83,7 +83,7 @@ namespace NotchPeninsula
         // 画整张卡片底 + 一行开关内容。
         private void DrawToggleCard(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false, string? badge = null)
         {
-            var cardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + yOffset, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + yOffset + 62);
+            var cardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + yOffset, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + yOffset + TOGGLE_CARD_H);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
             DrawToggleRow(canvas, yOffset, title, sub, state, hovered, disabled);
@@ -472,9 +472,9 @@ namespace NotchPeninsula
         // 页签：通用设置
         private void RenderTabGeneral(SKCanvas canvas)
         {
-            DrawToggleCard(canvas, 12, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
+            DrawToggleCard(canvas, CARD_TOP_Y, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered);
             // 窗口置顶（与下方消息通知整组互换位置）
-            DrawToggleCard(canvas, 84, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
+            DrawToggleCard(canvas, TOPMOST_CARD_Y, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered);
             //    分隔线 +TOAST_SEP_Y (222)
             //    分隔线 +SOUND_SEP_Y (284)
             var notifyCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + TOAST_ROW1_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
@@ -542,7 +542,7 @@ namespace NotchPeninsula
                 MspNotchBridge.IsEnabled, _mspToggleHovered, badge: MspBadgeText);
             DrawExternalLinkIcon(canvas, MspWikiIconRect(), _mspWikiHovered);
 
-            var fontCard = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);
+            var fontCard = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + FONT_CARD_Y + TOGGLE_CARD_H);
             canvas.DrawRoundRect(fontCard, 6, 6, _cardBg);
             canvas.DrawRoundRect(fontCard, 6, 6, _cardBorder);
             canvas.DrawText("切换灵动岛字体", CONTENT_TEXT_X, TITLE_BAR_HEIGHT + FONT_CARD_Y + ROW_TEXT_BASELINE, _uiTextPaint);
@@ -636,16 +636,20 @@ namespace NotchPeninsula
                     canvas.DrawRoundRect(new SKRect(cx - 25, cy - 10, cx + 25, cy + 10), 10, 10, _dynamicFillPaint);
                 }
 
-                // 单选 Radio 按钮与文本
+                // 单选 Radio 按钮与文本：作为整体在框内居中（文字宽度随名字变，钉死偏移会歪）。
                 float radioY = y + 72;
-                canvas.DrawCircle(cx - 30, radioY - 4, 6, _dynamicStrokePaint);
+                const float radioDiameter = 12f, radioTextGap = 9f;
+                float radioGroupW = radioDiameter + radioTextGap + _dynamicTextPaint.MeasureText(name);
+                float radioGroupLeft = x + (STYLE_OPT_W - radioGroupW) / 2f;
+                float radioCx = radioGroupLeft + radioDiameter / 2f;
+                canvas.DrawCircle(radioCx, radioY - 4, 6, _dynamicStrokePaint);
                 if (isSelected)
                 {
                     _dynamicFillPaint.Color = new SKColor(0, 120, 212);
-                    canvas.DrawCircle(cx - 30, radioY - 4, 3, _dynamicFillPaint);
+                    canvas.DrawCircle(radioCx, radioY - 4, 3, _dynamicFillPaint);
                 }
                 _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : _fgColor;
-                canvas.DrawText(name, cx - 15, radioY + 1, _dynamicTextPaint);
+                canvas.DrawText(name, radioGroupLeft + radioDiameter + radioTextGap, radioY + 1, _dynamicTextPaint);
             }
 
             DrawStyleOption(0, "经典刘海", STYLE_OPT_X, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
@@ -653,7 +657,7 @@ namespace NotchPeninsula
 
             float monitorRowY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + page;
             canvas.DrawText("目标显示器", CONTENT_TEXT_X, monitorRowY + ROW_LABEL_DY, _uiTextPaint);
-            float mdX = WIDTH - CONTENT_RM - MONITOR_DD_W;
+            float mdX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
             float mdY = monitorRowY + (ROW_H - MONITOR_DD_H) / 2f;
             _dynamicFillPaint.Color = _monitorDropdownHovered ? Overlay(15) : Overlay(8);
             canvas.DrawRoundRect(new SKRect(mdX, mdY, mdX + MONITOR_DD_W, mdY + MONITOR_DD_H), 4, 4, _dynamicFillPaint);
@@ -724,7 +728,7 @@ namespace NotchPeninsula
         {
             DrawToggleCard(canvas, 12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
 
-            var platformCardRect = new SKRect(CONTENT_L, PLATFORM_CARD_Y, WIDTH - CONTENT_RM, PLATFORM_CARD_Y + 124);
+            var platformCardRect = new SKRect(CONTENT_L, PLATFORM_CARD_Y, WIDTH - CONTENT_RM, PLATFORM_CARD_Y + PLATFORM_CARD_H);
             canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBorder);
 
@@ -784,7 +788,7 @@ namespace NotchPeninsula
             _chevronPaint.Color = Neutral(150);
 
             float lyricY = LYRIC_CARD_Y;
-            var lyricRect = new SKRect(CONTENT_L, lyricY, WIDTH - CONTENT_RM, lyricY + 176);
+            var lyricRect = new SKRect(CONTENT_L, lyricY, WIDTH - CONTENT_RM, lyricY + LYRIC_CARD_H);
             canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
             canvas.DrawText("歌词设置", CONTENT_TEXT_X, lyricY + 26, _uiTextPaint);
@@ -945,7 +949,7 @@ namespace NotchPeninsula
         {
             bool isAutoHideDisabled = false;
             bool isModeDisabled = !NotchWindow.IsAutoHideEnabled;
-            var autoHideCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + 12, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + 260);
+            var autoHideCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + AUTOHIDE_CARD_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBorder);
 
@@ -979,7 +983,7 @@ namespace NotchPeninsula
                 !isModeDisabled && _fsHideToggleHovered,
                 isModeDisabled);
 
-            DrawToggleCard(canvas, 270, "媒体交互方式",
+            DrawToggleCard(canvas, MEDIA_EXP_CARD_Y, "媒体交互方式",
                 Renderer.MediaInteractionMode == 1
                     ? "展开功能已开启：入口见下方「双击封面跳转应用」"
                     : "展开功能已关闭：折叠态右键直达媒体设置",
@@ -994,10 +998,10 @@ namespace NotchPeninsula
                 : (MediaController.IsAppLaunchEnabled
                     ? "开启后展开走右键；双击左半边 / 封面跳转"
                     : "关闭时左键单击展开；开启后展开走右键");
-            DrawToggleCard(canvas, 342, "双击封面跳转应用", appLaunchSub,
+            DrawToggleCard(canvas, APP_LAUNCH_CARD_Y, "双击封面跳转应用", appLaunchSub,
                 MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered);
 
-            DrawToggleCard(canvas, 414, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+            DrawToggleCard(canvas, PASS_CARD_Y, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
         }
 
         // 页签：关于软件
@@ -1166,8 +1170,8 @@ namespace NotchPeninsula
             RefreshPluginView();
 
             // ── 顶部操作卡片 ──
-            float topY = TITLE_BAR_HEIGHT + 12;
-            var topRect = new SKRect(CONTENT_L, topY, WIDTH - CONTENT_RM, topY + 96);
+            float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
+            var topRect = new SKRect(CONTENT_L, topY, WIDTH - CONTENT_RM, topY + PluginTopCardH);
             canvas.DrawRoundRect(topRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(topRect, 6, 6, _cardBorder);
             canvas.DrawText("我的插件", CONTENT_TEXT_X, topY + 26, _uiTextPaint);
@@ -1322,7 +1326,7 @@ namespace NotchPeninsula
             ApplyPendingMarketResult();   // 消费后台安装结果：刷新列表 + 提示 + 评分弹窗
             if (_marketDataDirty) { _marketDataDirty = false; RefreshMarketFilter(); }   // UI 线程重建过滤视图
 
-            float cardTop = TITLE_BAR_HEIGHT + 12;
+            float cardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var cardRect = new SKRect(CONTENT_L, cardTop, WIDTH - CONTENT_RM, HEIGHT - 20);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
@@ -1419,13 +1423,13 @@ namespace NotchPeninsula
                 : _marketError.Length > 0 ? _marketError
                 : $"共 {_marketView.Count} 个插件" + (string.Equals(_marketCategoryKey, "all", StringComparison.OrdinalIgnoreCase) && _marketSearch.Length == 0 && !_marketOnlyInstalled ? "" : "（已筛选）");
             float statusX = MarketChkLabelX + _marketTextPaint.MeasureText(MarketChkLabel) + 18f;
-            float statusMax = MarketRefreshX - 10f - statusX;
+            float statusMax = MarketSortX - 10f - statusX;   // 止于排序下拉左侧
             _marketTextPaint.Color = _marketError.Length > 0 && !_marketFetching ? new SKColor(232, 100, 100) : Neutral(140);
             canvas.DrawText(TruncateText(status, _marketTextPaint, statusMax), statusX, MarketStatusBaseline, _marketTextPaint);
             _marketTextPaint.Color = Neutral(140);
             if (!string.IsNullOrEmpty(_marketHint) && !_marketFetching)
             {
-                float hintRight = MarketRefreshX - 10f;   // 提示右对齐到刷新按钮左侧，别钻到按钮底下
+                float hintRight = MarketSortX - 10f;   // 提示右对齐到排序下拉左侧，别钻到控件底下
                 float hintMax = hintRight - statusX - _marketTextPaint.MeasureText(status) - 16;
                 _marketTextPaint.Color = _marketHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
                 DrawTextWithEmoji(canvas, _marketHint, _marketTextPaint, hintMax, hintRight, MarketStatusBaseline, rightAlign: true);
@@ -1442,6 +1446,21 @@ namespace NotchPeninsula
             float refreshTw = _marketTextPaint.MeasureText("刷新");
             canvas.DrawText("刷新", MarketRefreshX + (MarketRefreshW - refreshTw) / 2f, MarketStatusBaseline, _marketTextPaint);
             _marketTextPaint.Color = Neutral(170);
+
+            // ── 排序下拉（最热 / 评分 / 最新 / 名称，官方插件始终置顶）──
+            var sortRect = new SKRect(MarketSortX, MarketStatusRowY, MarketSortX + MarketSortW, MarketStatusRowY + MarketControlH);
+            _dynamicFillPaint.Color = _marketSortOpen || _hoveredMarketSortBox ? Overlay(30) : Overlay(15);
+            canvas.DrawRoundRect(sortRect, 5, 5, _dynamicFillPaint);
+            _dynamicStrokePaint.Color = Neutral(_marketSortOpen ? (byte)130 : (byte)90);
+            canvas.DrawRoundRect(sortRect, 5, 5, _dynamicStrokePaint);
+            _marketTextPaint.Color = _fgColor;
+            canvas.DrawText(MarketSortOptions[_marketSortIndex], MarketSortX + 12, MarketStatusBaseline, _marketTextPaint);
+            _marketTextPaint.Color = Neutral(170);
+            float sax = sortRect.Right - 16, say = MarketStatusRowY + 13;
+            _dynamicStrokePaint.Color = Neutral(170);
+            canvas.DrawLine(sax - 4, say, sax, say + 4, _dynamicStrokePaint);
+            canvas.DrawLine(sax, say + 4, sax + 4, say, _dynamicStrokePaint);
+            _dynamicStrokePaint.Color = Neutral(150);
             _subTextPaint.Color = Neutral(170);   // 下面列表区继续用这支，保持默认灰
 
             float rowsTop = MarketRowsTop;
@@ -1615,6 +1634,28 @@ namespace NotchPeninsula
                     if (selected)
                     {
                         DrawTextWithEmoji(canvas, "✓", _subTextPaint, 20, menu.Right - 12, mY + k * rowH + 18, rightAlign: true);
+                    }
+                }
+                _subTextPaint.Color = Neutral(170);
+            }
+
+            if (_marketSortOpen)
+            {
+                const float sortRowH = 26f;
+                float sMenuY = MarketStatusRowY + MarketControlH + 4;
+                var sortMenu = new SKRect(MarketSortX, sMenuY, MarketSortX + MarketSortW, sMenuY + MarketSortOptions.Length * sortRowH);
+                canvas.DrawRoundRect(sortMenu, 6, 6, _menuBg);
+                canvas.DrawRoundRect(sortMenu, 6, 6, _menuBorder);
+                for (int k = 0; k < MarketSortOptions.Length; k++)
+                {
+                    var item = new SKRect(sortMenu.Left + 2, sMenuY + k * sortRowH, sortMenu.Right - 2, sMenuY + (k + 1) * sortRowH);
+                    bool selected = k == _marketSortIndex;
+                    if (_hoveredMarketSortIndex == k) { _dynamicFillPaint.Color = Overlay(40); canvas.DrawRoundRect(item, 4, 4, _dynamicFillPaint); }
+                    _subTextPaint.Color = selected ? new SKColor(0, 140, 240) : Neutral(200);
+                    canvas.DrawText(MarketSortOptions[k], sortMenu.Left + 12, sMenuY + k * sortRowH + 18, _subTextPaint);
+                    if (selected)
+                    {
+                        DrawTextWithEmoji(canvas, "✓", _subTextPaint, 20, sortMenu.Right - 12, sMenuY + k * sortRowH + 18, rightAlign: true);
                     }
                 }
                 _subTextPaint.Color = Neutral(170);
@@ -1981,7 +2022,7 @@ namespace NotchPeninsula
 
             if (_selectedTab == 1 && _monitorDropdownOpen)
             {
-                float dX = WIDTH - CONTENT_RM - MONITOR_DD_W;
+                float dX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
                 float dY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + MONITOR_DD_H + 2f - _displayPageScroll;
                 float dW = MONITOR_DD_W; float dH = _monitorOptions.Length * 26;
                 var dRect = new SKRect(dX, dY, dX + dW, dY + dH);

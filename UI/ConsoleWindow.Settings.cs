@@ -61,15 +61,15 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
-        private const float THEME_CARD_Y = 12f;
+        private const float THEME_CARD_Y = CARD_TOP_Y;
 
         private const float THEME_CARD_H = 112f;   // 两行：主题配色 + 背景材质
 
-        private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + 14f;   // 130
+        private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;   // 134
 
         private const float OPACITY_CARD_H = 78f;
 
-        private const float SIZE_CARD_Y = OPACITY_CARD_Y + OPACITY_CARD_H + 14f;  // 222
+        private const float SIZE_CARD_Y = OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP;  // 222
 
         private const float THEME_SEG_W = 150f;
 

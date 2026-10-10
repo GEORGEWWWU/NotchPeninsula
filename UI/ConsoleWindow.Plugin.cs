@@ -284,6 +284,7 @@ namespace NotchPeninsula
             _soundVolumeDropdownOpen = false;
             _matchModeDropdownOpen = false;
             _appDropdownOpen = false;
+            _marketSortOpen = false;
         }
     }
 }
