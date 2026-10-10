@@ -78,9 +78,105 @@ namespace NotchPeninsula
             lock (_gate) _streak.Remove(appId.ToLowerInvariant());
         }
 
+        // 该客户端进程是否还有可见窗口、且其标题匹配给定标题。无迟滞、无副作用，
+        // 供「恢复判定」用：拿它问「这个标题的内容是否真的还在屏幕上」，而不用去动 _streak。
+        public static bool HasVisibleWindowWithTitle(string appId, string title)
+        {
+            if (!IsTrackedApp(appId)) return false;
+            if (title.Length == 0) return false;
+            return HasVisibleWindowWithTitle(title);
+        }
+
+        // 该客户端进程是否还有任何可见顶层窗口（不看标题）。
+        // 恢复判定用：会话整段消失时，若进程窗口还在，说明是客户端换视频的过渡
+        //（旧会话先销毁、新会话稍后才带新标题回来），并非真的退出。
+        public static bool HasVisibleWindow(string appId)
+        {
+            if (!IsTrackedApp(appId)) return false;
+
+            uint[] pids = ClientPids();
+            if (pids.Length == 0) return false;
+
+            bool hit = false;
+            Win32.EnumWindows((hwnd, _) =>
+            {
+                if (hit) return false;
+                if (!Win32.IsWindowVisible(hwnd)) return true;
+                if (Win32.GetWindowThreadProcessId(hwnd, out uint owner) == 0) return true;
+                if (Array.IndexOf(pids, owner) < 0) return true;
+                hit = true;
+                return false;
+            }, IntPtr.Zero);
+
+            return hit;
+        }
+
+        // 一次窗口枚举同时回答两个问题，供「标题纠偏」用（只在白名单 App 上调用）：
+        //   corroborated —— SMTC 给的标题有没有落地佐证（存在可见窗口、其标题与之匹配）；
+        //   contentTitle —— 该客户端「内容窗口」的标题（可见、且不是客户端自身的主窗口）。
+        //
+        // 为什么要这个：B站换视频后 SMTC 标题会滞后 2~3 秒（旧会话先抢报 Playing、或整段消失
+        // 再带新标题重建），而视频窗口标题是**即时**更新的 —— 于是岛体先闪一下上一个视频的标题。
+        // 调用方的规则：没落地佐证、内容窗口又明确时，以内容窗口标题为准。
+        //
+        // 返回 false = 该 App 不在白名单，调用方保持原样。
+        public static bool InspectLiveWindows(string? appId, string smtcTitle,
+            out bool corroborated, out string contentTitle)
+        {
+            corroborated = false;
+            contentTitle = "";
+
+            if (!IsTrackedApp(appId)) return false;
+
+            uint[] pids = ClientPids();
+            if (pids.Length == 0) return true;   // 客户端的进程都没了
+
+            string want = smtcTitle.Length > 0 ? Normalize(smtcTitle) : "";
+            // lambda 里不能用 out 参数（CS1628），先落在局部变量上，最后再赋值出去
+            bool seen = false;
+            int contentCount = 0;
+            string single = "";
+
+            Win32.EnumWindows((hwnd, _) =>
+            {
+                if (!Win32.IsWindowVisible(hwnd)) return true;
+                if (Win32.GetWindowThreadProcessId(hwnd, out uint owner) == 0) return true;
+                if (Array.IndexOf(pids, owner) < 0) return true;
+
+                string title = WindowTitle(hwnd);
+                if (title.Length == 0) return true;
+
+                string norm = Normalize(title);
+                if (norm.Length == 0) return true;
+
+                if (want.Length > 0 && norm.Contains(want)) seen = true;
+
+                if (!IsClientMainWindow(title))
+                {
+                    contentCount++;
+                    single = title;
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            corroborated = seen;
+            // 只有恰好一个内容窗口时才敢认定「就是当前视频」。
+            // 多个（比如开着设置/登录弹窗）说明状态不清晰，宁可什么都不改。
+            if (contentCount == 1) contentTitle = single;
+            return true;
+        }
+
         public static void Reset()
         {
             lock (_gate) _streak.Clear();
+        }
+
+        // 客户端自己的主窗口（标题里带客户端名字的那个），不算内容窗口。
+        private static bool IsClientMainWindow(string title)
+        {
+            foreach (string name in ClientProcessNames)
+                if (title.Contains(name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
         private static bool HasVisibleWindowWithTitle(string mediaTitle)
