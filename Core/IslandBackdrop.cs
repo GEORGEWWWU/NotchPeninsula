@@ -41,7 +41,7 @@ namespace NotchPeninsula
         private static int _capW, _capH;
         private static long _lastMs;
         private static bool _disabled;
-        private static bool _loggedFirst;
+        private static int _loggedX = int.MinValue, _loggedY = int.MinValue;
 
         // ---- 交给渲染线程的成品（交换后由渲染线程释放）----
         private static SKImage? _pending;
@@ -157,6 +157,11 @@ namespace NotchPeninsula
                 Win32.ReleaseDC(IntPtr.Zero, sdc);
             }
 
+            // ⚠️ 必须把 DIB 的 alpha 字节全部置 255。
+            // StretchBlt/BitBlt 只写 BGR、**不写 alpha**（留下 0），而 SKImage.FromPixels 会把 a=0 当「全透明」——
+            // 贴上去等于什么都没贴，亚克力整体消失（实测：不置 alpha → 画进画布后整块变透明）。
+            for (int i = 3, n = sw * sh * 4; i < n; i += 4) Marshal.WriteByte(_pBits, i, 255);
+
             var info = new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Opaque);
             using var src = SKImage.FromPixels(info, _pBits, sw * 4);
             if (src == null) return false;
@@ -172,10 +177,10 @@ namespace NotchPeninsula
             var stale = Interlocked.Exchange(ref _pending, img);
             stale?.Dispose();
 
-            if (!_loggedFirst)
+            if (x != _loggedX || y != _loggedY)
             {
-                _loggedFirst = true;
-                // 一次性诊断：把「胶囊正下方那块背板到底什么颜色」直接量出来 —— 白色/纯色就说明抓错了地方
+                _loggedX = x; _loggedY = y;
+                // 抓取矩形一变就报一行：把它和「背板中央平均 RGB」一起看 —— 矩形跑到屏幕外会得到全黑
                 int cw = Math.Max(1, sw / 3), chh = Math.Max(1, sh / 3);
                 long ar = 0, ag = 0, ab = 0; int cnt = 0;
                 var px = new SKPixmap();
@@ -188,7 +193,7 @@ namespace NotchPeninsula
                             ar += c.Red; ag += c.Green; ab += c.Blue; cnt++;
                         }
                 }
-                Info($"[亚克力] 首次抓屏 ok：屏幕矩形=({x},{y},{w},{h})  缩略图={sw}x{sh}"
+                Info($"[亚克力] 抓屏 ok：屏幕矩形=({x},{y},{w},{h})  缩略图={sw}x{sh}"
                     + $"  背板中央平均 RGB=({(cnt == 0 ? -1 : ar / cnt)},{(cnt == 0 ? -1 : ag / cnt)},{(cnt == 0 ? -1 : ab / cnt)})");
             }
             return true;

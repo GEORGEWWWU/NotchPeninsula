@@ -204,6 +204,7 @@ namespace NotchPeninsula
         private static int _cachedMonitorX = 0;
         private static int _cachedMonitorY = 0;
         private static int _cachedMonitorWidth = 1920;
+        private static int _cachedMonitorHeight = 1080;
 
         private void UpdateMonitorBounds()
         {
@@ -212,6 +213,7 @@ namespace NotchPeninsula
             _cachedMonitorX = screens[idx].Bounds.X;
             _cachedMonitorY = screens[idx].Bounds.Y;
             _cachedMonitorWidth = screens[idx].Bounds.Width;
+            _cachedMonitorHeight = screens[idx].Bounds.Height;
             _cachedMonitorIndex = Renderer.TargetMonitorIndex;
         }
 
