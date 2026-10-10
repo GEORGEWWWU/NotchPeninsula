@@ -777,7 +777,7 @@ namespace NotchPeninsula
                 {
                     if (item.Checked)
                     {
-                        float cx = TEXT_LEFT - 2;
+                        float cx = TEXT_LEFT + 5;   // 勾选块留在缩进槽里，但别贴着菜单左边缘
                         float cy = rect.MidY;
                         canvas.DrawLine(cx - 5.5f, cy + 0.5f, cx - 2f, cy + 4f, _checkPaint);
                         canvas.DrawLine(cx - 2f, cy + 4f, cx + 5f, cy - 4f, _checkPaint);
