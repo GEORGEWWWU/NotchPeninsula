@@ -316,6 +316,26 @@ namespace NotchPeninsula
 
         private const float BADGE_GAP_X = 8f;
 
+        // 「实验性」标签右边那枚外链图标（点击打开 MSP 接入 wiki）：
+        // 位置跟着「MSP 接入」标题文字 + 标签宽度走，所以抽成一处，绘制与命中同源。
+        private const string MspCardTitle = "MSP 接入";
+        private const string MspBadgeText = "实验性";
+        private const float MSP_WIKI_ICON = 15f;
+        private const float MSP_WIKI_GAP = 8f;
+
+        private float MspRowInkMidY => TITLE_BAR_HEIGHT + MSP_CARD_Y + ROW_TEXT_BASELINE - TEXT_INK_MID_OFFSET;
+
+        private SKRect MspWikiIconRect()
+        {
+            // 命中区比图标本身大一圈，好点
+            const float pad = 3f;
+            float left = CONTENT_TEXT_X + _uiTextPaint.MeasureText(MspCardTitle) + BADGE_GAP_X
+                + _badgeTextPaint.MeasureText(MspBadgeText) + BADGE_PAD_X * 2f + MSP_WIKI_GAP;
+            float cy = MspRowInkMidY;
+            return SKRect.Create(left, cy - MSP_WIKI_ICON / 2f - pad,
+                MSP_WIKI_ICON + pad * 2f, MSP_WIKI_ICON + pad * 2f);
+        }
+
         private const float FONT_CARD_Y = MSP_CARD_Y + 62f + 10f;
 
         private const float FONT_BTN_H = 26f;          // 按钮高度
@@ -395,6 +415,7 @@ namespace NotchPeninsula
         private bool _topmostToggleHovered = false;
 
         private bool _mspToggleHovered = false; // 「MSP 接入（实验性）」
+        private bool _mspWikiHovered = false;   // 「实验性」标签右边的外链图标
 
         private bool _fontPickHovered = false;
 

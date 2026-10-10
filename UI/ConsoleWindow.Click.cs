@@ -427,6 +427,20 @@ namespace NotchPeninsula
                 Renderer.ApplyThemeColors(); // 立刻刷新基底色
                 Render();
             }
+            else if (_mspWikiHovered)
+            {
+                // 「实验性」标签右边的外链图标 → MSP 接入文档（wiki）
+                // 人读：https://github.com/GEORGEWWWU/NotchPeninsula/wiki/MSP-接入文档
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "https://github.com/GEORGEWWWU/NotchPeninsula/wiki/MSP-%E6%8E%A5%E5%85%A5%E6%96%87%E6%A1%A3",
+                        UseShellExecute = true
+                    });
+                }
+                catch { /* 防止没装浏览器的极端环境崩溃 */ }
+            }
             else if (_mspToggleHovered)
             {
                 // MSP 接入（实验性）：立刻生效不用重启 —— 打开失败时 Enable 会把开关拨回来，

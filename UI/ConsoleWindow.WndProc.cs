@@ -113,6 +113,7 @@ namespace NotchPeninsula
             bool newAppLaunchToggleHovered = false; // 「双击媒体控制跳转应用」（媒体交互方式下面一格）
             bool newPassToggleHovered = false;
             bool newMspToggleHovered = false; // 「MSP 接入（实验性）」
+            bool newMspWikiHovered = false;   // 「实验性」标签右边的外链图标
             bool newMonitorDropdownHovered = false;
             int newHoveredMonitorDropdownIndex = -1;
             bool newToastModeDropdownHovered = false;
@@ -212,6 +213,10 @@ namespace NotchPeninsula
                     && y >= TITLE_BAR_HEIGHT + MSP_CARD_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
                     && y <= TITLE_BAR_HEIGHT + MSP_CARD_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
                     newMspToggleHovered = true;
+
+                // 「实验性」标签右边的外链图标（命中区比图标大一圈）
+                if (MspWikiIconRect().Contains(x, y))
+                    newMspWikiHovered = true;
 
                 // 切换灵动岛字体：[选择字体…] 与 [重置] 两个按钮
                 if (y >= TITLE_BAR_HEIGHT + FONT_BTN_Y && y <= TITLE_BAR_HEIGHT + FONT_BTN_Y + FONT_BTN_H)
@@ -623,6 +628,7 @@ namespace NotchPeninsula
                 newSoundResetHovered != _soundResetHovered ||
                 newPassToggleHovered != _passToggleHovered ||
                 newMspToggleHovered != _mspToggleHovered ||
+                newMspWikiHovered != _mspWikiHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
@@ -685,6 +691,7 @@ namespace NotchPeninsula
                 _topmostToggleHovered = newTopmostToggleHovered;
                 _passToggleHovered = newPassToggleHovered;
                 _mspToggleHovered = newMspToggleHovered;
+                _mspWikiHovered = newMspWikiHovered;
                 _hoveredPluginAction = newHoveredPluginAction;
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;

@@ -120,6 +120,40 @@ namespace NotchPeninsula
             canvas.DrawText(text, rect.Left + BADGE_PAD_X, baseline, _badgeTextPaint);
         }
 
+        // 外链小图标：方框里一枚指向右上的短箭头（MSP 卡片标签后面那枚）。
+        // 线条图标，hover 变主题蓝 —— 和「关于软件」页的链接同一套反馈。
+        private void DrawExternalLinkIcon(SKCanvas canvas, SKRect hit, bool hovered)
+        {
+            float s = MSP_WIKI_ICON;
+            float x = hit.MidX - s / 2f;
+            float y = hit.MidY - s / 2f;
+
+            float oldStroke = _dynamicStrokePaint.StrokeWidth;
+            var oldCap = _dynamicStrokePaint.StrokeCap;
+            var oldJoin = _dynamicStrokePaint.StrokeJoin;
+
+            _dynamicStrokePaint.Color = hovered ? new SKColor(0, 140, 240) : Neutral(150);
+            _dynamicStrokePaint.StrokeWidth = 1.4f;
+            _dynamicStrokePaint.StrokeCap = SKStrokeCap.Round;
+            _dynamicStrokePaint.StrokeJoin = SKStrokeJoin.Round;
+
+            canvas.DrawRoundRect(new SKRect(x + 1.3f, y + 1.3f, x + s - 1.3f, y + s - 1.3f), 3.4f, 3.4f, _dynamicStrokePaint);
+
+            using (var arrow = new SKPath())
+            {
+                arrow.MoveTo(x + 4.5f, y + 10.5f);      // 斜线
+                arrow.LineTo(x + 10.5f, y + 4.5f);
+                arrow.MoveTo(x + 6.7f, y + 4.5f);       // 箭头两条短边
+                arrow.LineTo(x + 10.5f, y + 4.5f);
+                arrow.LineTo(x + 10.5f, y + 8.3f);
+                canvas.DrawPath(arrow, _dynamicStrokePaint);
+            }
+
+            _dynamicStrokePaint.StrokeWidth = oldStroke;
+            _dynamicStrokePaint.StrokeCap = oldCap;
+            _dynamicStrokePaint.StrokeJoin = oldJoin;
+        }
+
         private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
         {
             float titleBaseline = TITLE_BAR_HEIGHT + yOffset
@@ -503,9 +537,10 @@ namespace NotchPeninsula
 
             // MSP 接入（实验性）：把灵动岛暴露成本机 MSP 节点，外部程序可弹通知、读控媒体。
             // 默认关闭 —— 它会监听一个本地端口，属于对外接口面，得用户自己点头。
-            DrawToggleCard(canvas, MSP_CARD_Y, "MSP 接入",
+            DrawToggleCard(canvas, MSP_CARD_Y, MspCardTitle,
                 "让本机 MSP 程序弹通知、读控媒体",
-                MspNotchBridge.IsEnabled, _mspToggleHovered, badge: "实验性");
+                MspNotchBridge.IsEnabled, _mspToggleHovered, badge: MspBadgeText);
+            DrawExternalLinkIcon(canvas, MspWikiIconRect(), _mspWikiHovered);
 
             var fontCard = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + FONT_CARD_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + FONT_CARD_Y + 62);
             canvas.DrawRoundRect(fontCard, 6, 6, _cardBg);
