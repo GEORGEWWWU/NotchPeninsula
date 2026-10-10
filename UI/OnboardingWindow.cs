@@ -104,16 +104,22 @@ namespace NotchPeninsula
         private static string CurrentVersion =>
             typeof(OnboardingWindow).Assembly.GetName().Version?.ToString() ?? "0";
 
-        private static bool IsFirstRunOfThisVersion()
+        private static string _reason = "";   // 本次为什么会弹（只进日志，方便事后取证）
+
+        /// <summary>注册表里"已引导过的版本"；null = 从没引导过（读失败也算没引导过，宁可多问一次）。</summary>
+        private static string? OnboardedVersion
         {
-            try
+            get
             {
-                using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula", false);
-                return (key?.GetValue(RegValue) as string) != CurrentVersion;
-            }
-            catch
-            {
-                return true;   // 读不出来就当首次，宁可多问一次
+                try
+                {
+                    using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula", false);
+                    return key?.GetValue(RegValue) as string;
+                }
+                catch
+                {
+                    return null;
+                }
             }
         }
 
@@ -144,7 +150,15 @@ namespace NotchPeninsula
 
             try
             {
-                if (!force && !IsFirstRunOfThisVersion()) return;
+                var prev = OnboardedVersion;
+                // 判据只看这一个值：与用户已有的其它设置无关。老用户升级（1.9.5 → 2.0.0）时
+                // 注册表里根本没这个值（1.9.5 没有引导代码），prev = null ⇒ 必然弹。
+                if (!force && prev == CurrentVersion) return;
+
+                _reason = _selfTest != 0 ? "自测强制"
+                        : force ? "-onboard 强制"
+                        : prev == null ? "首次安装（注册表无标记）"
+                        : $"版本变更 {prev} → {CurrentVersion}";
             }
             catch (Exception ex)
             {
@@ -258,7 +272,7 @@ namespace NotchPeninsula
             InitBuffer();
             LoadInitialValues();
             TryHookSystemTheme();
-            Logger.Info($"[引导] 首次启动引导已开启（版本 {CurrentVersion}，卡片 {CARD_W:0}×{CARD_H:0}）");
+            Logger.Info($"[引导] 首次启动引导已开启（{_reason}，版本 {CurrentVersion}，卡片 {CARD_W:0}×{CARD_H:0}）");
         }
 
         private static void Beat() => Volatile.Write(ref _heartbeat, Environment.TickCount64);
