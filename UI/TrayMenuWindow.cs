@@ -9,6 +9,7 @@ namespace NotchPeninsula
     {
         private const int MENU_WIDTH = 178;
         private const int ITEM_HEIGHT = 34;
+        private const int HEADER_HEIGHT = 26;      // 顶部版本号标题行
         private const int PADDING_V = 6;
         private const int PADDING_H = 6;          // 外框到高亮块的水平内缩
         private const int CORNER_RADIUS = 8;
@@ -16,6 +17,7 @@ namespace NotchPeninsula
         private const int CHECK_SLOT = 18;        // 勾选图标占位宽度，保证有无勾选时文字左对齐一致
         private const int ARROW_SLOT = 18;        // 子菜单箭头占位
         private const float TEXT_SIZE = 13.5f;
+        private const float TEXT_TITLE_SIZE = 11.5f;
 
         private const float HOVER_RADIUS = 5f;
 
@@ -33,6 +35,7 @@ namespace NotchPeninsula
         // ---- 菜单项 ----
         private enum MenuAction
         {
+            Header,
             OpenSettings,
             WakeIsland,
             ToggleAutoStart,
@@ -106,6 +109,12 @@ namespace NotchPeninsula
 
             _dpiScale = Math.Max(1f, Win32.GetDpiForSystem() / 96f);
 
+            _items.Add(new MenuItem
+            {
+                Action = MenuAction.Header,
+                Text = "NPS v" + FormatVersion(),
+                Enabled = false            // 灰色标题：HitTest 跳过 Enabled=false，天然不可点
+            });
             _items.Add(new MenuItem { Action = MenuAction.OpenSettings, Text = "打开设置" });
             _items.Add(new MenuItem { Action = MenuAction.WakeIsland, Text = "唤回灵动岛" });
             _items.Add(new MenuItem
@@ -143,6 +152,13 @@ namespace NotchPeninsula
                     continue;
                 }
 
+                if (item.Action == MenuAction.Header)
+                {
+                    item.HitRect = new SKRect(0, y, MENU_WIDTH, y + HEADER_HEIGHT);
+                    y += HEADER_HEIGHT;
+                    continue;
+                }
+
                 item.HitRect = new SKRect(PADDING_H, y, MENU_WIDTH - PADDING_H, y + ITEM_HEIGHT);
                 y += ITEM_HEIGHT;
             }
@@ -153,6 +169,13 @@ namespace NotchPeninsula
         }
 
         // ---- 对外入口 ----
+
+        /// <summary>版本号，口径与设置窗口标题一致（Major.Minor.Build）。</summary>
+        private static string FormatVersion()
+        {
+            var v = typeof(TrayMenuWindow).Assembly.GetName().Version;
+            return v == null ? "0.0.0" : $"{v.Major}.{v.Minor}.{v.Build}";
+        }
 
         public static void Show(int x, int y, Action onOpenSettings, Action onWakeIsland, Action onExit)
         {
@@ -742,7 +765,10 @@ namespace NotchPeninsula
                 if (i == _hoveredIndex && item.Enabled)
                     canvas.DrawRoundRect(rect, HOVER_RADIUS, HOVER_RADIUS, _hoverPaint);
 
-                _textPaint!.Color = item.Enabled ? COLOR_TEXT : COLOR_TEXT_DISABLED;
+                _textPaint!.TextSize = item.Action == MenuAction.Header ? TEXT_TITLE_SIZE : TEXT_SIZE;
+                _textPaint.Color = item.Action == MenuAction.Header
+                    ? COLOR_TEXT_DISABLED
+                    : item.Enabled ? COLOR_TEXT : COLOR_TEXT_DISABLED;
 
                 float baseline = rect.MidY - (_textPaint.FontMetrics.Ascent + _textPaint.FontMetrics.Descent) / 2f;
                 float textX = TEXT_LEFT;
