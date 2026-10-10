@@ -528,7 +528,7 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    float topY = TITLE_BAR_HEIGHT + 12;
+                    float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
                     // 顶部操作按钮：导入 DLL | 打开目录 | 插件市场
                     if (y >= topY + 60 && y <= topY + 84)
                     {

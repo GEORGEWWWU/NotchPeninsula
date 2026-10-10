@@ -47,6 +47,23 @@ namespace NotchPeninsula
             return false;
         }
 
+        // 视频模式下不要会话缩略图的平台：这类播放器在放视频时给的缩略图是视频截图，
+        // 语义上不是「封面」，直接退回应用图标，连整条 SMTC 探测链都不必启动。
+        // 新增平台只在这里追加一条，判定走 PlatformRules（与 IsPlatform 同一份身份表）。
+        private static readonly string[] VideoIconOnlyPlatforms =
+        [
+            "PotPlayer",
+        ];
+
+        public static bool IsVideoIconOnly(string? sourceAppUserModelId)
+        {
+            foreach (string name in VideoIconOnlyPlatforms)
+            {
+                if (IsPlatform(sourceAppUserModelId, name)) return true;
+            }
+            return false;
+        }
+
         private static bool MatchesAppId(string[] appIds, string lowerId)
         {
             foreach (var appId in appIds)

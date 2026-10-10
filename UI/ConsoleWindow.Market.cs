@@ -218,8 +218,10 @@ namespace NotchPeninsula
         //    收到 50 后两张卡各多显示一行。
         private const float PluginListRowH = 50f;
 
+        private const float PluginTopCardH = 96f;   // 「我的插件」顶部操作卡高度
+
         private void GetPluginListCardTop(out float listY)
-            => listY = TITLE_BAR_HEIGHT + 122f;
+            => listY = TITLE_BAR_HEIGHT + CARD_TOP_Y + PluginTopCardH + CARD_GAP;   // 118
 
         // ── 第一行：分类下拉（左）+ 搜索框 ──
         private const float MarketControlsY = TITLE_BAR_HEIGHT + 22f;   // 第一行顶（54，卡顶下留 10）

@@ -56,7 +56,9 @@ namespace NotchPeninsula
 
         private const int DISPLAY_MAX_ROWS = 8;
 
-        private const float DISPLAY_CARD_Y = TOGGLE_ROW_Y + 64f;
+        // 列表卡上移：卡顶 = 四行行块底（TOGGLE_ROW_Y + ROW_H）再留 CARD_GAP。
+        // 因为行块顶也留 CARD_GAP（MONITOR_ROW_Y），两处同源 ⇒ 四行在两卡之间自动垂直居中。
+        private const float DISPLAY_CARD_Y = TOGGLE_ROW_Y + ROW_H + CARD_GAP;
 
         private const float DISPLAY_CARD_H = DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H;
 
@@ -64,7 +66,16 @@ namespace NotchPeninsula
 
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
 
-        private const float STYLE_CARD_Y = 12f;
+        // ---- 卡片纵向间距：全设置窗唯一来源 ----
+        // 新增卡片一律写「上一张卡底 + CARD_GAP」，不要再摊数字。
+        // （之前 10 / 12 / 14 三种间距混用，卡片疏密不齐，视觉上像随手摆的。）
+        private const float CARD_GAP = 10f;
+
+        private const float CARD_TOP_Y = 12f;      // 每页首张卡的顶部偏移
+
+        private const float TOGGLE_CARD_H = 62f;   // 单行开关卡（DrawToggleCard / 字体卡）高度
+
+        private const float STYLE_CARD_Y = CARD_TOP_Y;
 
         private const float STYLE_CARD_H = 118f;   // = 选项高 90 + 上下内边距各 14
 
@@ -84,25 +95,25 @@ namespace NotchPeninsula
 
         private const float SEG_H = 30f;
 
-        private const float MONITOR_ROW_Y = STYLE_CARD_Y + STYLE_CARD_H + 8f;   // 138
+        private const float MONITOR_ROW_Y = STYLE_CARD_Y + STYLE_CARD_H + CARD_GAP;  // 140
 
         private const float MONITOR_DD_W = 160f;
 
         private const float MONITOR_DD_H = 32f;
 
-        private const float MODE_ROW_Y = MONITOR_ROW_Y + 44f;                   // 182
+        private const float MODE_ROW_Y = MONITOR_ROW_Y + 44f;                   // 184
 
         private const float MODE_SEG_W = 184f;                                  // 2 段 × 92
 
         private const float MODE_SEG_X = WIDTH - CONTENT_RM - MODE_SEG_W;       // 404
 
-        private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 226
+        private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 228
 
         private const float SCENE_SEG_W = 240f;                                 // 3 段 = 70 / 70 / 100
 
         private const float SCENE_SEG_X = WIDTH - CONTENT_RM - SCENE_SEG_W;     // 348
 
-        private const float TOGGLE_ROW_Y = SCENE_ROW_Y + 33f;                   // 259
+        private const float TOGGLE_ROW_Y = SCENE_ROW_Y + 33f;                   // 261
 
         private const float DISPLAY_PAGE_WHEEL_STEP = 48f;
 
@@ -210,10 +221,12 @@ namespace NotchPeninsula
 
         private const float CARD_PAD_RIGHT = CONTENT_TEXT_RM;   // 卡片内右对齐控件的基准（与文字右边界同源）
 
-        //   · 行 1「系统消息通知」行首 156
+        //   · 行 1「系统消息通知」行首 156 = 首卡 + 两张单行开关卡（各带一个 CARD_GAP）
         //   · 分隔线放在每一对行之间：+222、+284
 
-        private const float TOAST_ROW1_Y = 156f;
+        private const float TOPMOST_CARD_Y = CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;          // 84 窗口置顶
+
+        private const float TOAST_ROW1_Y = CARD_TOP_Y + (TOGGLE_CARD_H + CARD_GAP) * 2f;     // 156
 
         private const float TOAST_ROW2_Y = TOAST_ROW1_Y + 62f;
 
@@ -305,7 +318,7 @@ namespace NotchPeninsula
 
         // MSP 接入（实验性）：通知卡之后，与本页同一节奏（卡高 62 + 间隙 10）。
         // 本页内容底边 = FONT_CARD_Y + 62，必须 ≤ HEIGHT - TITLE_BAR_HEIGHT（现 548 ≤ 628）。
-        private const float MSP_CARD_Y = TOAST_CARD_BOTTOM + 10f;
+        private const float MSP_CARD_Y = TOAST_CARD_BOTTOM + CARD_GAP;
 
         // 标题后面的「实验性」小标签（目前只有 MSP 卡用）：位置跟着标题文字走，见 DrawInlineBadge
         private const float BADGE_H = 15f;
@@ -336,7 +349,7 @@ namespace NotchPeninsula
                 MSP_WIKI_ICON + pad * 2f, MSP_WIKI_ICON + pad * 2f);
         }
 
-        private const float FONT_CARD_Y = MSP_CARD_Y + 62f + 10f;
+        private const float FONT_CARD_Y = MSP_CARD_Y + TOGGLE_CARD_H + CARD_GAP;
 
         private const float FONT_BTN_H = 26f;          // 按钮高度
 
@@ -350,13 +363,29 @@ namespace NotchPeninsula
 
         private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
 
+        // 交互设置页卡片（大卡与单行开关卡混排，间距同一来源）：
+
+        private const float AUTOHIDE_CARD_Y = CARD_TOP_Y;
+
+        private const float AUTOHIDE_CARD_H = 248f;   // 总开关 + 三行模式 + 两条内分隔线
+
+        private const float MEDIA_EXP_CARD_Y = AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H + CARD_GAP;   // 270
+
+        private const float APP_LAUNCH_CARD_Y = MEDIA_EXP_CARD_Y + TOGGLE_CARD_H + CARD_GAP;   // 342
+
+        private const float PASS_CARD_Y = APP_LAUNCH_CARD_Y + TOGGLE_CARD_H + CARD_GAP;        // 414
+
         // 媒体设置页卡片顺序（合并后）：
 
-        private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + 84f;    // 合并卡片顶部
+        private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;   // 84 合并卡片顶部
+
+        private const float PLATFORM_CARD_H = 124f;
 
         private const float PLATFORM_ROW2_Y = TITLE_BAR_HEIGHT + 146f;   // 第 2 行「匹配方式」行首
 
-        private const float LYRIC_CARD_Y = TITLE_BAR_HEIGHT + 222f;      // 歌词设置卡片顶部
+        private const float LYRIC_CARD_Y = PLATFORM_CARD_Y + PLATFORM_CARD_H + CARD_GAP;   // 218 歌词设置卡片顶部
+
+        private const float LYRIC_CARD_H = 176f;
 
         private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
 
@@ -374,7 +403,7 @@ namespace NotchPeninsula
 
         private const float APP_MENU_W = 280f;         // 软件菜单宽度
 
-        private const float HOTKEY_CARD_Y = LYRIC_CARD_Y + 188f;   // 歌词卡底（+176）再留 12px 间距
+        private const float HOTKEY_CARD_Y = LYRIC_CARD_Y + LYRIC_CARD_H + CARD_GAP;   // 404
 
         private const float HOTKEY_CARD_H = 210f;
 

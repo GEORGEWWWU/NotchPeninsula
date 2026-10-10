@@ -278,6 +278,7 @@ namespace NotchPeninsula
         private const int MusicModeMissGrace = 3;
         private bool _isBrowserSession;   // 当前会话是否为浏览器 (Chrome/Edge)，启用视频标题清理
         private bool _isJustSoloSession;  // 当前会话是否为 Just Solo，启用 LyricServer 直连歌词
+        private bool _isVideoIconOnlySession; // 视频模式下只用应用图标（会话缩略图是视频截图，不是封面）
         private readonly JustSoloLyricClient _justSoloLyric = new();
 
         public MediaController()
@@ -549,6 +550,7 @@ namespace NotchPeninsula
             _isBilibiliSession = MediaLogoProvider.IsPlatform(newSession?.SourceAppUserModelId, "Bilibili");
             _isBrowserSession = MediaLogoProvider.IsBrowser(newSession?.SourceAppUserModelId);
             _isJustSoloSession = newSession?.SourceAppUserModelId?.Contains("justsolo", StringComparison.OrdinalIgnoreCase) == true;
+            _isVideoIconOnlySession = MediaLogoProvider.IsVideoIconOnly(newSession?.SourceAppUserModelId);
 
             if (IsAppLaunchEnabled) MediaAppLauncher.CaptureSession(newSession);
 
@@ -834,6 +836,17 @@ namespace NotchPeninsula
 
             if (!_coverPending) return;                  // 本世代已定局：不再重试
             if (Volatile.Read(ref _networkCoverGen) == gen) { _coverPending = false; return; }
+
+            // 视频模式下 PotPlayer 这类播放器：会话缩略图是视频截图而不是封面，直接用应用图标。
+            // 放在启动探测之前，SMTC 图根本没有机会贴上来；上面那一档若已贴过图标，这里的 SetAppIcon 会因
+            // _appIconKey 命中而直接返回，不产生多余的位图拷贝。
+            if (IsVideoMode && _isVideoIconOnlySession)
+            {
+                SetAppIcon();
+                _coverPending = false;
+                return;
+            }
+
             if (_currentSession == null || _trackTitle.Length == 0) return;
             if (Volatile.Read(ref _coverFetching) == 1) return;
 
