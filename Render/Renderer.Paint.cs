@@ -102,20 +102,6 @@ namespace NotchPeninsula
             _shadowPaint.Color = _currentTextColor.WithAlpha(50);
             _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
 
-            bool locked = System.Threading.Monitor.TryEnter(_renderLock, 50);
-            try
-            {
-                _fadePaint.Shader?.Dispose();
-                _fadePaint.Shader = SKShader.CreateLinearGradient(
-                    new SKPoint(0, 0), new SKPoint(1, 0),
-                    [bg.WithAlpha(0), bg],
-                    null, SKShaderTileMode.Clamp);
-            }
-            finally
-            {
-                if (locked) System.Threading.Monitor.Exit(_renderLock);
-            }
-
             _tagTextPaint.Color = _currentTextColor;
             _tagBgPaint.Color = _currentTextColor.WithAlpha(25);  // 浅色半透明背景标签
             _barBgPaint.Color = _currentTextColor.WithAlpha(30);   // 未填充进度条的半透明纯色底槽
@@ -196,14 +182,6 @@ namespace NotchPeninsula
         private static readonly SKPaint _barPaint = new() { Color = SKColors.White, IsAntialias = true };
 
         private static readonly SKPaint _tlTextPaint = new() { Color = SKColors.White, TextSize = 10f, IsAntialias = true, Typeface = _semiBoldTypeface };
-
-        private static readonly SKShader _fadeShader = SKShader.CreateLinearGradient(
-
-            new SKPoint(0, 0), new SKPoint(1, 0),
-            [SKColors.Black.WithAlpha(0), SKColors.Black],
-            null, SKShaderTileMode.Clamp);
-
-        private static readonly SKPaint _fadePaint = new() { Shader = _fadeShader };
 
         private static readonly SKPath _bgPath = new();
 

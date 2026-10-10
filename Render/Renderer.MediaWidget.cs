@@ -6,9 +6,8 @@ namespace NotchPeninsula
     {
         // ---- 媒体控制模块（唯一入口） ----
 
-        private const float MEDIA_MASK_FADE = 15f;      // 按钮块左缘再向左的渐隐宽度（把文字柔和收掉）
+        // 文字区右界都改用【真裁切】（见下），不再需要「渐隐幕布 + 纯色片」那套常量
         private const float BUTTON_BLOCK_LEFT = 79f;    // 组件右端 − 79 = 第一个图标左缘
-        private const float BUTTON_BLOCK_RIGHT = 11f;   // 组件右端 − 11 = 「下一首」图标右缘
 
         private readonly record struct MediaBlockGeometry(float ZoneLeft, float ContentLeft, float AnchorRight);
 
@@ -58,6 +57,15 @@ namespace NotchPeninsula
                 textX += thumbSize + 10;
             }
 
+            // 文字右界：悬停出按钮时让到按钮块左侧、常态让到频谱左侧。
+            // ⚠️ 用【真裁切】而不是「盖一层渐变 + 纯色」—— 那层在亚克力 / 低透明度下会变成一块突兀的亮片。
+            float textClipRight = (isHovered && MediaInteractionMode == 0)
+                ? geometry.AnchorRight - BUTTON_BLOCK_LEFT - 4f
+                : geometry.AnchorRight - 41f;
+
+            canvas.Save();
+            canvas.ClipRect(new SKRect(0, 0, textClipRight, currentHeight), SKClipOperation.Intersect, true);
+
             // 折叠态下的歌词叠化与位移动画 (带卡拉OK)
             bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
             if (_lyricAnimProgress < 1f && isLyricDisplay)
@@ -73,32 +81,13 @@ namespace NotchPeninsula
                 DrawLyricLine(canvas, _cachedMediaDisplay, _lastLyricTrans, textX, textY, _textPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
             }
 
+            canvas.Restore();   // 结束文字裁切
+
             if (isHovered && MediaInteractionMode == 0)
             {
                 int btnPrevX = (int)geometry.AnchorRight - 90;
                 int btnPlayX = (int)geometry.AnchorRight - 60;
                 int btnNextX = (int)geometry.AnchorRight - 30;
-
-                float maskL = Math.Max(geometry.ZoneLeft, geometry.AnchorRight - BUTTON_BLOCK_LEFT - MEDIA_MASK_FADE);
-                float maskR = geometry.AnchorRight - BUTTON_BLOCK_RIGHT;
-                // 组件过窄时两段渐隐会打架，按可用宽度对半收窄
-                float fadeW = Math.Min(MEDIA_MASK_FADE, (maskR - maskL) / 2f);
-
-                canvas.Save();
-                canvas.Translate(maskL, 0);
-                canvas.Scale(fadeW, currentHeight);
-                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                canvas.Restore();
-
-                canvas.Save();
-                canvas.Translate(maskR, 0);
-                canvas.Scale(-fadeW, currentHeight); // 负缩放 → 渐变镜像，实心在左、透明在右
-                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                canvas.Restore();
-
-                //    写成右边缘会画出一条一直冲到岛体最右的色带。
-                if (maskR - maskL > fadeW * 2f)
-                    canvas.DrawRect(new SKRect(maskL + fadeW, 0f, maskR - fadeW, currentHeight), _bgPaint);
 
                 float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
                 DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
@@ -150,8 +139,11 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(coverRect, 8f, 8f, _fallbackIconPaint);
             }
 
-            // 双行文字
+            // 双行文字（裁切到频谱左侧：超长直接切掉，不盖任何遮罩 / 底色层）
             float textStartX = coverX + coverSize + 12f;
+            canvas.Save();
+            canvas.ClipRect(new SKRect(0, 0, right - 55f, currentHeight), SKClipOperation.Intersect, true);
+
             _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
             _titlePaint.TextSize = 14.5f;
             DrawKaraoke(canvas, _lastMediaTitle, textStartX, coverY + 18f, _titlePaint, alpha, 0f, false); // 歌名也做 emoji/多语言回退
@@ -180,14 +172,7 @@ namespace NotchPeninsula
                 DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
             }
 
-            float maskEnd = right - 55f;
-            float maskStart = maskEnd - 20f;
-            canvas.Save();
-            canvas.Translate(maskStart, 0);
-            canvas.Scale(maskEnd - maskStart, currentHeight);
-            canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-            canvas.Restore();
-            canvas.DrawRect(maskEnd, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
+            canvas.Restore();   // 结束文字裁切
 
             // 复用律动频谱 (放右上角)
             if (bars != null)

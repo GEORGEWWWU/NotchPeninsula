@@ -146,16 +146,25 @@ namespace NotchPeninsula
             if (IsToastFullMode)
             {
                 // 渲染应用名（小字），右上角同排悬浮“现在”
+                // 应用名用【真裁切】收口（不再盖遮罩层）
+                canvas.Save();
+                canvas.ClipRect(new SKRect(0, 0, toastMaxTextRight, currentHeight), SKClipOperation.Intersect, true);
                 foreach (var run in _cachedToastAppNameRuns)
                 {
                     _bodyPaint.Typeface = run.Type;
                     canvas.DrawText(run.Text, toastTextX + run.X, line1Y, _bodyPaint);
                 }
+                canvas.Restore();
                 _bodyPaint.Typeface = _normalTypeface; // 重置
 
                 float nowWidth = _bodyPaint.MeasureText("现在");
                 canvas.DrawText("现在", right - 16f - nowWidth, line1Y, _bodyPaint);
             }
+
+            // 发送者 / 正文同样用真裁切收口 —— 不再叠渐变或纯色层（那层在亚克力 / 低透明度下会露出来）
+            float textClipRight = IsToastCompactMode ? compactRightLeft : toastMaxTextRight;
+            canvas.Save();
+            canvas.ClipRect(new SKRect(0, 0, textClipRight, currentHeight), SKClipOperation.Intersect, true);
 
             // 完整模式在第2行，缩略模式在第1行
             float senderY = IsToastFullMode ? line2Y : line1Y;
@@ -175,37 +184,11 @@ namespace NotchPeninsula
             }
             _bodyPaint.Typeface = _normalTypeface; // 重置
 
-            bool textOverflow;
-            if (IsToastFullMode)
-                textOverflow = toastTextX + _cachedToastAppNameWidth > toastMaxTextRight ||
-                               toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
-                               toastTextX + _cachedToastBodyWidth > toastMaxTextRight;
-            else if (IsToastCompactMode)
-                textOverflow = toastTextX + _cachedToastTitleWidth > compactRightLeft ||
-                               toastTextX + _cachedToastBodyWidth > compactRightLeft;
-            else
-                textOverflow = toastTextX + _cachedToastTitleWidth > toastMaxTextRight ||
-                               toastTextX + _cachedToastBodyWidth > toastMaxTextRight;
-
-            if (textOverflow)
-            {
-                float fadeWidth = 15f;
-                float fadeStart = IsToastCompactMode ? compactRightLeft - fadeWidth : toastMaxTextRight - fadeWidth;
-
-                canvas.Save();
-                canvas.Translate(fadeStart, 0);
-                canvas.Scale(fadeWidth, currentHeight);
-                canvas.DrawRect(0, 0, 1, 1, _fadePaint);
-                canvas.Restore();
-
-                if (!IsToastCompactMode)
-                    canvas.DrawRect(toastMaxTextRight, 0, WINDOW_WIDTH, currentHeight, _bgPaint);
-            }
+            canvas.Restore();   // 结束文字裁切
 
             if (IsToastCompactMode)
             {
                 string compactAppName = string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName;
-                canvas.DrawRect(compactRightLeft, 0f, right - 16f, currentHeight, _bgPaint);
                 canvas.DrawText("现在", right - 16f - compactNowWidth, line1Y, _compactTimePaint);
                 canvas.DrawText(compactAppName, right - 16f - compactAppW, line2Y, _compactAppPaint);
             }
