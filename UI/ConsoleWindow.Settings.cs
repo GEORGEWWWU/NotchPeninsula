@@ -63,7 +63,7 @@ namespace NotchPeninsula
 
         private const float THEME_CARD_Y = 12f;
 
-        private const float THEME_CARD_H = 104f;   // 两行：主题配色 + 背景材质
+        private const float THEME_CARD_H = 112f;   // 两行：主题配色 + 背景材质
 
         private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + 14f;   // 130
 
@@ -82,7 +82,15 @@ namespace NotchPeninsula
 
         private const float MAT_SEG_X = THEME_SEG_X;
 
-        private const float MAT_SEG_Y = THEME_SEG_Y + 42f;   // 70
+        // 两行之间的行距：原 42 两行贴太近，2026-10-10 加大到 50（卡高同步 +8）
+        private const float THEME_ROW_GAP = 50f;
+
+        private const float MAT_SEG_Y = THEME_SEG_Y + THEME_ROW_GAP;   // 78
+
+        // 「背景材质」两行基线：与分段控件同一套派生（标题 −2 / 副标题 +18）
+        private const float MAT_TITLE_DY = MAT_SEG_Y - 2f;   // 76
+
+        private const float MAT_SUB_DY = MAT_SEG_Y + 18f;    // 96
 
         private const float OPACITY_SLIDER_DY = 44f;
 

@@ -1081,8 +1081,11 @@ namespace NotchPeninsula
                 ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
 
             // 第二行：背景材质（独立选项，与主题配色互不影响）
-            canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + 68, _uiTextPaint);
-            canvas.DrawText("胶囊内模糊真实桌面背景", CONTENT_TEXT_X, themeY + 88, _subTextPaint);
+            canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + MAT_TITLE_DY, _uiTextPaint);
+            // 亚克力仍是实验特性：复用通用设置里 MSP 那枚「实验性」标签
+            DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X,
+                themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
+            canvas.DrawText("胶囊内模糊真实桌面背景", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
             DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
                 ["实体", "亚克力"], Renderer.IslandAcrylic ? 1 : 0, _hoveredMaterialIndex);
 
