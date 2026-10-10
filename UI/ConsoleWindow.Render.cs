@@ -466,8 +466,8 @@ namespace NotchPeninsula
 
             canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + SOUND_SEP_Y, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + SOUND_SEP_Y, _separatorPaint);
 
-            // ── 行 3：消息提示音开关 ──
-            DrawToggleRow(canvas, SOUND_ROW3_Y, "消息提示音",
+            // ── 行 3：消息提示音开关（内容随分隔线下方两行统一下移 SEP_ROW_CONTENT_DY）──
+            DrawToggleRow(canvas, SOUND_ROW3_Y + SEP_ROW_CONTENT_DY, "消息提示音",
                 _soundHint.Length > 0 ? _soundHint : "新消息到达时播放提示音",
                 ToastSoundConfig.IsEnabled, _soundToggleHovered);
 

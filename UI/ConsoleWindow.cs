@@ -217,6 +217,11 @@ namespace NotchPeninsula
 
         private const float TOAST_ROW2_Y = TOAST_ROW1_Y + 62f;
 
+        // 分隔线以下两行（消息通知内容 / 消息提示音）的内容整体下移：
+        // 贴着分隔线显得顶对齐（上隙 ~11px、下隙 ~18px）。只动文本与右侧控件，
+        // 分隔线 / 卡片 / 行距骨架不动；命中矩形引用同一常量，与绘制天然同步。
+        private const float SEP_ROW_CONTENT_DY = 4f;
+
         private const float TOAST_SEP_Y = TOAST_ROW2_Y + 4f;
 
         // 行内纵向锚点（全页唯一真源，第五次返工后定稿）
@@ -240,11 +245,11 @@ namespace NotchPeninsula
 
         private const float DROPDOWN_TEXT_BASELINE = 21f;
 
-        private const float TOAST_ROW2_TITLE_Y = TOAST_ROW2_Y + ROW_TEXT_BASELINE;
+        private const float TOAST_ROW2_TITLE_Y = TOAST_ROW2_Y + ROW_TEXT_BASELINE + SEP_ROW_CONTENT_DY;
 
         private const float TOAST_ROW2_DESC_Y = TOAST_ROW2_TITLE_Y + ROW_SUB_OFFSET;
 
-        private const float TOAST_MODE_ROW_Y = TOAST_ROW2_Y + ROW_DROPDOWN_TOP;
+        private const float TOAST_MODE_ROW_Y = TOAST_ROW2_Y + ROW_DROPDOWN_TOP + SEP_ROW_CONTENT_DY;
 
         private const float TOAST_MODE_ROW_H = 32f;
 
@@ -258,7 +263,7 @@ namespace NotchPeninsula
 
         private const float TOGGLE_TRACK_H = 20f;
 
-        private const float SOUND_TOGGLE_ROW_Y = SOUND_ROW3_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f;
+        private const float SOUND_TOGGLE_ROW_Y = SOUND_ROW3_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f + SEP_ROW_CONTENT_DY;
 
         private const float TOAST_TOGGLE_ROW_Y = TOAST_ROW1_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f;
 
