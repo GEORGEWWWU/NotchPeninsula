@@ -132,9 +132,11 @@ namespace NotchPeninsula
 
         // 亚克力背板画笔。
         // 这里**故意不带 ImageFilter** —— 每帧带高斯画一次会让 Skia 每帧开临时缓冲，帧率和内存都会崩。
-        // 模糊已经在抓到背板时一次性做完了（缩 1/12 + 小高斯），这里只需平滑放大。
+        // 模糊已经在抓到背板时一次性做完了（缩 1/12 + 降半升回的盒式模糊），这里只需平滑放大。
+        // ⚠️ 必须用 Low（纯双线性）：Medium 会走 mipmap，Skia 按图像 uniqueID 缓存 mip 层级，
+        // 而背板每 250ms 就是一张新图 → 同样只增不减。
         private static readonly SKPaint _acrylicPaint = new()
-        { IsAntialias = true, FilterQuality = SKFilterQuality.Medium };
+        { IsAntialias = true, FilterQuality = SKFilterQuality.Low };
 
         private static readonly SKPaint _fallbackIconPaint = new() { Color = new SKColor(0, 120, 212), IsAntialias = true };
 

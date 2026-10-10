@@ -24,8 +24,12 @@ namespace NotchPeninsula
         private const int RefreshMs = 250;      // 背板刷新节拍（屏幕读取很贵，别太频繁）
         public const float Downscale = 12f;     // 缩略倍数：越大越糊（实测 k=8→std31 / k=16→std6.6）
 
-        private static readonly SKPaint _smoothPaint = new()
-        { IsAntialias = true, ImageFilter = SKImageFilter.CreateBlur(2f, 2f, SKShaderTileMode.Clamp) };
+        // ⚠️ 这里的平滑**绝不能用 SKImageFilter.CreateBlur**：Skia 会把「每次过滤的产物」按源图的 uniqueID
+        // 缓存起来，而背板每 250ms 就产出一张**新图** → 缓存只增不减。实测（纯管道 200s）：
+        // 带滤镜 +13.9MB/分（私有内存 50.7→92.3MB），去掉滤镜后 0 增长。这就是「内存暴增」的真凶。
+        // 改用「降到 1/2 再升回」的双线性等效模糊：无滤镜、无缓存、开销极小（GDI 那一步 1/12 已经做过盒式平均）。
+        private static readonly SKPaint _resample = new()
+        { IsAntialias = true, FilterQuality = SKFilterQuality.Low };
 
         // ---- 渲染线程写入 ----
         private static volatile int _tx, _ty, _tw, _th;
@@ -166,9 +170,18 @@ namespace NotchPeninsula
             using var src = SKImage.FromPixels(info, _pBits, sw * 4);
             if (src == null) return false;
 
+            // 无滤镜等效模糊：先降到 1/2（双线性 = 盒式平均），再升回原尺寸
+            int hw = Math.Max(1, sw / 2), hh = Math.Max(1, sh / 2);
+            using var half = SKSurface.Create(new SKImageInfo(hw, hh, SKColorType.Bgra8888, SKAlphaType.Premul));
+            if (half == null) return false;
+            half.Canvas.DrawImage(src, new SKRect(0, 0, hw, hh), _resample);
+            half.Canvas.Flush();
+            using var halfImg = half.Snapshot();
+            if (halfImg == null) return false;
+
             using var smooth = SKSurface.Create(new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Premul));
             if (smooth == null) return false;
-            smooth.Canvas.DrawImage(src, 0, 0, _smoothPaint);
+            smooth.Canvas.DrawImage(halfImg, new SKRect(0, 0, sw, sh), _resample);
             smooth.Canvas.Flush();
             var img = smooth.Snapshot();
             if (img == null) return false;
@@ -180,19 +193,19 @@ namespace NotchPeninsula
             if (x != _loggedX || y != _loggedY)
             {
                 _loggedX = x; _loggedY = y;
-                // 抓取矩形一变就报一行：把它和「背板中央平均 RGB」一起看 —— 矩形跑到屏幕外会得到全黑
+                // 抓取矩形一变就报一行：把它和「背板中央平均 RGB」一起看 —— 矩形跑到屏幕外会得到全黑。
+                // 直接从 DIB 取样（BGRA），不再建 SKPixmap。
                 int cw = Math.Max(1, sw / 3), chh = Math.Max(1, sh / 3);
                 long ar = 0, ag = 0, ab = 0; int cnt = 0;
-                var px = new SKPixmap();
-                if (img.PeekPixels(px))
-                {
-                    for (int j = sh / 3; j < sh / 3 + chh && j < sh; j++)
-                        for (int i = sw / 3; i < sw / 3 + cw && i < sw; i++)
-                        {
-                            var c = px.GetPixelColor(i, j);
-                            ar += c.Red; ag += c.Green; ab += c.Blue; cnt++;
-                        }
-                }
+                for (int j = sh / 3; j < sh / 3 + chh && j < sh; j++)
+                    for (int i = sw / 3; i < sw / 3 + cw && i < sw; i++)
+                    {
+                        int p = (j * sw + i) * 4;
+                        ab += Marshal.ReadByte(_pBits, p);
+                        ag += Marshal.ReadByte(_pBits, p + 1);
+                        ar += Marshal.ReadByte(_pBits, p + 2);
+                        cnt++;
+                    }
                 Info($"[亚克力] 抓屏 ok：屏幕矩形=({x},{y},{w},{h})  缩略图={sw}x{sh}"
                     + $"  背板中央平均 RGB=({(cnt == 0 ? -1 : ar / cnt)},{(cnt == 0 ? -1 : ag / cnt)},{(cnt == 0 ? -1 : ab / cnt)})");
             }
