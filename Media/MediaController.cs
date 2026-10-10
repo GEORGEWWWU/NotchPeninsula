@@ -205,6 +205,11 @@ namespace NotchPeninsula
         // 这段就是「关掉视频 → 岛体清空」的观感延迟；判定只在非播放态才跑，播放中零成本。
         private const int StaleProbeIntervalMs = 250;
 
+        // 已判残留之后的「恢复」轮询间隔：降到 1 秒。
+        // 恢复不靠它顶着 —— 新会话一播放就会触发 OnPlaybackInfoChanged 立刻补一刀，
+        // 这里只是保底，没必要 250ms 一轮地读会话属性。
+        private const int StaleRecoverIntervalMs = 1000;
+
         private readonly bool[] _suspendedPlaying = new bool[RecentSongSlots];
 
         private readonly bool[] _suspendedDead = new bool[RecentSongSlots];
@@ -336,10 +341,17 @@ namespace NotchPeninsula
                 // 残留判定必须独立于会话增删事件：客户端关视频时不产生任何 SMTC 通知，
                 // 光靠 SessionsChanged 永远发现不了这个假会话。
                 // 频率比暂停采样高一档：这段延迟直接等于「关掉视频到岛体清空」的观感延迟。
-                if ((now - _staleProbeAt).TotalMilliseconds >= StaleProbeIntervalMs)
+                // 未判残留（清除路径）保持 250ms；已判残留（恢复路径）降到 1 秒 ——
+                // 恢复有事件驱动兜底，轮询只是保底，不必 250ms 一轮地读会话属性。
+                // 注意 _staleProbeAt 要无条件推进，否则非目标场景每 50ms 都会重算一次门槛。
+                int staleInterval = _staleAppId.Length > 0 ? StaleRecoverIntervalMs : StaleProbeIntervalMs;
+                if ((now - _staleProbeAt).TotalMilliseconds >= staleInterval)
                 {
                     _staleProbeAt = now;
-                    CheckStaleSession();
+                    // 到点才查入口：非白名单会话（绝大多数时候）连判定都不进，也不碰 WinRT 属性。
+                    bool staleRelevant = _staleAppId.Length > 0
+                        || (_currentSession != null && SessionValidity.IsTrackedApp(_currentSession.SourceAppUserModelId));
+                    if (staleRelevant) _ = CheckStaleSessionAsync();
                 }
             }
             catch (Exception ex)
@@ -355,7 +367,28 @@ namespace NotchPeninsula
         // 判定并忽略「僵尸会话」：客户端关了视频却不注销 SMTC 会话，系统媒体控件里就留着一个
         // 点不动的假媒体。判据与实测数据见 Media/SessionValidity.cs。
         // 这里只做「宿主内部忽略」，不去清系统会话（消费侧没有那个能力）。
-        private void CheckStaleSession()
+        //
+        // 异步 + 防重入：恢复判定要读会话标题来确认「内容真的换了」，由后台采样线程调用。
+        private int _staleChecking;
+
+        private async Task CheckStaleSessionAsync()
+        {
+            if (Interlocked.Exchange(ref _staleChecking, 1) == 1) return;
+            try
+            {
+                await CheckStaleSessionCore();
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"残留会话判定异常: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _staleChecking, 0);
+            }
+        }
+
+        private async Task CheckStaleSessionCore()
         {
             if (!IsMediaControlEnabled)
             {
@@ -380,9 +413,13 @@ namespace NotchPeninsula
 
             if (staleId.Length > 0)
             {
-                // 已判残留：只找「恢复」的证据
+                // 已判残留：只找「恢复」的证据。关键是必须确认「内容真的换了」——
+                // B站换视频的时序是「旧会话先抢报 Playing / 或整段消失，窗口标题立即变新，
+                // 新会话 2~3 秒后才带着新标题回来」。只凭 Playing 或会话在不在都放行得太早，
+                // 结果就是先把上一个视频的标题闪出来（实测持续 2.1 秒）。
                 bool found = false;
                 bool alive = false;
+
                 for (int i = 0; i < sessions.Count; i++)
                 {
                     var s = sessions[i];
@@ -391,16 +428,40 @@ namespace NotchPeninsula
                     found = true;
                     try
                     {
-                        alive = IsSessionPlaying(s)
-                            || (_staleTitle.Length > 0 && !SessionValidity.IsStale(staleId, _staleTitle));
+                        if (_staleTitle.Length > 0
+                            && SessionValidity.HasVisibleWindowWithTitle(staleId, _staleTitle))
+                        {
+                            // 便宜的一刀：窗口还挂着残留时的标题 → 内容确实在场
+                            //（重播同一视频 / 暂停 + 最小化），直接算恢复，省掉一次读属性。
+                            alive = true;
+                        }
+                        else
+                        {
+                            // 否则才去读标题，确认是换了新内容、还是旧会话抢报 Playing。
+                            string cur = (await s.TryGetMediaPropertiesAsync())?.Title ?? "";
+                            bool newContent = cur.Length > 0
+                                && !string.Equals(cur, _staleTitle, StringComparison.Ordinal);
+
+                            if (newContent)
+                            {
+                                // 换了内容：在播，或新内容的窗口已经可见 → 算恢复。
+                                //（后者兜住「点开视频但没自动播」。）
+                                alive = IsSessionPlaying(s)
+                                    || SessionValidity.HasVisibleWindowWithTitle(staleId, cur);
+                            }
+                            // 标题仍是残留时那个 → 继续忽略
+                        }
                     }
                     catch { return; }   // 读不出来就维持现状，下一轮再判
                     break;
                 }
 
-                if (found && !alive) return;   // 会话还在、也没恢复 → 继续忽略
+                if (found && !alive) return;   // 会话还在、内容也没换 → 继续忽略
 
-                // 又播起来了 / 窗口回来了 / 会话本身已消失 —— 三种都解除忽略
+                // 会话整段消失：B站换视频会先销毁旧会话、新会话稍后才带新标题回来。
+                // 该进程窗口还在就说明不是真退出 —— 继续忽略，免得用旧标题闪一下。
+                if (!found && SessionValidity.HasVisibleWindow(staleId)) return;
+
                 Logger.Debug($"[媒体] 残留会话恢复（{staleId}）");
                 _staleAppId = "";
                 _staleTitle = "";
@@ -840,6 +901,16 @@ namespace NotchPeninsula
                         smtcArtist = ""; // 网页不提供歌手，别让标题尾部被当成歌手
                     }
 
+                    // 标题纠偏（只对白名单客户端）：换视频后 SMTC 标题会滞后 2~3 秒，
+                    // 而视频窗口标题是即时更新的 —— 滞后这段就是「岛体先闪一下上一个视频」的来源。
+                    // SMTC 标题在可见窗口里找不到落地佐证、而内容窗口有明确标题时，以内容窗口为准。
+                    if (SessionValidity.InspectLiveWindows(_currentSession!.SourceAppUserModelId, smtcTitle,
+                            out bool titleConfirmed, out string liveTitle)
+                        && !titleConfirmed && liveTitle.Length > 0)
+                    {
+                        smtcTitle = liveTitle;
+                    }
+
                     UpdateMediaMode(smtcTitle, smtcArtist);
                     UpdateCover();
                 }
@@ -1115,7 +1186,7 @@ namespace NotchPeninsula
         private async void OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
         {
             // 残留状态下播放器只要有播放动作就得立刻响应，不必等 1 秒的轮询档
-            if (_staleAppId.Length > 0) CheckStaleSession();
+            if (_staleAppId.Length > 0) _ = CheckStaleSessionAsync();
 
             // 只刷属性会让界面停在那个已经暂停的会话上。
             if (_manager != null && IsMediaControlEnabled && TargetPlatform == "other" && !IsManualSessionMatch)
