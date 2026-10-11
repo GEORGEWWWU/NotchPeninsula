@@ -1263,6 +1263,7 @@ namespace NotchPeninsula
 
             _lyricSlot = newSlot;
             _forceResync = true;
+            _lyricMonoSlot = -1;   // 换歌：单调位置作废，新歌从自己的快照重新起算
             // 「没歌词」而并排再打一次同样的请求。
             _lyricRetryCount = 0;
             _lastLyricRetryAt = DateTime.UtcNow;
@@ -1297,6 +1298,10 @@ namespace NotchPeninsula
 
             // 暂停时不刷网络请求，等真正播放起来再说
             if (!_isPlaying) return;
+
+            // 首次取词还在跑时不要重试：两个请求会在 _fetchLock 上一前一后各写一次 _lyrics，
+            // 后到的那份会把屏上正在唱的整份换掉（行划分与时间轴都不同）—— 看上去就是「突然插进来一首新歌词」。
+            if (_fetchLock.CurrentCount == 0) return;
 
             var owner = _recentSongs[slot];
             if (string.IsNullOrEmpty(owner.Title) || string.IsNullOrEmpty(owner.Artist)) return;
@@ -1543,7 +1548,9 @@ namespace NotchPeninsula
                         }
                     }
                     // 半路返回的歌词不会被丢掉，正好赶上续播。
-                    if (IsLyricOwner(title, artist))
+                    // 同曲已有歌词时不再覆盖：重试与首次取词可能并发排队，后到的结果会把屏上
+                    // 正在唱的整份换掉 —— 歌词会毫无征兆地跳到别的位置。
+                    if (IsLyricOwner(title, artist) && _lyrics.Length == 0)
                     {
                         _lyrics = lines.ToArray();
                         _lyricWordTimings = wordTimings?.ToArray();
@@ -2753,7 +2760,7 @@ namespace NotchPeninsula
             string found = "";
             string foundTrans = "";
             float progress = 0f;
-            TimeSpan rawPosition = _recentSongs[_lyricSlot].Position;
+            TimeSpan rawPosition = MonotonicLyricPosition(_recentSongs[_lyricSlot].Position);
             for (int i = _lyrics.Length - 1; i >= 0; i--)
             {
                 if (rawPosition >= LineStartRaw(i))
@@ -2814,6 +2821,29 @@ namespace NotchPeninsula
         // 这首歌是否仍是当前歌词时间轴的归属者
         private bool IsLyricOwner(string title, string artist)
             => _lyricSlot >= 0 && _recentSongs[_lyricSlot].Title == title && _recentSongs[_lyricSlot].Artist == artist;
+
+        private int _lyricMonoSlot = -1;
+        private TimeSpan _lyricMonoPos;
+
+        // SMTC 的进度是「快照 + 墙钟外推」：两次快照之间外推，新快照可能落后于上一帧的外推值。
+        // 位置一后退，选行会跨回上一行、逐字扫光会往回缩，两者都会让叠化动画被反复重启 —— 看着就是抽。
+        // 除拖动（用户就是要它跟随）、换歌与大幅回退（判定为真实 seek）外只前进。
+        private TimeSpan MonotonicLyricPosition(TimeSpan raw)
+        {
+            if (_isDragging || _lyricMonoSlot != _lyricSlot)
+            {
+                _lyricMonoSlot = _lyricSlot;
+                _lyricMonoPos = raw;
+                return raw;
+            }
+
+            if (raw >= _lyricMonoPos || (_lyricMonoPos - raw).TotalSeconds > LyricMonoSeekBackSeconds)
+                _lyricMonoPos = raw;
+
+            return _lyricMonoPos;
+        }
+
+        private const double LyricMonoSeekBackSeconds = 1.2;
 
         // 这首歌回到台前时撤销后台登记：时间轴交回当前会话推进，
         // 否则同一首歌会被「当前会话」和「后台会话」各累加一次。
