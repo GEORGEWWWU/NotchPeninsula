@@ -43,6 +43,17 @@ namespace NotchPeninsula
             else if (_soundVolumeDropdownOpen && _hoveredSoundVolumeIndex == -1) { CloseAllDropdowns(); Render(); }
             else if (_matchModeDropdownOpen && _hoveredMatchModeIndex == -1) { CloseAllDropdowns(); Render(); }
             else if (_appDropdownOpen && _hoveredAppIndex == -1) { CloseAllDropdowns(); Render(); }
+            // 目标显示器下拉必须在显示页其它控件之前判定：展开的列表（y 209~261）与「显示模式」
+            // 分段器（y 220~250）重叠且 x 区间被包含，先判下面的控件会把列表里的点击整个吃掉，
+            // 表现成「点了主显示器却什么都没发生」。
+            else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
+            else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
+            {
+                Renderer.TargetMonitorIndex = _hoveredMonitorDropdownIndex;
+                Program.SaveSetting("TargetMonitorIndex", Renderer.TargetMonitorIndex);
+                _monitorDropdownOpen = false;
+                Render();
+            }
             else if (_selectedTab == 1 && _hoveredStyleIndex != -1)
             {
                 Renderer.NotchStyle = _hoveredStyleIndex;
@@ -120,14 +131,6 @@ namespace NotchPeninsula
                 _marketCategoryOpen = false; _marketSearchFocused = false;
                 if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
                 EnsureMarketData();
-                Render();
-            }
-            else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
-            else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
-            {
-                Renderer.TargetMonitorIndex = _hoveredMonitorDropdownIndex;
-                Program.SaveSetting("TargetMonitorIndex", Renderer.TargetMonitorIndex);
-                _monitorDropdownOpen = false;
                 Render();
             }
             else if (_toastModeDropdownHovered) { _toastModeDropdownOpen = true; Render(); }
