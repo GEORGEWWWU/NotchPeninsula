@@ -209,12 +209,21 @@ namespace NotchPeninsula
         private void UpdateMonitorBounds()
         {
             var screens = System.Windows.Forms.Screen.AllScreens;
-            int idx = Renderer.TargetMonitorIndex < screens.Length ? Renderer.TargetMonitorIndex : 0;
+            if (screens.Length == 0) return;   // 枚举不到就沿用上一次的矩形，别把岛体甩出屏幕
+            int want = Renderer.TargetMonitorIndex;
+            int idx = want >= 0 && want < screens.Length ? want : 0;
+            // 拔掉显示器后原下标会越界（比如原来是第 2 块）：就地夹紧并写回注册表，
+            // 否则设置页会一直显示「未知」，重启也还是这个越界值。
+            if (idx != want)
+            {
+                Renderer.TargetMonitorIndex = idx;
+                Program.SaveSetting("TargetMonitorIndex", idx);
+            }
             _cachedMonitorX = screens[idx].Bounds.X;
             _cachedMonitorY = screens[idx].Bounds.Y;
             _cachedMonitorWidth = screens[idx].Bounds.Width;
             _cachedMonitorHeight = screens[idx].Bounds.Height;
-            _cachedMonitorIndex = Renderer.TargetMonitorIndex;
+            _cachedMonitorIndex = idx;
         }
 
         public NotchWindow()
@@ -1310,6 +1319,12 @@ namespace NotchPeninsula
                     MediaHotkeys.Detach();
                     RevokeIslandDropTarget();
                     ShutdownIslandBackdrop();   // 停掉后台抓屏线程并释放它自己的 GDI 资源
+                    break;
+
+                case Win32.WM_DISPLAYCHANGE:
+                    // 显示器拔插 / 分辨率变化：作废缓存的显示器矩形，
+                    // 下一帧 UpdateWindow 会重算并顺手夹紧越界的目标下标。
+                    _cachedMonitorIndex = -1;
                     break;
 
                 case Win32.WM_SETCURSOR:

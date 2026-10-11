@@ -762,6 +762,9 @@ namespace NotchPeninsula
             else
             {
                 _instance._isAutoStartEnabled = NotchWindow.IsAutoStartEnabled();
+                // 上次关窗到现在显示器可能拔插过：开窗就把列表与越界下标重新对齐，
+                // 免得设置页显示「未知」或指向一块已经不存在的屏。
+                _instance.RefreshMonitorOptions(retry: false);
                 _instance.Render();
                 // 窗口标题当成标题栏文字画在左上角。
                 Win32.ShowWindow(_instance._hwnd, Win32.SW_RESTORE);
@@ -910,20 +913,55 @@ namespace NotchPeninsula
                 UpdateValueString(i);
             }
 
-            System.Threading.Tasks.Task.Run(() => {
-                var screens = Screen.AllScreens;
-                string[] opts = new string[screens.Length];
-                for (int i = 0; i < screens.Length; i++)
-                    opts[i] = screens[i].Primary ? $"显示器 {i + 1} (主)" : $"显示器 {i + 1}";
-                _monitorOptions = opts;
-                if (Renderer.TargetMonitorIndex >= screens.Length) Renderer.TargetMonitorIndex = 0;
-
-                var inst = _instance;
-                if (inst != null && inst._hwnd != IntPtr.Zero)
-                    Win32.PostMessage(inst._hwnd, WM_ASYNC_RERENDER, IntPtr.Zero, IntPtr.Zero);
-            });
+            RefreshMonitorOptions(retry: false);
 
             Render();
+        }
+
+        // 目标显示器列表只是快照，只在窗口创建与拓扑变化时重算。
+        // .NET 的 Screen.AllScreens 自带缓存，靠 SystemEvents.DisplaySettingsChanging 失效，
+        // 而 WM_DISPLAYCHANGE 与那个事件谁先到没有保证 ⇒ 拓扑变化时补一次延迟重算，保证最终态正确。
+        private void RefreshMonitorOptions(bool retry)
+        {
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                if (retry)
+                {
+                    try { System.Threading.Thread.Sleep(800); } catch { }
+                }
+                RefreshMonitorOptionsCore();
+            });
+        }
+
+        private void RefreshMonitorOptionsCore()
+        {
+            string[] opts;
+            try
+            {
+                var screens = Screen.AllScreens;
+                if (screens.Length == 0) return;   // 枚举不到就保留上一次的列表，别把下拉清空
+                opts = new string[screens.Length];
+                for (int i = 0; i < screens.Length; i++)
+                    opts[i] = screens[i].Primary ? $"显示器 {i + 1} (主)" : $"显示器 {i + 1}";
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("枚举目标显示器失败，保留上一次的列表", ex);
+                return;
+            }
+
+            _monitorOptions = opts;
+
+            // 拔掉显示器后原下标可能越界：夹紧并写回注册表（否则设置页显示「未知」，重启依旧是越界值）。
+            if (Renderer.TargetMonitorIndex < 0 || Renderer.TargetMonitorIndex >= opts.Length)
+            {
+                Renderer.TargetMonitorIndex = 0;
+                Program.SaveSetting("TargetMonitorIndex", 0);
+            }
+
+            var inst = _instance;
+            if (inst != null && inst._hwnd != IntPtr.Zero)
+                Win32.PostMessage(inst._hwnd, WM_ASYNC_RERENDER, IntPtr.Zero, IntPtr.Zero);
         }
 
         private const int WM_ASYNC_RERENDER = 0x8000 + 0x52;
@@ -1063,6 +1101,13 @@ namespace NotchPeninsula
                     }
                     break;
                 }
+
+                case Win32.WM_DISPLAYCHANGE:
+                    // 显示器拔插 / 分辨率变化：列表与越界下标都要重算。
+                    // 立刻算一次 + 800ms 后补一次，躲开 .NET Screen.AllScreens 的缓存失效时序。
+                    RefreshMonitorOptions(retry: false);
+                    RefreshMonitorOptions(retry: true);
+                    break;
 
                 case Win32.WM_MOUSEMOVE:
                     OnMouseMove(

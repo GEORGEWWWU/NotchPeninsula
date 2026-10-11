@@ -77,7 +77,16 @@ namespace NotchPeninsula
                     Renderer.StandbyToggleByDoubleClick =
                         (int)key.GetValue("StandbyToggleByDoubleClick", 0) != 0;
                     Renderer.StandbyActive = (int)key.GetValue("StandbyActive", 0) != 0;
-                    Renderer.TargetMonitorIndex = (int)key.GetValue("TargetMonitorIndex", 0);
+                    // 显示器拔插过之后注册表里可能留着越界下标（原来选的是第 2 块，现在只剩 1 块）：
+                    // 越界会让设置页显示「未知」、岛体只能靠兜底落回主屏。这里就地夹紧并写回。
+                    int loadedMonitor = (int)key.GetValue("TargetMonitorIndex", 0);
+                    int monitorCount = System.Windows.Forms.Screen.AllScreens.Length;
+                    if (loadedMonitor < 0 || (monitorCount > 0 && loadedMonitor >= monitorCount))
+                    {
+                        loadedMonitor = 0;
+                        Program.SaveSetting("TargetMonitorIndex", 0);
+                    }
+                    Renderer.TargetMonitorIndex = loadedMonitor;
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
                     Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
 
