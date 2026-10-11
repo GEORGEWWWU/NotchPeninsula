@@ -944,15 +944,15 @@ namespace NotchPeninsula
 
         private void UpdateMediaMode(string smtcTitle, string smtcArtist)
         {
-            // 外部媒体源（网易云 / 酷狗）接管标题：这两个参数就是 SMTC 那点脏数据的来源，
-            // 而插件从页面里读到的歌名 / 歌手要准得多。接管只在「SMTC 给不出时间轴」时成立，
-            // 否则 smtcTitle / smtcArtist 原样不动，本方法行为与从前完全一致。
-            if (TryGetExternalTrack(_currentAppId, _smtcDuration, out string extTitle, out string extArtist))
-            {
-                smtcTitle = extTitle;
-                smtcArtist = extArtist;
-            }
-
+            // 外部媒体源（插件）只接管「时间轴」，元数据一律以 SMTC 为准 —— 这两个参数原样使用。
+            //
+            // 曾经这里会把插件读到的歌名 / 歌手注入进来，结果是同一个会话的身份在两个值之间来回跳：
+            // 接管前提是「SMTC 给不出时长」，而 SMTC 的时长字段时有时无（刚换歌、缓冲、采样抖动），
+            // 于是「有值 → 用 SMTC 脏串 / 没值 → 用插件净串」反复横跳。每跳一次都会走到下面的
+            // titleChanged 分支：作废封面、重置重试、重排歌词槽 —— 表现就是切歌时封面闪、歌词一直
+            // 停在加载中，还会把取词请求刷得很密。
+            //
+            // 因此：歌名 / 歌手 / 封面全部维持宿主原有逻辑，插件只在「时长与进度」这一件事上生效。
             bool appChanged = !string.Equals(_trackAppId, _currentAppId, StringComparison.Ordinal);
             bool titleChanged = smtcTitle.Length > 0
                 && !string.Equals(_trackTitle, smtcTitle, StringComparison.Ordinal);

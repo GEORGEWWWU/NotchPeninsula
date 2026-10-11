@@ -45,19 +45,22 @@ public interface IMediaSessionSource
     /// <summary>是否正在播放（<see cref="IsActive"/> 为 false 时无意义）。</summary>
     bool IsPlaying { get; }
 
-    /// <summary>歌名。可能为空串。</summary>
+    /// <summary>
+    /// 歌名。可能为空串。<b>宿主不消费它</b>（元数据一律以 SMTC 为准，双源会让同一会话的歌名来回跳），
+    /// 实现方自己用它（界面展示、换歌判定）即可。
+    /// </summary>
     string Title { get; }
 
-    /// <summary>歌手。多个歌手由实现方决定用什么分隔符拼好，宿主直接显示。</summary>
+    /// <summary>歌手。<b>宿主同样不消费</b>，理由见 <see cref="Title"/>。</summary>
     string Artist { get; }
 
     /// <summary>当前播放位置。宿主可以按墙钟在这个值上继续推算（刷新周期之内不会更新）。</summary>
     TimeSpan Position { get; }
 
-    /// <summary>总时长；未知时为 <see cref="TimeSpan.Zero"/>。</summary>
+    /// <summary>总时长；未知时为 <see cref="TimeSpan.Zero"/>。<b>宿主只取这个与 <see cref="Position"/></b>。</summary>
     TimeSpan Duration { get; }
 
-    /// <summary>封面图片 URL；没有时为 null。宿主自行下载与缓存。</summary>
+    /// <summary>封面图片 URL；没有时为 null。实现方自用，宿主不消费。</summary>
     string? CoverUrl { get; }
 
     /// <summary>播放 / 暂停。</summary>

@@ -15,9 +15,16 @@ namespace NotchPeninsula
     /// </para>
     ///
     /// <para>
+    /// <b>接管范围：只有时间轴</b>。宿主只取插件报的「时长 + 播放位置」，歌名、歌手、封面、
+    /// 歌词匹配等元数据全部维持宿主原有逻辑（SMTC / 宿主自己的取词链）。原因是元数据一旦双源，
+    /// 同一个会话的身份就会在「SMTC 脏串」与「插件净串」之间反复横跳 —— 接管前提依赖
+    /// SMTC 的时长字段，而那个字段时有时无，每跳一次都会作废封面并重排歌词槽，切歌时尤其明显。
+    /// </para>
+    ///
+    /// <para>
     /// <b>接管规则（有意保守）</b>：只有当<b>当前会话就是这两家</b>、<b>且 SMTC 给出不了时间轴</b>时，
-    /// 才接受插件传入的数据；其余情况一律照旧走 SMTC。这样即使插件读错了，也不会把本来正常的
-    /// 会话带坏 —— 插件的价值本来就只体现在「SMTC 说不清」的那一小片场景里。
+    /// 才接受插件传入的时间轴；其余情况一律照旧走 SMTC（没装插件时登记表为空，永远返回 false，
+    /// 内置的虚拟跑表行为逐字节不变）。
     /// </para>
     /// </summary>
     public partial class MediaController
@@ -159,27 +166,6 @@ namespace NotchPeninsula
 
             duration = source.Duration;
             position = ExternalLivePosition(source, now);
-            return true;
-        }
-
-        /// <summary>
-        /// 外部源接管时的歌名 / 歌手，供 <c>UpdateMediaMode</c> 使用。
-        /// 走宿主原有的 Title / Artist 链路，歌词、封面、最近播放自然跟着一起变准。
-        /// </summary>
-        private bool TryGetExternalTrack(string? appId, TimeSpan smtcDuration,
-            out string title, out string artist)
-        {
-            title = "";
-            artist = "";
-
-            var source = PickExternalSource(appId, smtcDuration);
-            if (source == null) return false;
-
-            // 歌名还没读出来：宁可用 SMTC 的脏串，也不用空值把界面清空
-            if (source.Title.Length == 0) return false;
-
-            title = source.Title;
-            artist = source.Artist;
             return true;
         }
     }
