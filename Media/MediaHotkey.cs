@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace NotchPeninsula
 {
     internal enum MediaHotkeyAction
@@ -64,6 +62,20 @@ namespace NotchPeninsula
 
         public static bool IsBound(int index) => _vks[index] != 0;
 
+        // 别的全局键位（交互设置页的「唤出灵动岛」）录制时用它躲开已有组合，
+        // 否则两边绑同一组键，先注册的那个会把后者顶掉。
+        public static bool FindConflict(uint mods, int vk, out string label)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                if (_vks[i] != vk || _mods[i] != mods) continue;
+                label = _labels[i];
+                return true;
+            }
+            label = "";
+            return false;
+        }
+
         private static void ResetToDefaults()
         {
             for (int i = 0; i < Count; i++)
@@ -80,9 +92,9 @@ namespace NotchPeninsula
             for (int i = 0; i < Count; i++)
             {
                 string raw = key.GetValue(_settingKeys[i], "") as string ?? "";
-                if (!TryParse(raw, out uint mods, out int vk)) continue;
+                if (!HotkeyText.TryParse(raw, out uint mods, out int vk)) continue;
                 // 坏值一律忽略，别让它进内存后注册不上。
-                if (vk != 0 && !IsUsable(mods, vk)) continue;
+                if (vk != 0 && !HotkeyText.IsUsable(mods, vk)) continue;
                 _mods[i] = mods;
                 _vks[i] = vk;
             }
@@ -111,7 +123,7 @@ namespace NotchPeninsula
         {
             if (index < 0 || index >= Count) return "无效的快捷键项";
             if (vk == 0) { ClearBinding(index); return ""; }
-            if (!IsUsable(mods, vk)) return "请至少搭配 Ctrl / Alt / Shift / Win";
+            if (!HotkeyText.IsUsable(mods, vk)) return "请至少搭配 Ctrl / Alt / Shift / Win";
 
             for (int i = 0; i < Count; i++)
             {
@@ -182,72 +194,10 @@ namespace NotchPeninsula
             }
         }
 
-        public static string FormatKey(uint mods, int vk)
-        {
-            var sb = new StringBuilder(24);
-            if ((mods & Win32.MOD_CONTROL) != 0) sb.Append("Ctrl + ");
-            if ((mods & Win32.MOD_ALT) != 0) sb.Append("Alt + ");
-            if ((mods & Win32.MOD_SHIFT) != 0) sb.Append("Shift + ");
-            if ((mods & Win32.MOD_WIN) != 0) sb.Append("Win + ");
-            sb.Append(KeyName(vk));
-            return sb.ToString();
-        }
+        public static string FormatKey(uint mods, int vk) => HotkeyText.Format(mods, vk);
 
         public static string FormatKey(int index)
             => IsBound(index) ? FormatKey(_mods[index], _vks[index]) : "未设置";
-
-        private static string KeyName(int vk) => vk switch
-        {
-            0x08 => "Backspace",
-            0x09 => "Tab",
-            0x0D => "Enter",
-            0x14 => "CapsLock",
-            0x1B => "Esc",
-            0x20 => "Space",
-            0x21 => "PageUp",
-            0x22 => "PageDown",
-            0x23 => "End",
-            0x24 => "Home",
-            0x25 => "←",
-            0x26 => "↑",
-            0x27 => "→",
-            0x28 => "↓",
-            0x2D => "Insert",
-            0x2E => "Delete",
-            >= 0x30 and <= 0x39 => ((char)vk).ToString(),
-            >= 0x41 and <= 0x5A => ((char)vk).ToString(),
-            >= 0x60 and <= 0x69 => "小键盘" + (vk - 0x60),
-            0x6A => "小键盘 *",
-            0x6B => "小键盘 +",
-            0x6D => "小键盘 -",
-            0x6E => "小键盘 .",
-            0x6F => "小键盘 /",
-            >= 0x70 and <= 0x7B => "F" + (vk - 0x6F),
-            0xBA => ";",
-            0xBB => "=",
-            0xBC => ",",
-            0xBD => "-",
-            0xBE => ".",
-            0xBF => "/",
-            0xC0 => "`",
-            0xDB => "[",
-            0xDC => "\\",
-            0xDD => "]",
-            0xDE => "'",
-            _ => "0x" + vk.ToString("X2"),
-        };
-
-        private static bool IsUsable(uint mods, int vk)
-        {
-            const uint anyMod = Win32.MOD_CONTROL | Win32.MOD_ALT | Win32.MOD_SHIFT | Win32.MOD_WIN;
-            if ((mods & anyMod) == 0) return false;
-            if (vk <= 0) return false;
-            // 主键不能又是修饰键（Ctrl+Alt+Ctrl 这种）
-            return vk is not (Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU
-                or Win32.VK_LWIN or Win32.VK_RWIN
-                or Win32.VK_LSHIFT or Win32.VK_RSHIFT or Win32.VK_LCONTROL
-                or Win32.VK_RCONTROL or Win32.VK_LMENU or Win32.VK_RMENU);
-        }
 
         private static void ApplyRegistration()
         {
@@ -291,16 +241,5 @@ namespace NotchPeninsula
 
         private static void Persist(int index)
             => Program.SaveSetting(_settingKeys[index], $"{_mods[index]}|{_vks[index]}");
-
-        private static bool TryParse(string raw, out uint mods, out int vk)
-        {
-            mods = 0;
-            vk = 0;
-            if (raw.Length == 0) return false;
-
-            string[] parts = raw.Split('|');
-            if (parts.Length != 2) return false;
-            return uint.TryParse(parts[0], out mods) && int.TryParse(parts[1], out vk) && vk >= 0;
-        }
     }
 }

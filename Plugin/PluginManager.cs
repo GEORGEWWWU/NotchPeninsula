@@ -537,6 +537,20 @@ public sealed class PluginManager
             _host.RegisterPlugin(e.Id, e.DisplayName, e.Version);
             plugin.Initialize(_host.CreateScopedHost(e.Id));
 
+            // 插件若实现了外部媒体会话源（见 Plugin/MediaSessionSource.cs），交给媒体链路。
+            // 纯增量：媒体链路只在「当前会话是网易云 / 酷狗且 SMTC 给不出时间轴」时才去读它。
+            if (plugin is IMediaSessionSource mediaSource)
+            {
+                MediaController.RegisterExternalSource(mediaSource);
+            }
+            else
+            {
+                // 留一条线索：插件明明实现了却走到这里，几乎都是「它自己那份接口定义遮蔽了宿主的」——
+                // 比如把宿主专用的接口文件（host/MediaSessionSource.cs）一起编进了插件 dll，
+                // 那样两边是不同的 Type，判等必然是 false，而且静默跳过、没有任何报错。
+                Logger.Debug($"[PluginManager] {plugin.Id} 未实现 IMediaSessionSource，跳过外部媒体源登记");
+            }
+
             e.State = PluginState.Loaded;
             // 新加载的插件若还没有顺序位置，追加到末尾并同步给宿主
             EnsureOrder();
@@ -660,6 +674,11 @@ public sealed class PluginManager
                 try { disposable.Dispose(); }
                 catch (Exception ex) { Logger.Error($"[PluginManager] 插件 Dispose 异常: {e.Key}", ex); }
             }
+
+            // 反登记外部媒体源：插件实例持有 CDP 连接与轮询状态，热重载时旧实例会被换掉，
+            // 不摘掉的话媒体链路会一直拿着一个已经作废的源。
+            if (instance is IMediaSessionSource mediaSource)
+                MediaController.UnregisterExternalSource(mediaSource);
 
             if (!string.IsNullOrEmpty(id)) _host.UnregisterPlugin(id);
         }

@@ -110,6 +110,7 @@ namespace NotchPeninsula
                     Renderer.PassthroughModeEnabled = (int)key.GetValue("PassthroughMode", 0) != 0;
 
                     MediaHotkeys.Load(key);
+                    IslandHotkey.Load(key);
 
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }

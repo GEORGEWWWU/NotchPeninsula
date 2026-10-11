@@ -150,6 +150,10 @@ namespace NotchPeninsula
 
         public static float FullHideAlpha = 1.0f;
 
+        // 手动「隐藏灵动岛」（交互设置页的全局快捷键翻转）。只活在本次运行里：
+        // 不落注册表 —— 万一那组键被别的程序占着，重启还能把岛找回来。
+        public static volatile bool IslandHidden = false;
+
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
 
@@ -362,8 +366,11 @@ namespace NotchPeninsula
 
                 canvas.Restore(); // 1. 恢复 ClipPath 裁切
                 canvas.Restore(); // 2. 闭合 SaveLayer 透明层，本体内部渲染彻底完结！任何阴影、遮罩全部随之消失。
-                // 独立于本体之外，绘制隐形物理热区与极速渐变唤醒按钮
-                if ((PassthroughModeEnabled && PassthroughAlpha < 0.99f) || FullHideAlpha < 0.99f)
+                // 独立于本体之外，绘制隐形物理热区与极速渐变唤醒按钮。
+                // 手动隐藏时连唤醒按钮一起收掉：此时「唤回」只认全局快捷键与托盘菜单，
+                // 屏幕上不该再留一颗亮着的小圆（那就不叫隐藏了）。
+                if (!IslandHidden
+                    && ((PassthroughModeEnabled && PassthroughAlpha < 0.99f) || FullHideAlpha < 0.99f))
                     DrawWakeButton(canvas, currentHeight);
 
                 canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移

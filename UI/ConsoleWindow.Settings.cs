@@ -313,6 +313,7 @@ namespace NotchPeninsula
             int edited = _hotkeyRecordingIndex;
             _hotkeyRecordingIndex = -1;
             MediaHotkeys.ResumeRegistration();
+            IslandHotkey.ResumeRegistration();
             _hotkeyHint = MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError : "";
             Render();
         }
@@ -323,6 +324,71 @@ namespace NotchPeninsula
             _hotkeyRecordingIndex = -1;
             _hotkeyHint = "";
             MediaHotkeys.ResumeRegistration();
+            IslandHotkey.ResumeRegistration();
+            Render();
+        }
+
+        // ---- 交互设置页「唤出灵动岛」的录制（单键位，逻辑与上面那套同源） ----
+
+        private bool HandleIslandHotkeyRecording(int vk)
+        {
+            if (!_islandHotkeyRecording) return false;
+
+            // 只按修饰键不算「录了一个键」，留在录制态等主键。
+            if (vk is Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU
+                or Win32.VK_LWIN or Win32.VK_RWIN
+                or Win32.VK_LSHIFT or Win32.VK_RSHIFT
+                or Win32.VK_LCONTROL or Win32.VK_RCONTROL
+                or Win32.VK_LMENU or Win32.VK_RMENU)
+                return true;
+
+            if (vk == Win32.VK_ESCAPE) { CancelIslandHotkeyRecording(); return true; }
+
+            if (vk == Win32.VK_BACK)
+            {
+                IslandHotkey.ClearBinding();
+                _islandHotkeyHint = "";
+                EndIslandHotkeyRecording();
+                return true;
+            }
+
+            uint mods = 0;
+            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
+            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
+            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
+            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
+                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
+
+            string error = IslandHotkey.SetBinding(mods, vk);
+            if (error.Length > 0)
+            {
+                // 不合法：留在录制态等用户换个组合，提示走卡片副标题
+                _islandHotkeyHint = error;
+                Render();
+                return true;
+            }
+
+            _islandHotkeyHint = "";
+            EndIslandHotkeyRecording();
+            return true;
+        }
+
+        private void EndIslandHotkeyRecording()
+        {
+            _islandHotkeyRecording = false;
+            MediaHotkeys.ResumeRegistration();
+            IslandHotkey.ResumeRegistration();
+            _islandHotkeyHint = IslandHotkey.LastError;
+            Render();
+        }
+
+        private void CancelIslandHotkeyRecording()
+        {
+            if (!_islandHotkeyRecording) return;
+            _islandHotkeyRecording = false;
+            _islandHotkeyHint = "";
+            MediaHotkeys.ResumeRegistration();
+            IslandHotkey.ResumeRegistration();
             Render();
         }
     }

@@ -944,6 +944,15 @@ namespace NotchPeninsula
 
         private void UpdateMediaMode(string smtcTitle, string smtcArtist)
         {
+            // 外部媒体源（网易云 / 酷狗）接管标题：这两个参数就是 SMTC 那点脏数据的来源，
+            // 而插件从页面里读到的歌名 / 歌手要准得多。接管只在「SMTC 给不出时间轴」时成立，
+            // 否则 smtcTitle / smtcArtist 原样不动，本方法行为与从前完全一致。
+            if (TryGetExternalTrack(_currentAppId, _smtcDuration, out string extTitle, out string extArtist))
+            {
+                smtcTitle = extTitle;
+                smtcArtist = extArtist;
+            }
+
             bool appChanged = !string.Equals(_trackAppId, _currentAppId, StringComparison.Ordinal);
             bool titleChanged = smtcTitle.Length > 0
                 && !string.Equals(_trackTitle, smtcTitle, StringComparison.Ordinal);
@@ -2695,8 +2704,21 @@ namespace NotchPeninsula
             bool sampledNow = sampleVersion != _consumedSampleVersion;
             _consumedSampleVersion = sampleVersion;
 
-            HasTimeline = _smtcDuration > TimeSpan.Zero;
-            Duration = _smtcDuration;
+            // 时间轴：默认照旧用 SMTC；只有「当前会话是网易云 / 酷狗，且 SMTC 给不出时间轴」时，
+            // 才换成插件从 CDP 读到的时长与位置（位置在 MediaController.ExternalSource.cs 里按墙钟补足）。
+            TimeSpan drivePos = _smtcPos;
+            _externalDrive = TryGetExternalTimeline(_currentAppId, _smtcDuration, now, out TimeSpan extPos, out TimeSpan extDur);
+            if (_externalDrive)
+            {
+                drivePos = extPos;
+                HasTimeline = true;
+                Duration = extDur;
+            }
+            else
+            {
+                HasTimeline = _smtcDuration > TimeSpan.Zero;
+                Duration = _smtcDuration;
+            }
             // 反而要重排这一行的调用位置，得不偿失。
             UpdateTimelineTexts();
 
@@ -2704,10 +2726,15 @@ namespace NotchPeninsula
             if (IsNonLyricSession || _lyricSlot < 0)
             {
                 SetLyric("", "", 0f, false);
-                AdvanceFreeTimeline(_smtcPos, dt, now);
+                AdvanceFreeTimeline(drivePos, dt, now);
                 _forceResync = false; // 无歌词槽位：强制对齐标记不适用，就地消费，避免每帧重复采样
                 return;
             }
+
+            // 时间轴先推进：它跟「这一帧有没有歌词可显示」是两件事。
+            // 必须放在下面那几个 return 之前 —— 否则刚换歌、歌词还在拉的这段时间里，
+            // 位置一次都不推进，看上去就跟宿主自己的虚拟跑表一样（歌名时长都对、就是不往前走）。
+            AdvanceTimeline(HasTimeline, drivePos, sampledNow, dt, now);
 
             // 同一帧内三项来自同一份采样。
             string ownerTitle = _recentSongs[_lyricSlot].Title;
@@ -2720,8 +2747,6 @@ namespace NotchPeninsula
                 SetLyric("", "", 0f, false);
                 return;
             }
-
-            AdvanceTimeline(HasTimeline, _smtcPos, sampledNow, dt, now);
 
             if (_lyrics.Length == 0) { SetLyric("", "", 0f, false); return; }
 
@@ -2835,6 +2860,20 @@ namespace NotchPeninsula
 
             bool settling = now < _seekSettleUntil;
 
+            // 外部源（插件）接管时，位置就是「插件快照 + 墙钟」，上面已经算好并作为 smtcPos 传进来了。
+            // 必须短路掉下面那个 TryGetSmtcLivePosition —— 它读的是 _smtcPos，
+            // 而网易云/酷狗在 SMTC 里给出的进度就是 0：不短路的话歌名、时长都对，
+            // 位置却被按回原点，歌词自然一行都不往前走。
+            if (_externalDrive)
+            {
+                _recentSongs[slot].Position = smtcPos;
+                _timelineAhead = false;
+                _recentSongs[slot].TickedAt = now;
+                _timelinePos = smtcPos;
+                _forceResync = false;
+                return;
+            }
+
             if (!settling && TryGetSmtcLivePosition(now, out TimeSpan live))
             {
                 _recentSongs[slot].Position = live;
@@ -2901,6 +2940,13 @@ namespace NotchPeninsula
             if (_isDragging) return;
 
             bool settling = now < _seekSettleUntil;
+
+            // 外部源接管时位置由插件驱动（同 AdvanceTimeline 的理由），别再走 SMTC 外推
+            if (_externalDrive)
+            {
+                _timelinePos = smtcPos;
+                return;
+            }
 
             // 第一级：真实 SMTC 时间轴外推
             if (!settling && TryGetSmtcLivePosition(now, out TimeSpan live) && live >= TimeSpan.Zero)

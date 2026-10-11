@@ -112,6 +112,8 @@ namespace NotchPeninsula
             bool newMediaExpToggleHovered = false;
             bool newAppLaunchToggleHovered = false; // 「双击媒体控制跳转应用」（媒体交互方式下面一格）
             bool newPassToggleHovered = false;
+            bool newIslandHotkeyHovered = false;       // 交互页「唤出灵动岛」的键位框
+            bool newIslandHotkeyToggleHovered = false; // 同一张卡的总开关
             bool newMspToggleHovered = false; // 「MSP 接入（实验性）」
             bool newMspWikiHovered = false;   // 「实验性」标签右边的外链图标
             bool newMonitorDropdownHovered = false;
@@ -415,6 +417,16 @@ namespace NotchPeninsula
                     newAppLaunchToggleHovered = true;
                 // 使用局部变量，防止状态死锁
                 newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 434 && y <= TITLE_BAR_HEIGHT + 454;
+
+                // 「唤出灵动岛」：总开关在卡片头部右侧，键位框在下面那行
+                //（y 值与 DrawIslandHotkeyCard 严格同源）
+                newIslandHotkeyToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 12
+                    && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 32;
+
+                float islandBoxTop = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
+                newIslandHotkeyHovered = x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT
+                    && y >= islandBoxTop && y <= islandBoxTop + HOTKEY_BOX_H;
             }
             else if (_selectedTab == 7) // 插件市场
             {
@@ -646,6 +658,8 @@ namespace NotchPeninsula
                 newSoundPreviewHovered != _soundPreviewHovered ||
                 newSoundResetHovered != _soundResetHovered ||
                 newPassToggleHovered != _passToggleHovered ||
+                newIslandHotkeyHovered != _islandHotkeyHovered ||
+                newIslandHotkeyToggleHovered != _islandHotkeyToggleHovered ||
                 newMspToggleHovered != _mspToggleHovered ||
                 newMspWikiHovered != _mspWikiHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
@@ -711,6 +725,8 @@ namespace NotchPeninsula
                 _soundResetHovered = newSoundResetHovered;
                 _topmostToggleHovered = newTopmostToggleHovered;
                 _passToggleHovered = newPassToggleHovered;
+                _islandHotkeyHovered = newIslandHotkeyHovered;
+                _islandHotkeyToggleHovered = newIslandHotkeyToggleHovered;
                 _mspToggleHovered = newMspToggleHovered;
                 _mspWikiHovered = newMspWikiHovered;
                 _hoveredPluginAction = newHoveredPluginAction;

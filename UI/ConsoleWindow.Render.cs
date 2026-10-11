@@ -1002,6 +1002,82 @@ namespace NotchPeninsula
                 MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered);
 
             DrawToggleCard(canvas, PASS_CARD_Y, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
+
+            DrawIslandHotkeyCard(canvas);
+        }
+
+        // 交互页「唤出灵动岛」卡片：只有一个键位，结构与媒体页「全局快捷键」卡片同源
+        //（标题 + 副标题 + 一行「名字 … [键位框]」）。
+        private void DrawIslandHotkeyCard(SKCanvas canvas)
+        {
+            // ⚠️ 这里必须跟 DrawToggleCard 一样补上 TITLE_BAR_HEIGHT：
+            // ISLAND_HOTKEY_CARD_Y 等常量都是「相对内容区顶部」的偏移，而画布用的是全窗口坐标。
+            // 少加这一段的后果：卡片被画到上方「穿透模式」卡身上（看着像两张卡叠在一起），
+            // 而命中区（ConsoleWindow.WndProc.cs）用的是 TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + …，
+            // 于是「看得见的卡片点不动、点得动的地方反而是空的」。
+            float cardY = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y;
+            var cardRect = new SKRect(CONTENT_L, cardY, WIDTH - CONTENT_RM, cardY + ISLAND_HOTKEY_CARD_H);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+
+            canvas.DrawText("唤出灵动岛", CONTENT_TEXT_X, cardY + 19, _uiTextPaint);
+
+            // 总开关（出厂关，与媒体页那张卡的开关同一套画法）
+            float tW = 42f, tH = 20f;
+            float tX = WIDTH - CONTENT_RM - 16f - tW;
+            float tY = cardY + 12f;
+            var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+            if (IslandHotkey.IsEnabled)
+            {
+                _dynamicFillPaint.Color = _islandHotkeyToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+            }
+            else
+            {
+                _dynamicStrokePaint.Color = _islandHotkeyToggleHovered ? Neutral(150) : Neutral(100);
+                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                _toggleCirclePaint.Color = _islandHotkeyToggleHovered ? Neutral(200) : Neutral(150);
+                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                _toggleCirclePaint.Color = SKColors.White;
+            }
+
+            // 优先级：错误提示 > 录制操作说明 > 未开启 > 平时说明。
+            // 注册失败（键被别的程序占着）在没录制时也要一直挂着，否则用户只会觉得「按了没反应」。
+            string hint = _islandHotkeyHint.Length > 0 ? _islandHotkeyHint : IslandHotkey.LastError;
+            bool hasHint = hint.Length > 0;
+            string sub = hasHint ? hint
+                : (_islandHotkeyRecording ? "按下按键录制 · Esc 取消 · Backspace 清空"
+                    : (!IslandHotkey.IsEnabled ? "开启后按下可隐藏 / 唤出灵动岛 · 点按键框可重录"
+                                               : "全局生效 · 点按键框可重录"));
+            _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
+            float subMax = (WIDTH - CONTENT_RM - 16f - tW) - 12f - CONTENT_TEXT_X;
+            DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 36);
+            _subTextPaint.Color = Neutral(170);
+
+            float rowY = cardY + HOTKEY_HEAD_H;
+            canvas.DrawText("快捷键", CONTENT_TEXT_X, rowY + 20, _subTextPaint);
+
+            var boxRect = new SKRect(HOTKEY_BOX_X, rowY + 4, HOTKEY_BOX_RIGHT, rowY + 4 + HOTKEY_BOX_H);
+
+            _dynamicFillPaint.Color = _islandHotkeyRecording ? new SKColor(0, 120, 212, 70)
+                : (_islandHotkeyHovered ? Overlay(30) : Overlay(15));
+            canvas.DrawRoundRect(boxRect, 4, 4, _dynamicFillPaint);
+            if (_islandHotkeyRecording)
+            {
+                float oldStroke = _dynamicStrokePaint.StrokeWidth;
+                _dynamicStrokePaint.Color = new SKColor(0, 140, 240);
+                _dynamicStrokePaint.StrokeWidth = 1f;
+                canvas.DrawRoundRect(boxRect, 4, 4, _dynamicStrokePaint);
+                _dynamicStrokePaint.StrokeWidth = oldStroke;
+            }
+
+            string text = _islandHotkeyRecording ? "按下按键…" : IslandHotkey.FormatKey();
+            _dynamicTextPaint.Color = _islandHotkeyRecording ? new SKColor(0, 150, 255)
+                : (IslandHotkey.IsBound ? _fgColor : Neutral(120));
+            DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
+                HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);
+            _dynamicTextPaint.Color = _fgColor;
         }
 
         // 页签：关于软件
@@ -1303,7 +1379,7 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(zone, 8, 8, _dynamicStrokePaint);
                 _dynamicStrokePaint.StrokeWidth = 1.5f;   // 复位：该画笔被多处共用
 
-                const string dropHint = "松开鼠标以导入插件";
+                const string dropHint = "松开鼠标以导入插件（DLL / ZIP）";
                 float hintW = _uiTextPaint.MeasureText(dropHint);
                 float hintX = zone.MidX - hintW / 2f;
                 float hintY = zone.MidY + 5f;
