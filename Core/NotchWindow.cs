@@ -313,6 +313,7 @@ namespace NotchPeninsula
             _ = InitializeListenerAsync();
 
             MediaHotkeys.Attach(_hwnd);
+            IslandHotkey.Attach(_hwnd);
             _audioWatchTimer = new Timer(500);
             _audioWatchTimer.Elapsed += OnAudioWatchTick;
             _audioWatchTimer.Start();
@@ -626,6 +627,9 @@ namespace NotchPeninsula
 
         private bool HitWakeButton(int mx, int my)
         {
+            // 手动隐藏期间没有唤醒按钮可点（Renderer 那边也不画），别凭空留一块热区。
+            if (Renderer.IslandHidden) return false;
+
             float x = Renderer.WakeButtonX;
             float y = 12f * _currentStyleProgress + (_currentHeight - Renderer.WAKE_BTN_SIZE) / 2f;
             return mx >= x && mx <= x + Renderer.WAKE_BTN_SIZE
@@ -853,7 +857,10 @@ namespace NotchPeninsula
                 TickFullscreenProbe();
 
                 // 三项都在它内部合成，所以这里不再重复写。
-                bool shouldHide = CanAutoHideNow && !_media.IsDragging && !HasAnyExpanded && !isToastActive;
+                // 手动隐藏（交互设置页的全局快捷键）与自动隐藏共用同一条退场动画，
+                // 区别是它不看设置里的三个开关，按下就必须藏。
+                bool shouldHide = (Renderer.IslandHidden || CanAutoHideNow)
+                    && !_media.IsDragging && !HasAnyExpanded && !isToastActive;
 
                 float currentTopY = 12f * _currentStyleProgress;
                 float settledHeight = Math.Min(_currentHeight, _targetHeight);
@@ -1313,10 +1320,12 @@ namespace NotchPeninsula
             {
                 case Win32.WM_HOTKEY:
                     MediaHotkeys.Handle(Win32.Low32(wParam));
+                    IslandHotkey.Handle(Win32.Low32(wParam));
                     return (IntPtr)0;
 
                 case Win32.WM_DESTROY:
                     MediaHotkeys.Detach();
+                    IslandHotkey.Detach();
                     RevokeIslandDropTarget();
                     ShutdownIslandBackdrop();   // 停掉后台抓屏线程并释放它自己的 GDI 资源
                     break;
@@ -1824,9 +1833,28 @@ namespace NotchPeninsula
 
         public void RequestWakeIsland()
         {
+            // 手动隐藏的岛被「唤出」时顺手解除标记：否则它亮一下又会自己藏回去
+            // （HasAnyExpanded 一松，shouldHide 立刻成立）。
+            Renderer.IslandHidden = false;
             _isManuallyExpanded = true;
             _suppressOutsideCollapse = true;
             _isPassthroughAwake = true;
+        }
+
+        // 全局快捷键「唤出灵动岛」：显 → 藏，藏 → 显。
+        public static void ToggleIslandVisibility()
+        {
+            if (Renderer.IslandHidden)
+            {
+                _liveInstance?.RequestWakeIsland();
+            }
+            else
+            {
+                // 先收起展开态：留着媒体面板 / 插件详情页会让 shouldHide 恒为 false，
+                // 「隐藏」当场失效。收起顺带把 _isManuallyExpanded 归位。
+                Renderer.IslandHidden = true;
+                _liveInstance?.CollapseAllExpanded();
+            }
         }
 
         private static void RequestPanelCollapse()

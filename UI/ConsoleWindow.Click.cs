@@ -15,6 +15,9 @@ namespace NotchPeninsula
             if (_hotkeyRecordingIndex >= 0 && _hoveredHotkeyRow != _hotkeyRecordingIndex)
                 CancelHotkeyRecording();
 
+            if (_islandHotkeyRecording && !_islandHotkeyHovered)
+                CancelIslandHotkeyRecording();
+
             if (_closeHovered)
             {
                 if (_backdropHwnd != IntPtr.Zero)
@@ -377,8 +380,27 @@ namespace NotchPeninsula
             else if (_selectedTab == 2 && _hoveredHotkeyRow >= 0)
             {
                 _hotkeyHint = "";
+                // 两边一起挂起：录制期间按到任意一组已注册的组合都不该真的生效。
                 MediaHotkeys.SuspendRegistration();
+                IslandHotkey.SuspendRegistration();
                 _hotkeyRecordingIndex = _hoveredHotkeyRow;
+                if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
+                Render();
+            }
+            else if (_selectedTab == 3 && _islandHotkeyToggleHovered)
+            {
+                _islandHotkeyHint = "";
+                IslandHotkey.SetEnabled(!IslandHotkey.IsEnabled);
+                // 开启时若有键位被别的程序占着，把原因挂到卡片副标题上：
+                if (IslandHotkey.IsEnabled) _islandHotkeyHint = IslandHotkey.LastError;
+                Render();
+            }
+            else if (_selectedTab == 3 && _islandHotkeyHovered)
+            {
+                _islandHotkeyHint = "";
+                MediaHotkeys.SuspendRegistration();
+                IslandHotkey.SuspendRegistration();
+                _islandHotkeyRecording = true;
                 if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
                 Render();
             }

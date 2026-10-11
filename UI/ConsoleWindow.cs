@@ -383,6 +383,10 @@ namespace NotchPeninsula
 
         private const float PASS_CARD_Y = APP_LAUNCH_CARD_Y + TOGGLE_CARD_H + CARD_GAP;        // 414
 
+        private const float ISLAND_HOTKEY_CARD_Y = PASS_CARD_Y + TOGGLE_CARD_H + CARD_GAP;     // 486
+
+        private const float ISLAND_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;               // 76
+
         // 媒体设置页卡片顺序（合并后）：
 
         private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;   // 84 合并卡片顶部
@@ -595,6 +599,17 @@ namespace NotchPeninsula
         private int _hotkeyRecordingIndex = -1;
 
         private string _hotkeyHint = "";
+
+        // ---- 交互设置页「唤出灵动岛」卡片（单键位） ----
+
+        private bool _islandHotkeyToggleHovered = false;
+
+        private bool _islandHotkeyHovered = false;
+
+        private bool _islandHotkeyRecording = false;
+
+        private string _islandHotkeyHint = "";
+
         // 关于页交互状态
 
         private int _hoveredLinkIndex = -1;
@@ -1045,10 +1060,11 @@ namespace NotchPeninsula
                         ReapplyBackdropMaterial();
                         Win32.SetTimer(hwnd, BACKDROP_REFRESH_TIMER_ID, 150, IntPtr.Zero);
                     }
-                    else if (_hotkeyRecordingIndex >= 0)
+                    else
                     {
                         //    收工并保留原键位 —— 别把半截状态挂在那儿。
-                        CancelHotkeyRecording();
+                        if (_hotkeyRecordingIndex >= 0) CancelHotkeyRecording();
+                        if (_islandHotkeyRecording) CancelIslandHotkeyRecording();
                     }
                     break;
 
@@ -1241,11 +1257,13 @@ namespace NotchPeninsula
 
                 case Win32.WM_KEYDOWN:
                     if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
+                    if (HandleIslandHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     if (HandleMarketSearchKey(Win32.Low32(wParam), '\0')) return IntPtr.Zero;
                     break;
 
                 case Win32.WM_SYSKEYDOWN:
                     if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
+                    if (HandleIslandHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     break;
                 case WM_ASYNC_RERENDER:
                     Render();
