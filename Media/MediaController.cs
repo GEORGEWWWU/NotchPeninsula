@@ -2866,6 +2866,11 @@ namespace NotchPeninsula
             // 位置却被按回原点，歌词自然一行都不往前走。
             if (_externalDrive)
             {
+                // 拖动刚松开的那段「落定期」里不要覆盖位置：宿主正把 seek 发往播放器，
+                // 而插件的 DOM 位置也要等播放器真的跳过去才会变。不挡这一下，
+                // 外面看到的动作是「拖完进度条当场弹回原位」。
+                if (settling) return;
+
                 _recentSongs[slot].Position = smtcPos;
                 _timelineAhead = false;
                 _recentSongs[slot].TickedAt = now;
@@ -2944,6 +2949,7 @@ namespace NotchPeninsula
             // 外部源接管时位置由插件驱动（同 AdvanceTimeline 的理由），别再走 SMTC 外推
             if (_externalDrive)
             {
+                if (settling) return;   // 理由同 AdvanceTimeline：拖动落定期内不覆盖
                 _timelinePos = smtcPos;
                 return;
             }
