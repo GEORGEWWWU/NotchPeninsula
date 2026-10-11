@@ -254,16 +254,20 @@ namespace NotchPeninsula
                         newHoveredMonitorDropdownIndex = (int)((y - listY) / 26);
                 }
 
+                // 目标显示器列表展开时它压住下面几行控件（列表 y 209 起，每项 26），
+                // 被压住的控件必须一起停掉悬停，否则会有「悬停列表却亮了显示模式」的观感。
+                bool monitorListOpen = _monitorDropdownOpen;
+
                 float modeSegY = TITLE_BAR_HEIGHT + MODE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
-                if (y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
+                if (!monitorListOpen && y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
                     newHoveredDisplayModeIndex = Math.Min(1, (int)((x - MODE_SEG_X) / (MODE_SEG_W / 2f)));
 
                 float sceneSegY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
-                if (y >= sceneSegY && y <= sceneSegY + SEG_H && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W)
+                if (!monitorListOpen && y >= sceneSegY && y <= sceneSegY + SEG_H && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W)
                     newHoveredStandbySceneIndex = Math.Min(2, (int)((x - SCENE_SEG_X) / (SCENE_SEG_W / 3f))) + 1;
 
                 float modeToggleCy = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
-                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                if (!monitorListOpen && x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
                     newStandbyToggleHovered = true;
 
@@ -271,7 +275,7 @@ namespace NotchPeninsula
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
                 float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
-                if (!Renderer.StandbyActive
+                if (!Renderer.StandbyActive && !monitorListOpen
                     && x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);

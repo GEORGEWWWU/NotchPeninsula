@@ -22,6 +22,7 @@ namespace NotchPeninsula
         public const int WA_CLICKACTIVE = 2;
         public const int WM_TIMER = 0x0113;
         public const int WM_SETTINGCHANGE = 0x001A; // 系统设置变化广播（含「应用模式」浅色/深色切换）
+        public const int WM_DISPLAYCHANGE = 0x007E; // 显示器拔插 / 分辨率变化广播
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_LBUTTONDOWN = 0x0201;
         public const int WM_LBUTTONDBLCLK = 0x0203;
