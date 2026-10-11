@@ -15,6 +15,9 @@ namespace NotchPeninsula
         private const double SpectrumStaleMs = 500d;
         private const float VolumeDelta = 0.0005f;
 
+        // 服务端 position 是离散快照，只会被「真实 seek」拉到这个幅度以外
+        private const double MonoSeekBackMs = 1200d;
+
         private readonly record struct LyricLine(int Time, string Text, string Translation);
 
         private readonly object _lock = new();
@@ -23,6 +26,8 @@ namespace NotchPeninsula
         private int _position;
         private DateTime _positionStamp = DateTime.UtcNow;
         private bool _isPlaying;
+        private double _monoMs;         // 单调化的播放位置（ms），供选行与逐字扫光使用
+        private bool _monoValid;
         private float[] _spectrum = Array.Empty<float>();
         private DateTime _spectrumStamp = DateTime.MinValue;
         private float _volume;
@@ -105,6 +110,18 @@ namespace NotchPeninsula
 
             double elapsedMs = playing ? (DateTime.UtcNow - stamp).TotalMilliseconds : 0d;
             double currentMs = position + elapsedMs + (DefaultLyricPreReadSeconds + userOffsetSeconds) * 1000.0;
+
+            // 两次快照之间靠墙钟外推，新快照可能落后于上一帧的外推值 —— 直接采用会让扫光往回缩，
+            // 甚至在两行之间来回跳。除换歌（ApplyLyrics 会作废）与大幅回退（真实 seek）外只前进。
+            lock (_lock)
+            {
+                if (!_monoValid || currentMs > _monoMs || _monoMs - currentMs > MonoSeekBackMs)
+                {
+                    _monoMs = currentMs;
+                    _monoValid = true;
+                }
+                currentMs = _monoMs;
+            }
 
             int lo = 0, hi = lyrics.Length - 1, ans = -1;
             while (lo <= hi)
@@ -210,6 +227,7 @@ namespace NotchPeninsula
                 _position = 0;
                 _positionStamp = DateTime.UtcNow;
                 _isPlaying = false;
+                _monoValid = false;
                 _spectrum = Array.Empty<float>();
                 _spectrumStamp = DateTime.MinValue;
             }
@@ -351,6 +369,7 @@ namespace NotchPeninsula
                 {
                     _lyrics = Array.Empty<LyricLine>();
                     _hasTranslation = false;
+                    _monoValid = false;   // 歌词表位次全变，旧位置不再是同一坐标系
                 }
                 return;
             }
@@ -373,6 +392,7 @@ namespace NotchPeninsula
             {
                 _lyrics = lines.ToArray();
                 _hasTranslation = hasTranslation;
+                _monoValid = false;      // 换歌：新表的行位次与旧位置无关，必须从新快照重新起算
             }
         }
 
