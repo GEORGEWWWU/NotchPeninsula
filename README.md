@@ -99,6 +99,10 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 
 **首次启动**（或大版本升级后）会先跑一遍横版引导向导：主题配色 / 背景材质 / 目标显示器 / 显示模式 / 开机自启一次配好，与设置窗口写同一份配置；跳过、建窗失败或向导内异常都会立刻放弃引导、照常进入（不会挡住启动）。
 
+> [!TIP]
+> 想再跑一遍引导向导：删掉注册表 `HKEY_CURRENT_USER\SOFTWARE\NotchPeninsula` 下的 `OnboardedVersion` 值即可。
+> **别删整个键**——那样会连你的全部设置一起丢掉。
+
 ### 设置入口
 
 右键托盘图标：**打开设置 / 唤回灵动岛 / 开机自启 / 退出**。
@@ -129,7 +133,51 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 - 设置 → 隐私和安全性 → 通知
 - 打开对应权限开关
 
-如果关闭了通知权限，Toast 监听将无法正常显示消息。
+> [!IMPORTANT]
+> 如果关闭了通知权限，Toast 监听将无法正常显示消息。
+
+## 开发动态
+
+> 下面每格数据都由 shields.io 直接读取本仓库，**打开或刷新页面即为最新值**，不需要人工维护。
+
+<table align="center">
+  <tr>
+    <td align="center"><b>最新版本</b><br />
+      <img src="https://img.shields.io/github/v/release/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=2ea44f" alt="最新版本" /></td>
+    <td align="center"><b>累计提交</b><br />
+      <img src="https://img.shields.io/github/commit-activity/t/GEORGEWWWU/NotchPeninsula?style=flat-square&label=" alt="累计提交" /></td>
+    <td align="center"><b>提交频率</b><br />
+      <img src="https://img.shields.io/github/commit-activity/m/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=007ec6" alt="提交频率" /></td>
+    <td align="center"><b>最近提交</b><br />
+      <img src="https://img.shields.io/github/last-commit/GEORGEWWWU/NotchPeninsula?style=flat-square&label=" alt="最近提交" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>贡献者</b><br />
+      <img src="https://img.shields.io/github/contributors/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=8957e5" alt="贡献者" /></td>
+    <td align="center"><b>Star</b><br />
+      <img src="https://img.shields.io/github/stars/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=dfb317" alt="Star" /></td>
+    <td align="center"><b>Fork</b><br />
+      <img src="https://img.shields.io/github/forks/GEORGEWWWU/NotchPeninsula?style=flat-square&label=" alt="Fork" /></td>
+    <td align="center"><b>待处理 Issue</b><br />
+      <img src="https://img.shields.io/github/issues/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=f0883e" alt="待处理 Issue" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>待处理 PR</b><br />
+      <img src="https://img.shields.io/github/issues-pr/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=2ea44f" alt="待处理 PR" /></td>
+    <td align="center"><b>下载总量</b><br />
+      <img src="https://img.shields.io/github/downloads/GEORGEWWWU/NotchPeninsula/total?style=flat-square&label=&color=8957e5" alt="下载总量" /></td>
+    <td align="center"><b>仓库体积</b><br />
+      <img src="https://img.shields.io/github/repo-size/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=blueviolet" alt="仓库体积" /></td>
+    <td align="center"><b>主要语言</b><br />
+      <img src="https://img.shields.io/github/languages/top/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=239120" alt="主要语言" /></td>
+  </tr>
+</table>
+
+<div align="center">
+
+<img src="https://github-readme-stats.vercel.app/api/pin/?username=GEORGEWWWU&repo=NotchPeninsula&theme=github_dark&show_owner=true" alt="NotchPeninsula 仓库概览" />
+
+</div>
 
 ## 项目结构
 
