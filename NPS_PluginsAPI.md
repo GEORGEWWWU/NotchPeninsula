@@ -437,7 +437,8 @@ private void OnFontChanged() => _host?.InvalidateWidgetLayout();   // 回调可�
 
 > `IconPath` 虽然叫 Path，实际接受四种写法，程序会按前缀自动识别：本地文件路径（`C:/icons/a.png`）、图片链接（`https://...`，下载后缓存）、内联图（`data:image/png;base64,...`）、内置别名（`"qq"` / `"windows"`）。
 > 想让某个 App 名也能当别名用，把 `wechat-icon.png` 这样的文件丢进程序目录的 `data/image/` 即可（`<别名>-icon.*` 或 `<别名>-logo.*`）。
-> 图标是异步解析的：提醒会先用默认图标弹出来，解析完成后自动换图。任何一步失败都静默回退到默认图标。
+> `AvatarPath`（可选）是**消息头像**，写法与 `IconPath` 完全相同，但**优先级高于 `IconPath`**：聊天类提醒（QQ 消息的那张好友 / 群头像）带你自己的头像时就走它，宿主保证头像压过图标 —— 显示优先级固定为 `头像 > icon > 兜底`，同一帧里两者都在也只会画头像。
+> 图标 / 头像是异步解析的：提醒会先用兜底图标弹出来，解析完成后自动换图（先到头像就先显头像）。任何一步失败都静默回退到下一级。
 
 **持久化设置（GetSetting / SetSetting）**：插件自己的配置存在 Windows 注册表里，程序会自动给每个插件的配置 key 加上 `Plugin.<你的Id>.` 前缀，所以你和其他插件不会互相覆盖。`GetSetting(key, 默认值)` 读，`SetSetting(key, value)` 写，存的是字符串。组件加载时在 `OnActivate` 里读回，运行时用 `host.SettingsChanged` 事件监听配置被改动（`SetSetting` 写入后触发）。这是让插件“记住上次状态”的机制，示例图里的开关就是用这套实现的。
 
@@ -769,7 +770,7 @@ window.SetMouse(
 
 **命中模型 `WidgetHit`**——`readonly record struct WidgetHit(string? Action)`。`Action` 由组件自己定义（如 `"toggle"` / `"next"`），未命中用 `WidgetHit.None`，`IsHit` 判断是否命中。`OnLeftClick` 收到的动作名就是这里返回的。
 
-**提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标：本地路径 / 图片链接 / `data:image` base64 / 内置别名，见第七节）、`Duration`（停留时长，默认 4 秒，宿主夹到 1~60 秒，非正数退回默认值）、`OnClick`（可选：用户点中这条通知时的回调，**已接线** —— 宿主会先收起通知再回调，异常自吞）。
+**提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标：本地路径 / 图片链接 / `data:image` base64 / 内置别名，见第七节）、`AvatarPath`（可选头像，写法同 `IconPath`，**优先级高于 `IconPath`**）、`Duration`（停留时长，默认 4 秒，宿主夹到 1~60 秒，非正数退回默认值）、`OnClick`（可选：用户点中这条通知时的回调，**已接线** —— 宿主会先收起通知再回调，异常自吞）。
 
 **宿主公共设施（非冻结契约，插件可直接调用）**
 下面这几个是宿主的公共静态成员，**不在** `Plugin/PluginApi.cs` 里，也不属于「冻结的插件 API」。插件引用主程序后可以直接用，官方插件也都在用 —— 但**一律用 `try/catch` 包住并允许永久降级**（宿主将来把它们挪走时，只让对应的小优化失效，插件其余功能照常）。

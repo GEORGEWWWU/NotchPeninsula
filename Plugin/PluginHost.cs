@@ -264,10 +264,13 @@ public sealed class PluginHost
             OnClick = reminder.OnClick
         };
         string iconSpec = DetachString(reminder.IconPath);
+        string avatarSpec = DetachString(reminder.AvatarPath);
 
         Logger.Info($"[PluginHost] 插件提醒已投递: {toast.Title} — {toast.Body}");
         ReminderPosted?.Invoke(toast);
 
+        // 头像优先级最高：先起它的解析，让它在预览窗口里更早到位；没头像时才轮得到 icon。
+        ToastIconProvider.ResolveInBackground(avatarSpec, bmp => toast.Avatar = bmp);
         ToastIconProvider.ResolveInBackground(iconSpec, bmp => toast.CustomIcon = bmp);
     }
 

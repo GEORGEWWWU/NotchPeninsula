@@ -168,6 +168,9 @@ public sealed class ReminderData
     /// <summary>来源标签（可选）：通知左上角那一栏。不给就是「插件提醒」（插件既有行为不变）。</summary>
     public string? Source { get; init; }
     public string? IconPath { get; init; }
+    /// <summary>可选头像：写法与 <see cref="IconPath"/> 完全相同。**优先级高于 IconPath** —— 给了头像就画头像，
+    /// IconPath 只在没有头像（解析失败也算没有）时才出场；两者都没有才回退到宿主兜底图标。</summary>
+    public string? AvatarPath { get; init; }
     public TimeSpan Duration { get; init; } = TimeSpan.FromSeconds(4);
     public Action? OnClick { get; init; }
 }
