@@ -217,4 +217,12 @@ public interface IPluginHost
     IPluginWindow CreateWindow(string title, int width, int height);
 
     bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false);
+
+    /// <summary>
+    /// 注册「卸载时允许宿主帮忙删除的目录」—— 插件自己建的数据目录。
+    /// 最多注册一个，重复调用只认第一次（第二份会被忽略并在日志里留一条）。
+    /// 宿主绝不会擅自删除：卸载时会弹窗把路径摆给用户看，用户点了「删除」才递归删掉，
+    /// 点「保留」就只卸载插件、目录原样留在磁盘上。
+    /// </summary>
+    void RegisterUninstallDirectory(string path);
 }

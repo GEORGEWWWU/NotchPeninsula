@@ -465,7 +465,7 @@ namespace NotchPeninsula
                         newHoveredMarketSortIndex = -2;
                 }
 
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
@@ -473,7 +473,7 @@ namespace NotchPeninsula
                         var close = GetMarketDialogCloseRect(rect);
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
-                        if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
+                        if (!newHoveredDialogClose) newHoveredDialogButton = HitDialogButton(rect, x, y);
                     }
                 }
                 else if (_marketDialogIndex != -1)
@@ -531,7 +531,7 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 6) // 我的插件
             {
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
@@ -539,16 +539,16 @@ namespace NotchPeninsula
                         var close = GetMarketDialogCloseRect(rect);
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
-                        if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
+                        if (!newHoveredDialogClose) newHoveredDialogButton = HitDialogButton(rect, x, y);
                     }
                 }
                 else
                 {
                     float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
-                    // 顶部操作按钮：导入 DLL | 打开目录 | 插件市场
+                    // 顶部操作按钮：导入插件 | 打开目录 | 插件市场
                     if (y >= topY + 60 && y <= topY + 84)
                     {
-                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入 DLL
+                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入插件
                         else if (x >= CONTENT_TEXT_X + 104 && x <= CONTENT_TEXT_X + 200) newHoveredPluginAction = 1;  // 打开目录
                         else if (x >= CONTENT_TEXT_X + 208 && x <= CONTENT_TEXT_X + 304) newHoveredPluginAction = 2;  // 插件市场
                     }

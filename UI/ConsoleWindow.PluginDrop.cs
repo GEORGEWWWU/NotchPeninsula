@@ -236,8 +236,8 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 把一个 zip 当插件包装进 <c>plugins\&lt;名字&gt;\</c>。
-        /// 与「拖单个 dll」的区别：包里的<b>所有文件</b>（dll、附属 exe、说明）一起落进同一个子目录 ——
+        /// 把一个 zip 当插件包装进 <c>plugins\&lt;名字&gt;\</c>。按钮「导入插件」选中 zip 时也走这里。
+        /// 与「导入单个 dll」的区别：包里的<b>所有文件</b>（dll、附属 exe、说明）一起落进同一个子目录 ——
         /// 宿主按「与目录同名」或 plugin.json 指定的 dll 加载它，插件要用的附属文件就躺在旁边。
         /// </summary>
         private (bool Ok, string Message) InstallPluginPackage(string zipPath)
@@ -295,7 +295,7 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>找到包内真正放着 dll 的那一层（先看根，再看一层子目录）。</summary>
+        /// <summary>找到包内真正放着 dll 的那一层（先看根，再看一层子目录，都没有才往深里找）。</summary>
         private static string FindPackageRoot(string dir)
         {
             if (Directory.GetFiles(dir, "*.dll").Length > 0) return dir;
@@ -303,6 +303,13 @@ namespace NotchPeninsula
             foreach (string sub in Directory.GetDirectories(dir))
             {
                 if (Directory.GetFiles(sub, "*.dll").Length > 0) return sub;
+            }
+
+            // 多套了两三层（foo/bar/plugin.dll）也认：用户压缩时怎么套是他的自由，不该让他重新打包。
+            foreach (string sub in Directory.GetDirectories(dir))
+            {
+                string deep = FindPackageRoot(sub);
+                if (deep.Length > 0) return deep;
             }
             return "";
         }

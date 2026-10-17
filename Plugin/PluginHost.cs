@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.IO;
 
 namespace NotchPeninsula.Plugins;
 
@@ -36,6 +37,10 @@ public sealed class PluginHost
     private readonly Dictionary<string, Action?> _settingsHandlers = new();
 
     private readonly Dictionary<string, List<IPluginWindow>> _windows = new();
+
+    // 插件登记的「卸载时可由宿主帮忙删除的数据目录」：每个插件最多一个。
+    // 只存路径，删不删由用户在卸载弹窗里决定 —— 宿主从不自作主张。
+    private readonly Dictionary<string, string> _uninstallDirs = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly HashSet<string> _unregistering = new(StringComparer.OrdinalIgnoreCase);
 
@@ -195,6 +200,42 @@ public sealed class PluginHost
     public void RegisterSettingsPage(string pluginId, ISettingsPage page)
     {
         lock (_lock) _settingsPages.Add((pluginId, page));
+    }
+
+    // ---- 卸载目录登记 ----
+
+    public void RegisterUninstallDirectory(string pluginId, string path)
+    {
+        if (string.IsNullOrWhiteSpace(pluginId) || string.IsNullOrWhiteSpace(path)) return;
+
+        string full;
+        try { full = Path.GetFullPath(path.Trim()); }
+        catch (Exception ex) { Logger.Warn($"[PluginHost] {pluginId} 的卸载目录无法规范化，已忽略：{path} — {ex.Message}"); return; }
+
+        lock (_lock)
+        {
+            if (_uninstallDirs.ContainsKey(pluginId))
+            {
+                // 「最多注册一个」：第二次起一律忽略。覆盖会让先注册的那份悄悄失去删除机会。
+                Logger.Warn($"[PluginHost] {pluginId} 重复注册卸载目录，已忽略第二份：{full}");
+                return;
+            }
+            _uninstallDirs[pluginId] = full;
+        }
+        Logger.Info($"[PluginHost] {pluginId} 注册卸载目录：{full}");
+    }
+
+    public string? GetUninstallDirectory(string pluginId)
+    {
+        if (string.IsNullOrEmpty(pluginId)) return null;
+        lock (_lock) return _uninstallDirs.TryGetValue(pluginId, out var dir) ? dir : null;
+    }
+
+    /// <summary>插件卸载时清掉登记：重新加载会再注册一次，留着旧值会把第二次注册挡在门外。</summary>
+    public void ClearUninstallDirectory(string pluginId)
+    {
+        if (string.IsNullOrEmpty(pluginId)) return;
+        lock (_lock) _uninstallDirs.Remove(pluginId);
     }
 
     public void InvalidateWidgetLayout()
@@ -665,4 +706,5 @@ public sealed class ScopedPluginHost : IPluginHost
     public bool ToggleDetailPage(string widgetId) => _host.ToggleDetailPage(widgetId);
     public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(_pluginId, title, width, height);
     public bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false) => _host.StartFileDrag(paths, allowMove);
+    public void RegisterUninstallDirectory(string path) => _host.RegisterUninstallDirectory(_pluginId, path);
 }

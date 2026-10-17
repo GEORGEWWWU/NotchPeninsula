@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
@@ -180,12 +181,18 @@ namespace NotchPeninsula
         private int _marketScroll;                       // 市场列表滚动首行（绝对条目下标）
 
         //   只有一颗「好的」，两个页签都要能画出来。
-        private enum MarketDialog { None, Detail, Rate, LoadFailed }
+        private enum MarketDialog { None, Detail, Rate, LoadFailed, UninstallConfirm, UninstallData }
 
         private MarketDialog _marketDialog = MarketDialog.None;
         private int _marketDialogIndex = -1;             // 弹窗对应的市场条目下标
         private bool _hoveredDialogClose;                // 弹窗右上角 ❌ 是否悬停
-        private int _hoveredDialogButton = -1;           // 弹窗内按钮：0 = 主按钮（加载失败提示的「好的」）
+        private int _hoveredDialogButton = -1;           // 弹窗内按钮下标（从左到右，0 起）
+
+        // 卸载确认弹窗：所有卸载操作都先过这一关。
+        // 第一级问「确定卸载吗」，插件登记过数据目录的才进第二级问「目录要不要一起删」。
+        private PluginEntry? _uninstallEntry;
+        private string _uninstallDir = "";               // 空 = 没登记 / 登记的不允许删
+        private bool _uninstallFromMarket;               // 提示回哪个页签（市场页的状态行 / 插件页卡头）
 
         // 评分弹窗状态（进入时向服务端要一次「我评过没有」）
         private double _rateStars;                       // 0..5，鼠标预览中的分值（半星为 .5）
@@ -205,11 +212,17 @@ namespace NotchPeninsula
             if (_marketDialog == MarketDialog.None && _marketDialogIndex == -1) return;
             _marketDialog = MarketDialog.None;
             _marketDialogIndex = -1;
+            _uninstallEntry = null;
+            _uninstallDir = "";
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
             _rateStatus = "";
             if (render) Render();
         }
+
+        /// <summary>当前是否有「必须先处理」的弹窗：命中判定与点击分派都走它，别再去碰下面的列表。</summary>
+        private bool IsConfirmDialogOpen =>
+            _marketDialog is MarketDialog.LoadFailed or MarketDialog.UninstallConfirm or MarketDialog.UninstallData;
 
         private void ShowPluginLoadFailedDialog(bool render = true)
         {
@@ -550,16 +563,45 @@ namespace NotchPeninsula
 
         private static SKRect GetNoticeDialogRect() => GetMarketDialogRect(2f, true);
 
-        private static SKRect GetDialogSingleButtonRect(SKRect popup)
+        private const float DialogBtnGap = 10f;
+
+        /// <summary>
+        /// 弹窗按钮统一几何：一组按钮整体在弹窗里居中，从左到右排；单按钮退化成原来那个居中位置。
+        /// 绘制与命中都从这里取，别再各算一套。
+        /// </summary>
+        private static SKRect GetDialogButtonRect(SKRect popup, int index, int count)
         {
+            float totalW = count * DialogBtnW + (count - 1) * DialogBtnGap;
+            float x0 = popup.MidX - totalW / 2f + index * (DialogBtnW + DialogBtnGap);
             float y = popup.Bottom - 6f - DialogBtnH - 12f;
-            float x = popup.MidX - DialogBtnW / 2f;
-            return new SKRect(x, y, x + DialogBtnW, y + DialogBtnH);
+            return new SKRect(x0, y, x0 + DialogBtnW, y + DialogBtnH);
         }
+
+        private static int DialogButtonCount(MarketDialog kind) => kind switch
+        {
+            MarketDialog.UninstallData => 3,   // 打开目录 / 保留 / 删除
+            _ => 1,
+        };
+
+        private int HitDialogButton(SKRect popup, float x, float y)
+        {
+            int count = DialogButtonCount(_marketDialog);
+            for (int i = 0; i < count; i++)
+                if (GetDialogButtonRect(popup, i, count).Contains(x, y)) return i;
+            return -1;
+        }
+
+        /// <summary>卸载第一级：只问「确定卸载吗」。</summary>
+        private static SKRect GetUninstallConfirmDialogRect() => GetMarketDialogRect(2f, true);
+
+        /// <summary>卸载第二级：多一行路径，所以多一行高度。</summary>
+        private static SKRect GetUninstallDirDialogRect() => GetMarketDialogRect(3f, true);
 
         private SKRect GetCurrentDialogRect()
         {
             if (_marketDialog == MarketDialog.LoadFailed) return GetNoticeDialogRect();
+            if (_marketDialog == MarketDialog.UninstallConfirm) return GetUninstallConfirmDialogRect();
+            if (_marketDialog == MarketDialog.UninstallData) return GetUninstallDirDialogRect();
 
             var mp = GetMarketAt(_marketDialogIndex);
             if (mp == null) return SKRect.Empty;
@@ -701,8 +743,10 @@ namespace NotchPeninsula
             return string.CompareOrdinal(a, b);
         }
 
-        private static string MarketInstallLabel(MarketPlugin mp, PluginEntry? local)
+        private static string MarketInstallLabel(MarketPlugin mp, PluginEntry? local, bool disabled)
         {
+            // 已装但没在跑：主按钮不再是「重装」，而是把插件重新跑起来的「启用」。
+            if (local != null && disabled) return "启用";
             if (local == null) return "下载";
             if (local.Version.Length == 0) return "重装";
             return CompareVersions(mp.Version, local.Version) > 0 ? "更新" : "重装";
@@ -881,7 +925,9 @@ namespace NotchPeninsula
                 int py = (int)((MarketControlsY + MarketControlH) * _dpiScale);
                 var pt = new Win32.POINT(px, py);
 
-                var cf = new Win32.COMPOSITIONFORM { dwStyle = Win32.CFS_POINT, ptCurrentPos = pt };
+                // 组字串由宿主自己画在搜索框里（_marketImeComposing），所以用 CFS_FORCE_POSITION
+                // 让输入法别再浮一个白色组字小窗；CFS_POINT 只会把它摆到这里照样画。
+                var cf = new Win32.COMPOSITIONFORM { dwStyle = Win32.CFS_FORCE_POSITION, ptCurrentPos = pt };
                 Win32.ImmSetCompositionWindow(himc, ref cf);
 
                 var cand = new Win32.CANDIDATEFORM
@@ -937,6 +983,20 @@ namespace NotchPeninsula
         private void StartMarketInstall(MarketPlugin mp)
         {
             if (_marketBusyId.Length > 0) return;   // 同一时刻只允许一个下载任务
+
+            // 本机已装但没在跑（禁用 / 上次加载失败）：主按钮写的是「启用」，点它就该把插件跑起来。
+            // 再下一遍同样的包只是把网络、覆盖安装、重载全白做一遍，用户还得等进度。
+            var local = MatchLocalPlugin(mp);
+            if (local != null && PluginManager.Instance.IsDisabled(local))
+            {
+                PluginManager.Instance.SetEnabled(local, true);
+                ResetPluginHover();
+                RefreshPluginView();
+                if (_marketOnlyInstalled) RefreshMarketFilter();
+                Render();
+                return;
+            }
+
             _marketBusyId = mp.Id;
             // 停了表但不清文案，那条旧提示就会永远挂在状态行上。
             PostAsyncRerender();
@@ -1060,15 +1120,170 @@ namespace NotchPeninsula
             return false;
         }
 
-        private void UninstallMarketPlugin(MarketPlugin mp)
+        // ---- 卸载确认弹窗 ----
+        //    插件页的「卸载」和市场页的「卸载」都先过这里：
+        //    第一级只问「确定卸载吗」；第二级仅在插件登记过数据目录时出现，问目录要不要一起删。
+        //    没登记的插件看不到第二级 —— 老插件零改动，只是多一道确认。
+
+        private void OpenUninstallDialog(PluginEntry e, bool fromMarket)
         {
-            var local = MatchLocalPlugin(mp);
-            if (local == null) return;   // 理论上到不了（按钮置灰），兜一层
-            PluginManager.Instance.Remove(local);
+            string? registered = PluginManager.Instance.GetUninstallDirectory(e);
+            string dir = registered != null && IsSafeDeleteTarget(registered) ? registered : "";
+            if (registered != null && dir.Length == 0)
+                Logger.Warn($"[PluginCenter] {e.Key} 登记的卸载目录不可删，已跳过删除选项：{registered}");
+
+            _uninstallEntry = e;
+            _uninstallDir = dir;
+            _uninstallFromMarket = fromMarket;
+            _marketDialog = MarketDialog.UninstallConfirm;
+            _marketDialogIndex = -1;
+            _hoveredDialogClose = false;
+            _hoveredDialogButton = -1;
+            Render();
+        }
+
+        /// <summary>确认类弹窗的按钮分派。点 ❌ / 点弹窗外都由这里先收掉（什么都不执行）。</summary>
+        private void HandleConfirmDialogClick()
+        {
+            bool inside = TryGetCursorClientPos(out int px, out int py)
+                && GetCurrentDialogRect().Contains(px, py);
+            if (!inside || _hoveredDialogClose) { CloseMarketDialog(true); return; }
+
+            switch (_marketDialog)
+            {
+                case MarketDialog.LoadFailed:
+                    if (_hoveredDialogButton == 0) CloseMarketDialog(true);
+                    break;
+
+                case MarketDialog.UninstallConfirm:
+                    if (_hoveredDialogButton != 0) break;      // 唯一按钮就是「卸载」
+                    if (_uninstallDir.Length > 0)
+                    {
+                        _marketDialog = MarketDialog.UninstallData;
+                        _hoveredDialogButton = -1;
+                        Render();
+                    }
+                    else PerformUninstall(deleteDir: false);
+                    break;
+
+                case MarketDialog.UninstallData:
+                    if (_hoveredDialogButton == 0) OpenUninstallDir();            // 打开目录：弹窗不关
+                    else if (_hoveredDialogButton == 1) PerformUninstall(false);  // 保留目录
+                    else if (_hoveredDialogButton == 2) PerformUninstall(true);   // 连目录一起删
+                    break;
+            }
+        }
+
+        private void OpenUninstallDir()
+        {
+            if (_uninstallDir.Length == 0) return;
+            try
+            {
+                // 目录已经不在了就打开父级：比什么都不发生强。
+                string target = Directory.Exists(_uninstallDir)
+                    ? _uninstallDir
+                    : Path.GetDirectoryName(_uninstallDir) ?? _uninstallDir;
+                Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            }
+            catch (Exception ex) { Logger.Warn($"[PluginCenter] 打开插件目录失败：{_uninstallDir} — {ex.Message}"); }
+        }
+
+        private void PerformUninstall(bool deleteDir)
+        {
+            var e = _uninstallEntry;
+            string dir = _uninstallDir;
+            bool fromMarket = _uninstallFromMarket;
+
+            CloseMarketDialog(render: false);
+            if (e == null) { Render(); return; }
+
+            // 先卸载再动目录：插件 Dispose、影子目录与文件句柄都放开了，目录才可能删得掉。
+            PluginManager.Instance.Remove(e);
+
+            if (deleteDir && dir.Length > 0)
+            {
+                if (TryDeletePluginDataDir(dir, out string error))
+                {
+                    Logger.Info($"[PluginCenter] 已删除插件目录：{dir}");
+                }
+                else
+                {
+                    Logger.Warn($"[PluginCenter] 删除插件目录失败：{dir} — {error}");
+                    string msg = $"删除目录失败：{error}";
+                    if (fromMarket) SetMarketHint(msg, true);
+                    else { _pluginHint = msg; _pluginHintIsError = true; }
+                }
+            }
+
             ResetPluginHover();
             RefreshPluginView();
             if (_marketOnlyInstalled) RefreshMarketFilter();
             Render();
+        }
+
+        private static bool TryDeletePluginDataDir(string dir, out string error)
+        {
+            error = "";
+            if (!IsSafeDeleteTarget(dir)) { error = "该目录不允许删除"; return false; }
+            try { Directory.Delete(dir, true); return true; }
+            catch (Exception ex) { error = ex.Message; return false; }
+        }
+
+        /// <summary>
+        /// 删除前的兜底校验：插件登记什么路径都有可能，不能让一条写错的注册把用户目录连锅端。
+        /// 盘符根、宿主程序目录、系统 / 用户关键目录、以及这些目录的祖先一律拒绝。
+        /// </summary>
+        private static bool IsSafeDeleteTarget(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) return false;
+            try
+            {
+                string full = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (full.Length <= 3 || !Directory.Exists(full)) return false;
+
+                foreach (var special in new[]
+                {
+                    Environment.SpecialFolder.UserProfile,
+                    Environment.SpecialFolder.ApplicationData,
+                    Environment.SpecialFolder.LocalApplicationData,
+                    Environment.SpecialFolder.DesktopDirectory,
+                    Environment.SpecialFolder.MyDocuments,
+                    Environment.SpecialFolder.Windows,
+                    Environment.SpecialFolder.System,
+                    Environment.SpecialFolder.ProgramFiles,
+                    Environment.SpecialFolder.ProgramFilesX86,
+                })
+                {
+                    string root = Environment.GetFolderPath(special);
+                    if (root.Length == 0) continue;
+                    if (IsSameOrAncestorOf(full, root)) return false;
+                }
+
+                return !IsSameOrAncestorOf(full, AppContext.BaseDirectory)
+                    && !IsSameOrAncestorOf(full, PluginManager.Instance.PluginsRoot);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>candidate 就是 root，或是它的祖先 —— 这两种情况删掉 candidate 等于把 root 一起带走。</summary>
+        private static bool IsSameOrAncestorOf(string candidate, string root)
+        {
+            try
+            {
+                string c = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string r = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (c.Length == 0 || r.Length == 0) return false;
+                if (string.Equals(c, r, StringComparison.OrdinalIgnoreCase)) return true;
+                return r.StartsWith(c + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        private void UninstallMarketPlugin(MarketPlugin mp)
+        {
+            var local = MatchLocalPlugin(mp);
+            if (local == null) return;   // 理论上到不了（按钮置灰），兜一层
+            OpenUninstallDialog(local, fromMarket: true);
         }
 
         // ---- 详情弹窗 ----

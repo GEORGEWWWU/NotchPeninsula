@@ -10,7 +10,7 @@ namespace NotchPeninsula
     public partial class ConsoleWindow
     {
         // 插件中心交互状态
-        private int _hoveredPluginAction = -1;  // 0=导入 DLL, 1=打开目录, 2=插件市场
+        private int _hoveredPluginAction = -1;  // 0=导入插件, 1=打开目录, 2=插件市场
 
         private int _hoveredPluginToggle = -1;  // 行索引：启用/禁用开关
 
@@ -123,16 +123,25 @@ namespace NotchPeninsula
             }
         }
 
-        private void ImportPluginDll()
+        private void ImportPlugin()
         {
             try
             {
-                string? picked = ShowOpenFileDialog(_hwnd, "选择 NotchPeninsula 插件 DLL",
-                    "插件动态库 (*.dll)\0*.dll\0所有文件 (*.*)\0*.*\0");
+                // 单个 DLL 与插件包（ZIP，带附属文件的那种）共用同一个入口：
+                // 过滤器把两者放最前，选完再按扩展名分派到对应安装路径。
+                string? picked = ShowOpenFileDialog(_hwnd, "选择 NotchPeninsula 插件",
+                    "插件 (*.dll;*.zip)\0*.dll;*.zip\0插件动态库 (*.dll)\0*.dll\0插件包 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0");
                 if (picked == null) return;
 
-                var (ok, msg) = PluginManager.Instance.Import(picked);
+                bool isZip = picked.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+                var (ok, msg) = isZip ? InstallPluginPackage(picked) : PluginManager.Instance.Import(picked);
+
                 Logger.Info($"[PluginCenter] 导入结果: {(ok ? "成功" : "失败")} — {msg}");
+
+                // 失败原因写进列表卡头，弹窗只说明「加载失败」，具体缘由（例如包里没有 dll）只有这里能看到。
+                _pluginHint = ok ? "" : (isZip ? $"安装失败：{msg}" : $"导入失败：{msg}");
+                _pluginHintIsError = !ok;
+
                 ResetPluginHover();
                 RefreshPluginView();
                 if (!ok) ShowPluginLoadFailedDialog(render: false);

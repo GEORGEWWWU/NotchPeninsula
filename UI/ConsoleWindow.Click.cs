@@ -575,21 +575,15 @@ namespace NotchPeninsula
             // ---- 我的插件交互（tab 6）----
             else if (_selectedTab == 6)
             {
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
-                    if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
-                    else
-                    {
-                        bool inside = TryGetCursorClientPos(out int px, out int py)
-                            && GetCurrentDialogRect().Contains(px, py);
-                        if (!inside) CloseMarketDialog(true);
-                    }
+                    HandleConfirmDialogClick();
                 }
                 else if (_hoveredPluginAction != -1)
                 {
                     switch (_hoveredPluginAction)
                     {
-                        case 0: ImportPluginDll(); break;
+                        case 0: ImportPlugin(); break;
                         case 1: PluginManager.Instance.OpenPluginsFolder(); break;
                         case 2:
                             //    省得用户自己找到左栏去切页签。
@@ -618,27 +612,15 @@ namespace NotchPeninsula
                 else if (_hoveredPluginRemove != -1)
                 {
                     var pe = GetPluginAt(_hoveredPluginRemove);
-                    if (pe != null)
-                    {
-                        PluginManager.Instance.Remove(pe);
-                        ResetPluginHover();
-                        RefreshPluginView();
-                        Render();
-                    }
+                    if (pe != null) OpenUninstallDialog(pe, fromMarket: false);
                 }
             }
             // ---- 插件市场交互（tab 7）----
             else if (_selectedTab == 7)
             {
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
-                    if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
-                    else
-                    {
-                        bool inside = TryGetCursorClientPos(out int px, out int py)
-                            && GetCurrentDialogRect().Contains(px, py);
-                        if (!inside) CloseMarketDialog(true);
-                    }
+                    HandleConfirmDialogClick();
                 }
                 else if (_marketDialogIndex != -1)
                 {
