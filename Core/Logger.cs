@@ -7,6 +7,43 @@ namespace NotchPeninsula
         private static readonly object _lock = new object();
         private static readonly string LogPath = ResolveLogPath();
 
+        /// <summary>当前日志文件（app.log）完整路径。</summary>
+        public static string LogFilePath => LogPath;
+
+        /// <summary>日志目录 —— 崩溃文件与诊断包也落在这下面，别各自再算一遍路径。</summary>
+        public static string LogDirectory
+        {
+            get
+            {
+                try { return Path.GetDirectoryName(LogPath) ?? Path.GetTempPath(); }
+                catch { return Path.GetTempPath(); }
+            }
+        }
+
+        /// <summary>按写入时间倒序取最近若干份日志（含当前 app.log 与轮转出来的 app-*.log）。</summary>
+        public static List<string> GetRecentLogFiles(int max)
+        {
+            var list = new List<string>();
+            if (max <= 0) return list;
+
+            try
+            {
+                var dir = new DirectoryInfo(LogDirectory);
+                if (!dir.Exists) return list;
+
+                var files = dir.GetFiles("app*.log");
+                Array.Sort(files, (a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+                foreach (var f in files)
+                {
+                    if (list.Count >= max) break;
+                    list.Add(f.FullName);
+                }
+            }
+            catch { }
+
+            return list;
+        }
+
         private const long MaxBytes = 1024 * 1024;
 
         private const int MaxRotatedFiles = 2;

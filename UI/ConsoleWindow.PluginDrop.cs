@@ -169,27 +169,24 @@ namespace NotchPeninsula
                 var mgr = PluginManager.Instance;
                 int okCount = 0;
                 string lastMsg = "";
+                PluginFailureKind lastFailure = PluginFailureKind.Other;
 
                 foreach (var path in dlls)
                 {
-                    var (ok, msg) = mgr.Import(path);
+                    var (ok, msg, failure) = mgr.Import(path);
                     lastMsg = msg;
                     if (ok) okCount++;
+                    else lastFailure = failure;
                     Logger.Info($"[PluginCenter] 拖入导入 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
-                if (okCount == dlls.Count)
-                    _pluginHint = "";
-                else if (okCount > 0)
-                    _pluginHint = $"{dlls.Count - okCount} 个导入失败：{lastMsg}";
-                else
-                    _pluginHint = $"导入失败：{lastMsg}";
-
+                // 卡片头只说结论，原因交给弹窗（一行小字塞不下，也读不清）
+                _pluginHint = okCount == dlls.Count ? "" : "导入失败";
                 _pluginHintIsError = okCount != dlls.Count;
 
                 ResetPluginHover();
                 RefreshPluginView();
-                if (okCount != dlls.Count) ShowPluginLoadFailedDialog(render: false);
+                if (okCount != dlls.Count) ShowPluginLoadFailedDialog(lastFailure, render: false);
                 Render();
             }
             catch (Exception ex)
@@ -206,27 +203,23 @@ namespace NotchPeninsula
             {
                 int okCount = 0;
                 string lastMsg = "";
+                PluginFailureKind lastFailure = PluginFailureKind.Other;
 
                 foreach (string path in zips)
                 {
-                    var (ok, msg) = InstallPluginPackage(path);
+                    var (ok, msg, failure) = InstallPluginPackage(path);
                     lastMsg = msg;
                     if (ok) okCount++;
+                    else lastFailure = failure;
                     Logger.Info($"[PluginCenter] 拖入安装 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
-                if (okCount == zips.Count)
-                    _pluginHint = "";
-                else if (okCount > 0)
-                    _pluginHint = $"{zips.Count - okCount} 个安装失败：{lastMsg}";
-                else
-                    _pluginHint = $"安装失败：{lastMsg}";
-
+                _pluginHint = okCount == zips.Count ? "" : "安装失败";
                 _pluginHintIsError = okCount != zips.Count;
 
                 ResetPluginHover();
                 RefreshPluginView();
-                if (okCount != zips.Count) ShowPluginLoadFailedDialog(render: false);
+                if (okCount != zips.Count) ShowPluginLoadFailedDialog(lastFailure, render: false);
                 Render();
             }
             catch (Exception ex)
@@ -240,7 +233,7 @@ namespace NotchPeninsula
         /// 与「导入单个 dll」的区别：包里的<b>所有文件</b>（dll、附属 exe、说明）一起落进同一个子目录 ——
         /// 宿主按「与目录同名」或 plugin.json 指定的 dll 加载它，插件要用的附属文件就躺在旁边。
         /// </summary>
-        private (bool Ok, string Message) InstallPluginPackage(string zipPath)
+        private (bool Ok, string Message, PluginFailureKind Failure) InstallPluginPackage(string zipPath)
         {
             string? extractDir = null;
 
@@ -253,7 +246,7 @@ namespace NotchPeninsula
 
                 // 压缩时多套一层文件夹很常见（选中文件夹右键压缩），所以要往下找真正装着 dll 的那层
                 string root = FindPackageRoot(extractDir);
-                if (root.Length == 0) return (false, "包内没有找到 .dll");
+                if (root.Length == 0) return (false, "包内没有找到 .dll", PluginFailureKind.NotAPlugin);
 
                 string name = ResolvePackageName(root, zipPath);
                 string target = Path.Combine(PluginManager.Instance.PluginsRoot, name);
@@ -275,15 +268,15 @@ namespace NotchPeninsula
                 PluginManager.Instance.Refresh();
                 var fresh = PluginManager.Instance.Entries.FirstOrDefault(e =>
                     string.Equals(e.RootDir, target, StringComparison.OrdinalIgnoreCase));
-                if (fresh == null) return (false, "包内未找到可加载的插件");
+                if (fresh == null) return (false, "包内未找到可加载的插件", PluginFailureKind.NotAPlugin);
 
                 return PluginManager.Instance.Load(fresh)
-                    ? (true, "")
-                    : (false, "已安装但加载失败：" + fresh.Error);
+                    ? (true, "", PluginFailureKind.None)
+                    : (false, "已安装但加载失败：" + fresh.Error, fresh.Failure);
             }
             catch (Exception ex)
             {
-                return (false, ex.Message);
+                return (false, ex.Message, PluginFailureKind.Other);
             }
             finally
             {

@@ -134,17 +134,20 @@ namespace NotchPeninsula
                 if (picked == null) return;
 
                 bool isZip = picked.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
-                var (ok, msg) = isZip ? InstallPluginPackage(picked) : PluginManager.Instance.Import(picked);
+                var (ok, msg, failure) = isZip
+                    ? InstallPluginPackage(picked)
+                    : PluginManager.Instance.Import(picked);
 
                 Logger.Info($"[PluginCenter] 导入结果: {(ok ? "成功" : "失败")} — {msg}");
 
-                // 失败原因写进列表卡头，弹窗只说明「加载失败」，具体缘由（例如包里没有 dll）只有这里能看到。
-                _pluginHint = ok ? "" : (isZip ? $"安装失败：{msg}" : $"导入失败：{msg}");
+                // 卡片头只留一句「导入失败」：具体是哪一类（不是插件 / 缺依赖 / 版本不匹配）
+                // 放弹窗里说，一行小字塞不下也读不清。
+                _pluginHint = ok ? "" : (isZip ? "安装失败" : "导入失败");
                 _pluginHintIsError = !ok;
 
                 ResetPluginHover();
                 RefreshPluginView();
-                if (!ok) ShowPluginLoadFailedDialog(render: false);
+                if (!ok) ShowPluginLoadFailedDialog(failure, render: false);
                 Render();
             }
             catch (Exception ex)

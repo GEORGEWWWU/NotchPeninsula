@@ -19,6 +19,14 @@ namespace NotchPeninsula
             // Tab Hover 判定：与绘制 / 光标共用一套几何（HitSidebarTab）
             int newHoveredTab = HitSidebarTab(x, y);
 
+            // 弹窗是模态的：它盖住的顶栏与侧栏不该再亮，否则鼠标划过弹窗还能看见下面在闪
+            if (IsConfirmDialogOpen)
+            {
+                newMinHovered = false;
+                newCloseHovered = false;
+                newHoveredTab = -1;
+            }
+
             int newHoveredTheme = -1;
             int newHoveredMaterial = -1;
             int newHoveredOpacityIndex = -1;
@@ -139,6 +147,7 @@ namespace NotchPeninsula
             int newHoveredMarketCategoryIndex = -1;
             bool newHoveredDialogClose = false;
             int newHoveredDialogButton = -1;
+            bool newLoadFailedLinkHovered = false;
             double newRateStars = 0;
             bool newHoveredMarketChk = false;
             bool newMarketSearchHovered = false;
@@ -474,6 +483,10 @@ namespace NotchPeninsula
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
                         if (!newHoveredDialogClose) newHoveredDialogButton = HitDialogButton(rect, x, y);
+
+                        // 失败弹窗正文里的群号：位置取自打开时排好的版面，与绘制同一份数据
+                        if (!newHoveredDialogClose && _marketDialog == MarketDialog.LoadFailed)
+                            newLoadFailedLinkHovered = HitLoadFailedLink(rect, x, y);
                     }
                 }
                 else if (_marketDialogIndex != -1)
@@ -540,6 +553,10 @@ namespace NotchPeninsula
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
                         if (!newHoveredDialogClose) newHoveredDialogButton = HitDialogButton(rect, x, y);
+
+                        // 失败弹窗正文里的群号：位置取自打开时排好的版面，与绘制同一份数据
+                        if (!newHoveredDialogClose && _marketDialog == MarketDialog.LoadFailed)
+                            newLoadFailedLinkHovered = HitLoadFailedLink(rect, x, y);
                     }
                 }
                 else
@@ -588,6 +605,10 @@ namespace NotchPeninsula
                     else if (x >= 445 && x <= 500) newHoveredLinkIndex = 2; // 开发者 (Ryen)
                 }
             }
+
+            // 侧边栏左下角的「导出诊断包」常驻，不跟页签走 —— 用户在任何一页都能按。
+            bool newAboutExportHovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
+                                      && y >= EXPORT_BTN_Y && y <= EXPORT_BTN_Y + EXPORT_BTN_H;
 
             bool newIsHoveringDisabledArea = false;
             // 否则就会出现「明明能点、却显示禁止指针」。
@@ -656,6 +677,7 @@ namespace NotchPeninsula
                 newHoveredMarketDetail != _hoveredMarketDetail ||
                 newHoveredDialogClose != _hoveredDialogClose ||
                 newHoveredDialogButton != _hoveredDialogButton ||
+                newLoadFailedLinkHovered != _loadFailedLinkHovered ||
                 newRateStars != _rateStars ||
                 newHoveredMarketChk != _hoveredMarketChk ||
                 newHoveredMarketCategoryIndex != _hoveredMarketCategoryIndex ||
@@ -663,7 +685,8 @@ namespace NotchPeninsula
                 newMarketRefreshHovered != _hoveredMarketRefresh ||
                 newHoveredMarketSortIndex != _hoveredMarketSortIndex ||
                 newHoveredMarketSortBox != _hoveredMarketSortBox ||
-                newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered
+                newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered ||
+                newAboutExportHovered != _aboutExportHovered
                 )
             {
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -680,6 +703,7 @@ namespace NotchPeninsula
                 _appDropdownHovered = newAppDropdownHovered;
                 _hoveredAppIndex = newHoveredAppIndex;
                 _hoveredLinkIndex = newHoveredLinkIndex;
+                _aboutExportHovered = newAboutExportHovered;
                 _hoveredDisplayRow = newHoveredDisplayRow;
                 _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
@@ -723,6 +747,7 @@ namespace NotchPeninsula
                 _hoveredMarketDetail = newHoveredMarketDetail;
                 _hoveredDialogClose = newHoveredDialogClose;
                 _hoveredDialogButton = newHoveredDialogButton;
+                _loadFailedLinkHovered = newLoadFailedLinkHovered;
                 if (newRateStars != _rateStars) _rateStars = newRateStars;
                 _hoveredMarketChk = newHoveredMarketChk;
                 _hoveredMarketCategoryIndex = newHoveredMarketCategoryIndex;

@@ -614,6 +614,18 @@ namespace NotchPeninsula
 
         private int _hoveredLinkIndex = -1;
 
+        // 「导出诊断包」按钮：常驻在侧边栏左下角（页签最底一行到 388，下面整片空白）。
+        // 绘制 / 悬停 / 点击三处共用这套几何。
+        // 左下两个方向的留白取同一个值 —— 底部写死数字会和左边一点点对不上，所以由 X 和按钮高推出来。
+        private const float EXPORT_BTN_X = TAB_BOX_L;                     // 10，与页签块左缘对齐
+        private const float EXPORT_BTN_W = 96f;                           // 「导出诊断包」5 字 + 左右呼吸，别占满整行
+        private const float EXPORT_BTN_H = 28f;
+        private const float EXPORT_BTN_Y = HEIGHT - EXPORT_BTN_X - EXPORT_BTN_H;   // 622，下边留白 == 左边留白
+
+        private bool _aboutExportHovered = false;
+        private bool _aboutExporting = false;
+        private string _aboutExportHint = "";
+
         // 显示设置
         // 「显示内容」列表的悬停行：-1 = 没悬停任何行。
         private int _hoveredDisplayRow = -1;
@@ -803,10 +815,8 @@ namespace NotchPeninsula
 
         private void SelectTab(int tab)
         {
-            if (tab < 0 || tab > 6 || _selectedTab == tab) return;
-            _selectedTab = tab;
-            CloseAllDropdowns();
-            Render();
+            if (tab < 0 || tab > 6) return;
+            SwitchTab(tab);   // 与点侧栏走同一套：提示清理、浮层收起都在里面
         }
 
         private ConsoleWindow()
@@ -1158,6 +1168,8 @@ namespace NotchPeninsula
                 }
 
                 case Win32.WM_MOUSEWHEEL:
+                    // 弹窗是模态的：滚轮也不该滚到下面的列表 / 页面
+                    if (IsConfirmDialogOpen) break;
                     if (_toastSoundDropdownOpen)
                     {
                         int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
