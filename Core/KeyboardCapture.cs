@@ -64,8 +64,10 @@ namespace NotchPeninsula
             if (Environment.TickCount64 - _startedAt > MaxHoldMs)
             {
                 Logger.Warn("[快捷键录制] 挂起超时，自动释放键盘钩子");
+                // 先留住句柄再 Stop：Stop 会把 _hook 清零，这里要传的是本次回调所属的那一个。
+                IntPtr expired = _hook;
                 Stop();
-                return Win32.CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
+                return Win32.CallNextHookEx(expired, nCode, wParam, lParam);
             }
 
             // 只认按下：按住不放的自动重复也按一次算，SetBinding 本来就幂等。
