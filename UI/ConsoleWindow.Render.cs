@@ -467,6 +467,41 @@ namespace NotchPeninsula
             DrawTab(canvas, 7, "插件市场", TabRowY(7));
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, _separatorPaint);
             DrawTab(canvas, 4, "关于软件", TabRowY(4));
+
+            DrawExportBundleButton(canvas);
+        }
+
+        // 侧边栏左下角：导出诊断包（常驻，不绑页签）。
+        // 用户报 bug 时唯一要按的地方 —— 一个 zip 到手，版本 / 系统 / 显示器 / 配置快照 /
+        // 插件清单 / 最近日志全在里头，省掉一轮轮追问。
+        private void DrawExportBundleButton(SKCanvas canvas)
+        {
+            var rect = new SKRect(EXPORT_BTN_X, EXPORT_BTN_Y,
+                                  EXPORT_BTN_X + EXPORT_BTN_W, EXPORT_BTN_Y + EXPORT_BTN_H);
+
+            _dynamicFillPaint.Color = _aboutExportHovered ? Overlay(30) : Overlay(15);
+            canvas.DrawRoundRect(rect, 5f, 5f, _dynamicFillPaint);
+
+            _dynamicTextPaint.TextAlign = SKTextAlign.Center;
+            _dynamicTextPaint.TextSize = 12.5f;
+            _dynamicTextPaint.Color = _aboutExportHovered ? new SKColor(0, 140, 240) : Neutral(200);
+            canvas.DrawText(_aboutExporting ? "正在打包…" : "导出诊断包",
+                EXPORT_BTN_X + EXPORT_BTN_W / 2f, EXPORT_BTN_Y + 18.5f, _dynamicTextPaint);
+
+            // 成功不说、失败说：导出成功靠资源管理器选中文件来表达。失败就在按钮上方挂一行。
+            // 提示行比按钮宽（可占满侧栏），左对齐 —— 居中放不下时两边会顶到侧栏外。
+            if (_aboutExportHint.Length > 0)
+            {
+                _dynamicTextPaint.TextSize = 11f;
+                _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+                _dynamicTextPaint.Color = new SKColor(200, 80, 80);
+                canvas.DrawText(TruncateText(_aboutExportHint, _dynamicTextPaint, TAB_BOX_R - EXPORT_BTN_X),
+                    EXPORT_BTN_X, EXPORT_BTN_Y - 8f, _dynamicTextPaint);
+            }
+
+            // 共享画笔复位：后面的页签内容默认按左对齐排版
+            _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+            _dynamicTextPaint.TextSize = 13f;
         }
 
         // 页签：通用设置
@@ -1972,15 +2007,35 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(rect, 8, 8, _menuBg);
             canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
 
-            float bodyY = DrawDialogHeader(canvas, rect, "插件加载失败");
-            _subTextPaint.Color = Neutral(200);
-            canvas.DrawText(TruncateText("请确认您已使用最新 NPS。", _subTextPaint, DialogInnerW),
-                rect.Left + DialogPad, bodyY + 12, _subTextPaint);
-            _subTextPaint.Color = Neutral(150);
-            canvas.DrawText(TruncateText("可前往 QQ 群下载最新版本的 NPS。", _subTextPaint, DialogInnerW),
-                rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            float bodyY = DrawDialogHeader(canvas, rect, "插件加载失败") + LoadFailedBodyDY;
+            float left = rect.Left + DialogPad;
 
+            // 逐行逐段画：群号那一段单独上色 —— 折行位置是打开弹窗时算好的，
+            // 这里只按结果摆，别再自己折一遍（否则链接的命中区会跟画面错开）。
+            for (int i = 0; i < _loadFailedLines.Count; i++)
+            {
+                float lineY = bodyY + i * DialogLineH;
+                float x = left;
+                foreach (var (text, isLink) in _loadFailedLines[i])
+                {
+                    _subTextPaint.Color = isLink
+                        ? (_loadFailedLinkHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212))
+                        : Neutral(200);
+                    canvas.DrawText(text, x, lineY, _subTextPaint);
+                    x += _subTextPaint.MeasureText(text);
+                }
+            }
+
+            // 悬停才出下划线：静态下划线容易被当成正文里的分隔符
+            if (_loadFailedLinkHovered && _loadFailedLinkLine >= 0)
+            {
+                float y = bodyY + _loadFailedLinkLine * DialogLineH + 3f;
+                float x0 = left + _loadFailedLinkOffsetX;
+                _dynamicFillPaint.Color = new SKColor(0, 140, 240);
+                canvas.DrawRect(new SKRect(x0, y, x0 + _loadFailedLinkWidth, y + 1f), _dynamicFillPaint);
+            }
+
+            _subTextPaint.Color = Neutral(170);
             DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 1), "好的", 0, DialogAccentBlue);
         }
 

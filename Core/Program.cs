@@ -165,12 +165,15 @@ namespace NotchPeninsula
             {
                 try
                 {
-                    string detail = e.ExceptionObject switch
-                    {
-                        Exception ex => $"{ex.GetType().Name}: {ex.Message}{Environment.NewLine}{ex.StackTrace}",
-                        var other => other?.ToString() ?? "(null)",
-                    };
+                    Exception? ex = e.ExceptionObject as Exception;
+                    string detail = ex != null
+                        ? $"{ex.GetType().Name}: {ex.Message}{Environment.NewLine}{ex.StackTrace}"
+                        : e.ExceptionObject?.ToString() ?? "(null)";
+
                     Logger.Error($"[崩溃] 未处理异常，进程即将退出（IsTerminating={e.IsTerminating}）{Environment.NewLine}{detail}");
+
+                    // app.log 会被轮转冲掉，崩溃另存一份独立的、带完整异常链与末尾日志的文件
+                    Diagnostics.WriteCrash("未处理异常", ex, e.IsTerminating);
                 }
                 catch
                 {
@@ -179,7 +182,10 @@ namespace NotchPeninsula
             };
 
             TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
                 Logger.Error("[崩溃] 未观察的 Task 异常", e.Exception);
+                Diagnostics.WriteCrash("未观察的 Task 异常", e.Exception, terminating: false);
+            };
         }
 
         [STAThread]

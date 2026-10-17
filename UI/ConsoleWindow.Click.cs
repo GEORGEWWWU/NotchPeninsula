@@ -63,10 +63,112 @@ namespace NotchPeninsula
             }
         }
 
+        // 同一个坑的另一处：「导出诊断包」也读 hover，所以点击前同样要用落点重算一次。
+        private void SyncExportHoverFromPoint(int x, int y)
+        {
+            bool hovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
+                        && y >= EXPORT_BTN_Y && y <= EXPORT_BTN_Y + EXPORT_BTN_H;
+            if (hovered == _aboutExportHovered) return;
+
+            _aboutExportHovered = hovered;
+            Render();
+        }
+
+        // 导出诊断包：同步执行（读注册表 + 打 zip，几十毫秒），完成后用资源管理器选中文件 ——
+        // 用户下一步就是把它拖进聊天窗口，省掉「文件在哪」这一问。
+        private void ExportDiagnostics()
+        {
+            if (_aboutExporting) return;
+
+            _aboutExporting = true;
+            _aboutExportHint = "";
+            try
+            {
+                string zip = Diagnostics.ExportBundle();
+
+                try
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{zip}\"")
+                    {
+                        UseShellExecute = true
+                    });
+                }
+                catch
+                {
+                    // 打不开资源管理器（安全软件拦截 / 极简系统）不算失败：包已经生成好了
+                }
+            }
+            catch (Exception ex)
+            {
+                _aboutExportHint = "导出失败：" + ex.Message;
+                Logger.Error("[诊断] 导出诊断包失败", ex);
+            }
+            finally
+            {
+                _aboutExporting = false;
+                Render();
+            }
+        }
+
+        // 切页签：所有页内瞬时提示都在这里清掉。
+        // 提示是「这一次操作的结论」，离开这一页再回来还挂着，会让人以为刚才又失败了一次。
+        private void SwitchTab(int tab)
+        {
+            if (tab < 0 || tab > 7 || tab == _selectedTab) return;
+
+            _selectedTab = tab;
+            _dropdownOpen = false;
+            CloseMarketDialog();
+            CloseAllDropdowns();
+            _marketCategoryOpen = false;
+            _marketSearchFocused = false;
+            ClearTransientHints();
+
+            if (tab == 6) RefreshPluginView();
+            else if (tab == 7)
+            {
+                if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
+                EnsureMarketData();
+            }
+
+            Render();
+        }
+
+        private void ClearTransientHints()
+        {
+            _pluginHint = "";
+            _pluginHintIsError = false;
+
+            _marketHint = "";
+            _marketHintIsError = false;
+            _marketHintDeadline = 0;      // 定时器下次 tick 会自己停
+
+            _marketPendingHint = "";
+            _marketPendingHintIsError = false;
+            _marketPendingFailure = PluginFailureKind.Other;
+
+            _aboutExportHint = "";
+            _hotkeyHint = "";
+            _islandHotkeyHint = "";
+            _fontHint = "";
+            _soundHint = "";
+        }
+
         // 鼠标左键按下：整窗点击分派。
         private void OnLeftButtonDown(IntPtr hwnd, int clickX, int clickY)
         {
+            // 弹窗是模态的：期间任何点击只归弹窗，不让下层先吃一口。
+            // 之前只在 `_selectedTab == 6/7` 分支里判，导致点弹窗时侧栏切页、顶栏最小化 / 关闭
+            // 这些更靠前的分支照样能命中 —— 表现就是「弹窗还开着，后面的界面却动了」。
+            // 放在最前面：连按钮 hover 的落点重算都不做，那些属于被盖住的那一层。
+            if (IsConfirmDialogOpen)
+            {
+                HandleConfirmDialogClick();
+                return;
+            }
+
             SyncHotkeyHoverFromPoint(clickX, clickY);
+            SyncExportHoverFromPoint(clickX, clickY);
 
             if (_hotkeyRecordingIndex >= 0 && _hoveredHotkeyRow != _hotkeyRecordingIndex)
                 CancelHotkeyRecording();
@@ -171,26 +273,9 @@ namespace NotchPeninsula
                 SyncHoverFromCursor();
                 Render();
             }
-            else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 6 && _selectedTab != 6)
+            else if (_hoveredTab >= 0 && _hoveredTab <= 7 && _selectedTab != _hoveredTab)
             {
-                _selectedTab = 6; _dropdownOpen = false; CloseMarketDialog();
-                _marketCategoryOpen = false; _marketSearchFocused = false;
-                RefreshPluginView();
-                Render();
-            }
-            else if (_hoveredTab == 7 && _selectedTab != 7)
-            {
-                _selectedTab = 7; _dropdownOpen = false; CloseMarketDialog();
-                _marketCategoryOpen = false; _marketSearchFocused = false;
-                if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
-                EnsureMarketData();
-                Render();
+                SwitchTab(_hoveredTab);
             }
             else if (_toastModeDropdownHovered) { _toastModeDropdownOpen = true; Render(); }
             else if (_toastModeDropdownOpen && _hoveredToastModeIndex != -1)
@@ -338,6 +423,10 @@ namespace NotchPeninsula
                 Renderer.ApplyThemeColors(); // 立刻应用透明度
                 Program.SaveSetting("BgOpacityLevel", _hoveredOpacityIndex); // 持久化保存
                 Render(); // 刷新UI
+            }
+            else if (_aboutExportHovered)
+            {
+                ExportDiagnostics();
             }
             else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
             {
@@ -586,16 +675,9 @@ namespace NotchPeninsula
                         case 0: ImportPlugin(); break;
                         case 1: PluginManager.Instance.OpenPluginsFolder(); break;
                         case 2:
-                            //    省得用户自己找到左栏去切页签。
-                            _selectedTab = 7;
-                            _dropdownOpen = false;
-                            CloseMarketDialog();
-                            _marketCategoryOpen = false;
-                            _marketSearchFocused = false;
-                            if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;
-                            EnsureMarketData();
+                            // 直接从插件页跳市场，省得用户自己找到左栏去切页签
                             ResetPluginHover();
-                            Render();
+                            SwitchTab(7);
                             break;
                     }
                 }

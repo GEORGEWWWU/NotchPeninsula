@@ -224,14 +224,34 @@ namespace NotchPeninsula
         private bool IsConfirmDialogOpen =>
             _marketDialog is MarketDialog.LoadFailed or MarketDialog.UninstallConfirm or MarketDialog.UninstallData;
 
-        private void ShowPluginLoadFailedDialog(bool render = true)
+        private void ShowPluginLoadFailedDialog(PluginFailureKind kind = PluginFailureKind.Other, bool render = true)
         {
             _marketDialog = MarketDialog.LoadFailed;
             _marketDialogIndex = -1;
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
+            _loadFailedLinkHovered = false;
+            _loadFailedReason = ReasonTextOf(kind);
+            _loadFailedWithVersionHint = NeedsVersionHint(kind);
+            BuildLoadFailedLayout();   // 版面（行数 + 群号位置）在打开时定一次，绘制与命中共用
             if (render) Render();
         }
+
+        /// <summary>把失败类型翻成一句用户能行动的话。全都弹「不兼容」等于什么都没说。</summary>
+        private static string ReasonTextOf(PluginFailureKind kind) => kind switch
+        {
+            PluginFailureKind.NotAPlugin =>
+                "这个 DLL 里没有找到插件入口（INotchPlugin），可能是按旧版接口编译的，也可能根本不是 NPS 插件。",
+            PluginFailureKind.BadImage =>
+                "这个 DLL 无法作为 .NET 程序集加载：可能是 32 / 64 位不匹配，或文件本身已损坏。",
+            PluginFailureKind.MissingDependency =>
+                "插件缺少依赖文件：请确认整个插件包（不只是那个 dll）都放进来了。",
+            PluginFailureKind.HostMismatch =>
+                "插件引用了当前 NPS 里不存在的接口，多半是按旧版 API 编译的。",
+            PluginFailureKind.InitFailed =>
+                "插件初始化时抛出了异常，通常是它与当前 NPS 版本不兼容。",
+            _ => "可能是插件与 NPS 的兼容性问题。",
+        };
 
         // ---- 布局真源 ----
         //             列表行起点 +92
@@ -565,7 +585,159 @@ namespace NotchPeninsula
 
         private static SKRect GetRateDialogRect() => GetMarketDialogRect(4f, false);
 
-        private static SKRect GetNoticeDialogRect() => GetMarketDialogRect(2f, true);
+        // ---- 「插件加载失败」弹窗 ----
+        //
+        // 正文里有一串可点的群号：折行之后位置就散了，所以打开弹窗时按当前字体排一次版面，
+        // 绘制与命中都读这份结果。绘制自己折一遍、命中再折一遍，是这类行内链接最常见的错位来源。
+
+        private const float LoadFailedBodyDY = 12f;   // 正文首行基线距标题区末行（与其它弹窗同值）
+
+        private const string LoadFailedLinkText = "1080730621";
+
+        private const string LoadFailedQqUrl =
+            "https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW&jump_from=webapi"
+            + "&authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87";
+
+        private static readonly (string Text, bool IsLink)[] LoadFailedRuns =
+        {
+            // 具体原因那句是动态的（_loadFailedReason，按失败类型挑），这里只放固定的后半段
+            ("欢迎加入 QQ 群 ", false),
+            (LoadFailedLinkText, true),
+            ("，获取最新 NPS 测试版、一起讨论。", false),
+        };
+
+        // 「去插件详情看它要求的 NPS 版本」这句只对「版本 / 接口对不上」有意义：
+        // 缺依赖、文件损坏、位数不匹配时，用户去查版本号是白跑一趟。
+        private const string LoadFailedVersionHint = "具体插件依赖的 NPS 版本，可前往插件市场中该插件的详情里查看。";
+
+        private static bool NeedsVersionHint(PluginFailureKind kind)
+            => kind is PluginFailureKind.NotAPlugin
+                    or PluginFailureKind.HostMismatch
+                    or PluginFailureKind.InitFailed;
+
+        // 失败原因那句：由 ShowPluginLoadFailedDialog 按 PluginFailureKind 填
+        private string _loadFailedReason = "";
+        private bool _loadFailedWithVersionHint = false;
+
+        // 折行结果：每行若干段，段内文本属性一致（是否链接）
+        private readonly List<List<(string Text, bool IsLink)>> _loadFailedLines = new();
+
+        private int _loadFailedLinkLine = -1;      // 链接所在行号（-1 = 文案里没排到）
+        private float _loadFailedLinkOffsetX;      // 链接起点相对正文左缘的偏移
+        private float _loadFailedLinkWidth;
+
+        private bool _loadFailedLinkHovered = false;
+
+        /// <summary>按当前字体把失败文案排成行。群号单独成段，且保证不跨行（跨行后命中区就散了）。</summary>
+        private void BuildLoadFailedLayout()
+        {
+            _loadFailedLines.Clear();
+            _loadFailedLinkLine = -1;
+            _loadFailedLinkOffsetX = 0f;
+            _loadFailedLinkWidth = 0f;
+
+            float maxW = DialogInnerW;
+            float linkW = _subTextPaint.MeasureText(LoadFailedLinkText);
+
+            var line = new List<(string Text, bool IsLink)>();
+            var sb = new System.Text.StringBuilder();
+            float x = 0f;
+            bool sbIsLink = false;
+
+            void Flush()
+            {
+                if (sb.Length == 0) return;
+                line.Add((sb.ToString(), sbIsLink));
+                sb.Clear();
+            }
+
+            void BreakLine()
+            {
+                Flush();
+                if (line.Count > 0) _loadFailedLines.Add(line);
+                line = new List<(string, bool)>();
+                x = 0f;
+            }
+
+            // 先排「为什么失败」那句，再接固定的群 / 版本提示
+            var runs = new List<(string Text, bool IsLink)>(LoadFailedRuns.Length + 2);
+            if (_loadFailedReason.Length > 0) runs.Add((_loadFailedReason, false));
+            runs.AddRange(LoadFailedRuns);
+            if (_loadFailedWithVersionHint) runs.Add((LoadFailedVersionHint, false));
+
+            foreach (var (text, isLink) in runs)
+            {
+                // 整串群号必须落在同一行：当前行剩余宽度不够就先把这一行断掉
+                if (isLink && x + linkW > maxW && (sb.Length > 0 || line.Count > 0)) BreakLine();
+
+                foreach (char c in text)
+                {
+                    float w = _subTextPaint.MeasureText(c.ToString());
+
+                    // 链接段内部绝不换行（上面已保证放得下），否则命中区会跨两行
+                    if (!isLink && x + w > maxW && (sb.Length > 0 || line.Count > 0)) BreakLine();
+
+                    if (sb.Length > 0 && sbIsLink != isLink)
+                    {
+                        line.Add((sb.ToString(), sbIsLink));
+                        sb.Clear();
+                    }
+                    sbIsLink = isLink;
+
+                    if (isLink && _loadFailedLinkLine < 0)
+                    {
+                        _loadFailedLinkLine = _loadFailedLines.Count;   // 当前正在凑的这一行
+                        _loadFailedLinkOffsetX = x;
+                    }
+
+                    sb.Append(c);
+                    x += w;
+                }
+
+                if (isLink)
+                {
+                    // 整段走完才定宽：逐字累加会被 kerning 吃掉一点，直接量整串更准
+                    _loadFailedLinkWidth = linkW;
+                }
+            }
+
+            BreakLine();
+        }
+
+        // 失败弹窗的行数由文案折行结果决定，不能写死 2 行。
+        // 顺手兜底：绘制 / 悬停 / 点击三条路都要经过这里，万一哪条没走 ShowPluginLoadFailedDialog，
+        // 版面就在这里补出来 —— 空版面会让正文整块消失、链接也永远点不中。
+        private SKRect GetNoticeDialogRect()
+        {
+            if (_loadFailedLines.Count == 0) BuildLoadFailedLayout();
+            return GetMarketDialogRect(Math.Max(2, _loadFailedLines.Count), true);
+        }
+
+        /// <summary>失败弹窗正文里群号的命中区：行号与横向偏移都来自打开时算好的版面。</summary>
+        private bool HitLoadFailedLink(SKRect rect, float x, float y)
+        {
+            if (_loadFailedLinkLine < 0) return false;
+
+            float bodyY = rect.Top + DialogTitleH + 8f + LoadFailedBodyDY;
+            float lineY = bodyY + _loadFailedLinkLine * DialogLineH;
+            float x0 = rect.Left + DialogPad + _loadFailedLinkOffsetX;
+
+            // 纵向按 12pt 中文的上下沿放宽（基线 -14 ~ +6），横向各留 2px —— 别让用户非得点正字心
+            return x >= x0 - 2f && x <= x0 + _loadFailedLinkWidth + 2f
+                && y >= lineY - 14f && y <= lineY + 6f;
+        }
+
+        private void OpenLoadFailedQqLink()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(LoadFailedQqUrl) { UseShellExecute = true });
+            }
+            catch
+            {
+                // 没装浏览器 / 被安全软件拦：弹窗不能因此卡住
+            }
+        }
 
         private const float DialogBtnGap = 10f;
 
@@ -1046,6 +1218,8 @@ namespace NotchPeninsula
 
         private string _marketPendingHint = "";
         private bool _marketPendingHintIsError;
+        // 市场安装失败的类型：稍后弹窗按它挑说明句（安装是异步的，状态得先存着）
+        private PluginFailureKind _marketPendingFailure = PluginFailureKind.Other;
         private bool _marketPendingHintDone;
         private int _marketPendingRateIndex = -1;
 
@@ -1064,10 +1238,11 @@ namespace NotchPeninsula
             if (_marketPendingHintIsError && _marketPendingHint.Length > 0)
             {
                 SetMarketHint(_marketPendingHint, true);
-                ShowPluginLoadFailedDialog(render: false);
+                ShowPluginLoadFailedDialog(_marketPendingFailure, render: false);
             }
             _marketPendingHint = "";
             _marketPendingHintIsError = false;
+            _marketPendingFailure = PluginFailureKind.Other;
 
             if (rateTarget != null)
                 OpenRateDialog(rateTarget);   // 装完自动问一句评分
@@ -1082,9 +1257,10 @@ namespace NotchPeninsula
 
         private bool InstallDllPlugin(string tempFile)
         {
-            var (ok, msg) = PluginManager.Instance.Import(tempFile);   // 同 Id 旧版本由 Import 自动清掉
+            var (ok, msg, failure) = PluginManager.Instance.Import(tempFile);   // 同 Id 旧版本由 Import 自动清掉
             _marketPendingHint = ok ? "" : msg;
             _marketPendingHintIsError = !ok;
+            _marketPendingFailure = failure;
             return ok;
         }
 
@@ -1114,16 +1290,19 @@ namespace NotchPeninsula
             {
                 _marketPendingHint = $"安装 {mp.Name} 失败：包内未找到可加载的插件";
                 _marketPendingHintIsError = true;
+                _marketPendingFailure = PluginFailureKind.NotAPlugin;
                 return false;
             }
             if (PluginManager.Instance.Load(fresh))
             {
                 _marketPendingHint = "";   // 成功不提示（同上）
                 _marketPendingHintIsError = false;
+                _marketPendingFailure = PluginFailureKind.None;
                 return true;
             }
             _marketPendingHint = $"已安装但加载失败：{fresh.Error}";
             _marketPendingHintIsError = true;
+            _marketPendingFailure = fresh.Failure;
             return false;
         }
 
@@ -1154,11 +1333,28 @@ namespace NotchPeninsula
         {
             bool inside = TryGetCursorClientPos(out int px, out int py)
                 && GetCurrentDialogRect().Contains(px, py);
-            if (!inside || _hoveredDialogClose) { CloseMarketDialog(true); return; }
+            if (!inside) { CloseMarketDialog(true); return; }
+
+            // 关闭键、按钮、链接一律按落点重算：hover 由 WM_MOUSEMOVE 维护，
+            // 拖放刚结束 / 光标从别处移进来时它还是旧值 —— 只信 hover 就是「点了没反应」。
+            var dlgRect = GetCurrentDialogRect();
+            var closeRect = GetMarketDialogCloseRect(dlgRect);
+            closeRect.Inflate(4f, 4f);
+            _hoveredDialogClose = closeRect.Contains(px, py);
+            if (_hoveredDialogClose) { CloseMarketDialog(true); return; }
+
+            _hoveredDialogButton = HitDialogButton(dlgRect, px, py);
+            if (_marketDialog == MarketDialog.LoadFailed)
+            {
+                _loadFailedLinkHovered = HitLoadFailedLink(dlgRect, px, py);
+                Logger.Debug($"[弹窗] 链接判定 line={_loadFailedLinkLine} dx={_loadFailedLinkOffsetX:F0} "
+                           + $"w={_loadFailedLinkWidth:F0} 点击=({px},{py}) 命中={_loadFailedLinkHovered}");
+            }
 
             switch (_marketDialog)
             {
                 case MarketDialog.LoadFailed:
+                    if (_loadFailedLinkHovered) { OpenLoadFailedQqLink(); break; }   // 点链接不关弹窗
                     if (_hoveredDialogButton == 0) CloseMarketDialog(true);
                     break;
 

@@ -14,6 +14,26 @@ public enum PluginState
     Failed
 }
 
+/// <summary>
+/// 加载失败的具体原因。把「装不上」拆成用户看得懂、也能自己动手的那几种 ——
+/// 全都弹同一句「不兼容」等于什么都没说。
+/// </summary>
+public enum PluginFailureKind
+{
+    None,
+    /// <summary>程序集里找不到 INotchPlugin 实现：多半是插件自带了一份宿主接口副本，或根本不是 NPS 插件。</summary>
+    NotAPlugin,
+    /// <summary>不是合法的 .NET 程序集 / 位数不匹配（AnyCPU 以外的 x86 插件等）/ 文件损坏。</summary>
+    BadImage,
+    /// <summary>缺依赖文件：插件包没解全，或依赖的 dll 没一起放进来。</summary>
+    MissingDependency,
+    /// <summary>引用了当前宿主里不存在的类型或成员：按旧版 API 编译的插件。</summary>
+    HostMismatch,
+    /// <summary>构造实例或 Initialize 抛了异常。</summary>
+    InitFailed,
+    Other,
+}
+
 public sealed class PluginEntry
 {
     public string Key { get; init; } = "";
@@ -27,6 +47,9 @@ public sealed class PluginEntry
     public string Author { get; internal set; } = "";
     public PluginState State { get; internal set; } = PluginState.NotLoaded;
     public string? Error { get; internal set; }
+
+    /// <summary>加载失败的归类（<see cref="PluginFailureKind.None"/> = 没失败过）。错误原文仍在 <see cref="Error"/>。</summary>
+    public PluginFailureKind Failure { get; internal set; } = PluginFailureKind.None;
 
     internal string CachedName { get; set; } = "";
 
@@ -501,6 +524,10 @@ public sealed class PluginManager
         string? shadow = null;
         PluginLoadContext? ctx = null;
 
+        // 失败归因要看「走到哪一步」：程序集读不出来和 Initialize 抛异常是两类问题，
+        // 异常类型本身区分不了（Initialize 里什么都可能抛），所以用阶段做第一判据。
+        var stage = LoadStage.Assembly;
+
         if (e.Context != null)
         {
             var staleShadow = e.ShadowDir;
@@ -526,10 +553,12 @@ public sealed class PluginManager
                 TryDeleteDir(shadow);
                 e.State = PluginState.Failed;
                 e.Error = NoPluginError;
+                e.Failure = PluginFailureKind.NotAPlugin;
                 RaiseChanged();
                 return false;
             }
 
+            stage = LoadStage.Instance;
             var plugin = (INotchPlugin)Activator.CreateInstance(pluginType)!;
             e.Context = ctx;
             e.ShadowDir = shadow;
@@ -546,6 +575,7 @@ public sealed class PluginManager
             if (dedupSameId) RemoveSameIdDuplicates(e);
 
             _host.RegisterPlugin(e.Id, e.DisplayName, e.Version);
+            stage = LoadStage.Init;
             plugin.Initialize(_host.CreateScopedHost(e.Id));
 
             // 插件若实现了外部媒体会话源（见 Plugin/MediaSessionSource.cs），交给媒体链路。
@@ -594,10 +624,50 @@ public sealed class PluginManager
 
             e.State = PluginState.Failed;
             e.Error = ex.Message;
-            Logger.Error($"[PluginManager] 加载失败: {e.Key}", ex);
+            e.Failure = stage is LoadStage.Instance or LoadStage.Init
+                ? PluginFailureKind.InitFailed
+                : ClassifyLoadException(ex);
+            Logger.Error($"[PluginManager] 加载失败: {e.Key} ({e.Failure})", ex);
             RaiseChanged();
             return false;
         }
+    }
+
+    private enum LoadStage { Assembly, Instance, Init }
+
+    /// <summary>
+    /// 把加载期异常翻成用户能行动的几类。只看异常链，不猜 —— 猜错比不分类更糟。
+    /// </summary>
+    private static PluginFailureKind ClassifyLoadException(Exception ex)
+    {
+        for (Exception? cur = ex; cur != null; cur = cur.InnerException)
+        {
+            switch (cur)
+            {
+                case BadImageFormatException:
+                    return PluginFailureKind.BadImage;
+
+                case ReflectionTypeLoadException rtle:
+                {
+                    // 加载类型时缺文件 → 依赖没齐；否则就是类型/成员对不上（旧版 API）
+                    foreach (Exception? le in rtle.LoaderExceptions)
+                        if (le is FileNotFoundException or FileLoadException) return PluginFailureKind.MissingDependency;
+                    return PluginFailureKind.HostMismatch;
+                }
+
+                case FileNotFoundException:
+                case FileLoadException:
+                    return PluginFailureKind.MissingDependency;
+
+                case TypeLoadException:
+                case MissingMethodException:
+                case MissingFieldException:
+                case MissingMemberException:
+                    return PluginFailureKind.HostMismatch;
+            }
+        }
+
+        return PluginFailureKind.Other;
     }
 
     private void RemoveSameIdDuplicates(PluginEntry loaded)
@@ -766,11 +836,11 @@ public sealed class PluginManager
 
     // ---- 导入 / 移除 / 打开目录 ----
 
-    public (bool Ok, string Message) Import(string dllPath)
+    public (bool Ok, string Message, PluginFailureKind Failure) Import(string dllPath)
     {
         try
         {
-            if (!File.Exists(dllPath)) return (false, "文件不存在");
+            if (!File.Exists(dllPath)) return (false, "文件不存在", PluginFailureKind.Other);
 
             Directory.CreateDirectory(PluginsRoot);
             var target = Path.Combine(PluginsRoot, Path.GetFileName(dllPath));
@@ -782,23 +852,27 @@ public sealed class PluginManager
             Refresh();
 
             var e = Find(Path.GetFileName(target));
-            if (e == null) { TryDelete(target); return (false, "导入失败：无法识别插件"); }
+            if (e == null)
+            {
+                TryDelete(target);
+                return (false, "导入失败：无法识别插件", PluginFailureKind.NotAPlugin);
+            }
 
-            if (Load(e, dedupSameId: true)) return (true, $"已导入并加载：{e.FriendlyName}");
+            if (Load(e, dedupSameId: true)) return (true, $"已导入并加载：{e.FriendlyName}", PluginFailureKind.None);
 
             if (e.Error == NoPluginError)
             {
                 TryDelete(target);
                 lock (_lock) _entries.Remove(e);
                 RaiseChanged();
-                return (false, "所选 DLL 不是合法的 NotchPeninsula 插件");
+                return (false, "所选 DLL 不是合法的 NotchPeninsula 插件", PluginFailureKind.NotAPlugin);
             }
-            return (false, $"已导入但加载失败：{e.Error}");
+            return (false, $"已导入但加载失败：{e.Error}", e.Failure);
         }
         catch (Exception ex)
         {
             Logger.Error("[PluginManager] 导入插件失败", ex);
-            return (false, $"导入失败：{ex.Message}");
+            return (false, $"导入失败：{ex.Message}", PluginFailureKind.Other);
         }
     }
 
