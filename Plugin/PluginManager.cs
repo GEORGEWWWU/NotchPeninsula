@@ -697,6 +697,7 @@ public sealed class PluginManager
 
             if (!string.IsNullOrEmpty(id)) _host.UnregisterPlugin(id);
             if (!string.IsNullOrEmpty(id)) _host.ClearUninstallDirectory(id);   // 重新加载会再注册一份
+            if (!string.IsNullOrEmpty(id)) _host.ClearUninstallAction(id);      // 委托拖着插件程序集，不清退不掉上下文
         }
         finally
         {
@@ -803,6 +804,10 @@ public sealed class PluginManager
 
     public void Remove(PluginEntry e)
     {
+        // 插件登记的卸载前操作先跑：这一刻实例还活着、它自己的资源都拿得到，Unload 之后就没机会了。
+        // 禁用 / 重载 / 退出都不走这里，所以「只在真正卸载时执行一次」是成立的。
+        _host.RunUninstallAction(e.Id);
+
         Unload(e);
 
         lock (_lock)

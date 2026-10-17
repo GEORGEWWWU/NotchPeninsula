@@ -225,4 +225,12 @@ public interface IPluginHost
     /// 点「保留」就只卸载插件、目录原样留在磁盘上。
     /// </summary>
     void RegisterUninstallDirectory(string path);
+
+    /// <summary>
+    /// 注册「卸载前要执行的操作」—— 插件自己清理宿主看不见的东西（注册表项、外部进程、临时文件……）。
+    /// 只在用户**真正卸载这个插件**时执行一次：禁用、重载、程序退出都不执行，也不弹任何窗。
+    /// 执行时机是「插件实例还活着、文件还没删」，所以里面可以正常用自己的资源；
+    /// 抛异常只会记一条日志，不会挡住卸载。重复注册以最后一次为准。
+    /// </summary>
+    void RegisterUninstallAction(Action action);
 }

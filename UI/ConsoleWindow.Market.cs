@@ -531,10 +531,14 @@ namespace NotchPeninsula
 
         private static SKRect GetMarketDialogRect(float bodyLines, bool buttons)
         {
+            // 标题行 → 正文区的起点与 DrawDialogHeader 的返回值严格一致（Top + DialogTitleH + 8），
+            // 否则按钮会按一个高度算、正文按另一个高度画，留白忽大忽小。
             float ph = DialogTitleH + 8f;
-            if (bodyLines > 0f) ph += bodyLines * DialogLineH + 8f;
-            if (buttons) ph += DialogBtnH + 18f;
-            ph += 6f;
+            if (bodyLines > 0f) ph += bodyLines * DialogLineH;
+            // 按钮区：正文末到按钮、按钮到弹窗底各留同样多。
+            // 原来是「上沿 6 / 下沿 18」，按钮贴着正文、离底边老远，整块看着往下掉。
+            if (buttons) ph += DialogBtnPad + DialogBtnH + DialogBtnPad;
+            else ph += 14f;   // 无按钮弹窗（详情 / 评分）的底部呼吸，与原高度一致
             float px = (WIDTH - DialogW) / 2f;
             float py = Math.Max(TITLE_BAR_HEIGHT + 24f, (HEIGHT - ph) / 2f);
             return new SKRect(px, py, px + DialogW, py + ph);
@@ -565,16 +569,19 @@ namespace NotchPeninsula
 
         private const float DialogBtnGap = 10f;
 
+        private const float DialogBtnPad = 14f;   // 正文末 → 按钮 / 按钮 → 弹窗底，两边同值
+
         /// <summary>
-        /// 弹窗按钮统一几何：一组按钮整体在弹窗里居中，从左到右排；单按钮退化成原来那个居中位置。
-        /// 绘制与命中都从这里取，别再各算一套。
+        /// 弹窗按钮统一几何：一组按钮<b>靠右</b>排（与右上角 ❌ 同侧，Windows 惯例），
+        /// index 从左到右 0 起、最右那个是主操作。绘制与命中都从这里取，别再各算一套。
+        /// 居中摆一个按钮在 380 宽的弹窗里两侧各空 130，重心是散的；右对齐后和标题、❌ 同一条竖线收口。
         /// </summary>
         private static SKRect GetDialogButtonRect(SKRect popup, int index, int count)
         {
-            float totalW = count * DialogBtnW + (count - 1) * DialogBtnGap;
-            float x0 = popup.MidX - totalW / 2f + index * (DialogBtnW + DialogBtnGap);
-            float y = popup.Bottom - 6f - DialogBtnH - 12f;
-            return new SKRect(x0, y, x0 + DialogBtnW, y + DialogBtnH);
+            float right = popup.Right - DialogPad;
+            float x = right - (count - index) * DialogBtnW - (count - index - 1) * DialogBtnGap;
+            float y = popup.Bottom - DialogBtnPad - DialogBtnH;
+            return new SKRect(x, y, x + DialogBtnW, y + DialogBtnH);
         }
 
         private static int DialogButtonCount(MarketDialog kind) => kind switch
