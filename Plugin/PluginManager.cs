@@ -168,8 +168,19 @@ public sealed class PluginManager
     public bool IsDisabled(PluginEntry? e)
     {
         if (e == null || string.IsNullOrEmpty(e.Key)) return false;
-        lock (_lock) return _disabled.Contains(e.Key);
+        // 两个判据都要看：_disabled 是「用户按下过禁用」（重启后 Initialize 据此跳过它），
+        // State 是「这一次到底跑起来没有」（刚导入还没 Load、加载失败都算）。只看 _disabled
+        // 就会出现「插件在跑、市场页却写已禁用」—— 与插件页按 State 显示的「运行中」正好打架。
+        lock (_lock)
+        {
+            if (_disabled.Contains(e.Key)) return true;
+            return e.State != PluginState.Loaded;
+        }
     }
+
+    /// <summary>插件登记的「卸载时可删的数据目录」（插件没注册就是 null）。</summary>
+    public string? GetUninstallDirectory(PluginEntry? e)
+        => e == null || string.IsNullOrEmpty(e.Id) ? null : _host.GetUninstallDirectory(e.Id);
 
     public sealed class DisplayItem
     {
@@ -552,6 +563,10 @@ public sealed class PluginManager
             }
 
             e.State = PluginState.Loaded;
+            // 加载成功就等于「用户要它跑」。重装 / 重载一个已禁用的插件只走到这里（不经过 SetEnabled），
+            // 不摘掉 _disabled 会同时坏两件事：市场页按 _disabled 判「已禁用」与实际运行状态自相矛盾；
+            // 下次启动 Initialize 又按 _disabled 把它跳过 —— 重装完看着好好的，重启就没了。
+            ClearDisabled(e.Key);
             // 新加载的插件若还没有顺序位置，追加到末尾并同步给宿主
             EnsureOrder();
             PushOrderToHost();
@@ -681,6 +696,8 @@ public sealed class PluginManager
                 MediaController.UnregisterExternalSource(mediaSource);
 
             if (!string.IsNullOrEmpty(id)) _host.UnregisterPlugin(id);
+            if (!string.IsNullOrEmpty(id)) _host.ClearUninstallDirectory(id);   // 重新加载会再注册一份
+            if (!string.IsNullOrEmpty(id)) _host.ClearUninstallAction(id);      // 委托拖着插件程序集，不清退不掉上下文
         }
         finally
         {
@@ -787,6 +804,10 @@ public sealed class PluginManager
 
     public void Remove(PluginEntry e)
     {
+        // 插件登记的卸载前操作先跑：这一刻实例还活着、它自己的资源都拿得到，Unload 之后就没机会了。
+        // 禁用 / 重载 / 退出都不走这里，所以「只在真正卸载时执行一次」是成立的。
+        _host.RunUninstallAction(e.Id);
+
         Unload(e);
 
         lock (_lock)
@@ -797,6 +818,7 @@ public sealed class PluginManager
         SaveOrderList();
 
         if (_hidden.Remove(e.Key)) SaveHiddenList();
+        ClearDisabled(e.Key);   // 文件都进回收站了，禁用清单里再留着这个 key 只会越积越长
 
         try
         {
@@ -918,12 +940,24 @@ public sealed class PluginManager
         catch (Exception ex) { Logger.Error("[PluginManager] 读取插件禁用清单失败", ex); }
     }
 
+    /// <summary>从禁用清单里摘掉一个 key（加载成功时调用）。清单真变了才落盘，避免每次加载都写注册表。</summary>
+    private void ClearDisabled(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+        bool removed;
+        lock (_lock) removed = _disabled.Remove(key);
+        if (removed) SaveDisabledList();
+    }
+
     private void SaveDisabledList()
     {
         try
         {
+            // 市场安装在后台线程也会走到这里，先拿快照再落盘：边序列化边被 UI 线程改会抛集合已修改。
+            string raw;
+            lock (_lock) raw = string.Join(";", _disabled);
             using var key = Registry.CurrentUser.CreateSubKey(RegistryBase);
-            key?.SetValue(DisabledListValue, string.Join(";", _disabled));
+            key?.SetValue(DisabledListValue, raw);
         }
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件禁用清单失败", ex); }
     }

@@ -150,6 +150,9 @@ namespace NotchPeninsula
         public const int GCS_COMPSTR = 0x0008;
         public const int GCS_RESULTSTR = 0x0800;
         public const int CFS_POINT = 0x0002;
+        // 告诉 IME「组字串由应用自己画」：用这个样式定位后，输入法不再自己浮一个组字小窗
+        //（不认这个标志的输入法仍会浮，至少微软拼音 / 搜狗认）。
+        public const int CFS_FORCE_POSITION = 0x0020;
         public const int CFS_CANDIDATEPOS = 0x0040;
         public const int CFS_EXCLUDE = 0x0080;
         public const int VK_LBUTTON = 0x01;
