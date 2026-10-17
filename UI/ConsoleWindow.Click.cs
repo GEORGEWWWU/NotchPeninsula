@@ -9,9 +9,65 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // 鼠标左键按下：整窗点击分派。
-        private void OnLeftButtonDown(IntPtr hwnd, int clickY)
+        // 「全局快捷键」卡片的命中几何：绘制（DrawHotkeyCard）、悬停（OnMouseMove）、
+        // 点击（落点重算）三处共用，避免任何一处改了 y 值对不上。
+        private static bool HitMediaHotkeyToggle(int x, int y, bool anyPopupOpen)
+            => !anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30
+               && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
+
+        private static int HitMediaHotkeyRow(int x, int y, bool anyPopupOpen)
         {
+            if (anyPopupOpen || x < HOTKEY_BOX_X || x > HOTKEY_BOX_RIGHT) return -1;
+            for (int i = 0; i < MediaHotkeys.Count; i++)
+            {
+                float rowTop = HOTKEY_CARD_Y + HOTKEY_HEAD_H + i * HOTKEY_ROW_H + 4;
+                if (y >= rowTop && y <= rowTop + HOTKEY_BOX_H) return i;
+            }
+            return -1;
+        }
+
+        private static bool HitIslandHotkeyToggle(int x, int y)
+            => x >= WIDTH - 80 && x <= WIDTH - 30
+               && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 12
+               && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 32;
+
+        private static bool HitIslandHotkeyBox(int x, int y)
+        {
+            float top = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
+            return x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT && y >= top && y <= top + HOTKEY_BOX_H;
+        }
+
+        // 点击判定读的是 hover 状态，而 hover 只由 WM_MOUSEMOVE 维护：
+        // 光标从别的窗口移进来、或窗口刚弹出就点，MOVE 可能压根没到过这里 ——
+        // 命中项还是 -1，于是「点了录制框什么都没发生」。落点坐标就在手上，就地重算一次。
+        private void SyncHotkeyHoverFromPoint(int x, int y)
+        {
+            if (_selectedTab == 2)
+            {
+                bool anyPopupOpen = _dropdownOpen || _matchModeDropdownOpen || _appDropdownOpen;
+                bool toggle = HitMediaHotkeyToggle(x, y, anyPopupOpen);
+                int row = HitMediaHotkeyRow(x, y, anyPopupOpen);
+                if (toggle == _hotkeyToggleHovered && row == _hoveredHotkeyRow) return;
+                _hotkeyToggleHovered = toggle;
+                _hoveredHotkeyRow = row;
+                Render();
+            }
+            else if (_selectedTab == 3)
+            {
+                bool toggle = HitIslandHotkeyToggle(x, y);
+                bool box = HitIslandHotkeyBox(x, y);
+                if (toggle == _islandHotkeyToggleHovered && box == _islandHotkeyHovered) return;
+                _islandHotkeyToggleHovered = toggle;
+                _islandHotkeyHovered = box;
+                Render();
+            }
+        }
+
+        // 鼠标左键按下：整窗点击分派。
+        private void OnLeftButtonDown(IntPtr hwnd, int clickX, int clickY)
+        {
+            SyncHotkeyHoverFromPoint(clickX, clickY);
+
             if (_hotkeyRecordingIndex >= 0 && _hoveredHotkeyRow != _hotkeyRecordingIndex)
                 CancelHotkeyRecording();
 
@@ -384,6 +440,8 @@ namespace NotchPeninsula
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
                 _hotkeyRecordingIndex = _hoveredHotkeyRow;
+                // 客户区键盘消息录不到系统级组合，先挂低层钩子（装不上就靠下面的 WM_KEYDOWN 兜底）。
+                KeyboardCapture.Start(_hwnd);
                 if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
                 Render();
             }
@@ -401,6 +459,7 @@ namespace NotchPeninsula
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
                 _islandHotkeyRecording = true;
+                KeyboardCapture.Start(_hwnd);
                 if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
                 Render();
             }

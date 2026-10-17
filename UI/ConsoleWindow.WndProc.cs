@@ -375,19 +375,9 @@ namespace NotchPeninsula
                     Render();
                 }
 
-                bool newHotkeyToggleHovered = !anyPopupOpen
-                    && x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
+                bool newHotkeyToggleHovered = HitMediaHotkeyToggle(x, y, anyPopupOpen);
 
-                int newHoveredHotkeyRow = -1;
-                if (!anyPopupOpen && x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT)
-                {
-                    for (int i = 0; i < MediaHotkeys.Count; i++)
-                    {
-                        float rowTop = HOTKEY_CARD_Y + HOTKEY_HEAD_H + i * HOTKEY_ROW_H + 4;
-                        if (y >= rowTop && y <= rowTop + HOTKEY_BOX_H) { newHoveredHotkeyRow = i; break; }
-                    }
-                }
+                int newHoveredHotkeyRow = HitMediaHotkeyRow(x, y, anyPopupOpen);
 
                 if (newHotkeyToggleHovered != _hotkeyToggleHovered || newHoveredHotkeyRow != _hoveredHotkeyRow)
                 {
@@ -420,13 +410,8 @@ namespace NotchPeninsula
 
                 // 「唤出灵动岛」：总开关在卡片头部右侧，键位框在下面那行
                 //（y 值与 DrawIslandHotkeyCard 严格同源）
-                newIslandHotkeyToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 12
-                    && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 32;
-
-                float islandBoxTop = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
-                newIslandHotkeyHovered = x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT
-                    && y >= islandBoxTop && y <= islandBoxTop + HOTKEY_BOX_H;
+                newIslandHotkeyToggleHovered = HitIslandHotkeyToggle(x, y);
+                newIslandHotkeyHovered = HitIslandHotkeyBox(x, y);
             }
             else if (_selectedTab == 7) // 插件市场
             {

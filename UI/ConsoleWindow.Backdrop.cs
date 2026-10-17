@@ -13,6 +13,9 @@ namespace NotchPeninsula
 
         private bool _backdropRebuilding;
 
+        // 系统拖动 / 缩放循环中（WM_ENTERSIZEMOVE ~ WM_EXITSIZEMOVE）。
+        private bool _dragMoving;
+
         private static readonly IntPtr BACKDROP_REFRESH_TIMER_ID = new IntPtr(0x4E50); // "NP"
 
         private enum BackdropMaterialMode
@@ -38,7 +41,7 @@ namespace NotchPeninsula
                 Win32.DeleteObject(region);
         }
 
-        private void SyncBackdropToContent()
+        private void SyncBackdropToContent(bool keepZOrder = false)
         {
             if (_backdropHwnd == IntPtr.Zero || _hwnd == IntPtr.Zero)
                 return;
@@ -48,8 +51,27 @@ namespace NotchPeninsula
 
             int width = rect.Right - rect.Left;
             int height = rect.Bottom - rect.Top;
-            // 拖动时就只剩一块亚克力空板把内容盖住。
-            _ = Win32.SetWindowPos(_backdropHwnd, _hwnd, rect.Left, rect.Top, width, height, Win32.SWP_NOACTIVATE);
+            // 拖动中不再重申 Z 序：每次重排都要 DWM 重新合成一遍，
+            // 亚克力窗会有一帧「重新贴材质」的空档，看起来就是窗口中间劈开、露出下面。
+            uint flags = Win32.SWP_NOACTIVATE | (keepZOrder ? Win32.SWP_NOZORDER : 0u);
+            _ = Win32.SetWindowPos(_backdropHwnd, keepZOrder ? IntPtr.Zero : _hwnd,
+                rect.Left, rect.Top, width, height, flags);
+        }
+
+        // 拖动 / 缩放期间：材质窗继续跟随，但不做任何视觉切换（不藏、不实心化、不重绘）。
+        // 拖动循环里插一次 UpdateLayeredWindow 就是撕裂的根 —— 位图上传和窗口移动是两件事，
+        // 赶在一起就会看到半张窗口是空的。所以拖动期间只有位置同步这一件事。
+        private void BeginDragMove()
+        {
+            _dragMoving = true;
+        }
+
+        private void EndDragMove()
+        {
+            if (!_dragMoving) return;
+            _dragMoving = false;
+            SyncBackdropToContent();   // 收尾对齐一次（带上 Z 序）
+            Render();                  // 拖动期间被挡下的重绘在这里补一帧（窗口已停，不会撕裂）
         }
 
         // 材质窗只能「藏」，不能「最小化」。
@@ -233,7 +255,9 @@ namespace NotchPeninsula
 
         private void ReapplyBackdropMaterial()
         {
-            if (_backdropHwnd == IntPtr.Zero)
+            // 拖动中重贴材质等于把亚克力板拆了重建：闪一帧是很明显的「窗口中间空了一块」。
+            // 材质属性此刻没变，跳过不损失；下次激活会照常补。
+            if (_backdropHwnd == IntPtr.Zero || _dragMoving)
                 return;
 
             switch (_backdropMode)
@@ -255,7 +279,8 @@ namespace NotchPeninsula
 
         private void RebuildBackdropWindow()
         {
-            if (_backdropRebuilding || _hwnd == IntPtr.Zero)
+            // 销毁重建材质窗在拖动中做，等于当着用户的面把背景铲掉重刷。
+            if (_backdropRebuilding || _hwnd == IntPtr.Zero || _dragMoving)
                 return;
 
             if (!Win32.GetWindowRect(_hwnd, out var rect))

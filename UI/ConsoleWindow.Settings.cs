@@ -266,7 +266,30 @@ namespace NotchPeninsula
 
         // ---- 媒体设置页「全局快捷键」的录制 ----
 
-        private bool HandleHotkeyRecording(int vk)
+        // 钩子路径（KeyboardCapture）的入口：修饰键由钩子当场读好带过来，
+        // 窗口自己再读 GetKeyState 已经没有意义 —— 那会儿手早松了。
+        private bool HandleCapturedKey(int vk, uint mods)
+        {
+            if (_hotkeyRecordingIndex >= 0) return HandleHotkeyRecording(vk, mods);
+            if (_islandHotkeyRecording) return HandleIslandHotkeyRecording(vk, mods);
+            return false;
+        }
+
+        // 兜底路径（钩子装不上时的窗口键盘消息）：此刻按键状态还在本线程队列里。
+        private static uint ReadModsNow()
+        {
+            uint mods = 0;
+            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
+            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
+            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
+            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
+                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
+            return mods;
+        }
+
+        private bool HandleHotkeyRecording(int vk) => HandleHotkeyRecording(vk, ReadModsNow());
+
+        private bool HandleHotkeyRecording(int vk, uint mods)
         {
             if (_hotkeyRecordingIndex < 0) return false;
 
@@ -287,13 +310,6 @@ namespace NotchPeninsula
                 return true;
             }
 
-            uint mods = 0;
-            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
-            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
-            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
-            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
-                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
-
             string error = MediaHotkeys.SetBinding(_hotkeyRecordingIndex, mods, vk);
             if (error.Length > 0)
             {
@@ -312,9 +328,14 @@ namespace NotchPeninsula
         {
             int edited = _hotkeyRecordingIndex;
             _hotkeyRecordingIndex = -1;
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
-            _hotkeyHint = MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError : "";
+            // 键位存下来了 ≠ 立刻生效：总开关关着时一个都不注册。
+            // 这正是「设好快捷键按下去没反应」最常见的成因，所以宁可挂一句提示。
+            _hotkeyHint = edited >= 0 && MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError
+                : (edited >= 0 && !MediaHotkeys.IsEnabled && MediaHotkeys.IsBound(edited)
+                    ? "已保存，打开右上角开关后生效" : "");
             Render();
         }
 
@@ -323,6 +344,7 @@ namespace NotchPeninsula
             if (_hotkeyRecordingIndex < 0) return;
             _hotkeyRecordingIndex = -1;
             _hotkeyHint = "";
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
             Render();
@@ -330,7 +352,9 @@ namespace NotchPeninsula
 
         // ---- 交互设置页「唤出灵动岛」的录制（单键位，逻辑与上面那套同源） ----
 
-        private bool HandleIslandHotkeyRecording(int vk)
+        private bool HandleIslandHotkeyRecording(int vk) => HandleIslandHotkeyRecording(vk, ReadModsNow());
+
+        private bool HandleIslandHotkeyRecording(int vk, uint mods)
         {
             if (!_islandHotkeyRecording) return false;
 
@@ -352,13 +376,6 @@ namespace NotchPeninsula
                 return true;
             }
 
-            uint mods = 0;
-            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
-            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
-            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
-            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
-                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
-
             string error = IslandHotkey.SetBinding(mods, vk);
             if (error.Length > 0)
             {
@@ -376,9 +393,13 @@ namespace NotchPeninsula
         private void EndIslandHotkeyRecording()
         {
             _islandHotkeyRecording = false;
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
-            _islandHotkeyHint = IslandHotkey.LastError;
+            // 同媒体验收：存下来但开关没开时并不生效，得说一声。
+            _islandHotkeyHint = IslandHotkey.LastError.Length > 0 ? IslandHotkey.LastError
+                : (!IslandHotkey.IsEnabled && IslandHotkey.IsBound
+                    ? "已保存，打开右上角开关后生效" : "");
             Render();
         }
 
@@ -387,6 +408,7 @@ namespace NotchPeninsula
             if (!_islandHotkeyRecording) return;
             _islandHotkeyRecording = false;
             _islandHotkeyHint = "";
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
             Render();

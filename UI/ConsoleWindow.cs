@@ -1028,7 +1028,16 @@ namespace NotchPeninsula
             switch (msg)
             {
                 case Win32.WM_MOVE:
-                    SyncBackdropToContent();
+                    // 拖动中材质窗照样跟随（不跟就会漏出桌面），只是不再重申 Z 序。
+                    SyncBackdropToContent(keepZOrder: _dragMoving);
+                    break;
+
+                case Win32.WM_ENTERSIZEMOVE:
+                    BeginDragMove();
+                    break;
+
+                case Win32.WM_EXITSIZEMOVE:
+                    EndDragMove();
                     break;
 
                 // 最小化 / 还原：材质窗跟着内容窗一起藏 / 亮。
@@ -1074,6 +1083,9 @@ namespace NotchPeninsula
                     return IntPtr.Zero;
 
                 case Win32.WM_TIMER:
+                    // 拖动期间暂停定时器事务（滚动条淡出 / 材质补修都会 Render 或重贴材质，
+                    // 插进拖动帧就是卡顿来源）。周期定时器松手后照常继续，等价于「拖动期间冻结」。
+                    if (_dragMoving) return IntPtr.Zero;
                     if (wParam == BACKDROP_REFRESH_TIMER_ID)
                     {
                         Win32.KillTimer(hwnd, BACKDROP_REFRESH_TIMER_ID);
@@ -1126,6 +1138,10 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_MOUSEMOVE:
+                    // 拖动中不碰 hover：窗口追不上鼠标时，光标会短暂落回客户区，
+                    // hover 一变就 Render，而 Render 走 UpdateLayeredWindow（顺手把窗口重定位一次），
+                    // 等于在拖动循环里插一次窗口搬移 —— 越拖越跟不上。
+                    if (_dragMoving) break;
                     OnMouseMove(
                         (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale),
                         (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale),
@@ -1133,8 +1149,13 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    OnLeftButtonDown(hwnd, (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale));
+                {
+                    int lp = Win32.Low32(lParam);
+                    OnLeftButtonDown(hwnd,
+                        (int)((short)(lp & 0xFFFF) / _dpiScale),
+                        (int)((short)((lp >> 16) & 0xFFFF) / _dpiScale));
                     break;
+                }
 
                 case Win32.WM_MOUSEWHEEL:
                     if (_toastSoundDropdownOpen)
@@ -1261,15 +1282,25 @@ namespace NotchPeninsula
                     if (HandleMarketSearchKey(Win32.Low32(wParam), '\0')) return IntPtr.Zero;
                     break;
 
+                // 录制期按键走低层钩子投递（能拿到 Win 组合与被系统抢先的键）。
+                case KeyboardCapture.WM_CAPTURED_KEY:
+                    if (HandleCapturedKey((int)Win32.Low32(wParam), (uint)Win32.Low32(lParam)))
+                        return IntPtr.Zero;
+                    break;
+
                 case Win32.WM_SYSKEYDOWN:
                     if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     if (HandleIslandHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     break;
                 case WM_ASYNC_RERENDER:
+                    // 拖动中不重绘（EndDragMove 收尾时会补一帧，这里丢了不会留下过期画面）。
+                    if (_dragMoving) return IntPtr.Zero;
                     Render();
                     return IntPtr.Zero;
 
                 case Win32.WM_DESTROY:
+                    // 钩子挂在 UI 线程上，窗口没了必须摘掉：否则键盘会一直卡在「按下没反应」。
+                    KeyboardCapture.Stop();
                     RevokePluginDropTarget();
                     if (_backdropHwnd != IntPtr.Zero)
                     {
@@ -1288,6 +1319,9 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_SETCURSOR:
+                    // 拖动中光标归系统拖动循环管：窗口追不上鼠标时，鼠标会短暂落到客户区，
+                    // 这里再塞一个手型光标就和系统的移动光标抢起来了（看着像多出一个指针）。
+                    if (_dragMoving) break;
                     if ((Win32.Low32(lParam) & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
                     {
                         if (_isHoveringDisabledArea)
@@ -1309,6 +1343,11 @@ namespace NotchPeninsula
 
         private void Render()
         {
+            // 拖动期间一次都不要上传位图：UpdateLayeredWindow 会把窗口重新定位一次，
+            // 和系统拖动循环的移动撞在一起，就是「半张窗口空掉、直接看到下面」。
+            // 拖动中该显示的状态变化不会丢 —— EndDragMove 收尾会补一帧。
+            if (_dragMoving) return;
+
             lock (_renderLock)
             {
                 RenderCore();
