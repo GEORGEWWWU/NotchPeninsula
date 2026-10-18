@@ -28,6 +28,7 @@ namespace NotchPeninsula
         public static bool IsTopmostEnabled = true; // 默认开启置顶
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         private readonly IntPtr _hwnd;
+        private readonly IntPtr _ownerHwnd;   // 只做「不进任务栏/Alt-Tab」的隐藏 owner，见构造函数注释
         private readonly MediaController _media;
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
@@ -226,6 +227,20 @@ namespace NotchPeninsula
             _cachedMonitorIndex = idx;
         }
 
+        private const string OwnerClassName = "NotchPeninsulaOwnerClass";
+        private static readonly Win32.WndProc _ownerWndProc = Win32.DefWindowProc; // 必须持有引用，否则被 GC 后回调直接崩
+
+        private static void RegisterOwnerClass(IntPtr hInstance)
+        {
+            var wc = new Win32.WNDCLASS
+            {
+                lpfnWndProc = _ownerWndProc,
+                hInstance = hInstance,
+                lpszClassName = OwnerClassName
+            };
+            Win32.RegisterClass(ref wc);   // 已注册过会返回 0（ERROR_CLASS_ALREADY_EXISTS），无所谓
+        }
+
         public NotchWindow()
         {
             _instanceForExit = this; // 托盘"退出"回调需要一条静态可达的引用链
@@ -251,6 +266,17 @@ namespace NotchPeninsula
             if (Win32.RegisterClass(ref wc) == 0)
                 throw new Exception($"注册窗口类失败！错误码: {Marshal.GetLastWin32Error()}");
 
+            // 隐藏 owner 窗：只为把岛体挤出任务栏 / Alt-Tab。
+            // ⚠️ 岛体**不能再带 WS_EX_TOOLWINDOW**：OBS 等捕获端枚举窗口时直接跳过该扩展样式
+            //    （obs-studio libobs/util/windows/window-helpers.c 的 check_window_valid），
+            //    表现就是「窗口捕获列表里根本没有 NotchPeninsula」。
+            //    owner 用独立的类 + DefWindowProc，**绝不能**复用 NotchPeninsulaClass ——
+            //    那边的 WndProc 收到 WM_DESTROY 会把整个程序关掉。
+            RegisterOwnerClass(wc.hInstance);
+            _ownerHwnd = Win32.CreateWindowEx(
+                Win32.WS_EX_TOOLWINDOW, OwnerClassName, "NotchPeninsulaOwner",
+                Win32.WS_POPUP, 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
+
             _dpiScale = Win32.GetDpiForSystem() / 96f;
             _scaledWidth = (int)(Renderer.WINDOW_WIDTH * _dpiScale);
             _scaledHeight = (int)(Renderer.MAX_WINDOW_HEIGHT * _dpiScale);
@@ -260,15 +286,15 @@ namespace NotchPeninsula
             int y = _cachedMonitorY;
 
             // 动态判定是否追加置顶属性
-            int exStyle = Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_LAYERED;
+            int exStyle = Win32.WS_EX_LAYERED;
             if (IsTopmostEnabled) exStyle |= Win32.WS_EX_TOPMOST;
 
             _hwnd = Win32.CreateWindowEx(
                 exStyle,
-                "NotchPeninsulaClass", "Notch",
+                "NotchPeninsulaClass", "NotchPeninsula",
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
                 x, y, _scaledWidth, _scaledHeight, // 传入缩放后的尺寸
-                IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero
+                _ownerHwnd, IntPtr.Zero, wc.hInstance, IntPtr.Zero
             );
 
             InitRenderBuffer();
