@@ -1345,7 +1345,16 @@ namespace NotchPeninsula
                 bool subDisabled = i < _pluginSubDisabled.Count && _pluginSubDisabled[i];
                 float infoBaseline = rowY + 37;
                 string shownSub = TruncateText(sub, _subTextPaint, infoTextMax);
-                if (subDisabled && shownSub.StartsWith("已禁用", StringComparison.Ordinal))
+                if (entry.State == PluginState.Failed && shownSub.StartsWith("加载失败", StringComparison.Ordinal))
+                {
+                    // 红字：这一行是弹窗关掉之后唯一还能说明「它没跑起来」的地方
+                    const string tag = "加载失败";
+                    _subTextPaint.Color = new SKColor(232, 100, 100);
+                    canvas.DrawText(tag, CONTENT_TEXT_X, infoBaseline, _subTextPaint);
+                    _subTextPaint.Color = Neutral(170);
+                    canvas.DrawText(shownSub[tag.Length..], CONTENT_TEXT_X + _subTextPaint.MeasureText(tag), infoBaseline, _subTextPaint);
+                }
+                else if (subDisabled && shownSub.StartsWith("已禁用", StringComparison.Ordinal))
                 {
                     const string tag = "已禁用";
                     _subTextPaint.Color = new SKColor(0, 140, 240);
@@ -1424,17 +1433,11 @@ namespace NotchPeninsula
                 canvas.DrawText(dropHint, hintX, hintY, _uiTextPaint);
                 _uiTextPaint.Color = _fgColor;
             }
-
-            if (_marketDialog == MarketDialog.UninstallConfirm || _marketDialog == MarketDialog.UninstallData)
-                DrawUninstallDialog(canvas);
-            else if (_marketDialog == MarketDialog.LoadFailed)
-                DrawLoadFailedDialog(canvas);
         }
 
         private void RenderTabMarket(SKCanvas canvas)
         {
             EnsureMarketData();
-            ApplyPendingMarketResult();   // 消费后台安装结果：刷新列表 + 提示 + 评分弹窗
             if (_marketDataDirty) { _marketDataDirty = false; RefreshMarketFilter(); }   // UI 线程重建过滤视图
 
             float cardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
@@ -1780,7 +1783,15 @@ namespace NotchPeninsula
                 }
                 _subTextPaint.Color = Neutral(170);
             }
+        }
 
+        /// <summary>
+        /// 弹窗绘制总入口。三分支＝三种弹窗，放在这里而不是各自的页签渲染里：
+        /// 加载失败可能在任何页签发生（市场后台装完、插件页重载 / 启用），
+        /// 只画在 6、7 就会出现「点击被模态拦掉、画面上什么都没弹」的假死。
+        /// </summary>
+        private void RenderPluginDialogs(SKCanvas canvas)
+        {
             if (_marketDialog == MarketDialog.UninstallConfirm || _marketDialog == MarketDialog.UninstallData)
             {
                 DrawUninstallDialog(canvas);

@@ -88,6 +88,9 @@ namespace NotchPeninsula
             // 不然用户得先松手、再自己切页签。切页签的收尾跟点侧栏走同一套。
             if (_selectedTab != 6)
             {
+                // 模态弹窗开着就别抢页签：结论还没被确认，跳走就等于把它吃掉。
+                if (IsConfirmDialogOpen) return false;
+
                 _selectedTab = 6;
                 CloseMarketDialog();
                 _marketCategoryOpen = false;
@@ -169,6 +172,7 @@ namespace NotchPeninsula
                 var mgr = PluginManager.Instance;
                 int okCount = 0;
                 string lastMsg = "";
+                string lastFailed = "";
                 PluginFailureKind lastFailure = PluginFailureKind.Other;
 
                 foreach (var path in dlls)
@@ -176,7 +180,7 @@ namespace NotchPeninsula
                     var (ok, msg, failure) = mgr.Import(path);
                     lastMsg = msg;
                     if (ok) okCount++;
-                    else lastFailure = failure;
+                    else { lastFailure = failure; lastFailed = Path.GetFileName(path); }
                     Logger.Info($"[PluginCenter] 拖入导入 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
@@ -186,7 +190,7 @@ namespace NotchPeninsula
 
                 ResetPluginHover();
                 RefreshPluginView();
-                if (okCount != dlls.Count) ShowPluginLoadFailedDialog(lastFailure, render: false);
+                if (okCount != dlls.Count) ReportPluginLoadFailure(lastFailure, lastFailed, render: false);
                 Render();
             }
             catch (Exception ex)
@@ -203,6 +207,7 @@ namespace NotchPeninsula
             {
                 int okCount = 0;
                 string lastMsg = "";
+                string lastFailed = "";
                 PluginFailureKind lastFailure = PluginFailureKind.Other;
 
                 foreach (string path in zips)
@@ -210,7 +215,7 @@ namespace NotchPeninsula
                     var (ok, msg, failure) = InstallPluginPackage(path);
                     lastMsg = msg;
                     if (ok) okCount++;
-                    else lastFailure = failure;
+                    else { lastFailure = failure; lastFailed = Path.GetFileName(path); }
                     Logger.Info($"[PluginCenter] 拖入安装 {Path.GetFileName(path)}：{(ok ? "成功" : "失败")} — {msg}");
                 }
 
@@ -219,7 +224,7 @@ namespace NotchPeninsula
 
                 ResetPluginHover();
                 RefreshPluginView();
-                if (okCount != zips.Count) ShowPluginLoadFailedDialog(lastFailure, render: false);
+                if (okCount != zips.Count) ReportPluginLoadFailure(lastFailure, lastFailed, render: false);
                 Render();
             }
             catch (Exception ex)

@@ -224,16 +224,33 @@ namespace NotchPeninsula
         private bool IsConfirmDialogOpen =>
             _marketDialog is MarketDialog.LoadFailed or MarketDialog.UninstallConfirm or MarketDialog.UninstallData;
 
-        private void ShowPluginLoadFailedDialog(PluginFailureKind kind = PluginFailureKind.Other, bool render = true)
+        /// <summary>
+        /// 打开「插件加载失败」弹窗。<paramref name="subject"/> = 是哪个插件（可为空：启动期批量失败时
+        /// 不指名更有用），有名字时正文会带一句，否则用户根本不知道是哪一次操作出的错。
+        /// </summary>
+        private void ShowPluginLoadFailedDialog(PluginFailureKind kind = PluginFailureKind.Other, string subject = "", bool render = true)
         {
             _marketDialog = MarketDialog.LoadFailed;
             _marketDialogIndex = -1;
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
             _loadFailedLinkHovered = false;
-            _loadFailedReason = ReasonTextOf(kind);
+            _loadFailedReason = subject.Length > 0
+                ? $"「{subject}」：{ReasonTextOf(kind)}"
+                : ReasonTextOf(kind);
             _loadFailedWithVersionHint = NeedsVersionHint(kind);
             BuildLoadFailedLayout();   // 版面（行数 + 群号位置）在打开时定一次，绘制与命中共用
+            if (render) Render();
+        }
+
+        /// <summary>
+        /// 所有「插件加载失败」的唯一出口 —— 市场安装、插件页导入 / 拖入 / 重载 / 启用，全都从这里走。
+        /// 以前每处各弹一次、甚至有整条路径压根不弹，用户点完没动静也没人解释。
+        /// </summary>
+        private void ReportPluginLoadFailure(PluginFailureKind kind, string subject, string? marketHint = null, bool render = true)
+        {
+            if (!string.IsNullOrEmpty(marketHint)) SetMarketHint(marketHint!, true);
+            ShowPluginLoadFailedDialog(kind, subject, render: false);
             if (render) Render();
         }
 
@@ -331,7 +348,9 @@ namespace NotchPeninsula
 
             _marketView.Sort(CompareMarketPlugins);
             _marketScroll = 0;
-            CloseMarketDialog();   // 过滤结果变了，原下标全部失效 —— 弹窗一起收掉
+            // 过滤结果变了，原下标全部失效：只有靠下标的详情 / 评分弹窗要跟着收。
+            // 提示类弹窗（加载失败 / 卸载确认）跟列表无关，不能被顺手关掉。
+            if (!IsConfirmDialogOpen) CloseMarketDialog();
             ResetPluginHover();
         }
 
@@ -801,7 +820,7 @@ namespace NotchPeninsula
         })
         { Timeout = TimeSpan.FromSeconds(12) };
 
-        private void OpenRateDialog(MarketPlugin mp)
+        private void OpenRateDialog(MarketPlugin mp, bool render = true)
         {
             _marketDialog = MarketDialog.Rate;
             // 漏了它弹窗会因为「拿不到插件」被当成失效而直接关掉。
@@ -814,7 +833,7 @@ namespace NotchPeninsula
             _rateStatus = "";
             _rateStatusIsError = false;
             _rateLoading = true;
-            Render();
+            if (render) Render();
 
             Task.Run(async () =>
             {
@@ -1168,11 +1187,12 @@ namespace NotchPeninsula
             var local = MatchLocalPlugin(mp);
             if (local != null && PluginManager.Instance.IsDisabled(local))
             {
-                PluginManager.Instance.SetEnabled(local, true);
+                bool started = PluginManager.Instance.SetEnabled(local, true);
                 ResetPluginHover();
                 RefreshPluginView();
                 if (_marketOnlyInstalled) RefreshMarketFilter();
-                Render();
+                if (!started) ReportPluginLoadFailure(local.Failure, local.FriendlyName, "启用失败");   // 启用 = 再加载一次，失败照样要说
+                else Render();
                 return;
             }
 
@@ -1198,13 +1218,16 @@ namespace NotchPeninsula
                         await src.CopyToAsync(dst);
                     }
 
-                    ok = mp.IsZip ? InstallZipPlugin(mp, tempFile) : InstallDllPlugin(tempFile);
+                    ok = mp.IsZip ? InstallZipPlugin(mp, tempFile) : InstallDllPlugin(mp, tempFile);
                 }
                 catch (Exception ex)
                 {
                     Logger.Error("[Market] 安装插件失败", ex);
                     _marketPendingHint = $"安装 {mp.Name} 失败：{ex.Message}";
                     _marketPendingHintIsError = true;
+                    // 下载 / 解压炸了跟插件本身没关系，不能沿用上一轮的失败类型去解释
+                    _marketPendingFailure = PluginFailureKind.Other;
+                    _marketPendingPluginName = mp.Name;
                 }
                 finally
                 {
@@ -1220,6 +1243,8 @@ namespace NotchPeninsula
         private bool _marketPendingHintIsError;
         // 市场安装失败的类型：稍后弹窗按它挑说明句（安装是异步的，状态得先存着）
         private PluginFailureKind _marketPendingFailure = PluginFailureKind.Other;
+        // 失败的是哪个插件：弹窗正文要指名，否则用户不知道刚才哪一步炸了
+        private string _marketPendingPluginName = "";
         private bool _marketPendingHintDone;
         private int _marketPendingRateIndex = -1;
 
@@ -1235,17 +1260,21 @@ namespace NotchPeninsula
             RefreshPluginView();          // 已安装列表 + 市场行按钮文案都靠它重算
             if (_marketOnlyInstalled) RefreshMarketFilter();
 
-            if (_marketPendingHintIsError && _marketPendingHint.Length > 0)
-            {
-                SetMarketHint(_marketPendingHint, true);
-                ShowPluginLoadFailedDialog(_marketPendingFailure, render: false);
-            }
+            // 后台装完就得当场把失败弹出来，不管用户此刻在看哪一页 ——
+            // 这里以前只在市场页的渲染里消费，切走一次结果就直接丢了。
+            if (_marketPendingHintIsError)
+                ReportPluginLoadFailure(_marketPendingFailure, _marketPendingPluginName, _marketPendingHint, render: false);
+
             _marketPendingHint = "";
             _marketPendingHintIsError = false;
             _marketPendingFailure = PluginFailureKind.Other;
+            _marketPendingPluginName = "";
 
-            if (rateTarget != null)
-                OpenRateDialog(rateTarget);   // 装完自动问一句评分
+            // 评分弹窗只在市场页问：它靠点击市场行来交互，画在别的页签上既挡视线又没人点得中。
+            // 失败弹窗相反 —— 必须不分页签当场弹，所以两者的「什么时候出现」不能共用一套判断。
+            // render: false —— 这里本身就在 Render() 里面，再叫一次会把整帧重画一遍叠在当前画布上。
+            if (rateTarget != null && _selectedTab == 7)
+                OpenRateDialog(rateTarget, render: false);   // 装完自动问一句评分
         }
 
         private int IndexOfMarketView(MarketPlugin mp)
@@ -1255,17 +1284,20 @@ namespace NotchPeninsula
             return -1;
         }
 
-        private bool InstallDllPlugin(string tempFile)
+        private bool InstallDllPlugin(MarketPlugin mp, string tempFile)
         {
             var (ok, msg, failure) = PluginManager.Instance.Import(tempFile);   // 同 Id 旧版本由 Import 自动清掉
             _marketPendingHint = ok ? "" : msg;
             _marketPendingHintIsError = !ok;
             _marketPendingFailure = failure;
+            _marketPendingPluginName = mp.Name;
             return ok;
         }
 
         private bool InstallZipPlugin(MarketPlugin mp, string zipPath)
         {
+            _marketPendingPluginName = mp.Name;
+
             string extractDir = Path.Combine(Path.GetTempPath(), "NotchPeninsula", "market", "x_" + mp.Id);
             if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
             ZipFile.ExtractToDirectory(zipPath, extractDir);
@@ -1328,16 +1360,22 @@ namespace NotchPeninsula
             Render();
         }
 
-        /// <summary>确认类弹窗的按钮分派。点 ❌ / 点弹窗外都由这里先收掉（什么都不执行）。</summary>
+        /// <summary>
+        /// 确认类弹窗的按钮分派。点 ❌ / 点弹窗外都由这里先收掉（什么都不执行）。
+        /// 点弹窗外<b>不关</b>：这类弹窗是「必须先看一眼」的结论，糊掉就等于把提示吃了 ——
+        /// 要退出只能点弹窗上的按钮（❌ 或底部按钮）。
+        /// </summary>
         private void HandleConfirmDialogClick()
         {
-            bool inside = TryGetCursorClientPos(out int px, out int py)
-                && GetCurrentDialogRect().Contains(px, py);
-            if (!inside) { CloseMarketDialog(true); return; }
+            var dlgRect = GetCurrentDialogRect();
+            // 几何算不出来（弹窗状态坏了）就别拦：宁可放行，也不能把人困在一个看不见的模态里。
+            if (dlgRect.Width <= 0f) { CloseMarketDialog(true); return; }
+
+            bool inside = TryGetCursorClientPos(out int px, out int py) && dlgRect.Contains(px, py);
+            if (!inside) return;
 
             // 关闭键、按钮、链接一律按落点重算：hover 由 WM_MOUSEMOVE 维护，
             // 拖放刚结束 / 光标从别处移进来时它还是旧值 —— 只信 hover 就是「点了没反应」。
-            var dlgRect = GetCurrentDialogRect();
             var closeRect = GetMarketDialogCloseRect(dlgRect);
             closeRect.Inflate(4f, 4f);
             _hoveredDialogClose = closeRect.Contains(px, py);
