@@ -217,7 +217,7 @@ namespace NotchPeninsula
                 // 在实例化任何窗口和媒体控制器之前，先将配置注入内存
                 LoadSettings();
 
-                // 首次启动（或升级到新版本后第一次启动）先走一遍偏好引导：只写注册表，
+                // 从没引导过时先走一遍偏好引导（升级不算）：只写注册表，
                 // 写完就直接进软件。跳过 / 关闭 / 按 ESC 都算过，失败也绝不拦着启动。
                 OnboardingWindow.ShowIfNeeded(args);
 

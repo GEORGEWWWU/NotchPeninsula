@@ -124,7 +124,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 首次启动（或升级到新版本后第一次启动）时弹引导；`-onboard` 强制弹。
+        /// 只在"从没引导过"时弹一次（与版本号无关）；`-onboard` 强制弹。
         /// 引导跑在自己的后台线程上，主线程只负责等；任何异常 / 卡死都不会拖住启动流程。
         /// </summary>
         public static void ShowIfNeeded(string[] args)
@@ -151,14 +151,14 @@ namespace NotchPeninsula
             try
             {
                 var prev = OnboardedVersion;
-                // 判据只看这一个值：与用户已有的其它设置无关。老用户升级（1.9.5 → 2.0.0）时
-                // 注册表里根本没这个值（1.9.5 没有引导代码），prev = null ⇒ 必然弹。
-                if (!force && prev == CurrentVersion) return;
+                // 判据只看"引导过没有"，跟版本号无关：注册表里有值（不 care 是哪个版本写的）就说明
+                // 用户已经走过一遍，升级换版本号不许再抓回来重播。只有 prev == null（全新安装，
+                // 或从没有引导代码的老版本首次升级上来）才弹这一次。
+                if (!force && prev != null) return;
 
                 _reason = _selfTest != 0 ? "自测强制"
                         : force ? "-onboard 强制"
-                        : prev == null ? "首次安装（注册表无标记）"
-                        : $"版本变更 {prev} → {CurrentVersion}";
+                        : "首次安装（注册表无标记）";
             }
             catch (Exception ex)
             {
