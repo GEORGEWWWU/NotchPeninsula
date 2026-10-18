@@ -9,6 +9,36 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
+        /// <summary>
+        /// 模态弹窗自己的悬停。6、7 页签在各自的列表分支里已经算过一遍，这里负责其余页签：
+        /// 弹窗既然能跨页签弹出（加载失败），它的按钮反馈也得跟着跨页签存在。
+        /// </summary>
+        private void UpdateModalDialogHover(int x, int y)
+        {
+            var rect = GetCurrentDialogRect();
+            bool closeHovered = false;
+            int button = -1;
+            bool linkHovered = false;
+
+            if (rect.Width > 0)
+            {
+                var close = GetMarketDialogCloseRect(rect);
+                close.Inflate(4f, 4f);
+                closeHovered = close.Contains(x, y);
+                if (!closeHovered) button = HitDialogButton(rect, x, y);
+                if (!closeHovered && _marketDialog == MarketDialog.LoadFailed)
+                    linkHovered = HitLoadFailedLink(rect, x, y);
+            }
+
+            if (closeHovered == _hoveredDialogClose && button == _hoveredDialogButton
+                && linkHovered == _loadFailedLinkHovered) return;
+
+            _hoveredDialogClose = closeHovered;
+            _hoveredDialogButton = button;
+            _loadFailedLinkHovered = linkHovered;
+            Render();
+        }
+
         //    因此它是一个整体，不要再按页签拆开。
         private void OnMouseMove(int x, int y, bool dragging)
         {
@@ -25,6 +55,21 @@ namespace NotchPeninsula
                 newMinHovered = false;
                 newCloseHovered = false;
                 newHoveredTab = -1;
+
+                // 加载失败弹窗可能出现在任意页签（市场后台装完 / 插件页重载），
+                // 所以它的悬停不能只挂在 6、7 的分支里 —— 否则在别的页签上「好的」不会亮。
+                if (_selectedTab != 6 && _selectedTab != 7)
+                {
+                    // 顶栏 / 侧栏的悬停先落定：直接 return 会把「最小化键还亮着」留在画面上。
+                    bool chromeChanged = newMinHovered != _minHovered
+                        || newCloseHovered != _closeHovered || newHoveredTab != _hoveredTab;
+                    _minHovered = newMinHovered;
+                    _closeHovered = newCloseHovered;
+                    _hoveredTab = newHoveredTab;
+                    if (chromeChanged) Render();
+                    UpdateModalDialogHover(x, y);
+                    return;
+                }
             }
 
             int newHoveredTheme = -1;

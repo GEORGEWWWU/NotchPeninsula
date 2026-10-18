@@ -810,8 +810,13 @@ public sealed class PluginManager
         return Load(fresh);
     }
 
-    public void SetEnabled(PluginEntry e, bool enabled)
+    /// <summary>
+    /// 启用 / 禁用。返回值 = 「要的终态达成了没有」：禁用恒为 true，启用则等于这次加载的结果。
+    /// 以前这里是 void，调用方没法知道 Load 又失败了 —— 用户点「启用」看着没反应，也没人告诉他为什么。
+    /// </summary>
+    public bool SetEnabled(PluginEntry e, bool enabled)
     {
+        bool ok = true;
         if (enabled)
         {
             _disabled.Remove(e.Key);
@@ -821,7 +826,7 @@ public sealed class PluginManager
 
             Refresh();
             var fresh = Find(e.Key) ?? e;
-            if (fresh.State != PluginState.Loaded) Load(fresh);
+            if (fresh.State != PluginState.Loaded) ok = Load(fresh);
             PushOrderToHost();
         }
         else
@@ -832,6 +837,7 @@ public sealed class PluginManager
             Unload(cur);
         }
         RaiseChanged();
+        return ok;
     }
 
     // ---- 导入 / 移除 / 打开目录 ----

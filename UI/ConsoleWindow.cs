@@ -1410,6 +1410,10 @@ namespace NotchPeninsula
 
             RenderSidebar(canvas);
 
+            // 后台安装 / 更新的结论要在这一帧就消费掉：页内容与弹窗都得用刷新后的状态。
+            // 放在页签分派之前、且不分页签 —— 用户在别的页签时失败也必须当场看见。
+            ApplyPendingMarketResult();
+
             if (_selectedTab == 0) RenderTabGeneral(canvas);
             else if (_selectedTab == 1) RenderTabDisplay(canvas);
             else if (_selectedTab == 2) RenderTabMedia(canvas);
@@ -1418,6 +1422,10 @@ namespace NotchPeninsula
             else if (_selectedTab == 5) RenderTabPersonalize(canvas);
             else if (_selectedTab == 6) RenderTabPlugins(canvas);
             else if (_selectedTab == 7) RenderTabMarket(canvas);
+
+            // 弹窗统一画在页内容之上，不分页签：只画在 6、7 会变成
+            // 「模态已经拦下所有点击、画面上却什么都没有」的假死。
+            RenderPluginDialogs(canvas);
 
             canvas.Restore();
 

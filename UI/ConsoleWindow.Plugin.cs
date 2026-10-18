@@ -53,11 +53,18 @@ namespace NotchPeninsula
             for (int i = 0; i < _pluginView.Count; i++)
             {
                 var entry = _pluginView[i];
-                bool disabled = entry.State == PluginState.NotLoaded;
+                // 三态必须分开说。以前只判 NotLoaded ⇒ 加载失败的插件在列表里写着「运行中」，
+                // 弹窗一关用户就再也看不出它其实没跑起来。
+                string state = entry.State switch
+                {
+                    PluginState.Loaded => "运行中",
+                    PluginState.Failed => "加载失败",
+                    _ => "已禁用",
+                };
                 string tail = string.IsNullOrEmpty(entry.Version) ? "" : $" · v{entry.Version}";
                 if (!string.IsNullOrEmpty(entry.Author)) tail += $" · {entry.Author}";
-                _pluginSubDisabled.Add(disabled);
-                _pluginSubTexts.Add((disabled ? "已禁用" : "运行中") + tail);
+                _pluginSubDisabled.Add(entry.State != PluginState.Loaded);
+                _pluginSubTexts.Add(state + tail);
             }
 
             // 行内悬停索引一并清空，避免指向错行。
@@ -147,7 +154,7 @@ namespace NotchPeninsula
 
                 ResetPluginHover();
                 RefreshPluginView();
-                if (!ok) ShowPluginLoadFailedDialog(failure, render: false);
+                if (!ok) ReportPluginLoadFailure(failure, Path.GetFileName(picked), render: false);
                 Render();
             }
             catch (Exception ex)

@@ -118,7 +118,9 @@ namespace NotchPeninsula
 
             _selectedTab = tab;
             _dropdownOpen = false;
-            CloseMarketDialog();
+            // 模态弹窗只认它自己的按钮：切页签不能把「加载失败」这类结论顺手带走。
+            // （实际点侧栏时已在 OnLeftButtonDown 最前面被拦下，这里是兜底。）
+            if (!IsConfirmDialogOpen) CloseMarketDialog();
             CloseAllDropdowns();
             _marketCategoryOpen = false;
             _marketSearchFocused = false;
@@ -143,9 +145,8 @@ namespace NotchPeninsula
             _marketHintIsError = false;
             _marketHintDeadline = 0;      // 定时器下次 tick 会自己停
 
-            _marketPendingHint = "";
-            _marketPendingHintIsError = false;
-            _marketPendingFailure = PluginFailureKind.Other;
+            // _marketPending* 不在这里清：那是后台安装任务的结论，还没被弹窗消费掉，
+            // 切页签顺手清掉就等于「装失败了你刚好换了一页，所以没提醒你」。
 
             _aboutExportHint = "";
             _hotkeyHint = "";
@@ -684,12 +685,27 @@ namespace NotchPeninsula
                 else if (_hoveredPluginToggle != -1)
                 {
                     var pe = GetPluginAt(_hoveredPluginToggle);
-                    if (pe != null) { PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    if (pe != null)
+                    {
+                        bool ok = PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled);
+                        ResetPluginHover();
+                        RefreshPluginView();
+                        // 开关点了没反应是最糟的反馈：加载失败必须当场说清楚。
+                        if (!ok) { _pluginHint = "启用失败"; _pluginHintIsError = true; ReportPluginLoadFailure(pe.Failure, pe.FriendlyName, "启用失败"); }
+                        else Render();
+                    }
                 }
                 else if (_hoveredPluginReload != -1)
                 {
                     var pe = GetPluginAt(_hoveredPluginReload);
-                    if (pe != null) { PluginManager.Instance.Reload(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    if (pe != null)
+                    {
+                        bool ok = PluginManager.Instance.Reload(pe);
+                        ResetPluginHover();
+                        RefreshPluginView();
+                        if (!ok) { _pluginHint = "重载失败"; _pluginHintIsError = true; ReportPluginLoadFailure(pe.Failure, pe.FriendlyName, "重载失败"); }
+                        else Render();
+                    }
                 }
                 else if (_hoveredPluginRemove != -1)
                 {
@@ -719,10 +735,8 @@ namespace NotchPeninsula
                     }
                     else
                     {
-                        // 点弹窗内其它位置：不关。点弹窗外：关。
-                        bool inside = TryGetCursorClientPos(out int px, out int py)
-                            && GetCurrentDialogRect().Contains(px, py);
-                        if (!inside) CloseMarketDialog(true);
+                        // 点弹窗内部其它位置：不关。点弹窗外部：也不关。
+                        // 统一规矩是「只能点弹窗上的按钮退出」，点空白糊掉是最容易把内容一起糊没的路径。
                     }
                 }
                 else if (_marketCategoryOpen)
