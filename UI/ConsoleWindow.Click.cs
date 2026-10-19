@@ -413,9 +413,36 @@ namespace NotchPeninsula
             else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
             {
                 Renderer.IslandAcrylic = _hoveredMaterialIndex == 1;
+                Renderer.IslandLiquidGlass = _hoveredMaterialIndex == 2;
                 Renderer.ApplyThemeColors(); // 岛体涂层厚度要跟着换
                 Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                // 切走玻璃时那张参数卡当场消失，悬停索引一并清掉，别留着下一帧误命中
+                _hoveredGlassQualityIndex = _hoveredGlassSourceIndex = _hoveredGlassParamIndex
+                    = _hoveredGlassParamLevel = -1;
                 NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
+                Render();
+            }
+            else if (_selectedTab == 5 && _hoveredGlassQualityIndex != -1)
+            {
+                // 换质量 = 换抓屏倍率 + 模糊核：抓屏那边已经 Expire 过，这里再兜一次重建
+                LiquidGlass.Quality = _hoveredGlassQualityIndex;
+                Program.SaveSetting("LiquidGlassQuality", _hoveredGlassQualityIndex);
+                NotchWindow.RequestAcrylicRebuild();
+                Render();
+            }
+            else if (_selectedTab == 5 && _hoveredGlassSourceIndex != -1)
+            {
+                // 抓屏方式：放大镜不可用时点它也无效（会静默回退兼容），所以这里顺手校一次
+                IslandBackdrop.UseMagnifier = _hoveredGlassSourceIndex == 0 && !MagnifierBackdrop.IsDisabled;
+                Program.SaveSetting("GlassUseMagnifier", IslandBackdrop.UseMagnifier ? 1 : 0);
+                IslandBackdrop.Expire();
+                NotchWindow.RequestAcrylicRebuild();
+                Render();
+            }
+            else if (_selectedTab == 5 && _hoveredGlassParamIndex != -1 && _hoveredGlassParamLevel >= 0)
+            {
+                ApplyGlassLevel(_hoveredGlassParamIndex, _hoveredGlassParamLevel);
                 Render();
             }
             else if (_selectedTab == 5 && _hoveredOpacityIndex != -1)

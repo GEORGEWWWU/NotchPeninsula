@@ -61,6 +61,15 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
+        // 液态玻璃 9 根滑轨的唯一落库口（参数是下标 + 档位）。
+        // 悬停拖拽与单击走同一条路，免得两处各写一遍导致设置对不上。
+        private void ApplyGlassLevel(int paramIndex, int level)
+        {
+            if (paramIndex < 0 || paramIndex >= LiquidGlass.ParamCount) return;
+            LiquidGlass.SetLevel(paramIndex, level);
+            Program.SaveSetting(LiquidGlass.ParamKeys[paramIndex], LiquidGlass.GetLevel(paramIndex));
+        }
+
         private const float THEME_CARD_Y = CARD_TOP_Y;
 
         private const float THEME_CARD_H = 112f;   // 两行：主题配色 + 背景材质
@@ -78,9 +87,11 @@ namespace NotchPeninsula
         private const float THEME_SEG_Y = 28f;
 
         // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟
-        private const float MAT_SEG_W = THEME_SEG_W;
+        // 三档里「液态玻璃」是四个字（13.5px 下约 54px），比主题那排的档位宽，
+        // 所以这一排单独加宽；副标题同步收短，避免文字撞到控件上。
+        private const float MAT_SEG_W = 176f;
 
-        private const float MAT_SEG_X = THEME_SEG_X;
+        private const float MAT_SEG_X = WIDTH - CONTENT_TEXT_RM - MAT_SEG_W;
 
         // 两行之间的行距：原 42 两行贴太近，2026-10-10 加大到 50（卡高同步 +8）
         private const float THEME_ROW_GAP = 50f;
@@ -91,6 +102,38 @@ namespace NotchPeninsula
         private const float MAT_TITLE_DY = MAT_SEG_Y - 2f;   // 76
 
         private const float MAT_SUB_DY = MAT_SEG_Y + 18f;    // 96
+
+        // 尺寸卡：4 行 × 34 + 上下各留 12
+        private const float SIZE_CARD_H = 148f;
+
+        // ---- 「液态玻璃」卡：只在材质选到液态玻璃时出现，挂在尺寸卡下面 ----
+        // 第一行并排两个分段控件（玻璃质量 / 抓屏方式），下面 9 根滑轨排成两列（5 行）。
+        private const float GLASS_CARD_Y = SIZE_CARD_Y + SIZE_CARD_H + CARD_GAP;   // 380
+
+        private const float GLASS_CARD_H = 218f;
+
+        private const float GLASS_SEG_Y = 12f;                  // 第一行：分段控件在卡内的顶部偏移
+
+        private const float GLASS_QUALITY_SEG_W = 150f;
+
+        private const float GLASS_QUALITY_SEG_X = 262f;
+
+        private const float GLASS_SOURCE_SEG_W = 90f;
+
+        private const float GLASS_SOURCE_SEG_X = 482f;
+
+        private const float GLASS_ROW0_Y = 56f;                 // 滑轨区第一行（卡内偏移）
+
+        private const float GLASS_ROW_H = 30f;
+
+        // 两列：左列标签/滑轨/档位名，右列整体右移 188px
+        private const float GLASS_COL_W = 188f;
+
+        private const float GLASS_SLIDER_X = CONTENT_TEXT_X + 50f;              // 252（让开标签）
+
+        private const float GLASS_SLIDER_END = GLASS_SLIDER_X + 90f;            // 342
+
+        private const float GLASS_LEVEL_TEXT_X = GLASS_SLIDER_END + 6f;         // 348
 
         private const float OPACITY_SLIDER_DY = 44f;
 

@@ -1235,9 +1235,10 @@ namespace NotchPeninsula
             // 亚克力仍是实验特性：复用通用设置里 MSP 那枚「实验性」标签
             DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X,
                 themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
-            canvas.DrawText("胶囊内模糊真实桌面背景", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
+            canvas.DrawText("胶囊内背景材质", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
             DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
-                ["实体", "亚克力"], Renderer.IslandAcrylic ? 1 : 0, _hoveredMaterialIndex);
+                ["实体", "亚克力", "液态玻璃"], Renderer.IslandLiquidGlass ? 2 : (Renderer.IslandAcrylic ? 1 : 0),
+                _hoveredMaterialIndex);
 
             float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
             canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBg);
@@ -1274,6 +1275,69 @@ namespace NotchPeninsula
                 _dynamicTextPaint.TextSize = 13f;
             }
             DrawMultiCard(SIZE_CARD_Y, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
+
+            // 液态玻璃参数卡：只在材质选到「液态玻璃」时出现 —— 实体 / 亚克力下这些滑块没有任何意义
+            if (Renderer.IslandLiquidGlass)
+            {
+                float gY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
+                var gRect = new SKRect(CONTENT_L, gY, WIDTH - CONTENT_RM, gY + GLASS_CARD_H);
+                canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
+
+                float segY = gY + GLASS_SEG_Y;
+                float segTextY = segY + 20f;
+                canvas.DrawText("玻璃质量", CONTENT_TEXT_X, segTextY, _uiTextPaint);
+                DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
+                    ["流畅", "均衡", "精细"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
+
+                // 抓屏方式：放大镜那条线 1:1 全分辨率；放大镜不可用时会静默回退「兼容」
+                bool magOn = IslandBackdrop.UseMagnifier && !MagnifierBackdrop.IsDisabled;
+                canvas.DrawText("抓屏", GLASS_SOURCE_SEG_X - 62f, segTextY, _uiTextPaint);
+                DrawSegmented(canvas, GLASS_SOURCE_SEG_X, segY, GLASS_SOURCE_SEG_W, SEG_H,
+                    ["放大镜", "兼容"], magOn ? 0 : 1, _hoveredGlassSourceIndex);
+
+                // 9 根滑轨排成两列：左列第 0/2/4/6/8 项，右列第 1/3/5/7 项
+                for (int row = 0; row < 5; row++)
+                {
+                    float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
+                    DrawGlassSlider(canvas, rowY, 0, row * 2);
+                    DrawGlassSlider(canvas, rowY, 1, row * 2 + 1);
+                }
+            }
+        }
+
+        // 液态玻璃的一根 5 档滑轨：标签 + 滑轨 + 右侧档位名，与背景透明度那根同口径。
+        // col 0 = 左列，1 = 右列（整体右移 GLASS_COL_W）。
+        private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
+        {
+            if (paramIndex >= LiquidGlass.ParamCount) return;
+
+            float dx = col * GLASS_COL_W;
+            float x0 = GLASS_SLIDER_X + dx, x1 = GLASS_SLIDER_END + dx;
+            float y = rowY + 17f;
+
+            canvas.DrawText(LiquidGlass.ParamNames[paramIndex], CONTENT_TEXT_X + dx, y, _subTextPaint);
+
+            int level = Math.Clamp(LiquidGlass.GetLevel(paramIndex), 0, LiquidGlass.MaxLevel);
+            bool hovered = _hoveredGlassParamIndex == paramIndex;
+            int hoveredLevel = hovered ? _hoveredGlassParamLevel : -1;
+
+            float w = x1 - x0;
+            canvas.DrawLine(x0, y, x1, y, _separatorPaint);
+            _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
+            _dynamicStrokePaint.StrokeWidth = 2f;
+            canvas.DrawLine(x0, y, x0 + (w / LiquidGlass.MaxLevel) * level, y, _dynamicStrokePaint);
+            _dynamicStrokePaint.StrokeWidth = 1.5f;
+            for (int i = 0; i <= LiquidGlass.MaxLevel; i++)
+            {
+                bool sel = level == i, hov = hoveredLevel == i;
+                if (!sel && !hov) continue;
+                float px = x0 + (w / LiquidGlass.MaxLevel) * i;
+                _dynamicFillPaint.Color = sel ? new SKColor(0, 120, 212) : Overlay(80);
+                canvas.DrawCircle(px, y, sel ? 6 : 4, _dynamicFillPaint);
+            }
+
+            canvas.DrawText(GlassLevelLabels[level], GLASS_LEVEL_TEXT_X + dx, y, _subTextPaint);
         }
 
         private void RenderTabPlugins(SKCanvas canvas)

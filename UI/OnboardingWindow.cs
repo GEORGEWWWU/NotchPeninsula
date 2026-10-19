@@ -296,7 +296,7 @@ namespace NotchPeninsula
         {
             _style = Math.Clamp(Renderer.NotchStyle, 0, 1);
             _theme = Math.Clamp(Renderer.ThemeMode, 0, 2);
-            _material = Renderer.IslandAcrylic ? 1 : 0;
+            _material = Renderer.IslandLiquidGlass ? 2 : (Renderer.IslandAcrylic ? 1 : 0);
             _mode = Renderer.StandbyActive ? 0 : 1;
             _autoStart = true;   // 引导里默认推荐开启，用户不点就按开启处理
             _monitors = BuildMonitorNames();
@@ -546,8 +546,10 @@ namespace NotchPeninsula
                 case ACT_MATERIAL:
                     _material = val;
                     Renderer.IslandAcrylic = _material == 1;
+                    Renderer.IslandLiquidGlass = _material == 2;
                     Renderer.ApplyThemeColors();          // 岛体涂层厚度要跟着换
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                    Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
                     break;
 
                 case ACT_MONITOR:
@@ -898,7 +900,7 @@ namespace NotchPeninsula
 
             Row(c, BODY_TOP, "形态", ["经典刘海", "悬浮灵动岛"], _style, ACT_STYLE, CTRL_X, CTRL_W);
             Row(c, BODY_TOP + ROW_GAP, "主题配色", ["黑", "白", "跟随系统"], _theme, ACT_THEME, CTRL_X, CTRL_W);
-            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力"], _material, ACT_MATERIAL, CTRL_X, CTRL_W);
+            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力", "液态玻璃"], _material, ACT_MATERIAL, CTRL_X, CTRL_W);
         }
 
         private void DrawPreview(SKCanvas c, SKRect box)
@@ -906,7 +908,7 @@ namespace NotchPeninsula
             float cx = box.MidX, cy = box.MidY;
 
             _fill.Color = M(Light ? SKColors.White : SKColors.Black);
-            if (_material == 1) _fill.Color = _fill.Color.WithAlpha((byte)(_fill.Color.Alpha * 0.62f));
+            if (_material != 0) _fill.Color = _fill.Color.WithAlpha((byte)(_fill.Color.Alpha * (_material == 2 ? 0.74f : 0.62f)));
             _stroke.Color = M(Light ? new SKColor(0, 0, 0, 34) : new SKColor(255, 255, 255, 46));
             _stroke.StrokeWidth = 1f;
 

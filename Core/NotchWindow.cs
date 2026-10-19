@@ -304,6 +304,11 @@ namespace NotchPeninsula
             else Info($"窗口创建成功，句柄: {_hwnd}");
             InstanceHandle = _hwnd;
             SetupIslandDropTarget();
+
+            // 放大镜抓屏：宿主窗口与放大镜窗口必须建在消息泵这条线上，所以放在这里（构造函数跑在主线程）。
+            // 不可用会自己回退 GDI，不影响启动。
+            if (Renderer.IslandLiquidGlass || Renderer.IslandAcrylic)
+                MagnifierBackdrop.Initialize(_hwnd, _ownerHwnd);
             _renderThread = new Thread(RenderThreadLoop)
             {
                 IsBackground = true,
@@ -1342,6 +1347,15 @@ namespace NotchPeninsula
 
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            // 放大镜窗口只允许建在消息泵这条线上：设置里后切到玻璃材质时，
+            // 由这条消息把初始化"补"到 UI 线程来做（岛体窗口自己的 WndProc 就在这条线上）。
+            if (msg == MagNative.WM_APP_ENSURE_MAG)
+            {
+                if (Renderer.IslandLiquidGlass || Renderer.IslandAcrylic)
+                    MagnifierBackdrop.Initialize(_hwnd, _ownerHwnd);
+                return IntPtr.Zero;
+            }
+
             switch (msg)
             {
                 case Win32.WM_HOTKEY:
