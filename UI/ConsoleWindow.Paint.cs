@@ -120,5 +120,8 @@ namespace NotchPeninsula
         }
 
         private static readonly string[] OpacityStopLabels = ["0%", "25%", "50%", "75%", "100%"];
+
+        // 液态玻璃 9 根滑轨共用的 5 档刻度名（与 LiquidGlass.MaxLevel 对应）
+        private static readonly string[] GlassLevelLabels = ["最低", "偏低", "标准", "偏高", "最高"];
     }
 }

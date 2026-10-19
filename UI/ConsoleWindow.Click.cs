@@ -9,9 +9,168 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // 鼠标左键按下：整窗点击分派。
-        private void OnLeftButtonDown(IntPtr hwnd, int clickY)
+        // 「全局快捷键」卡片的命中几何：绘制（DrawHotkeyCard）、悬停（OnMouseMove）、
+        // 点击（落点重算）三处共用，避免任何一处改了 y 值对不上。
+        private static bool HitMediaHotkeyToggle(int x, int y, bool anyPopupOpen)
+            => !anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30
+               && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
+
+        private static int HitMediaHotkeyRow(int x, int y, bool anyPopupOpen)
         {
+            if (anyPopupOpen || x < HOTKEY_BOX_X || x > HOTKEY_BOX_RIGHT) return -1;
+            for (int i = 0; i < MediaHotkeys.Count; i++)
+            {
+                float rowTop = HOTKEY_CARD_Y + HOTKEY_HEAD_H + i * HOTKEY_ROW_H + 4;
+                if (y >= rowTop && y <= rowTop + HOTKEY_BOX_H) return i;
+            }
+            return -1;
+        }
+
+        private static bool HitIslandHotkeyToggle(int x, int y)
+            => x >= WIDTH - 80 && x <= WIDTH - 30
+               && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 12
+               && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 32;
+
+        private static bool HitIslandHotkeyBox(int x, int y)
+        {
+            float top = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
+            return x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT && y >= top && y <= top + HOTKEY_BOX_H;
+        }
+
+        // 点击判定读的是 hover 状态，而 hover 只由 WM_MOUSEMOVE 维护：
+        // 光标从别的窗口移进来、或窗口刚弹出就点，MOVE 可能压根没到过这里 ——
+        // 命中项还是 -1，于是「点了录制框什么都没发生」。落点坐标就在手上，就地重算一次。
+        private void SyncHotkeyHoverFromPoint(int x, int y)
+        {
+            if (_selectedTab == 2)
+            {
+                bool anyPopupOpen = _dropdownOpen || _matchModeDropdownOpen || _appDropdownOpen;
+                bool toggle = HitMediaHotkeyToggle(x, y, anyPopupOpen);
+                int row = HitMediaHotkeyRow(x, y, anyPopupOpen);
+                if (toggle == _hotkeyToggleHovered && row == _hoveredHotkeyRow) return;
+                _hotkeyToggleHovered = toggle;
+                _hoveredHotkeyRow = row;
+                Render();
+            }
+            else if (_selectedTab == 3)
+            {
+                bool toggle = HitIslandHotkeyToggle(x, y);
+                bool box = HitIslandHotkeyBox(x, y);
+                if (toggle == _islandHotkeyToggleHovered && box == _islandHotkeyHovered) return;
+                _islandHotkeyToggleHovered = toggle;
+                _islandHotkeyHovered = box;
+                Render();
+            }
+        }
+
+        // 同一个坑的另一处：「导出诊断包」也读 hover，所以点击前同样要用落点重算一次。
+        private void SyncExportHoverFromPoint(int x, int y)
+        {
+            bool hovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
+                        && y >= EXPORT_BTN_Y && y <= EXPORT_BTN_Y + EXPORT_BTN_H;
+            if (hovered == _aboutExportHovered) return;
+
+            _aboutExportHovered = hovered;
+            Render();
+        }
+
+        // 导出诊断包：同步执行（读注册表 + 打 zip，几十毫秒），完成后用资源管理器选中文件 ——
+        // 用户下一步就是把它拖进聊天窗口，省掉「文件在哪」这一问。
+        private void ExportDiagnostics()
+        {
+            if (_aboutExporting) return;
+
+            _aboutExporting = true;
+            _aboutExportHint = "";
+            try
+            {
+                string zip = Diagnostics.ExportBundle();
+
+                try
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{zip}\"")
+                    {
+                        UseShellExecute = true
+                    });
+                }
+                catch
+                {
+                    // 打不开资源管理器（安全软件拦截 / 极简系统）不算失败：包已经生成好了
+                }
+            }
+            catch (Exception ex)
+            {
+                _aboutExportHint = "导出失败：" + ex.Message;
+                Logger.Error("[诊断] 导出诊断包失败", ex);
+            }
+            finally
+            {
+                _aboutExporting = false;
+                Render();
+            }
+        }
+
+        // 切页签：所有页内瞬时提示都在这里清掉。
+        // 提示是「这一次操作的结论」，离开这一页再回来还挂着，会让人以为刚才又失败了一次。
+        private void SwitchTab(int tab)
+        {
+            if (tab < 0 || tab > 7 || tab == _selectedTab) return;
+
+            _selectedTab = tab;
+            _dropdownOpen = false;
+            // 模态弹窗只认它自己的按钮：切页签不能把「加载失败」这类结论顺手带走。
+            // （实际点侧栏时已在 OnLeftButtonDown 最前面被拦下，这里是兜底。）
+            if (!IsConfirmDialogOpen) CloseMarketDialog();
+            CloseAllDropdowns();
+            _marketCategoryOpen = false;
+            _marketSearchFocused = false;
+            ClearTransientHints();
+
+            if (tab == 6) RefreshPluginView();
+            else if (tab == 7)
+            {
+                if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
+                EnsureMarketData();
+            }
+
+            Render();
+        }
+
+        private void ClearTransientHints()
+        {
+            _pluginHint = "";
+            _pluginHintIsError = false;
+
+            _marketHint = "";
+            _marketHintIsError = false;
+            _marketHintDeadline = 0;      // 定时器下次 tick 会自己停
+
+            // _marketPending* 不在这里清：那是后台安装任务的结论，还没被弹窗消费掉，
+            // 切页签顺手清掉就等于「装失败了你刚好换了一页，所以没提醒你」。
+
+            _aboutExportHint = "";
+            _hotkeyHint = "";
+            _islandHotkeyHint = "";
+            _fontHint = "";
+            _soundHint = "";
+        }
+
+        // 鼠标左键按下：整窗点击分派。
+        private void OnLeftButtonDown(IntPtr hwnd, int clickX, int clickY)
+        {
+            // 弹窗是模态的：期间任何点击只归弹窗，不让下层先吃一口。
+            // 之前只在 `_selectedTab == 6/7` 分支里判，导致点弹窗时侧栏切页、顶栏最小化 / 关闭
+            // 这些更靠前的分支照样能命中 —— 表现就是「弹窗还开着，后面的界面却动了」。
+            // 放在最前面：连按钮 hover 的落点重算都不做，那些属于被盖住的那一层。
+            if (IsConfirmDialogOpen)
+            {
+                HandleConfirmDialogClick();
+                return;
+            }
+
+            SyncHotkeyHoverFromPoint(clickX, clickY);
+            SyncExportHoverFromPoint(clickX, clickY);
+
             if (_hotkeyRecordingIndex >= 0 && _hoveredHotkeyRow != _hotkeyRecordingIndex)
                 CancelHotkeyRecording();
 
@@ -115,26 +274,9 @@ namespace NotchPeninsula
                 SyncHoverFromCursor();
                 Render();
             }
-            else if (_hoveredTab == 0 && _selectedTab != 0) { _selectedTab = 0; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 1 && _selectedTab != 1) { _selectedTab = 1; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 2 && _selectedTab != 2) { _selectedTab = 2; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 3 && _selectedTab != 3) { _selectedTab = 3; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 4 && _selectedTab != 4) { _selectedTab = 4; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 5 && _selectedTab != 5) { _selectedTab = 5; CloseMarketDialog(); _marketCategoryOpen = false; _marketSearchFocused = false; CloseAllDropdowns(); Render(); }
-            else if (_hoveredTab == 6 && _selectedTab != 6)
+            else if (_hoveredTab >= 0 && _hoveredTab <= 7 && _selectedTab != _hoveredTab)
             {
-                _selectedTab = 6; _dropdownOpen = false; CloseMarketDialog();
-                _marketCategoryOpen = false; _marketSearchFocused = false;
-                RefreshPluginView();
-                Render();
-            }
-            else if (_hoveredTab == 7 && _selectedTab != 7)
-            {
-                _selectedTab = 7; _dropdownOpen = false; CloseMarketDialog();
-                _marketCategoryOpen = false; _marketSearchFocused = false;
-                if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
-                EnsureMarketData();
-                Render();
+                SwitchTab(_hoveredTab);
             }
             else if (_toastModeDropdownHovered) { _toastModeDropdownOpen = true; Render(); }
             else if (_toastModeDropdownOpen && _hoveredToastModeIndex != -1)
@@ -271,9 +413,36 @@ namespace NotchPeninsula
             else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
             {
                 Renderer.IslandAcrylic = _hoveredMaterialIndex == 1;
+                Renderer.IslandLiquidGlass = _hoveredMaterialIndex == 2;
                 Renderer.ApplyThemeColors(); // 岛体涂层厚度要跟着换
                 Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                // 切走玻璃时那张参数卡当场消失，悬停索引一并清掉，别留着下一帧误命中
+                _hoveredGlassQualityIndex = _hoveredGlassSourceIndex = _hoveredGlassParamIndex
+                    = _hoveredGlassParamLevel = -1;
                 NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
+                Render();
+            }
+            else if (_selectedTab == 5 && _hoveredGlassQualityIndex != -1)
+            {
+                // 换质量 = 换抓屏倍率 + 模糊核：抓屏那边已经 Expire 过，这里再兜一次重建
+                LiquidGlass.Quality = _hoveredGlassQualityIndex;
+                Program.SaveSetting("LiquidGlassQuality", _hoveredGlassQualityIndex);
+                NotchWindow.RequestAcrylicRebuild();
+                Render();
+            }
+            else if (_selectedTab == 5 && _hoveredGlassSourceIndex != -1)
+            {
+                // 抓屏方式：放大镜不可用时点它也无效（会静默回退兼容），所以这里顺手校一次
+                IslandBackdrop.UseMagnifier = _hoveredGlassSourceIndex == 0 && !MagnifierBackdrop.IsDisabled;
+                Program.SaveSetting("GlassUseMagnifier", IslandBackdrop.UseMagnifier ? 1 : 0);
+                IslandBackdrop.Expire();
+                NotchWindow.RequestAcrylicRebuild();
+                Render();
+            }
+            else if (_selectedTab == 5 && _hoveredGlassParamIndex != -1 && _hoveredGlassParamLevel >= 0)
+            {
+                ApplyGlassLevel(_hoveredGlassParamIndex, _hoveredGlassParamLevel);
                 Render();
             }
             else if (_selectedTab == 5 && _hoveredOpacityIndex != -1)
@@ -282,6 +451,10 @@ namespace NotchPeninsula
                 Renderer.ApplyThemeColors(); // 立刻应用透明度
                 Program.SaveSetting("BgOpacityLevel", _hoveredOpacityIndex); // 持久化保存
                 Render(); // 刷新UI
+            }
+            else if (_aboutExportHovered)
+            {
+                ExportDiagnostics();
             }
             else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
             {
@@ -384,6 +557,8 @@ namespace NotchPeninsula
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
                 _hotkeyRecordingIndex = _hoveredHotkeyRow;
+                // 客户区键盘消息录不到系统级组合，先挂低层钩子（装不上就靠下面的 WM_KEYDOWN 兜底）。
+                KeyboardCapture.Start(_hwnd);
                 if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
                 Render();
             }
@@ -401,6 +576,7 @@ namespace NotchPeninsula
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
                 _islandHotkeyRecording = true;
+                KeyboardCapture.Start(_hwnd);
                 if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
                 Render();
             }
@@ -516,70 +692,60 @@ namespace NotchPeninsula
             // ---- 我的插件交互（tab 6）----
             else if (_selectedTab == 6)
             {
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
-                    if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
-                    else
-                    {
-                        bool inside = TryGetCursorClientPos(out int px, out int py)
-                            && GetCurrentDialogRect().Contains(px, py);
-                        if (!inside) CloseMarketDialog(true);
-                    }
+                    HandleConfirmDialogClick();
                 }
                 else if (_hoveredPluginAction != -1)
                 {
                     switch (_hoveredPluginAction)
                     {
-                        case 0: ImportPluginDll(); break;
+                        case 0: ImportPlugin(); break;
                         case 1: PluginManager.Instance.OpenPluginsFolder(); break;
                         case 2:
-                            //    省得用户自己找到左栏去切页签。
-                            _selectedTab = 7;
-                            _dropdownOpen = false;
-                            CloseMarketDialog();
-                            _marketCategoryOpen = false;
-                            _marketSearchFocused = false;
-                            if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;
-                            EnsureMarketData();
+                            // 直接从插件页跳市场，省得用户自己找到左栏去切页签
                             ResetPluginHover();
-                            Render();
+                            SwitchTab(7);
                             break;
                     }
                 }
                 else if (_hoveredPluginToggle != -1)
                 {
                     var pe = GetPluginAt(_hoveredPluginToggle);
-                    if (pe != null) { PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    if (pe != null)
+                    {
+                        bool ok = PluginManager.Instance.SetEnabled(pe, !pe.IsEnabled);
+                        ResetPluginHover();
+                        RefreshPluginView();
+                        // 开关点了没反应是最糟的反馈：加载失败必须当场说清楚。
+                        if (!ok) { _pluginHint = "启用失败"; _pluginHintIsError = true; ReportPluginLoadFailure(pe.Failure, pe.FriendlyName, "启用失败"); }
+                        else Render();
+                    }
                 }
                 else if (_hoveredPluginReload != -1)
                 {
                     var pe = GetPluginAt(_hoveredPluginReload);
-                    if (pe != null) { PluginManager.Instance.Reload(pe); ResetPluginHover(); RefreshPluginView(); Render(); }
+                    if (pe != null)
+                    {
+                        bool ok = PluginManager.Instance.Reload(pe);
+                        ResetPluginHover();
+                        RefreshPluginView();
+                        if (!ok) { _pluginHint = "重载失败"; _pluginHintIsError = true; ReportPluginLoadFailure(pe.Failure, pe.FriendlyName, "重载失败"); }
+                        else Render();
+                    }
                 }
                 else if (_hoveredPluginRemove != -1)
                 {
                     var pe = GetPluginAt(_hoveredPluginRemove);
-                    if (pe != null)
-                    {
-                        PluginManager.Instance.Remove(pe);
-                        ResetPluginHover();
-                        RefreshPluginView();
-                        Render();
-                    }
+                    if (pe != null) OpenUninstallDialog(pe, fromMarket: false);
                 }
             }
             // ---- 插件市场交互（tab 7）----
             else if (_selectedTab == 7)
             {
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
-                    if (_hoveredDialogClose || _hoveredDialogButton == 0) { CloseMarketDialog(true); }
-                    else
-                    {
-                        bool inside = TryGetCursorClientPos(out int px, out int py)
-                            && GetCurrentDialogRect().Contains(px, py);
-                        if (!inside) CloseMarketDialog(true);
-                    }
+                    HandleConfirmDialogClick();
                 }
                 else if (_marketDialogIndex != -1)
                 {
@@ -596,10 +762,8 @@ namespace NotchPeninsula
                     }
                     else
                     {
-                        // 点弹窗内其它位置：不关。点弹窗外：关。
-                        bool inside = TryGetCursorClientPos(out int px, out int py)
-                            && GetCurrentDialogRect().Contains(px, py);
-                        if (!inside) CloseMarketDialog(true);
+                        // 点弹窗内部其它位置：不关。点弹窗外部：也不关。
+                        // 统一规矩是「只能点弹窗上的按钮退出」，点空白糊掉是最容易把内容一起糊没的路径。
                     }
                 }
                 else if (_marketCategoryOpen)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
@@ -180,12 +181,18 @@ namespace NotchPeninsula
         private int _marketScroll;                       // 市场列表滚动首行（绝对条目下标）
 
         //   只有一颗「好的」，两个页签都要能画出来。
-        private enum MarketDialog { None, Detail, Rate, LoadFailed }
+        private enum MarketDialog { None, Detail, Rate, LoadFailed, UninstallConfirm, UninstallData }
 
         private MarketDialog _marketDialog = MarketDialog.None;
         private int _marketDialogIndex = -1;             // 弹窗对应的市场条目下标
         private bool _hoveredDialogClose;                // 弹窗右上角 ❌ 是否悬停
-        private int _hoveredDialogButton = -1;           // 弹窗内按钮：0 = 主按钮（加载失败提示的「好的」）
+        private int _hoveredDialogButton = -1;           // 弹窗内按钮下标（从左到右，0 起）
+
+        // 卸载确认弹窗：所有卸载操作都先过这一关。
+        // 第一级问「确定卸载吗」，插件登记过数据目录的才进第二级问「目录要不要一起删」。
+        private PluginEntry? _uninstallEntry;
+        private string _uninstallDir = "";               // 空 = 没登记 / 登记的不允许删
+        private bool _uninstallFromMarket;               // 提示回哪个页签（市场页的状态行 / 插件页卡头）
 
         // 评分弹窗状态（进入时向服务端要一次「我评过没有」）
         private double _rateStars;                       // 0..5，鼠标预览中的分值（半星为 .5）
@@ -205,20 +212,63 @@ namespace NotchPeninsula
             if (_marketDialog == MarketDialog.None && _marketDialogIndex == -1) return;
             _marketDialog = MarketDialog.None;
             _marketDialogIndex = -1;
+            _uninstallEntry = null;
+            _uninstallDir = "";
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
             _rateStatus = "";
             if (render) Render();
         }
 
-        private void ShowPluginLoadFailedDialog(bool render = true)
+        /// <summary>当前是否有「必须先处理」的弹窗：命中判定与点击分派都走它，别再去碰下面的列表。</summary>
+        private bool IsConfirmDialogOpen =>
+            _marketDialog is MarketDialog.LoadFailed or MarketDialog.UninstallConfirm or MarketDialog.UninstallData;
+
+        /// <summary>
+        /// 打开「插件加载失败」弹窗。<paramref name="subject"/> = 是哪个插件（可为空：启动期批量失败时
+        /// 不指名更有用），有名字时正文会带一句，否则用户根本不知道是哪一次操作出的错。
+        /// </summary>
+        private void ShowPluginLoadFailedDialog(PluginFailureKind kind = PluginFailureKind.Other, string subject = "", bool render = true)
         {
             _marketDialog = MarketDialog.LoadFailed;
             _marketDialogIndex = -1;
             _hoveredDialogClose = false;
             _hoveredDialogButton = -1;
+            _loadFailedLinkHovered = false;
+            _loadFailedReason = subject.Length > 0
+                ? $"「{subject}」：{ReasonTextOf(kind)}"
+                : ReasonTextOf(kind);
+            _loadFailedWithVersionHint = NeedsVersionHint(kind);
+            BuildLoadFailedLayout();   // 版面（行数 + 群号位置）在打开时定一次，绘制与命中共用
             if (render) Render();
         }
+
+        /// <summary>
+        /// 所有「插件加载失败」的唯一出口 —— 市场安装、插件页导入 / 拖入 / 重载 / 启用，全都从这里走。
+        /// 以前每处各弹一次、甚至有整条路径压根不弹，用户点完没动静也没人解释。
+        /// </summary>
+        private void ReportPluginLoadFailure(PluginFailureKind kind, string subject, string? marketHint = null, bool render = true)
+        {
+            if (!string.IsNullOrEmpty(marketHint)) SetMarketHint(marketHint!, true);
+            ShowPluginLoadFailedDialog(kind, subject, render: false);
+            if (render) Render();
+        }
+
+        /// <summary>把失败类型翻成一句用户能行动的话。全都弹「不兼容」等于什么都没说。</summary>
+        private static string ReasonTextOf(PluginFailureKind kind) => kind switch
+        {
+            PluginFailureKind.NotAPlugin =>
+                "这个 DLL 里没有找到插件入口（INotchPlugin），可能是按旧版接口编译的，也可能根本不是 NPS 插件。",
+            PluginFailureKind.BadImage =>
+                "这个 DLL 无法作为 .NET 程序集加载：可能是 32 / 64 位不匹配，或文件本身已损坏。",
+            PluginFailureKind.MissingDependency =>
+                "插件缺少依赖文件：请确认整个插件包（不只是那个 dll）都放进来了。",
+            PluginFailureKind.HostMismatch =>
+                "插件引用了当前 NPS 里不存在的接口，多半是按旧版 API 编译的。",
+            PluginFailureKind.InitFailed =>
+                "插件初始化时抛出了异常，通常是它与当前 NPS 版本不兼容。",
+            _ => "可能是插件与 NPS 的兼容性问题。",
+        };
 
         // ---- 布局真源 ----
         //             列表行起点 +92
@@ -298,7 +348,9 @@ namespace NotchPeninsula
 
             _marketView.Sort(CompareMarketPlugins);
             _marketScroll = 0;
-            CloseMarketDialog();   // 过滤结果变了，原下标全部失效 —— 弹窗一起收掉
+            // 过滤结果变了，原下标全部失效：只有靠下标的详情 / 评分弹窗要跟着收。
+            // 提示类弹窗（加载失败 / 卸载确认）跟列表无关，不能被顺手关掉。
+            if (!IsConfirmDialogOpen) CloseMarketDialog();
             ResetPluginHover();
         }
 
@@ -518,10 +570,14 @@ namespace NotchPeninsula
 
         private static SKRect GetMarketDialogRect(float bodyLines, bool buttons)
         {
+            // 标题行 → 正文区的起点与 DrawDialogHeader 的返回值严格一致（Top + DialogTitleH + 8），
+            // 否则按钮会按一个高度算、正文按另一个高度画，留白忽大忽小。
             float ph = DialogTitleH + 8f;
-            if (bodyLines > 0f) ph += bodyLines * DialogLineH + 8f;
-            if (buttons) ph += DialogBtnH + 18f;
-            ph += 6f;
+            if (bodyLines > 0f) ph += bodyLines * DialogLineH;
+            // 按钮区：正文末到按钮、按钮到弹窗底各留同样多。
+            // 原来是「上沿 6 / 下沿 18」，按钮贴着正文、离底边老远，整块看着往下掉。
+            if (buttons) ph += DialogBtnPad + DialogBtnH + DialogBtnPad;
+            else ph += 14f;   // 无按钮弹窗（详情 / 评分）的底部呼吸，与原高度一致
             float px = (WIDTH - DialogW) / 2f;
             float py = Math.Max(TITLE_BAR_HEIGHT + 24f, (HEIGHT - ph) / 2f);
             return new SKRect(px, py, px + DialogW, py + ph);
@@ -548,18 +604,202 @@ namespace NotchPeninsula
 
         private static SKRect GetRateDialogRect() => GetMarketDialogRect(4f, false);
 
-        private static SKRect GetNoticeDialogRect() => GetMarketDialogRect(2f, true);
+        // ---- 「插件加载失败」弹窗 ----
+        //
+        // 正文里有一串可点的群号：折行之后位置就散了，所以打开弹窗时按当前字体排一次版面，
+        // 绘制与命中都读这份结果。绘制自己折一遍、命中再折一遍，是这类行内链接最常见的错位来源。
 
-        private static SKRect GetDialogSingleButtonRect(SKRect popup)
+        private const float LoadFailedBodyDY = 12f;   // 正文首行基线距标题区末行（与其它弹窗同值）
+
+        private const string LoadFailedLinkText = "1080730621";
+
+        private const string LoadFailedQqUrl =
+            "https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW&jump_from=webapi"
+            + "&authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87";
+
+        private static readonly (string Text, bool IsLink)[] LoadFailedRuns =
         {
-            float y = popup.Bottom - 6f - DialogBtnH - 12f;
-            float x = popup.MidX - DialogBtnW / 2f;
+            // 具体原因那句是动态的（_loadFailedReason，按失败类型挑），这里只放固定的后半段
+            ("欢迎加入 QQ 群 ", false),
+            (LoadFailedLinkText, true),
+            ("，获取最新 NPS 测试版、一起讨论。", false),
+        };
+
+        // 「去插件详情看它要求的 NPS 版本」这句只对「版本 / 接口对不上」有意义：
+        // 缺依赖、文件损坏、位数不匹配时，用户去查版本号是白跑一趟。
+        private const string LoadFailedVersionHint = "具体插件依赖的 NPS 版本，可前往插件市场中该插件的详情里查看。";
+
+        private static bool NeedsVersionHint(PluginFailureKind kind)
+            => kind is PluginFailureKind.NotAPlugin
+                    or PluginFailureKind.HostMismatch
+                    or PluginFailureKind.InitFailed;
+
+        // 失败原因那句：由 ShowPluginLoadFailedDialog 按 PluginFailureKind 填
+        private string _loadFailedReason = "";
+        private bool _loadFailedWithVersionHint = false;
+
+        // 折行结果：每行若干段，段内文本属性一致（是否链接）
+        private readonly List<List<(string Text, bool IsLink)>> _loadFailedLines = new();
+
+        private int _loadFailedLinkLine = -1;      // 链接所在行号（-1 = 文案里没排到）
+        private float _loadFailedLinkOffsetX;      // 链接起点相对正文左缘的偏移
+        private float _loadFailedLinkWidth;
+
+        private bool _loadFailedLinkHovered = false;
+
+        /// <summary>按当前字体把失败文案排成行。群号单独成段，且保证不跨行（跨行后命中区就散了）。</summary>
+        private void BuildLoadFailedLayout()
+        {
+            _loadFailedLines.Clear();
+            _loadFailedLinkLine = -1;
+            _loadFailedLinkOffsetX = 0f;
+            _loadFailedLinkWidth = 0f;
+
+            float maxW = DialogInnerW;
+            float linkW = _subTextPaint.MeasureText(LoadFailedLinkText);
+
+            var line = new List<(string Text, bool IsLink)>();
+            var sb = new System.Text.StringBuilder();
+            float x = 0f;
+            bool sbIsLink = false;
+
+            void Flush()
+            {
+                if (sb.Length == 0) return;
+                line.Add((sb.ToString(), sbIsLink));
+                sb.Clear();
+            }
+
+            void BreakLine()
+            {
+                Flush();
+                if (line.Count > 0) _loadFailedLines.Add(line);
+                line = new List<(string, bool)>();
+                x = 0f;
+            }
+
+            // 先排「为什么失败」那句，再接固定的群 / 版本提示
+            var runs = new List<(string Text, bool IsLink)>(LoadFailedRuns.Length + 2);
+            if (_loadFailedReason.Length > 0) runs.Add((_loadFailedReason, false));
+            runs.AddRange(LoadFailedRuns);
+            if (_loadFailedWithVersionHint) runs.Add((LoadFailedVersionHint, false));
+
+            foreach (var (text, isLink) in runs)
+            {
+                // 整串群号必须落在同一行：当前行剩余宽度不够就先把这一行断掉
+                if (isLink && x + linkW > maxW && (sb.Length > 0 || line.Count > 0)) BreakLine();
+
+                foreach (char c in text)
+                {
+                    float w = _subTextPaint.MeasureText(c.ToString());
+
+                    // 链接段内部绝不换行（上面已保证放得下），否则命中区会跨两行
+                    if (!isLink && x + w > maxW && (sb.Length > 0 || line.Count > 0)) BreakLine();
+
+                    if (sb.Length > 0 && sbIsLink != isLink)
+                    {
+                        line.Add((sb.ToString(), sbIsLink));
+                        sb.Clear();
+                    }
+                    sbIsLink = isLink;
+
+                    if (isLink && _loadFailedLinkLine < 0)
+                    {
+                        _loadFailedLinkLine = _loadFailedLines.Count;   // 当前正在凑的这一行
+                        _loadFailedLinkOffsetX = x;
+                    }
+
+                    sb.Append(c);
+                    x += w;
+                }
+
+                if (isLink)
+                {
+                    // 整段走完才定宽：逐字累加会被 kerning 吃掉一点，直接量整串更准
+                    _loadFailedLinkWidth = linkW;
+                }
+            }
+
+            BreakLine();
+        }
+
+        // 失败弹窗的行数由文案折行结果决定，不能写死 2 行。
+        // 顺手兜底：绘制 / 悬停 / 点击三条路都要经过这里，万一哪条没走 ShowPluginLoadFailedDialog，
+        // 版面就在这里补出来 —— 空版面会让正文整块消失、链接也永远点不中。
+        private SKRect GetNoticeDialogRect()
+        {
+            if (_loadFailedLines.Count == 0) BuildLoadFailedLayout();
+            return GetMarketDialogRect(Math.Max(2, _loadFailedLines.Count), true);
+        }
+
+        /// <summary>失败弹窗正文里群号的命中区：行号与横向偏移都来自打开时算好的版面。</summary>
+        private bool HitLoadFailedLink(SKRect rect, float x, float y)
+        {
+            if (_loadFailedLinkLine < 0) return false;
+
+            float bodyY = rect.Top + DialogTitleH + 8f + LoadFailedBodyDY;
+            float lineY = bodyY + _loadFailedLinkLine * DialogLineH;
+            float x0 = rect.Left + DialogPad + _loadFailedLinkOffsetX;
+
+            // 纵向按 12pt 中文的上下沿放宽（基线 -14 ~ +6），横向各留 2px —— 别让用户非得点正字心
+            return x >= x0 - 2f && x <= x0 + _loadFailedLinkWidth + 2f
+                && y >= lineY - 14f && y <= lineY + 6f;
+        }
+
+        private void OpenLoadFailedQqLink()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(LoadFailedQqUrl) { UseShellExecute = true });
+            }
+            catch
+            {
+                // 没装浏览器 / 被安全软件拦：弹窗不能因此卡住
+            }
+        }
+
+        private const float DialogBtnGap = 10f;
+
+        private const float DialogBtnPad = 14f;   // 正文末 → 按钮 / 按钮 → 弹窗底，两边同值
+
+        /// <summary>
+        /// 弹窗按钮统一几何：一组按钮<b>靠右</b>排（与右上角 ❌ 同侧，Windows 惯例），
+        /// index 从左到右 0 起、最右那个是主操作。绘制与命中都从这里取，别再各算一套。
+        /// 居中摆一个按钮在 380 宽的弹窗里两侧各空 130，重心是散的；右对齐后和标题、❌ 同一条竖线收口。
+        /// </summary>
+        private static SKRect GetDialogButtonRect(SKRect popup, int index, int count)
+        {
+            float right = popup.Right - DialogPad;
+            float x = right - (count - index) * DialogBtnW - (count - index - 1) * DialogBtnGap;
+            float y = popup.Bottom - DialogBtnPad - DialogBtnH;
             return new SKRect(x, y, x + DialogBtnW, y + DialogBtnH);
         }
+
+        private static int DialogButtonCount(MarketDialog kind) => kind switch
+        {
+            MarketDialog.UninstallData => 3,   // 打开目录 / 保留 / 删除
+            _ => 1,
+        };
+
+        private int HitDialogButton(SKRect popup, float x, float y)
+        {
+            int count = DialogButtonCount(_marketDialog);
+            for (int i = 0; i < count; i++)
+                if (GetDialogButtonRect(popup, i, count).Contains(x, y)) return i;
+            return -1;
+        }
+
+        /// <summary>卸载第一级：只问「确定卸载吗」。</summary>
+        private static SKRect GetUninstallConfirmDialogRect() => GetMarketDialogRect(2f, true);
+
+        /// <summary>卸载第二级：多一行路径，所以多一行高度。</summary>
+        private static SKRect GetUninstallDirDialogRect() => GetMarketDialogRect(3f, true);
 
         private SKRect GetCurrentDialogRect()
         {
             if (_marketDialog == MarketDialog.LoadFailed) return GetNoticeDialogRect();
+            if (_marketDialog == MarketDialog.UninstallConfirm) return GetUninstallConfirmDialogRect();
+            if (_marketDialog == MarketDialog.UninstallData) return GetUninstallDirDialogRect();
 
             var mp = GetMarketAt(_marketDialogIndex);
             if (mp == null) return SKRect.Empty;
@@ -580,7 +820,7 @@ namespace NotchPeninsula
         })
         { Timeout = TimeSpan.FromSeconds(12) };
 
-        private void OpenRateDialog(MarketPlugin mp)
+        private void OpenRateDialog(MarketPlugin mp, bool render = true)
         {
             _marketDialog = MarketDialog.Rate;
             // 漏了它弹窗会因为「拿不到插件」被当成失效而直接关掉。
@@ -593,7 +833,7 @@ namespace NotchPeninsula
             _rateStatus = "";
             _rateStatusIsError = false;
             _rateLoading = true;
-            Render();
+            if (render) Render();
 
             Task.Run(async () =>
             {
@@ -701,8 +941,10 @@ namespace NotchPeninsula
             return string.CompareOrdinal(a, b);
         }
 
-        private static string MarketInstallLabel(MarketPlugin mp, PluginEntry? local)
+        private static string MarketInstallLabel(MarketPlugin mp, PluginEntry? local, bool disabled)
         {
+            // 已装但没在跑：主按钮不再是「重装」，而是把插件重新跑起来的「启用」。
+            if (local != null && disabled) return "启用";
             if (local == null) return "下载";
             if (local.Version.Length == 0) return "重装";
             return CompareVersions(mp.Version, local.Version) > 0 ? "更新" : "重装";
@@ -881,7 +1123,9 @@ namespace NotchPeninsula
                 int py = (int)((MarketControlsY + MarketControlH) * _dpiScale);
                 var pt = new Win32.POINT(px, py);
 
-                var cf = new Win32.COMPOSITIONFORM { dwStyle = Win32.CFS_POINT, ptCurrentPos = pt };
+                // 组字串由宿主自己画在搜索框里（_marketImeComposing），所以用 CFS_FORCE_POSITION
+                // 让输入法别再浮一个白色组字小窗；CFS_POINT 只会把它摆到这里照样画。
+                var cf = new Win32.COMPOSITIONFORM { dwStyle = Win32.CFS_FORCE_POSITION, ptCurrentPos = pt };
                 Win32.ImmSetCompositionWindow(himc, ref cf);
 
                 var cand = new Win32.CANDIDATEFORM
@@ -937,6 +1181,21 @@ namespace NotchPeninsula
         private void StartMarketInstall(MarketPlugin mp)
         {
             if (_marketBusyId.Length > 0) return;   // 同一时刻只允许一个下载任务
+
+            // 本机已装但没在跑（禁用 / 上次加载失败）：主按钮写的是「启用」，点它就该把插件跑起来。
+            // 再下一遍同样的包只是把网络、覆盖安装、重载全白做一遍，用户还得等进度。
+            var local = MatchLocalPlugin(mp);
+            if (local != null && PluginManager.Instance.IsDisabled(local))
+            {
+                bool started = PluginManager.Instance.SetEnabled(local, true);
+                ResetPluginHover();
+                RefreshPluginView();
+                if (_marketOnlyInstalled) RefreshMarketFilter();
+                if (!started) ReportPluginLoadFailure(local.Failure, local.FriendlyName, "启用失败");   // 启用 = 再加载一次，失败照样要说
+                else Render();
+                return;
+            }
+
             _marketBusyId = mp.Id;
             // 停了表但不清文案，那条旧提示就会永远挂在状态行上。
             PostAsyncRerender();
@@ -959,13 +1218,16 @@ namespace NotchPeninsula
                         await src.CopyToAsync(dst);
                     }
 
-                    ok = mp.IsZip ? InstallZipPlugin(mp, tempFile) : InstallDllPlugin(tempFile);
+                    ok = mp.IsZip ? InstallZipPlugin(mp, tempFile) : InstallDllPlugin(mp, tempFile);
                 }
                 catch (Exception ex)
                 {
                     Logger.Error("[Market] 安装插件失败", ex);
                     _marketPendingHint = $"安装 {mp.Name} 失败：{ex.Message}";
                     _marketPendingHintIsError = true;
+                    // 下载 / 解压炸了跟插件本身没关系，不能沿用上一轮的失败类型去解释
+                    _marketPendingFailure = PluginFailureKind.Other;
+                    _marketPendingPluginName = mp.Name;
                 }
                 finally
                 {
@@ -979,6 +1241,10 @@ namespace NotchPeninsula
 
         private string _marketPendingHint = "";
         private bool _marketPendingHintIsError;
+        // 市场安装失败的类型：稍后弹窗按它挑说明句（安装是异步的，状态得先存着）
+        private PluginFailureKind _marketPendingFailure = PluginFailureKind.Other;
+        // 失败的是哪个插件：弹窗正文要指名，否则用户不知道刚才哪一步炸了
+        private string _marketPendingPluginName = "";
         private bool _marketPendingHintDone;
         private int _marketPendingRateIndex = -1;
 
@@ -994,16 +1260,21 @@ namespace NotchPeninsula
             RefreshPluginView();          // 已安装列表 + 市场行按钮文案都靠它重算
             if (_marketOnlyInstalled) RefreshMarketFilter();
 
-            if (_marketPendingHintIsError && _marketPendingHint.Length > 0)
-            {
-                SetMarketHint(_marketPendingHint, true);
-                ShowPluginLoadFailedDialog(render: false);
-            }
+            // 后台装完就得当场把失败弹出来，不管用户此刻在看哪一页 ——
+            // 这里以前只在市场页的渲染里消费，切走一次结果就直接丢了。
+            if (_marketPendingHintIsError)
+                ReportPluginLoadFailure(_marketPendingFailure, _marketPendingPluginName, _marketPendingHint, render: false);
+
             _marketPendingHint = "";
             _marketPendingHintIsError = false;
+            _marketPendingFailure = PluginFailureKind.Other;
+            _marketPendingPluginName = "";
 
-            if (rateTarget != null)
-                OpenRateDialog(rateTarget);   // 装完自动问一句评分
+            // 评分弹窗只在市场页问：它靠点击市场行来交互，画在别的页签上既挡视线又没人点得中。
+            // 失败弹窗相反 —— 必须不分页签当场弹，所以两者的「什么时候出现」不能共用一套判断。
+            // render: false —— 这里本身就在 Render() 里面，再叫一次会把整帧重画一遍叠在当前画布上。
+            if (rateTarget != null && _selectedTab == 7)
+                OpenRateDialog(rateTarget, render: false);   // 装完自动问一句评分
         }
 
         private int IndexOfMarketView(MarketPlugin mp)
@@ -1013,16 +1284,20 @@ namespace NotchPeninsula
             return -1;
         }
 
-        private bool InstallDllPlugin(string tempFile)
+        private bool InstallDllPlugin(MarketPlugin mp, string tempFile)
         {
-            var (ok, msg) = PluginManager.Instance.Import(tempFile);   // 同 Id 旧版本由 Import 自动清掉
+            var (ok, msg, failure) = PluginManager.Instance.Import(tempFile);   // 同 Id 旧版本由 Import 自动清掉
             _marketPendingHint = ok ? "" : msg;
             _marketPendingHintIsError = !ok;
+            _marketPendingFailure = failure;
+            _marketPendingPluginName = mp.Name;
             return ok;
         }
 
         private bool InstallZipPlugin(MarketPlugin mp, string zipPath)
         {
+            _marketPendingPluginName = mp.Name;
+
             string extractDir = Path.Combine(Path.GetTempPath(), "NotchPeninsula", "market", "x_" + mp.Id);
             if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
             ZipFile.ExtractToDirectory(zipPath, extractDir);
@@ -1047,28 +1322,209 @@ namespace NotchPeninsula
             {
                 _marketPendingHint = $"安装 {mp.Name} 失败：包内未找到可加载的插件";
                 _marketPendingHintIsError = true;
+                _marketPendingFailure = PluginFailureKind.NotAPlugin;
                 return false;
             }
             if (PluginManager.Instance.Load(fresh))
             {
                 _marketPendingHint = "";   // 成功不提示（同上）
                 _marketPendingHintIsError = false;
+                _marketPendingFailure = PluginFailureKind.None;
                 return true;
             }
             _marketPendingHint = $"已安装但加载失败：{fresh.Error}";
             _marketPendingHintIsError = true;
+            _marketPendingFailure = fresh.Failure;
             return false;
+        }
+
+        // ---- 卸载确认弹窗 ----
+        //    插件页的「卸载」和市场页的「卸载」都先过这里：
+        //    第一级只问「确定卸载吗」；第二级仅在插件登记过数据目录时出现，问目录要不要一起删。
+        //    没登记的插件看不到第二级 —— 老插件零改动，只是多一道确认。
+
+        private void OpenUninstallDialog(PluginEntry e, bool fromMarket)
+        {
+            string? registered = PluginManager.Instance.GetUninstallDirectory(e);
+            string dir = registered != null && IsSafeDeleteTarget(registered) ? registered : "";
+            if (registered != null && dir.Length == 0)
+                Logger.Warn($"[PluginCenter] {e.Key} 登记的卸载目录不可删，已跳过删除选项：{registered}");
+
+            _uninstallEntry = e;
+            _uninstallDir = dir;
+            _uninstallFromMarket = fromMarket;
+            _marketDialog = MarketDialog.UninstallConfirm;
+            _marketDialogIndex = -1;
+            _hoveredDialogClose = false;
+            _hoveredDialogButton = -1;
+            Render();
+        }
+
+        /// <summary>
+        /// 确认类弹窗的按钮分派。点 ❌ / 点弹窗外都由这里先收掉（什么都不执行）。
+        /// 点弹窗外<b>不关</b>：这类弹窗是「必须先看一眼」的结论，糊掉就等于把提示吃了 ——
+        /// 要退出只能点弹窗上的按钮（❌ 或底部按钮）。
+        /// </summary>
+        private void HandleConfirmDialogClick()
+        {
+            var dlgRect = GetCurrentDialogRect();
+            // 几何算不出来（弹窗状态坏了）就别拦：宁可放行，也不能把人困在一个看不见的模态里。
+            if (dlgRect.Width <= 0f) { CloseMarketDialog(true); return; }
+
+            bool inside = TryGetCursorClientPos(out int px, out int py) && dlgRect.Contains(px, py);
+            if (!inside) return;
+
+            // 关闭键、按钮、链接一律按落点重算：hover 由 WM_MOUSEMOVE 维护，
+            // 拖放刚结束 / 光标从别处移进来时它还是旧值 —— 只信 hover 就是「点了没反应」。
+            var closeRect = GetMarketDialogCloseRect(dlgRect);
+            closeRect.Inflate(4f, 4f);
+            _hoveredDialogClose = closeRect.Contains(px, py);
+            if (_hoveredDialogClose) { CloseMarketDialog(true); return; }
+
+            _hoveredDialogButton = HitDialogButton(dlgRect, px, py);
+            if (_marketDialog == MarketDialog.LoadFailed)
+            {
+                _loadFailedLinkHovered = HitLoadFailedLink(dlgRect, px, py);
+                Logger.Debug($"[弹窗] 链接判定 line={_loadFailedLinkLine} dx={_loadFailedLinkOffsetX:F0} "
+                           + $"w={_loadFailedLinkWidth:F0} 点击=({px},{py}) 命中={_loadFailedLinkHovered}");
+            }
+
+            switch (_marketDialog)
+            {
+                case MarketDialog.LoadFailed:
+                    if (_loadFailedLinkHovered) { OpenLoadFailedQqLink(); break; }   // 点链接不关弹窗
+                    if (_hoveredDialogButton == 0) CloseMarketDialog(true);
+                    break;
+
+                case MarketDialog.UninstallConfirm:
+                    if (_hoveredDialogButton != 0) break;      // 唯一按钮就是「卸载」
+                    if (_uninstallDir.Length > 0)
+                    {
+                        _marketDialog = MarketDialog.UninstallData;
+                        _hoveredDialogButton = -1;
+                        Render();
+                    }
+                    else PerformUninstall(deleteDir: false);
+                    break;
+
+                case MarketDialog.UninstallData:
+                    if (_hoveredDialogButton == 0) OpenUninstallDir();            // 打开目录：弹窗不关
+                    else if (_hoveredDialogButton == 1) PerformUninstall(false);  // 保留目录
+                    else if (_hoveredDialogButton == 2) PerformUninstall(true);   // 连目录一起删
+                    break;
+            }
+        }
+
+        private void OpenUninstallDir()
+        {
+            if (_uninstallDir.Length == 0) return;
+            try
+            {
+                // 目录已经不在了就打开父级：比什么都不发生强。
+                string target = Directory.Exists(_uninstallDir)
+                    ? _uninstallDir
+                    : Path.GetDirectoryName(_uninstallDir) ?? _uninstallDir;
+                Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            }
+            catch (Exception ex) { Logger.Warn($"[PluginCenter] 打开插件目录失败：{_uninstallDir} — {ex.Message}"); }
+        }
+
+        private void PerformUninstall(bool deleteDir)
+        {
+            var e = _uninstallEntry;
+            string dir = _uninstallDir;
+            bool fromMarket = _uninstallFromMarket;
+
+            CloseMarketDialog(render: false);
+            if (e == null) { Render(); return; }
+
+            // 先卸载再动目录：插件 Dispose、影子目录与文件句柄都放开了，目录才可能删得掉。
+            PluginManager.Instance.Remove(e);
+
+            if (deleteDir && dir.Length > 0)
+            {
+                if (TryDeletePluginDataDir(dir, out string error))
+                {
+                    Logger.Info($"[PluginCenter] 已删除插件目录：{dir}");
+                }
+                else
+                {
+                    Logger.Warn($"[PluginCenter] 删除插件目录失败：{dir} — {error}");
+                    string msg = $"删除目录失败：{error}";
+                    if (fromMarket) SetMarketHint(msg, true);
+                    else { _pluginHint = msg; _pluginHintIsError = true; }
+                }
+            }
+
+            ResetPluginHover();
+            RefreshPluginView();
+            if (_marketOnlyInstalled) RefreshMarketFilter();
+            Render();
+        }
+
+        private static bool TryDeletePluginDataDir(string dir, out string error)
+        {
+            error = "";
+            if (!IsSafeDeleteTarget(dir)) { error = "该目录不允许删除"; return false; }
+            try { Directory.Delete(dir, true); return true; }
+            catch (Exception ex) { error = ex.Message; return false; }
+        }
+
+        /// <summary>
+        /// 删除前的兜底校验：插件登记什么路径都有可能，不能让一条写错的注册把用户目录连锅端。
+        /// 盘符根、宿主程序目录、系统 / 用户关键目录、以及这些目录的祖先一律拒绝。
+        /// </summary>
+        private static bool IsSafeDeleteTarget(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) return false;
+            try
+            {
+                string full = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (full.Length <= 3 || !Directory.Exists(full)) return false;
+
+                foreach (var special in new[]
+                {
+                    Environment.SpecialFolder.UserProfile,
+                    Environment.SpecialFolder.ApplicationData,
+                    Environment.SpecialFolder.LocalApplicationData,
+                    Environment.SpecialFolder.DesktopDirectory,
+                    Environment.SpecialFolder.MyDocuments,
+                    Environment.SpecialFolder.Windows,
+                    Environment.SpecialFolder.System,
+                    Environment.SpecialFolder.ProgramFiles,
+                    Environment.SpecialFolder.ProgramFilesX86,
+                })
+                {
+                    string root = Environment.GetFolderPath(special);
+                    if (root.Length == 0) continue;
+                    if (IsSameOrAncestorOf(full, root)) return false;
+                }
+
+                return !IsSameOrAncestorOf(full, AppContext.BaseDirectory)
+                    && !IsSameOrAncestorOf(full, PluginManager.Instance.PluginsRoot);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>candidate 就是 root，或是它的祖先 —— 这两种情况删掉 candidate 等于把 root 一起带走。</summary>
+        private static bool IsSameOrAncestorOf(string candidate, string root)
+        {
+            try
+            {
+                string c = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string r = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (c.Length == 0 || r.Length == 0) return false;
+                if (string.Equals(c, r, StringComparison.OrdinalIgnoreCase)) return true;
+                return r.StartsWith(c + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
         }
 
         private void UninstallMarketPlugin(MarketPlugin mp)
         {
             var local = MatchLocalPlugin(mp);
             if (local == null) return;   // 理论上到不了（按钮置灰），兜一层
-            PluginManager.Instance.Remove(local);
-            ResetPluginHover();
-            RefreshPluginView();
-            if (_marketOnlyInstalled) RefreshMarketFilter();
-            Render();
+            OpenUninstallDialog(local, fromMarket: true);
         }
 
         // ---- 详情弹窗 ----

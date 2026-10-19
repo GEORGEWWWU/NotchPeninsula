@@ -9,6 +9,36 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
+        /// <summary>
+        /// 模态弹窗自己的悬停。6、7 页签在各自的列表分支里已经算过一遍，这里负责其余页签：
+        /// 弹窗既然能跨页签弹出（加载失败），它的按钮反馈也得跟着跨页签存在。
+        /// </summary>
+        private void UpdateModalDialogHover(int x, int y)
+        {
+            var rect = GetCurrentDialogRect();
+            bool closeHovered = false;
+            int button = -1;
+            bool linkHovered = false;
+
+            if (rect.Width > 0)
+            {
+                var close = GetMarketDialogCloseRect(rect);
+                close.Inflate(4f, 4f);
+                closeHovered = close.Contains(x, y);
+                if (!closeHovered) button = HitDialogButton(rect, x, y);
+                if (!closeHovered && _marketDialog == MarketDialog.LoadFailed)
+                    linkHovered = HitLoadFailedLink(rect, x, y);
+            }
+
+            if (closeHovered == _hoveredDialogClose && button == _hoveredDialogButton
+                && linkHovered == _loadFailedLinkHovered) return;
+
+            _hoveredDialogClose = closeHovered;
+            _hoveredDialogButton = button;
+            _loadFailedLinkHovered = linkHovered;
+            Render();
+        }
+
         //    因此它是一个整体，不要再按页签拆开。
         private void OnMouseMove(int x, int y, bool dragging)
         {
@@ -19,9 +49,36 @@ namespace NotchPeninsula
             // Tab Hover 判定：与绘制 / 光标共用一套几何（HitSidebarTab）
             int newHoveredTab = HitSidebarTab(x, y);
 
+            // 弹窗是模态的：它盖住的顶栏与侧栏不该再亮，否则鼠标划过弹窗还能看见下面在闪
+            if (IsConfirmDialogOpen)
+            {
+                newMinHovered = false;
+                newCloseHovered = false;
+                newHoveredTab = -1;
+
+                // 加载失败弹窗可能出现在任意页签（市场后台装完 / 插件页重载），
+                // 所以它的悬停不能只挂在 6、7 的分支里 —— 否则在别的页签上「好的」不会亮。
+                if (_selectedTab != 6 && _selectedTab != 7)
+                {
+                    // 顶栏 / 侧栏的悬停先落定：直接 return 会把「最小化键还亮着」留在画面上。
+                    bool chromeChanged = newMinHovered != _minHovered
+                        || newCloseHovered != _closeHovered || newHoveredTab != _hoveredTab;
+                    _minHovered = newMinHovered;
+                    _closeHovered = newCloseHovered;
+                    _hoveredTab = newHoveredTab;
+                    if (chromeChanged) Render();
+                    UpdateModalDialogHover(x, y);
+                    return;
+                }
+            }
+
             int newHoveredTheme = -1;
             int newHoveredMaterial = -1;
             int newHoveredOpacityIndex = -1;
+            int newHoveredGlassQuality = -1;      // 液态玻璃卡：质量分段控件
+            int newHoveredGlassSource = -1;       // 抓屏方式分段控件
+            int newHoveredGlassParam = -1;        // 9 根滑轨里悬停的是哪一根
+            int newHoveredGlassParamLevel = -1;   // 悬停到的档位
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             if (_selectedTab == 5)
             {
@@ -33,7 +90,7 @@ namespace NotchPeninsula
                 float matSegY = TITLE_BAR_HEIGHT + MAT_SEG_Y;
                 if (y >= matSegY && y <= matSegY + SEG_H
                     && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
-                    newHoveredMaterial = Math.Min(1, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 2f)));
+                    newHoveredMaterial = Math.Min(2, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 3f)));
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
@@ -60,6 +117,51 @@ namespace NotchPeninsula
                         }
                     }
                 } 
+
+                // 液态玻璃卡：材质不是玻璃时整张卡都不画，命中也跟着关掉
+                if (Renderer.IslandLiquidGlass)
+                {
+                    float gCardY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
+                    float segY = gCardY + GLASS_SEG_Y;
+                    if (y >= segY && y <= segY + SEG_H)
+                    {
+                        if (x >= GLASS_QUALITY_SEG_X && x <= GLASS_QUALITY_SEG_X + GLASS_QUALITY_SEG_W)
+                            newHoveredGlassQuality = Math.Min(2, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 3f)));
+                        else if (x >= GLASS_SOURCE_SEG_X && x <= GLASS_SOURCE_SEG_X + GLASS_SOURCE_SEG_W)
+                            newHoveredGlassSource = Math.Min(1, (int)((x - GLASS_SOURCE_SEG_X) / (GLASS_SOURCE_SEG_W / 2f)));
+                    }
+
+                    // 9 根滑轨：先定位行，再看落在左列还是右列
+                    for (int row = 0; row < 5; row++)
+                    {
+                        float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
+                        if (y < ry - 13 || y > ry + 13) continue;
+
+                        for (int col = 0; col < 2; col++)
+                        {
+                            int idx = row * 2 + col;
+                            if (idx >= LiquidGlass.ParamCount) continue;
+
+                            float gx0 = GLASS_SLIDER_X + col * GLASS_COL_W;
+                            float gx1 = GLASS_SLIDER_END + col * GLASS_COL_W;
+                            if (x < gx0 - 20 || x > gx1 + 20) continue;
+
+                            int lvl = (int)Math.Round((x - gx0) / ((gx1 - gx0) / LiquidGlass.MaxLevel));
+                            if (lvl < 0) lvl = 0;
+                            if (lvl > LiquidGlass.MaxLevel) lvl = LiquidGlass.MaxLevel;
+
+                            newHoveredGlassParam = idx;
+                            newHoveredGlassParamLevel = lvl;
+                            if (dragging && LiquidGlass.GetLevel(idx) != lvl)
+                            {
+                                ApplyGlassLevel(idx, lvl);
+                                Render();   // 与透明度滑轨同款：跨档立刻跟手
+                            }
+                            break;
+                        }
+                        break;
+                    }
+                }
 
                 int newHintRow = -1;
                 if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM)
@@ -139,6 +241,7 @@ namespace NotchPeninsula
             int newHoveredMarketCategoryIndex = -1;
             bool newHoveredDialogClose = false;
             int newHoveredDialogButton = -1;
+            bool newLoadFailedLinkHovered = false;
             double newRateStars = 0;
             bool newHoveredMarketChk = false;
             bool newMarketSearchHovered = false;
@@ -375,19 +478,9 @@ namespace NotchPeninsula
                     Render();
                 }
 
-                bool newHotkeyToggleHovered = !anyPopupOpen
-                    && x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
+                bool newHotkeyToggleHovered = HitMediaHotkeyToggle(x, y, anyPopupOpen);
 
-                int newHoveredHotkeyRow = -1;
-                if (!anyPopupOpen && x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT)
-                {
-                    for (int i = 0; i < MediaHotkeys.Count; i++)
-                    {
-                        float rowTop = HOTKEY_CARD_Y + HOTKEY_HEAD_H + i * HOTKEY_ROW_H + 4;
-                        if (y >= rowTop && y <= rowTop + HOTKEY_BOX_H) { newHoveredHotkeyRow = i; break; }
-                    }
-                }
+                int newHoveredHotkeyRow = HitMediaHotkeyRow(x, y, anyPopupOpen);
 
                 if (newHotkeyToggleHovered != _hotkeyToggleHovered || newHoveredHotkeyRow != _hoveredHotkeyRow)
                 {
@@ -420,13 +513,8 @@ namespace NotchPeninsula
 
                 // 「唤出灵动岛」：总开关在卡片头部右侧，键位框在下面那行
                 //（y 值与 DrawIslandHotkeyCard 严格同源）
-                newIslandHotkeyToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 12
-                    && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 32;
-
-                float islandBoxTop = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
-                newIslandHotkeyHovered = x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT
-                    && y >= islandBoxTop && y <= islandBoxTop + HOTKEY_BOX_H;
+                newIslandHotkeyToggleHovered = HitIslandHotkeyToggle(x, y);
+                newIslandHotkeyHovered = HitIslandHotkeyBox(x, y);
             }
             else if (_selectedTab == 7) // 插件市场
             {
@@ -480,7 +568,7 @@ namespace NotchPeninsula
                         newHoveredMarketSortIndex = -2;
                 }
 
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
@@ -488,7 +576,11 @@ namespace NotchPeninsula
                         var close = GetMarketDialogCloseRect(rect);
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
-                        if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
+                        if (!newHoveredDialogClose) newHoveredDialogButton = HitDialogButton(rect, x, y);
+
+                        // 失败弹窗正文里的群号：位置取自打开时排好的版面，与绘制同一份数据
+                        if (!newHoveredDialogClose && _marketDialog == MarketDialog.LoadFailed)
+                            newLoadFailedLinkHovered = HitLoadFailedLink(rect, x, y);
                     }
                 }
                 else if (_marketDialogIndex != -1)
@@ -546,7 +638,7 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 6) // 我的插件
             {
-                if (_marketDialog == MarketDialog.LoadFailed)
+                if (IsConfirmDialogOpen)
                 {
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
@@ -554,16 +646,20 @@ namespace NotchPeninsula
                         var close = GetMarketDialogCloseRect(rect);
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
-                        if (GetDialogSingleButtonRect(rect).Contains(x, y)) newHoveredDialogButton = 0;
+                        if (!newHoveredDialogClose) newHoveredDialogButton = HitDialogButton(rect, x, y);
+
+                        // 失败弹窗正文里的群号：位置取自打开时排好的版面，与绘制同一份数据
+                        if (!newHoveredDialogClose && _marketDialog == MarketDialog.LoadFailed)
+                            newLoadFailedLinkHovered = HitLoadFailedLink(rect, x, y);
                     }
                 }
                 else
                 {
                     float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
-                    // 顶部操作按钮：导入 DLL | 打开目录 | 插件市场
+                    // 顶部操作按钮：导入插件 | 打开目录 | 插件市场
                     if (y >= topY + 60 && y <= topY + 84)
                     {
-                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入 DLL
+                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入插件
                         else if (x >= CONTENT_TEXT_X + 104 && x <= CONTENT_TEXT_X + 200) newHoveredPluginAction = 1;  // 打开目录
                         else if (x >= CONTENT_TEXT_X + 208 && x <= CONTENT_TEXT_X + 304) newHoveredPluginAction = 2;  // 插件市场
                     }
@@ -603,6 +699,10 @@ namespace NotchPeninsula
                     else if (x >= 445 && x <= 500) newHoveredLinkIndex = 2; // 开发者 (Ryen)
                 }
             }
+
+            // 侧边栏左下角的「导出诊断包」常驻，不跟页签走 —— 用户在任何一页都能按。
+            bool newAboutExportHovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
+                                      && y >= EXPORT_BTN_Y && y <= EXPORT_BTN_Y + EXPORT_BTN_H;
 
             bool newIsHoveringDisabledArea = false;
             // 否则就会出现「明明能点、却显示禁止指针」。
@@ -646,6 +746,10 @@ namespace NotchPeninsula
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
                 newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
                 newHoveredMaterial != _hoveredMaterialIndex ||
+                newHoveredGlassQuality != _hoveredGlassQualityIndex ||
+                newHoveredGlassSource != _hoveredGlassSourceIndex ||
+                newHoveredGlassParam != _hoveredGlassParamIndex ||
+                newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
@@ -671,6 +775,7 @@ namespace NotchPeninsula
                 newHoveredMarketDetail != _hoveredMarketDetail ||
                 newHoveredDialogClose != _hoveredDialogClose ||
                 newHoveredDialogButton != _hoveredDialogButton ||
+                newLoadFailedLinkHovered != _loadFailedLinkHovered ||
                 newRateStars != _rateStars ||
                 newHoveredMarketChk != _hoveredMarketChk ||
                 newHoveredMarketCategoryIndex != _hoveredMarketCategoryIndex ||
@@ -678,7 +783,8 @@ namespace NotchPeninsula
                 newMarketRefreshHovered != _hoveredMarketRefresh ||
                 newHoveredMarketSortIndex != _hoveredMarketSortIndex ||
                 newHoveredMarketSortBox != _hoveredMarketSortBox ||
-                newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered
+                newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered ||
+                newAboutExportHovered != _aboutExportHovered
                 )
             {
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -695,6 +801,7 @@ namespace NotchPeninsula
                 _appDropdownHovered = newAppDropdownHovered;
                 _hoveredAppIndex = newHoveredAppIndex;
                 _hoveredLinkIndex = newHoveredLinkIndex;
+                _aboutExportHovered = newAboutExportHovered;
                 _hoveredDisplayRow = newHoveredDisplayRow;
                 _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
@@ -709,6 +816,10 @@ namespace NotchPeninsula
                 _hoveredResetIndex = newHoverReset;
                 _hoveredThemeIndex = newHoveredTheme;
                 _hoveredMaterialIndex = newHoveredMaterial;
+                _hoveredGlassQualityIndex = newHoveredGlassQuality;
+                _hoveredGlassSourceIndex = newHoveredGlassSource;
+                _hoveredGlassParamIndex = newHoveredGlassParam;
+                _hoveredGlassParamLevel = newHoveredGlassParamLevel;
                 _mediaExpToggleHovered = newMediaExpToggleHovered;
                 _appLaunchToggleHovered = newAppLaunchToggleHovered;
                 _hoveredOpacityIndex = newHoveredOpacityIndex;
@@ -738,6 +849,7 @@ namespace NotchPeninsula
                 _hoveredMarketDetail = newHoveredMarketDetail;
                 _hoveredDialogClose = newHoveredDialogClose;
                 _hoveredDialogButton = newHoveredDialogButton;
+                _loadFailedLinkHovered = newLoadFailedLinkHovered;
                 if (newRateStars != _rateStars) _rateStars = newRateStars;
                 _hoveredMarketChk = newHoveredMarketChk;
                 _hoveredMarketCategoryIndex = newHoveredMarketCategoryIndex;

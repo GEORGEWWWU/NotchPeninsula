@@ -10,7 +10,7 @@ namespace NotchPeninsula
     public partial class ConsoleWindow
     {
         // 插件中心交互状态
-        private int _hoveredPluginAction = -1;  // 0=导入 DLL, 1=打开目录, 2=插件市场
+        private int _hoveredPluginAction = -1;  // 0=导入插件, 1=打开目录, 2=插件市场
 
         private int _hoveredPluginToggle = -1;  // 行索引：启用/禁用开关
 
@@ -53,11 +53,18 @@ namespace NotchPeninsula
             for (int i = 0; i < _pluginView.Count; i++)
             {
                 var entry = _pluginView[i];
-                bool disabled = entry.State == PluginState.NotLoaded;
+                // 三态必须分开说。以前只判 NotLoaded ⇒ 加载失败的插件在列表里写着「运行中」，
+                // 弹窗一关用户就再也看不出它其实没跑起来。
+                string state = entry.State switch
+                {
+                    PluginState.Loaded => "运行中",
+                    PluginState.Failed => "加载失败",
+                    _ => "已禁用",
+                };
                 string tail = string.IsNullOrEmpty(entry.Version) ? "" : $" · v{entry.Version}";
                 if (!string.IsNullOrEmpty(entry.Author)) tail += $" · {entry.Author}";
-                _pluginSubDisabled.Add(disabled);
-                _pluginSubTexts.Add((disabled ? "已禁用" : "运行中") + tail);
+                _pluginSubDisabled.Add(entry.State != PluginState.Loaded);
+                _pluginSubTexts.Add(state + tail);
             }
 
             // 行内悬停索引一并清空，避免指向错行。
@@ -123,19 +130,31 @@ namespace NotchPeninsula
             }
         }
 
-        private void ImportPluginDll()
+        private void ImportPlugin()
         {
             try
             {
-                string? picked = ShowOpenFileDialog(_hwnd, "选择 NotchPeninsula 插件 DLL",
-                    "插件动态库 (*.dll)\0*.dll\0所有文件 (*.*)\0*.*\0");
+                // 单个 DLL 与插件包（ZIP，带附属文件的那种）共用同一个入口：
+                // 过滤器把两者放最前，选完再按扩展名分派到对应安装路径。
+                string? picked = ShowOpenFileDialog(_hwnd, "选择 NotchPeninsula 插件",
+                    "插件 (*.dll;*.zip)\0*.dll;*.zip\0插件动态库 (*.dll)\0*.dll\0插件包 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0");
                 if (picked == null) return;
 
-                var (ok, msg) = PluginManager.Instance.Import(picked);
+                bool isZip = picked.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+                var (ok, msg, failure) = isZip
+                    ? InstallPluginPackage(picked)
+                    : PluginManager.Instance.Import(picked);
+
                 Logger.Info($"[PluginCenter] 导入结果: {(ok ? "成功" : "失败")} — {msg}");
+
+                // 卡片头只留一句「导入失败」：具体是哪一类（不是插件 / 缺依赖 / 版本不匹配）
+                // 放弹窗里说，一行小字塞不下也读不清。
+                _pluginHint = ok ? "" : (isZip ? "安装失败" : "导入失败");
+                _pluginHintIsError = !ok;
+
                 ResetPluginHover();
                 RefreshPluginView();
-                if (!ok) ShowPluginLoadFailedDialog(render: false);
+                if (!ok) ReportPluginLoadFailure(failure, Path.GetFileName(picked), render: false);
                 Render();
             }
             catch (Exception ex)

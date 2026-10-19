@@ -614,6 +614,18 @@ namespace NotchPeninsula
 
         private int _hoveredLinkIndex = -1;
 
+        // 「导出诊断包」按钮：常驻在侧边栏左下角（页签最底一行到 388，下面整片空白）。
+        // 绘制 / 悬停 / 点击三处共用这套几何。
+        // 左下两个方向的留白取同一个值 —— 底部写死数字会和左边一点点对不上，所以由 X 和按钮高推出来。
+        private const float EXPORT_BTN_X = TAB_BOX_L;                     // 10，与页签块左缘对齐
+        private const float EXPORT_BTN_W = 96f;                           // 「导出诊断包」5 字 + 左右呼吸，别占满整行
+        private const float EXPORT_BTN_H = 28f;
+        private const float EXPORT_BTN_Y = HEIGHT - EXPORT_BTN_X - EXPORT_BTN_H;   // 622，下边留白 == 左边留白
+
+        private bool _aboutExportHovered = false;
+        private bool _aboutExporting = false;
+        private string _aboutExportHint = "";
+
         // 显示设置
         // 「显示内容」列表的悬停行：-1 = 没悬停任何行。
         private int _hoveredDisplayRow = -1;
@@ -746,7 +758,11 @@ namespace NotchPeninsula
 
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
 
-        private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力
+        private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力, 2:液态玻璃
+        private int _hoveredGlassQualityIndex = -1;      // 液态玻璃：0流畅 1均衡 2精细
+        private int _hoveredGlassSourceIndex = -1;       // 抓屏方式：0放大镜 1兼容
+        private int _hoveredGlassParamIndex = -1;        // 9 根滑轨里悬停的是哪一根（-1 = 没有）
+        private int _hoveredGlassParamLevel = -1;        // 悬停到的档位 0..4
 
         private int _hoveredOpacityIndex = -1;
         // DPI 缩放相关
@@ -803,10 +819,8 @@ namespace NotchPeninsula
 
         private void SelectTab(int tab)
         {
-            if (tab < 0 || tab > 6 || _selectedTab == tab) return;
-            _selectedTab = tab;
-            CloseAllDropdowns();
-            Render();
+            if (tab < 0 || tab > 6) return;
+            SwitchTab(tab);   // 与点侧栏走同一套：提示清理、浮层收起都在里面
         }
 
         private ConsoleWindow()
@@ -1028,7 +1042,16 @@ namespace NotchPeninsula
             switch (msg)
             {
                 case Win32.WM_MOVE:
-                    SyncBackdropToContent();
+                    // 拖动中材质窗照样跟随（不跟就会漏出桌面），只是不再重申 Z 序。
+                    SyncBackdropToContent(keepZOrder: _dragMoving);
+                    break;
+
+                case Win32.WM_ENTERSIZEMOVE:
+                    BeginDragMove();
+                    break;
+
+                case Win32.WM_EXITSIZEMOVE:
+                    EndDragMove();
                     break;
 
                 // 最小化 / 还原：材质窗跟着内容窗一起藏 / 亮。
@@ -1074,6 +1097,9 @@ namespace NotchPeninsula
                     return IntPtr.Zero;
 
                 case Win32.WM_TIMER:
+                    // 拖动期间暂停定时器事务（滚动条淡出 / 材质补修都会 Render 或重贴材质，
+                    // 插进拖动帧就是卡顿来源）。周期定时器松手后照常继续，等价于「拖动期间冻结」。
+                    if (_dragMoving) return IntPtr.Zero;
                     if (wParam == BACKDROP_REFRESH_TIMER_ID)
                     {
                         Win32.KillTimer(hwnd, BACKDROP_REFRESH_TIMER_ID);
@@ -1126,6 +1152,10 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_MOUSEMOVE:
+                    // 拖动中不碰 hover：窗口追不上鼠标时，光标会短暂落回客户区，
+                    // hover 一变就 Render，而 Render 走 UpdateLayeredWindow（顺手把窗口重定位一次），
+                    // 等于在拖动循环里插一次窗口搬移 —— 越拖越跟不上。
+                    if (_dragMoving) break;
                     OnMouseMove(
                         (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale),
                         (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale),
@@ -1133,10 +1163,17 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
-                    OnLeftButtonDown(hwnd, (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale));
+                {
+                    int lp = Win32.Low32(lParam);
+                    OnLeftButtonDown(hwnd,
+                        (int)((short)(lp & 0xFFFF) / _dpiScale),
+                        (int)((short)((lp >> 16) & 0xFFFF) / _dpiScale));
                     break;
+                }
 
                 case Win32.WM_MOUSEWHEEL:
+                    // 弹窗是模态的：滚轮也不该滚到下面的列表 / 页面
+                    if (IsConfirmDialogOpen) break;
                     if (_toastSoundDropdownOpen)
                     {
                         int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
@@ -1261,15 +1298,25 @@ namespace NotchPeninsula
                     if (HandleMarketSearchKey(Win32.Low32(wParam), '\0')) return IntPtr.Zero;
                     break;
 
+                // 录制期按键走低层钩子投递（能拿到 Win 组合与被系统抢先的键）。
+                case KeyboardCapture.WM_CAPTURED_KEY:
+                    if (HandleCapturedKey((int)Win32.Low32(wParam), (uint)Win32.Low32(lParam)))
+                        return IntPtr.Zero;
+                    break;
+
                 case Win32.WM_SYSKEYDOWN:
                     if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     if (HandleIslandHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     break;
                 case WM_ASYNC_RERENDER:
+                    // 拖动中不重绘（EndDragMove 收尾时会补一帧，这里丢了不会留下过期画面）。
+                    if (_dragMoving) return IntPtr.Zero;
                     Render();
                     return IntPtr.Zero;
 
                 case Win32.WM_DESTROY:
+                    // 钩子挂在 UI 线程上，窗口没了必须摘掉：否则键盘会一直卡在「按下没反应」。
+                    KeyboardCapture.Stop();
                     RevokePluginDropTarget();
                     if (_backdropHwnd != IntPtr.Zero)
                     {
@@ -1288,6 +1335,9 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_SETCURSOR:
+                    // 拖动中光标归系统拖动循环管：窗口追不上鼠标时，鼠标会短暂落到客户区，
+                    // 这里再塞一个手型光标就和系统的移动光标抢起来了（看着像多出一个指针）。
+                    if (_dragMoving) break;
                     if ((Win32.Low32(lParam) & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
                     {
                         if (_isHoveringDisabledArea)
@@ -1309,6 +1359,11 @@ namespace NotchPeninsula
 
         private void Render()
         {
+            // 拖动期间一次都不要上传位图：UpdateLayeredWindow 会把窗口重新定位一次，
+            // 和系统拖动循环的移动撞在一起，就是「半张窗口空掉、直接看到下面」。
+            // 拖动中该显示的状态变化不会丢 —— EndDragMove 收尾会补一帧。
+            if (_dragMoving) return;
+
             lock (_renderLock)
             {
                 RenderCore();
@@ -1359,6 +1414,10 @@ namespace NotchPeninsula
 
             RenderSidebar(canvas);
 
+            // 后台安装 / 更新的结论要在这一帧就消费掉：页内容与弹窗都得用刷新后的状态。
+            // 放在页签分派之前、且不分页签 —— 用户在别的页签时失败也必须当场看见。
+            ApplyPendingMarketResult();
+
             if (_selectedTab == 0) RenderTabGeneral(canvas);
             else if (_selectedTab == 1) RenderTabDisplay(canvas);
             else if (_selectedTab == 2) RenderTabMedia(canvas);
@@ -1367,6 +1426,10 @@ namespace NotchPeninsula
             else if (_selectedTab == 5) RenderTabPersonalize(canvas);
             else if (_selectedTab == 6) RenderTabPlugins(canvas);
             else if (_selectedTab == 7) RenderTabMarket(canvas);
+
+            // 弹窗统一画在页内容之上，不分页签：只画在 6、7 会变成
+            // 「模态已经拦下所有点击、画面上却什么都没有」的假死。
+            RenderPluginDialogs(canvas);
 
             canvas.Restore();
 

@@ -11,7 +11,7 @@
 ![C#](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp&logoColor=white)
 ![NAudio](https://img.shields.io/badge/NAudio-2.2-5C2D91)
 ![SkiaSharp](https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2)
-![Version](https://img.shields.io/badge/version-2.0.1-blue)
+![Version](https://img.shields.io/badge/version-2.0.2-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
 
 <p>
@@ -109,7 +109,7 @@ NotchPeninsula 是一个面向 Win 10/11 的“刘海屏”风格桌面小组件
 
 设置窗口按左侧导航分为 8 个页签：
 
-- **个性化中心** —— 主题（黑 / 白 / 系统）、背景材质（实体 / **亚克力**，实验性）、背景不透明度、全局折叠态高度与底部圆角、通知尺寸、视觉比例
+- **个性化中心** —— 主题（黑 / 白 / 系统）、背景材质（实体 / **亚克力** / **液态玻璃**，后两者实验性）、背景不透明度、全局折叠态高度与底部圆角、通知尺寸、视觉比例；选「液态玻璃」后展开玻璃质量、抓屏方式与 9 项玻璃参数（模糊 / 折射 / 色散 / 高光 / 厚度 / 透镜 / 饱和 / 雾度 / 明度）
 - **通用设置** —— 开机自启、窗口置顶、系统消息通知与提示音、**MSP 接入（实验性）**、灵动岛字体
 - **显示设置** —— 显示形态（刘海 / 灵动岛）、目标显示器、显示模式（待机 / 普通 + 双击空白切换）、待机模式（待机后显示时间 / 空白 / 媒体控制）、**显示内容**（勾选显示项并调整先后次序）
 - **媒体设置** —— 媒体控制、目标媒体平台与匹配方式、歌词与译文、逐字歌词、歌词延迟补偿、**全局快捷键**
@@ -192,7 +192,9 @@ NotchPeninsula/
 │   ├── IslandHotkey.cs               # 「隐藏 / 唤出灵动岛」全局快捷键（单键位）
 │   ├── SystemSettingManager.cs       # 系统音量控制
 │   ├── brightness.cs                 # 屏幕亮度控制
-│   ├── IslandBackdrop.cs             # 岛体亚克力背板（后台线程抓屏 + 缩略，避免渲染线程硬停顿）
+│   ├── IslandBackdrop.cs             # 岛体背板（后台线程抓屏 + 缩略，避免渲染线程硬停顿）
+│   ├── MagnifierBackdrop.cs          # 放大镜 API 抓屏（1:1 全分辨率 + 排除岛体自身，液态玻璃专用）
+│   ├── MagNative.cs                  # Windows Magnification API 的 P/Invoke 声明
 │   ├── IslandDropTarget.cs           # 岛体 OLE 拖入目标（让插件详情页也能接文件拖放）
 │   ├── DataResources.cs              # data\ 内置资源解析（磁盘优先、嵌入兜底）
 │   ├── UpdateManager.cs              # GitHub 版本检测与更新弹窗
@@ -205,6 +207,7 @@ NotchPeninsula/
 │   ├── Renderer.Media.cs             # 媒体/歌词/逐字/时间轴/硬件统计
 │   ├── Renderer.MediaWidget.cs       # 媒体控制模块绘制：折叠态内联行、展开面板、歌词与按钮
 │   ├── Renderer.Paint.cs             # 画笔池、字体、矢量路径与图标资源
+│   ├── LiquidGlass.cs                # 液态玻璃背景：SDF 折射 + 色散 + 高斯模糊（C++ / HLSL demo 的 C# 移植）
 │   ├── FontConfig.cs                 # 灵动岛字体统一配置中心
 │   └── LyricsFont.cs                 # 歌词字体
 ├── Media/                            # 媒体、音频与歌词

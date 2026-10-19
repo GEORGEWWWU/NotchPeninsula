@@ -71,16 +71,20 @@ namespace NotchPeninsula
             // 预计算颜色，避免在渲染树中生成新对象
             // 亚克力 = 模糊背板 + 上层的浅色/深色涂层（真实亚克力的"奶感"就来自这层）。
             // 上限 140/255 ≈ 55%，与设置窗口那套亚克力色调（0x8C）同口径；档位滑到最左 = 纯模糊。
-            byte bgAlpha = IslandAcrylic
-                ? (byte)Math.Clamp(BgOpacityLevel * 140 / 4, 0, 255)
-                : (byte)Math.Clamp(BgOpacityLevel * 255 / 4, 0, 255);
+            // 液态玻璃本身已经带折射/色散/高光，涂层要比亚克力更薄，否则会把玻璃糊掉
+            byte bgAlpha = IslandLiquidGlass
+                ? (byte)Math.Clamp(BgOpacityLevel * 90 / 4, 0, 255)
+                : IslandAcrylic
+                    ? (byte)Math.Clamp(BgOpacityLevel * 140 / 4, 0, 255)
+                    : (byte)Math.Clamp(BgOpacityLevel * 255 / 4, 0, 255);
 
-            // 一次性诊断：材质开关一变就记一行 —— 排查「亚克力看不见」时第一时间看它
-            if (IslandAcrylic != _acrylicLogged)
+            // 一次性诊断：材质开关一变就记一行 —— 排查「亚克力/玻璃看不见」时第一时间看它
+            bool wantBackdrop = IslandAcrylic || IslandLiquidGlass;
+            if (wantBackdrop != _acrylicLogged)
             {
-                _acrylicLogged = IslandAcrylic;
-                Logger.Info($"[亚克力] 材质={(IslandAcrylic ? "开" : "关")}  涂层alpha={bgAlpha}"
-                    + $"  档位={BgOpacityLevel}  主题={(isLight ? "浅" : "深")}  底色={(isLight ? "白" : "黑")}");
+                _acrylicLogged = wantBackdrop;
+                Logger.Info($"[背景材质] 材质={(IslandLiquidGlass ? "液态玻璃" : IslandAcrylic ? "亚克力" : "实体")}"
+                    + $"  涂层alpha={bgAlpha}  档位={BgOpacityLevel}  主题={(isLight ? "浅" : "深")}  底色={(isLight ? "白" : "黑")}");
             }
             var baseBg = isLight ? SKColors.White : SKColors.Black;
             var bg = baseBg.WithAlpha(bgAlpha); // 只改变背景色的透明度，不影响内部元素

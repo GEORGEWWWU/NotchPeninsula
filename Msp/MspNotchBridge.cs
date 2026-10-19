@@ -39,6 +39,13 @@ public static class MspNotchBridge
     private const string AnnotationsKey = "annotations";
     private const string RoleKey = "role";
     private const string IconRole = "icon";
+    private const string AvatarRole = "avatar";
+
+    // 头像角色的同义词：发送端怎么叫都认（大小写不敏感）。
+    private static readonly HashSet<string> AvatarRoles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "avatar", "head", "headimg", "headimage", "portrait", "profile", "photo",
+    };
 
     private static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(6);
 
@@ -144,7 +151,9 @@ public static class MspNotchBridge
         node.Tool("notify", (Func<string, string, string, List<JsonElement>, object>)Notify,
             "在灵动岛顶部弹出一条通知。点对点，不广播到 notify 域。"
             + "title/body 是文本；content 可选，是 MSP/MCP 的 content block 数组，"
-            + "其中 annotations.role == \"icon\" 的 image / resource_link 块会被当作图标（不传就用默认图标）");
+            + "其中 annotations.role == \"icon\" 的 image / resource_link 块会被当作图标，"
+            + "annotations.role == \"avatar\"（同义词 head / portrait / profile / photo）"
+            + "的块会被当作消息头像 —— 头像优先于图标，也没有图标时就用头像；两者都没有才用默认图标");
 
         node.Tool("media_status", () => MediaStatus(), "只读当前媒体播放状态（活动/播放/标题/艺术家/进度）");
         node.Tool("media_control", (string action) => MediaControl(action),
@@ -203,14 +212,18 @@ public static class MspNotchBridge
             _lastNoticeId = notice.NoticeId;
         }
 
+        var blocks = new List<JsonElement>(2);
+        var avatar = ImageBlock(notice.AvatarPng, AvatarRole);
+        if (avatar != null) blocks.Add(avatar.Value);
         var icon = ImageBlock(notice.IconPng, IconRole);
+        if (icon != null) blocks.Add(icon.Value);
 
         Publish(SignalToastRaised, new
         {
             kind = notice.AppName,
             title = notice.Title,
             body = notice.Body,
-            content = icon == null ? null : new[] { icon.Value },
+            content = blocks.Count == 0 ? null : blocks,
             aumid = notice.Aumid,
             receivedAt = notice.ReceivedUtc.ToString("o"),
         });
@@ -289,21 +302,22 @@ public static class MspNotchBridge
 
         string title = n.Title.Length > 0 ? n.Title : n.Body;
 
-        ShowOnIsland(title, n.Body, n.IconSpec, source, n.Duration);
+        ShowOnIsland(title, n.Body, n.AvatarSpec, n.IconSpec, source, n.Duration);
 
         Logger.Info($"[MSP] 对端通知已受理：{sig.Path} ← {peer}（{title}）"
                     + $"，来源: {source}"
+                    + $"，头像: {ToastIconProvider.Describe(n.AvatarSpec)}"
                     + $"，图标: {ToastIconProvider.Describe(n.IconSpec)}"
                     + (n.ExtraBlocks > 0 ? $"，另有 {n.ExtraBlocks} 个块未渲染" : ""));
     }
 
     private readonly record struct NotifyPayload(
-        string Kind, string Title, string Body, string? IconSpec, TimeSpan Duration, int ExtraBlocks);
+        string Kind, string Title, string Body, string? AvatarSpec, string? IconSpec, TimeSpan Duration, int ExtraBlocks);
 
     private static NotifyPayload ParseNotify(JsonElement payload)
     {
         if (payload.ValueKind != JsonValueKind.Object)
-            return new NotifyPayload("", "", "", null, DefaultDuration, 0);
+            return new NotifyPayload("", "", "", null, null, DefaultDuration, 0);
 
         string kind = ReadString(payload, "kind", "Kind", "source", "app", "AppName");
         string title = ReadString(payload, "title", "Title", "name");
@@ -311,27 +325,39 @@ public static class MspNotchBridge
         var duration = ReadDuration(payload);
 
         string? icon = null;
+        string? avatar = null;
         string textFallback = "";
         int extra = 0;
 
         if (payload.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
-            (icon, textFallback, extra) = ParseBlocks(content.EnumerateArray());
+            (avatar, icon, textFallback, extra) = ParseBlocks(content.EnumerateArray());
+
+        // 头像也可以直接给在载荷顶层（avatar / avatarUrl / head ...）：块里没标头像时才用它。
+        if (avatar == null)
+        {
+            string direct = ReadString(payload, "avatar", "avatarUrl", "avatar_url", "head", "headimg");
+            if (!string.IsNullOrWhiteSpace(direct)) avatar = direct;
+        }
 
         if (string.IsNullOrWhiteSpace(body)) body = textFallback;
 
-        return new NotifyPayload(kind, title, body, icon, duration, extra);
+        return new NotifyPayload(kind, title, body, avatar, icon, duration, extra);
     }
 
     // 图标两级判定：优先第一个 annotations.role=="icon" 的 image / resource_link 块，
     // 都没标就取第一个图像块 —— 一条通知载荷里的图，唯一合理读法就是图标。
     // ⚠️ 角色标记必须从**原始块**读：Msp.Core.ResourceLink 没有 Annotations 成员，
     //    ContentBlock.From → ToElement 这一趟往返会把 resource_link 的 role=icon 悄悄丢掉。
+    // 头像（role=avatar 及其同义词）单列一条通道，**永远压过图标、且与块顺序无关** ——
+    // 聊天类消息往往同时带「群图标」和「发送者头像」，这时要的是头像。
     // 认不出的 type（audio / resource / blob_ref / 未知）只计数跳过，绝不让整条通知失败。
-    private static (string? IconSpec, string TextFallback, int ExtraBlocks) ParseBlocks(
+    private static (string? AvatarSpec, string? IconSpec, string TextFallback, int ExtraBlocks) ParseBlocks(
         IEnumerable<JsonElement> rawBlocks)
     {
-        string? markedIcon = null;   // 显式标了 role=icon 的第一个
-        string? firstImageish = null;   // 没标记，但长得像图标的第一个
+        string? markedAvatar = null;   // 标了头像的第一个
+        string? markedIcon = null;     // 标了角色 icon 的第一个
+        string? unmarked = null;       // 没标角色的第一个图像块
+        string? firstImageish = null;  // 没标记，但长得像图标的第一个
         int imageishCount = 0;
 
         string textFallback = "";
@@ -341,7 +367,8 @@ public static class MspNotchBridge
         {
             if (raw.ValueKind != JsonValueKind.Object) { extra++; continue; }
 
-            bool marked = IsIconBlock(raw);
+            bool isAvatar = IsAvatarBlock(raw);
+            bool isIcon = !isAvatar && IsIconBlock(raw);
             JsonElement el = NormalizeBlock(raw);
             string type = ReadString(el, "type");
 
@@ -355,7 +382,10 @@ public static class MspNotchBridge
             if (!string.IsNullOrWhiteSpace(spec))
             {
                 imageishCount++;
-                if (marked && markedIcon == null) markedIcon = spec;
+                if (isAvatar) markedAvatar ??= spec;
+                else if (isIcon) markedIcon ??= spec;
+                else unmarked ??= spec;
+
                 firstImageish ??= spec;
                 continue;
             }
@@ -369,11 +399,15 @@ public static class MspNotchBridge
             extra++;
         }
 
-        string? icon = markedIcon ?? firstImageish;
+        string? avatar = markedAvatar;
+        // 图标：标了角色的优先，其次没标角色的，最后才退回「第一个图像块」。
+        string? icon = markedIcon ?? unmarked
+                       ?? (firstImageish != null && firstImageish != avatar ? firstImageish : null);
 
-        if (icon != null && imageishCount > 1) extra += imageishCount - 1;
+        int used = (avatar != null ? 1 : 0) + (icon != null ? 1 : 0);
+        if (imageishCount > used) extra += imageishCount - used;
 
-        return (icon, textFallback, extra);
+        return (avatar, icon, textFallback, extra);
     }
 
     private static JsonElement NormalizeBlock(JsonElement raw)
@@ -389,12 +423,18 @@ public static class MspNotchBridge
         }
     }
 
-    private static bool IsIconBlock(JsonElement block)
+    private static bool IsIconBlock(JsonElement block) => IsRoleBlock(block, IconRole);
+
+    private static bool IsAvatarBlock(JsonElement block)
+        => block.TryGetProperty(AnnotationsKey, out var ann) && ann.ValueKind == JsonValueKind.Object
+           && AvatarRoles.Contains(ReadString(ann, RoleKey));
+
+    private static bool IsRoleBlock(JsonElement block, string role)
     {
         if (!block.TryGetProperty(AnnotationsKey, out var ann) || ann.ValueKind != JsonValueKind.Object)
             return false;
 
-        return string.Equals(ReadString(ann, RoleKey), IconRole, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(ReadString(ann, RoleKey), role, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? ImageSpecOf(JsonElement block)
@@ -471,18 +511,19 @@ public static class MspNotchBridge
             return new { ok = false, error = "title / body / content 至少要给一个" };
         }
 
+        string? avatar = null;
         string? icon = null;
         string textFallback = "";
         int extra = 0;
 
         if (content is { Count: > 0 })
-            (icon, textFallback, extra) = ParseBlocks(content);
+            (avatar, icon, textFallback, extra) = ParseBlocks(content);
 
         var kindLabel = string.IsNullOrWhiteSpace(kind) ? "MSP" : kind.Trim();
         string effectiveBody = string.IsNullOrWhiteSpace(body) ? textFallback : body;
         string effectiveTitle = string.IsNullOrWhiteSpace(title) ? effectiveBody : title;
 
-        ShowOnIsland(effectiveTitle, effectiveBody, icon, kindLabel, DefaultDuration);
+        ShowOnIsland(effectiveTitle, effectiveBody, avatar, icon, kindLabel, DefaultDuration);
 
         return new
         {
@@ -491,6 +532,7 @@ public static class MspNotchBridge
             source = kindLabel,
             title = effectiveTitle,
             body = effectiveBody,
+            avatar = ToastIconProvider.Describe(avatar),
             icon = ToastIconProvider.Describe(icon),
             blocks = extra,
         };
@@ -551,13 +593,15 @@ public static class MspNotchBridge
     // 绝不在调用线程上同步跑宿主的展示链路：PostReminder 只是把撤下时间往未来推（没有 Sleep），
     // 但它会**同步** Invoke ReminderPosted —— 任何订阅方在里面阻塞都会顺着 RPC 变成对端眼里的超时。
     // 所以回执语义是「已受理」。用 ContinueWith 串成一条链（不是裸 Task.Run）以保证先到先显示。
-    private static void ShowOnIsland(string title, string body, string? iconSpec, string source, TimeSpan duration)
+    private static void ShowOnIsland(string title, string body, string? avatarSpec, string? iconSpec,
+        string source, TimeSpan duration)
     {
         var reminder = new ReminderData
         {
             Title = title,
             Body = body,
             Source = string.IsNullOrWhiteSpace(source) ? "MSP" : source,
+            AvatarPath = string.IsNullOrWhiteSpace(avatarSpec) ? null : avatarSpec,
             IconPath = string.IsNullOrWhiteSpace(iconSpec) ? null : iconSpec,
             Duration = duration,
         };

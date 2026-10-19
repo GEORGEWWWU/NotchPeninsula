@@ -89,6 +89,14 @@ namespace NotchPeninsula
                     Renderer.TargetMonitorIndex = loadedMonitor;
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
                     Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
+                    Renderer.IslandLiquidGlass = (int)key.GetValue("IslandLiquidGlass", 0) != 0;
+                    if (Renderer.IslandLiquidGlass) Renderer.IslandAcrylic = false;   // 两者互斥，玻璃优先
+
+                    // 液态玻璃：质量档 + 9 根滑轨 + 抓屏方式（越界一律夹回，老配置/手改注册表都不怕）
+                    LiquidGlass.Quality = (int)key.GetValue("LiquidGlassQuality", 1);
+                    for (int i = 0; i < LiquidGlass.ParamCount; i++)
+                        LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], 2));
+                    IslandBackdrop.UseMagnifier = (int)key.GetValue("GlassUseMagnifier", 1) != 0;
 
                     // 本来就开着的，沿用注册表里的勾选状态。
                     // 不勾的话升级后媒体会整个消失。
@@ -165,12 +173,15 @@ namespace NotchPeninsula
             {
                 try
                 {
-                    string detail = e.ExceptionObject switch
-                    {
-                        Exception ex => $"{ex.GetType().Name}: {ex.Message}{Environment.NewLine}{ex.StackTrace}",
-                        var other => other?.ToString() ?? "(null)",
-                    };
+                    Exception? ex = e.ExceptionObject as Exception;
+                    string detail = ex != null
+                        ? $"{ex.GetType().Name}: {ex.Message}{Environment.NewLine}{ex.StackTrace}"
+                        : e.ExceptionObject?.ToString() ?? "(null)";
+
                     Logger.Error($"[崩溃] 未处理异常，进程即将退出（IsTerminating={e.IsTerminating}）{Environment.NewLine}{detail}");
+
+                    // app.log 会被轮转冲掉，崩溃另存一份独立的、带完整异常链与末尾日志的文件
+                    Diagnostics.WriteCrash("未处理异常", ex, e.IsTerminating);
                 }
                 catch
                 {
@@ -179,7 +190,10 @@ namespace NotchPeninsula
             };
 
             TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
                 Logger.Error("[崩溃] 未观察的 Task 异常", e.Exception);
+                Diagnostics.WriteCrash("未观察的 Task 异常", e.Exception, terminating: false);
+            };
         }
 
         [STAThread]
@@ -211,7 +225,7 @@ namespace NotchPeninsula
                 // 在实例化任何窗口和媒体控制器之前，先将配置注入内存
                 LoadSettings();
 
-                // 首次启动（或升级到新版本后第一次启动）先走一遍偏好引导：只写注册表，
+                // 从没引导过时先走一遍偏好引导（升级不算）：只写注册表，
                 // 写完就直接进软件。跳过 / 关闭 / 按 ESC 都算过，失败也绝不拦着启动。
                 OnboardingWindow.ShowIfNeeded(args);
 

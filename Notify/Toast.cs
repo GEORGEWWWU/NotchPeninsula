@@ -120,11 +120,13 @@ namespace NotchPeninsula
                                 string title = root.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
                                 string body = root.TryGetProperty("subtitle", out var s) ? s.GetString() ?? "" : "";
 
-                                string iconSpec = ReadStringProp(root, "icon");
-                                if (string.IsNullOrWhiteSpace(iconSpec))
-                                    iconSpec = ReadStringProp(root, "iconUrl");
+                                string iconSpec = ReadStringProp(root, "icon", "iconUrl");
 
-                                Logger.Info($"[HTTP接口] 收到发送端消息推送到灵动岛 -> 类型: {appName}, 标题: {title}, 内容: {body}, 图标: {ToastIconProvider.Describe(iconSpec)}");
+                                // 头像与图标是两条独立通道：有头像时头像出场，预设 icon 只在没头像时才显示。
+                                string avatarSpec = ReadStringProp(root, "avatar", "avatarUrl", "avatar_url", "head");
+
+                                Logger.Info($"[HTTP接口] 收到发送端消息推送到灵动岛 -> 类型: {appName}, 标题: {title}, 内容: {body}, "
+                                          + $"头像: {ToastIconProvider.Describe(avatarSpec)}, 图标: {ToastIconProvider.Describe(iconSpec)}");
 
                                 var toast = new ToastData
                                 {
@@ -138,6 +140,8 @@ namespace NotchPeninsula
 
                                 OnToastDetected?.Invoke(toast);
 
+                                // 先起头像的解析：它优先级最高，让它在预览窗口里更早到位。
+                                ToastIconProvider.ResolveInBackground(avatarSpec, bmp => toast.Avatar = bmp);
                                 ToastIconProvider.ResolveInBackground(iconSpec, bmp => toast.CustomIcon = bmp);
                             }
 
@@ -197,13 +201,17 @@ namespace NotchPeninsula
             }
         }
 
-        private static string ReadStringProp(System.Text.Json.JsonElement root, string name)
+        private static string ReadStringProp(System.Text.Json.JsonElement root, params string[] names)
         {
             try
             {
-                return root.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
-                    ? v.GetString() ?? string.Empty
-                    : string.Empty;
+                foreach (string name in names)
+                {
+                    if (root.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(v.GetString()))
+                        return v.GetString()!;
+                }
+                return string.Empty;
             }
             catch
             {
@@ -498,7 +506,7 @@ namespace NotchPeninsula
 
                 Logger.Info($"[Toast] 捕获系统通知 -> 应用: {appName} ({aumid}), 标题: {title}, 内容: {body}, ID: {notification.Id}");
 
-                return new ToastData
+                var toast = new ToastData
                 {
                     AppName = appName,
                     Title = title,
@@ -508,6 +516,11 @@ namespace NotchPeninsula
                     NotificationId = notification.Id,
                     ProcessName = appInfo?.AppUserModelId ?? appName
                 };
+
+                // toast 里的头像（QQ 聊天通知带的好友/群头像）WinRT 读不到，去通知库里取证；后台做，不挡轮询。
+                ToastAvatarProbe.ResolveInBackground(toast);
+
+                return toast;
             }
             catch (Exception ex)
             {
@@ -600,6 +613,18 @@ namespace NotchPeninsula
         {
             get => Volatile.Read(ref _customIcon);
             set => Volatile.Write(ref _customIcon, value);
+        }
+
+        private SKBitmap? _avatar;
+
+        /// <summary>
+        /// 消息头像（如 QQ 消息带的好友 / 群头像）。优先级高于 <see cref="CustomIcon"/>：
+        /// 只要有头像就画头像，预设图标只在没有头像时才出场。渲染线程无锁读。
+        /// </summary>
+        public SKBitmap? Avatar
+        {
+            get => Volatile.Read(ref _avatar);
+            set => Volatile.Write(ref _avatar, value);
         }
     }
     

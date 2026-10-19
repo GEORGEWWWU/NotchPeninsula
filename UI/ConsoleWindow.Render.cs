@@ -467,6 +467,41 @@ namespace NotchPeninsula
             DrawTab(canvas, 7, "插件市场", TabRowY(7));
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, _separatorPaint);
             DrawTab(canvas, 4, "关于软件", TabRowY(4));
+
+            DrawExportBundleButton(canvas);
+        }
+
+        // 侧边栏左下角：导出诊断包（常驻，不绑页签）。
+        // 用户报 bug 时唯一要按的地方 —— 一个 zip 到手，版本 / 系统 / 显示器 / 配置快照 /
+        // 插件清单 / 最近日志全在里头，省掉一轮轮追问。
+        private void DrawExportBundleButton(SKCanvas canvas)
+        {
+            var rect = new SKRect(EXPORT_BTN_X, EXPORT_BTN_Y,
+                                  EXPORT_BTN_X + EXPORT_BTN_W, EXPORT_BTN_Y + EXPORT_BTN_H);
+
+            _dynamicFillPaint.Color = _aboutExportHovered ? Overlay(30) : Overlay(15);
+            canvas.DrawRoundRect(rect, 5f, 5f, _dynamicFillPaint);
+
+            _dynamicTextPaint.TextAlign = SKTextAlign.Center;
+            _dynamicTextPaint.TextSize = 12.5f;
+            _dynamicTextPaint.Color = _aboutExportHovered ? new SKColor(0, 140, 240) : Neutral(200);
+            canvas.DrawText(_aboutExporting ? "正在打包…" : "导出诊断包",
+                EXPORT_BTN_X + EXPORT_BTN_W / 2f, EXPORT_BTN_Y + 18.5f, _dynamicTextPaint);
+
+            // 成功不说、失败说：导出成功靠资源管理器选中文件来表达。失败就在按钮上方挂一行。
+            // 提示行比按钮宽（可占满侧栏），左对齐 —— 居中放不下时两边会顶到侧栏外。
+            if (_aboutExportHint.Length > 0)
+            {
+                _dynamicTextPaint.TextSize = 11f;
+                _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+                _dynamicTextPaint.Color = new SKColor(200, 80, 80);
+                canvas.DrawText(TruncateText(_aboutExportHint, _dynamicTextPaint, TAB_BOX_R - EXPORT_BTN_X),
+                    EXPORT_BTN_X, EXPORT_BTN_Y - 8f, _dynamicTextPaint);
+            }
+
+            // 共享画笔复位：后面的页签内容默认按左对齐排版
+            _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+            _dynamicTextPaint.TextSize = 13f;
         }
 
         // 页签：通用设置
@@ -1200,9 +1235,10 @@ namespace NotchPeninsula
             // 亚克力仍是实验特性：复用通用设置里 MSP 那枚「实验性」标签
             DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X,
                 themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
-            canvas.DrawText("胶囊内模糊真实桌面背景", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
+            canvas.DrawText("胶囊内背景材质", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
             DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
-                ["实体", "亚克力"], Renderer.IslandAcrylic ? 1 : 0, _hoveredMaterialIndex);
+                ["实体", "亚克力", "液态玻璃"], Renderer.IslandLiquidGlass ? 2 : (Renderer.IslandAcrylic ? 1 : 0),
+                _hoveredMaterialIndex);
 
             float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
             canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBg);
@@ -1239,6 +1275,69 @@ namespace NotchPeninsula
                 _dynamicTextPaint.TextSize = 13f;
             }
             DrawMultiCard(SIZE_CARD_Y, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
+
+            // 液态玻璃参数卡：只在材质选到「液态玻璃」时出现 —— 实体 / 亚克力下这些滑块没有任何意义
+            if (Renderer.IslandLiquidGlass)
+            {
+                float gY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
+                var gRect = new SKRect(CONTENT_L, gY, WIDTH - CONTENT_RM, gY + GLASS_CARD_H);
+                canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
+                canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
+
+                float segY = gY + GLASS_SEG_Y;
+                float segTextY = segY + 20f;
+                canvas.DrawText("玻璃质量", CONTENT_TEXT_X, segTextY, _uiTextPaint);
+                DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
+                    ["流畅", "均衡", "精细"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
+
+                // 抓屏方式：放大镜那条线 1:1 全分辨率；放大镜不可用时会静默回退「兼容」
+                bool magOn = IslandBackdrop.UseMagnifier && !MagnifierBackdrop.IsDisabled;
+                canvas.DrawText("抓屏", GLASS_SOURCE_SEG_X - 62f, segTextY, _uiTextPaint);
+                DrawSegmented(canvas, GLASS_SOURCE_SEG_X, segY, GLASS_SOURCE_SEG_W, SEG_H,
+                    ["放大镜", "兼容"], magOn ? 0 : 1, _hoveredGlassSourceIndex);
+
+                // 9 根滑轨排成两列：左列第 0/2/4/6/8 项，右列第 1/3/5/7 项
+                for (int row = 0; row < 5; row++)
+                {
+                    float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
+                    DrawGlassSlider(canvas, rowY, 0, row * 2);
+                    DrawGlassSlider(canvas, rowY, 1, row * 2 + 1);
+                }
+            }
+        }
+
+        // 液态玻璃的一根 5 档滑轨：标签 + 滑轨 + 右侧档位名，与背景透明度那根同口径。
+        // col 0 = 左列，1 = 右列（整体右移 GLASS_COL_W）。
+        private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
+        {
+            if (paramIndex >= LiquidGlass.ParamCount) return;
+
+            float dx = col * GLASS_COL_W;
+            float x0 = GLASS_SLIDER_X + dx, x1 = GLASS_SLIDER_END + dx;
+            float y = rowY + 17f;
+
+            canvas.DrawText(LiquidGlass.ParamNames[paramIndex], CONTENT_TEXT_X + dx, y, _subTextPaint);
+
+            int level = Math.Clamp(LiquidGlass.GetLevel(paramIndex), 0, LiquidGlass.MaxLevel);
+            bool hovered = _hoveredGlassParamIndex == paramIndex;
+            int hoveredLevel = hovered ? _hoveredGlassParamLevel : -1;
+
+            float w = x1 - x0;
+            canvas.DrawLine(x0, y, x1, y, _separatorPaint);
+            _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
+            _dynamicStrokePaint.StrokeWidth = 2f;
+            canvas.DrawLine(x0, y, x0 + (w / LiquidGlass.MaxLevel) * level, y, _dynamicStrokePaint);
+            _dynamicStrokePaint.StrokeWidth = 1.5f;
+            for (int i = 0; i <= LiquidGlass.MaxLevel; i++)
+            {
+                bool sel = level == i, hov = hoveredLevel == i;
+                if (!sel && !hov) continue;
+                float px = x0 + (w / LiquidGlass.MaxLevel) * i;
+                _dynamicFillPaint.Color = sel ? new SKColor(0, 120, 212) : Overlay(80);
+                canvas.DrawCircle(px, y, sel ? 6 : 4, _dynamicFillPaint);
+            }
+
+            canvas.DrawText(GlassLevelLabels[level], GLASS_LEVEL_TEXT_X + dx, y, _subTextPaint);
         }
 
         private void RenderTabPlugins(SKCanvas canvas)
@@ -1265,7 +1364,7 @@ namespace NotchPeninsula
                 _uiTextPaint.Color = _fgColor;
             }
 
-            DrawPluginButton(0, "导入 DLL", CONTENT_TEXT_X, topY + 60, 96);
+            DrawPluginButton(0, "导入插件", CONTENT_TEXT_X, topY + 60, 96);
             DrawPluginButton(1, "打开目录", CONTENT_TEXT_X + 104, topY + 60, 96);
             DrawPluginButton(2, "插件市场", CONTENT_TEXT_X + 208, topY + 60, 96);
 
@@ -1294,7 +1393,7 @@ namespace NotchPeninsula
             float infoTextMax = PLUGIN_BTN_RELOAD_X - CONTENT_TEXT_X - 8;     // 信息止于按钮区之前
 
             if (_pluginView.Count == 0)
-                canvas.DrawText("暂无插件，点击「导入 DLL」或到「插件市场」下载", CONTENT_TEXT_X, listY + 66, _subTextPaint);
+                canvas.DrawText("暂无插件，点击「导入插件」或到「插件市场」下载", CONTENT_TEXT_X, listY + 66, _subTextPaint);
 
             for (int slot = 0; slot < visibleRows; slot++)
             {
@@ -1310,7 +1409,16 @@ namespace NotchPeninsula
                 bool subDisabled = i < _pluginSubDisabled.Count && _pluginSubDisabled[i];
                 float infoBaseline = rowY + 37;
                 string shownSub = TruncateText(sub, _subTextPaint, infoTextMax);
-                if (subDisabled && shownSub.StartsWith("已禁用", StringComparison.Ordinal))
+                if (entry.State == PluginState.Failed && shownSub.StartsWith("加载失败", StringComparison.Ordinal))
+                {
+                    // 红字：这一行是弹窗关掉之后唯一还能说明「它没跑起来」的地方
+                    const string tag = "加载失败";
+                    _subTextPaint.Color = new SKColor(232, 100, 100);
+                    canvas.DrawText(tag, CONTENT_TEXT_X, infoBaseline, _subTextPaint);
+                    _subTextPaint.Color = Neutral(170);
+                    canvas.DrawText(shownSub[tag.Length..], CONTENT_TEXT_X + _subTextPaint.MeasureText(tag), infoBaseline, _subTextPaint);
+                }
+                else if (subDisabled && shownSub.StartsWith("已禁用", StringComparison.Ordinal))
                 {
                     const string tag = "已禁用";
                     _subTextPaint.Color = new SKColor(0, 140, 240);
@@ -1389,23 +1497,31 @@ namespace NotchPeninsula
                 canvas.DrawText(dropHint, hintX, hintY, _uiTextPaint);
                 _uiTextPaint.Color = _fgColor;
             }
-
-            if (_marketDialog == MarketDialog.LoadFailed)
-            {
-                DrawLoadFailedDialog(canvas);
-            }
         }
 
         private void RenderTabMarket(SKCanvas canvas)
         {
             EnsureMarketData();
-            ApplyPendingMarketResult();   // 消费后台安装结果：刷新列表 + 提示 + 评分弹窗
             if (_marketDataDirty) { _marketDataDirty = false; RefreshMarketFilter(); }   // UI 线程重建过滤视图
 
             float cardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var cardRect = new SKRect(CONTENT_L, cardTop, WIDTH - CONTENT_RM, HEIGHT - 20);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+
+            // 工具栏下拉箭头（分类 / 排序共用）：几何与线宽只在这里定义一份。
+            // 26px 高的小控件里用 1.6f 比页面通用的 1.5f 更立得住；纵向按控件顶 +11 居中，
+            // 别按「控件顶 +13」另算一套 —— 两枚箭头会明显错半个像素位。
+            void DrawMarketChevron(SKRect box)
+            {
+                float cx = box.Right - 16, cy = box.Top + 11;
+                _dynamicStrokePaint.Color = Neutral(170);
+                _dynamicStrokePaint.StrokeWidth = 1.6f;
+                canvas.DrawLine(cx - 4, cy, cx, cy + 4, _dynamicStrokePaint);
+                canvas.DrawLine(cx, cy + 4, cx + 4, cy, _dynamicStrokePaint);
+                _dynamicStrokePaint.StrokeWidth = 1.5f;   // 复位：共用画笔
+                _dynamicStrokePaint.Color = Neutral(150);
+            }
 
             var catRect = new SKRect(CONTENT_TEXT_X, MarketControlsY, CONTENT_TEXT_X + MarketCatBtnW, MarketControlsY + MarketControlH);
             _dynamicFillPaint.Color = _marketCategoryOpen || _hoveredMarketCategoryIndex != -1 ? Overlay(30) : Overlay(15);
@@ -1415,12 +1531,7 @@ namespace NotchPeninsula
             _marketTextPaint.Color = _fgColor;
             canvas.DrawText(MarketCategoryName(_marketCategoryKey), CONTENT_TEXT_X + 12, MarketControlsY + 17, _marketTextPaint);
             // 下拉箭头
-            float ax = catRect.Right - 16, ay = MarketControlsY + 11;
-            _dynamicStrokePaint.Color = Neutral(170);
-            _dynamicStrokePaint.StrokeWidth = 1.6f;
-            canvas.DrawLine(ax - 4, ay, ax, ay + 4, _dynamicStrokePaint);
-            canvas.DrawLine(ax, ay + 4, ax + 4, ay, _dynamicStrokePaint);
-            _dynamicStrokePaint.StrokeWidth = 1.5f;   // 复位：共用画笔
+            DrawMarketChevron(catRect);
 
             var searchRect = new SKRect(MarketSearchX, MarketControlsY, MarketSearchX + MarketSearchW, MarketControlsY + MarketControlH);
             _dynamicFillPaint.Color = Overlay(15);
@@ -1495,9 +1606,11 @@ namespace NotchPeninsula
             _marketTextPaint.Color = _hoveredMarketChk ? _fgColor : Neutral(190);
             canvas.DrawText(MarketChkLabel, MarketChkLabelX, MarketStatusBaseline, _marketTextPaint);
 
+            // 只说总数，不追加「（已筛选）」：分类 / 搜索 / 「只看已安装」三个控件本身就在旁边，
+            // 再挂一个后缀只会把这句话挤成省略号。
             string status = _marketFetching ? "正在加载插件市场…"
                 : _marketError.Length > 0 ? _marketError
-                : $"共 {_marketView.Count} 个插件" + (string.Equals(_marketCategoryKey, "all", StringComparison.OrdinalIgnoreCase) && _marketSearch.Length == 0 && !_marketOnlyInstalled ? "" : "（已筛选）");
+                : $"共 {_marketView.Count} 个插件";
             float statusX = MarketChkLabelX + _marketTextPaint.MeasureText(MarketChkLabel) + 18f;
             float statusMax = MarketSortX - 10f - statusX;   // 止于排序下拉左侧
             _marketTextPaint.Color = _marketError.Length > 0 && !_marketFetching ? new SKColor(232, 100, 100) : Neutral(140);
@@ -1532,11 +1645,7 @@ namespace NotchPeninsula
             _marketTextPaint.Color = _fgColor;
             canvas.DrawText(MarketSortOptions[_marketSortIndex], MarketSortX + 12, MarketStatusBaseline, _marketTextPaint);
             _marketTextPaint.Color = Neutral(170);
-            float sax = sortRect.Right - 16, say = MarketStatusRowY + 13;
-            _dynamicStrokePaint.Color = Neutral(170);
-            canvas.DrawLine(sax - 4, say, sax, say + 4, _dynamicStrokePaint);
-            canvas.DrawLine(sax, say + 4, sax + 4, say, _dynamicStrokePaint);
-            _dynamicStrokePaint.Color = Neutral(150);
+            DrawMarketChevron(sortRect);
             _subTextPaint.Color = Neutral(170);   // 下面列表区继续用这支，保持默认灰
 
             float rowsTop = MarketRowsTop;
@@ -1650,16 +1759,18 @@ namespace NotchPeninsula
 
                 const float btnTop = 21f, btnH = 20f;
 
-                // 主操作（下载 / 更新 / 重装）：三态三种颜色
+                // 主操作（下载 / 更新 / 重装 / 启用）：四态四种颜色
                 {
                     bool enabled = !busy;
                     bool hovered = _hoveredMarketInstall == i;
                     var r = new SKRect(MarketBtn1X, rowY + btnTop, MarketBtn1X + MarketBtnW, rowY + btnTop + btnH);
-                    var (normal, hover) = InstallButtonColors(local, mp);
+                    var (normal, hover) = InstallButtonColors(local, mp, dim);
                     _dynamicFillPaint.Color = !enabled ? Overlay(20) : hovered ? hover : normal;
                     canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                    _uiTextPaint.Color = enabled ? SKColors.White : Neutral(110);
-                    DrawCenteredButtonLabel(canvas, MarketInstallLabel(mp, local), r, _uiTextPaint);
+                    // 「启用」是灰底，白字压在浅色主题的浅灰底上会糊掉 —— 这类按钮的文字跟着底色走。
+                    _uiTextPaint.Color = !enabled ? Neutral(110)
+                        : (local != null && dim) ? Neutral(235) : SKColors.White;
+                    DrawCenteredButtonLabel(canvas, MarketInstallLabel(mp, local, dim), r, _uiTextPaint);
                 }
 
                 // 卸载：灰实底，悬停转红；本机没装则置灰
@@ -1736,8 +1847,20 @@ namespace NotchPeninsula
                 }
                 _subTextPaint.Color = Neutral(170);
             }
+        }
 
-            if (_marketDialog == MarketDialog.LoadFailed)
+        /// <summary>
+        /// 弹窗绘制总入口。三分支＝三种弹窗，放在这里而不是各自的页签渲染里：
+        /// 加载失败可能在任何页签发生（市场后台装完、插件页重载 / 启用），
+        /// 只画在 6、7 就会出现「点击被模态拦掉、画面上什么都没弹」的假死。
+        /// </summary>
+        private void RenderPluginDialogs(SKCanvas canvas)
+        {
+            if (_marketDialog == MarketDialog.UninstallConfirm || _marketDialog == MarketDialog.UninstallData)
+            {
+                DrawUninstallDialog(canvas);
+            }
+            else if (_marketDialog == MarketDialog.LoadFailed)
             {
                 DrawLoadFailedDialog(canvas);
             }
@@ -1752,8 +1875,10 @@ namespace NotchPeninsula
         private static string FormatScore(double score)
             => score.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
 
-        private static (SKColor Normal, SKColor Hover) InstallButtonColors(PluginEntry? local, MarketPlugin mp)
+        private static (SKColor Normal, SKColor Hover) InstallButtonColors(PluginEntry? local, MarketPlugin mp, bool disabled)
         {
+            // 已装但没在跑：中性灰，和「下载绿 / 更新橙 / 重装蓝」区分开 —— 它不下载任何东西。
+            if (local != null && disabled) return (Neutral(95), Neutral(115));
             if (local == null) return (new SKColor(44, 160, 92), new SKColor(58, 184, 108));       // 下载：绿
             if (local.Version.Length > 0 && CompareVersions(mp.Version, local.Version) > 0)
                 return (new SKColor(214, 126, 24), new SKColor(238, 146, 34));                    // 更新：橙
@@ -1933,26 +2058,104 @@ namespace NotchPeninsula
             return p;
         }
 
+        /// <summary>
+        /// 弹窗按钮只有两种：主操作（彩色实底白字，accent 有值）与次操作（灰底浅字，accent 为 null）。
+        /// 弹窗样式统一的要求全落在这里 —— 别在各自的 Draw 里再手搓颜色。
+        /// </summary>
+        private void DrawDialogButton(SKCanvas canvas, SKRect r, string label, int index, (SKColor Normal, SKColor Hover)? accent)
+        {
+            bool hovered = _hoveredDialogButton == index;
+            _dynamicFillPaint.Color = accent is { } a
+                ? (hovered ? a.Hover : a.Normal)
+                : (hovered ? Overlay(30) : Overlay(15));
+            canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
+            _uiTextPaint.Color = accent == null ? Neutral(200) : SKColors.White;
+            DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
+        }
+
+        private static readonly (SKColor Normal, SKColor Hover) DialogAccentBlue = (new SKColor(0, 120, 212), new SKColor(0, 140, 240));
+        private static readonly (SKColor Normal, SKColor Hover) DialogAccentRed = (new SKColor(180, 50, 50), new SKColor(200, 60, 60));
+
         private void DrawLoadFailedDialog(SKCanvas canvas)
         {
             var rect = GetNoticeDialogRect();
             canvas.DrawRoundRect(rect, 8, 8, _menuBg);
             canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
 
-            float bodyY = DrawDialogHeader(canvas, rect, "插件加载失败");
+            float bodyY = DrawDialogHeader(canvas, rect, "插件加载失败") + LoadFailedBodyDY;
+            float left = rect.Left + DialogPad;
+
+            // 逐行逐段画：群号那一段单独上色 —— 折行位置是打开弹窗时算好的，
+            // 这里只按结果摆，别再自己折一遍（否则链接的命中区会跟画面错开）。
+            for (int i = 0; i < _loadFailedLines.Count; i++)
+            {
+                float lineY = bodyY + i * DialogLineH;
+                float x = left;
+                foreach (var (text, isLink) in _loadFailedLines[i])
+                {
+                    _subTextPaint.Color = isLink
+                        ? (_loadFailedLinkHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212))
+                        : Neutral(200);
+                    canvas.DrawText(text, x, lineY, _subTextPaint);
+                    x += _subTextPaint.MeasureText(text);
+                }
+            }
+
+            // 悬停才出下划线：静态下划线容易被当成正文里的分隔符
+            if (_loadFailedLinkHovered && _loadFailedLinkLine >= 0)
+            {
+                float y = bodyY + _loadFailedLinkLine * DialogLineH + 3f;
+                float x0 = left + _loadFailedLinkOffsetX;
+                _dynamicFillPaint.Color = new SKColor(0, 140, 240);
+                canvas.DrawRect(new SKRect(x0, y, x0 + _loadFailedLinkWidth, y + 1f), _dynamicFillPaint);
+            }
+
+            _subTextPaint.Color = Neutral(170);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 1), "好的", 0, DialogAccentBlue);
+        }
+
+        /// <summary>
+        /// 卸载确认弹窗（两级）。
+        /// 第一级只有一句「确定卸载吗」，第二级才把插件登记的数据目录摆出来 ——
+        /// 没登记的插件根本走不到第二级，行为与以前一致，只是多了第一级的确认。
+        /// </summary>
+        private void DrawUninstallDialog(SKCanvas canvas)
+        {
+            bool askDir = _marketDialog == MarketDialog.UninstallData;
+            var rect = askDir ? GetUninstallDirDialogRect() : GetUninstallConfirmDialogRect();
+            canvas.DrawRoundRect(rect, 8, 8, _menuBg);
+            canvas.DrawRoundRect(rect, 8, 8, _menuBorder);
+
+            string name = _uninstallEntry?.FriendlyName ?? "";
+            float bodyY = DrawDialogHeader(canvas, rect, askDir ? "删除插件目录" : "卸载插件");
+
+            if (!askDir)
+            {
+                _subTextPaint.Color = Neutral(200);
+                canvas.DrawText(TruncateText($"确定要卸载「{name}」吗？", _subTextPaint, DialogInnerW),
+                    rect.Left + DialogPad, bodyY + 12, _subTextPaint);
+                _subTextPaint.Color = Neutral(150);
+                canvas.DrawText(TruncateText("插件文件会移入回收站，之后可以重新导入。", _subTextPaint, DialogInnerW),
+                    rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
+                _subTextPaint.Color = Neutral(170);
+
+                DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 1), "卸载", 0, DialogAccentRed);
+                return;
+            }
+
             _subTextPaint.Color = Neutral(200);
-            canvas.DrawText(TruncateText("请确认您已使用最新 NPS。", _subTextPaint, DialogInnerW),
+            canvas.DrawText(TruncateText("这个插件登记了它创建的数据目录：", _subTextPaint, DialogInnerW),
                 rect.Left + DialogPad, bodyY + 12, _subTextPaint);
             _subTextPaint.Color = Neutral(150);
-            canvas.DrawText(TruncateText("可前往 QQ 群下载最新版本的 NPS。", _subTextPaint, DialogInnerW),
+            canvas.DrawText(TruncateText(_uninstallDir, _subTextPaint, DialogInnerW),
                 rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
+            canvas.DrawText(TruncateText("删除后无法恢复；点「保留」只卸载插件。", _subTextPaint, DialogInnerW),
+                rect.Left + DialogPad, bodyY + 12 + DialogLineH * 2, _subTextPaint);
             _subTextPaint.Color = Neutral(170);
 
-            var btn = GetDialogSingleButtonRect(rect);
-            _dynamicFillPaint.Color = _hoveredDialogButton == 0 ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-            canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
-            _uiTextPaint.Color = SKColors.White;
-            DrawCenteredButtonLabel(canvas, "好的", btn, _uiTextPaint);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 3), "打开目录", 0, null);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 1, 3), "保留", 1, null);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 2, 3), "删除", 2, DialogAccentRed);
         }
 
         private void RenderDropdownList(SKCanvas canvas, float x, float yOffset, float w,

@@ -73,9 +73,38 @@ namespace NotchPeninsula
         public const int WM_MOUSEHOVER = 0x02A1;
         public const int WM_CAPTURECHANGED = 0x0215;  // 鼠标捕获被抢占/释放
         public const int WM_KEYDOWN = 0x0100;
+        public const int WM_KEYUP = 0x0101;
         public const int WM_SYSKEYDOWN = 0x0104;
+        public const int WM_SYSKEYUP = 0x0105;
         public const int WM_CHAR = 0x0102;            // 插件市场搜索框的字符输入
         public const int WM_HOTKEY = 0x0312;
+        public const int WM_ENTERSIZEMOVE = 0x0231;   // 系统拖动 / 缩放循环开始
+        public const int WM_EXITSIZEMOVE = 0x0232;    // 同上，结束
+
+        // 低层键盘钩子（快捷键录制用）：挂在 UI 线程，能拿到 Win 组合与被系统抢先的键。
+        public const int WH_KEYBOARD_LL = 13;
+        public const uint LLKHF_INJECTED = 0x10;      // SendInput / 驱动注入的键，不进录制
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KBDLLHOOKSTRUCT
+        {
+            public uint vkCode;
+            public uint scanCode;
+            public uint flags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
         public const uint MOD_ALT = 0x0001;
         public const uint MOD_CONTROL = 0x0002;
@@ -121,6 +150,9 @@ namespace NotchPeninsula
         public const int GCS_COMPSTR = 0x0008;
         public const int GCS_RESULTSTR = 0x0800;
         public const int CFS_POINT = 0x0002;
+        // 告诉 IME「组字串由应用自己画」：用这个样式定位后，输入法不再自己浮一个组字小窗
+        //（不认这个标志的输入法仍会浮，至少微软拼音 / 搜狗认）。
+        public const int CFS_FORCE_POSITION = 0x0020;
         public const int CFS_CANDIDATEPOS = 0x0040;
         public const int CFS_EXCLUDE = 0x0080;
         public const int VK_LBUTTON = 0x01;
@@ -434,6 +466,8 @@ namespace NotchPeninsula
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
         public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOMOVE_NOSIZE = 0x0001 | 0x0002;
         public const uint SWP_NOZORDER = 0x0004;
         public const uint SWP_NOACTIVATE = 0x0010;

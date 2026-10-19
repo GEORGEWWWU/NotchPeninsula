@@ -124,7 +124,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 首次启动（或升级到新版本后第一次启动）时弹引导；`-onboard` 强制弹。
+        /// 只在"从没引导过"时弹一次（与版本号无关）；`-onboard` 强制弹。
         /// 引导跑在自己的后台线程上，主线程只负责等；任何异常 / 卡死都不会拖住启动流程。
         /// </summary>
         public static void ShowIfNeeded(string[] args)
@@ -151,14 +151,14 @@ namespace NotchPeninsula
             try
             {
                 var prev = OnboardedVersion;
-                // 判据只看这一个值：与用户已有的其它设置无关。老用户升级（1.9.5 → 2.0.0）时
-                // 注册表里根本没这个值（1.9.5 没有引导代码），prev = null ⇒ 必然弹。
-                if (!force && prev == CurrentVersion) return;
+                // 判据只看"引导过没有"，跟版本号无关：注册表里有值（不 care 是哪个版本写的）就说明
+                // 用户已经走过一遍，升级换版本号不许再抓回来重播。只有 prev == null（全新安装，
+                // 或从没有引导代码的老版本首次升级上来）才弹这一次。
+                if (!force && prev != null) return;
 
                 _reason = _selfTest != 0 ? "自测强制"
                         : force ? "-onboard 强制"
-                        : prev == null ? "首次安装（注册表无标记）"
-                        : $"版本变更 {prev} → {CurrentVersion}";
+                        : "首次安装（注册表无标记）";
             }
             catch (Exception ex)
             {
@@ -296,7 +296,7 @@ namespace NotchPeninsula
         {
             _style = Math.Clamp(Renderer.NotchStyle, 0, 1);
             _theme = Math.Clamp(Renderer.ThemeMode, 0, 2);
-            _material = Renderer.IslandAcrylic ? 1 : 0;
+            _material = Renderer.IslandLiquidGlass ? 2 : (Renderer.IslandAcrylic ? 1 : 0);
             _mode = Renderer.StandbyActive ? 0 : 1;
             _autoStart = true;   // 引导里默认推荐开启，用户不点就按开启处理
             _monitors = BuildMonitorNames();
@@ -546,8 +546,10 @@ namespace NotchPeninsula
                 case ACT_MATERIAL:
                     _material = val;
                     Renderer.IslandAcrylic = _material == 1;
+                    Renderer.IslandLiquidGlass = _material == 2;
                     Renderer.ApplyThemeColors();          // 岛体涂层厚度要跟着换
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                    Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
                     break;
 
                 case ACT_MONITOR:
@@ -898,7 +900,7 @@ namespace NotchPeninsula
 
             Row(c, BODY_TOP, "形态", ["经典刘海", "悬浮灵动岛"], _style, ACT_STYLE, CTRL_X, CTRL_W);
             Row(c, BODY_TOP + ROW_GAP, "主题配色", ["黑", "白", "跟随系统"], _theme, ACT_THEME, CTRL_X, CTRL_W);
-            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力"], _material, ACT_MATERIAL, CTRL_X, CTRL_W);
+            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力", "液态玻璃"], _material, ACT_MATERIAL, CTRL_X, CTRL_W);
         }
 
         private void DrawPreview(SKCanvas c, SKRect box)
@@ -906,7 +908,7 @@ namespace NotchPeninsula
             float cx = box.MidX, cy = box.MidY;
 
             _fill.Color = M(Light ? SKColors.White : SKColors.Black);
-            if (_material == 1) _fill.Color = _fill.Color.WithAlpha((byte)(_fill.Color.Alpha * 0.62f));
+            if (_material != 0) _fill.Color = _fill.Color.WithAlpha((byte)(_fill.Color.Alpha * (_material == 2 ? 0.74f : 0.62f)));
             _stroke.Color = M(Light ? new SKColor(0, 0, 0, 34) : new SKColor(255, 255, 255, 46));
             _stroke.StrokeWidth = 1f;
 

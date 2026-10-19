@@ -11,6 +11,13 @@ namespace NotchPeninsula
 
         private const float TOAST_FULL_MODE_RIGHT_RESERVE = 36f;
 
+        // 头像与图标是两个尺寸档：头像大 5px，且圆角取自身的 50%（正方形头像 → 正圆）。
+        private const float TOAST_ICON_SIZE = 28f;
+
+        private const float TOAST_AVATAR_SIZE = TOAST_ICON_SIZE + 5f;
+
+        private const float TOAST_ICON_RADIUS = 4f;
+
         public static float GetToastAutoWidth()
         {
             float maxTextW = IsToastFullMode
@@ -45,6 +52,25 @@ namespace NotchPeninsula
 
         private static float _cachedToastCompactRightWidth = 0f;
 
+        /// <summary>头像取短边居中的正方形源区，避免非正方形头像被拉到圆形里变形。</summary>
+        private static SKRect SquareSrcOf(SKBitmap bmp)
+        {
+            float side = Math.Min(bmp.Width, bmp.Height);
+            float x = (bmp.Width - side) / 2f;
+            float y = (bmp.Height - side) / 2f;
+            return new SKRect(x, y, x + side, y + side);
+        }
+
+        /// <summary>预设图标：没带 icon / 头像的来源，按名字挑一张内置图（目前只有 QQ）。</summary>
+        private static SKBitmap? ResolvePresetIcon(ToastData toast)
+        {
+            if (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
+                toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase))
+                return _qqIcon;
+
+            return null;
+        }
+
         private static void DrawToastLayer(SKCanvas canvas, ToastData toast, float left, float right, float currentHeight)
         {
             if (_lastToastId != toast.NotificationId)
@@ -64,31 +90,32 @@ namespace NotchPeninsula
                     _compactAppPaint.MeasureText(string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName));
             }
 
-            float iconSize = 28f;
+            // 头像：大 5px + 50% 圆角（正圆）；图标维持原尺寸与原圆角。
+            bool isAvatar = toast.Avatar != null;
+            float iconSize = isAvatar ? TOAST_AVATAR_SIZE : TOAST_ICON_SIZE;
+            float iconRadius = isAvatar ? iconSize * 0.5f : TOAST_ICON_RADIUS;
             float toastIconX = left + 14f;
             float toastIconY = (currentHeight - iconSize) / 2f;
             var iconRect = new SKRect(toastIconX, toastIconY, toastIconX + iconSize, toastIconY + iconSize);
 
             EnsureIconsLoaded();
 
-            SKBitmap? targetIcon = toast.CustomIcon;
-
-            if (targetIcon == null &&
-                (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
-                 toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase)))
-            {
-                targetIcon = _qqIcon;
-            }
-            targetIcon ??= _defaultToastIcon;
+            // 图标三级：头像 > icon > 兜底。任何一条消息带了头像，预设图标就让位。
+            SKBitmap? targetIcon = isAvatar
+                ? toast.Avatar
+                : toast.CustomIcon ?? ResolvePresetIcon(toast) ?? _defaultToastIcon;
 
             // 直接绘制位图，逻辑极其精简
             if (targetIcon != null)
             {
                 canvas.Save();
                 _clipPath.Rewind();
-                _clipPath.AddRoundRect(iconRect, 4, 4);
+                _clipPath.AddRoundRect(iconRect, iconRadius, iconRadius);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                canvas.DrawBitmap(targetIcon, iconRect, _highQualitySampling);
+
+                // 头像按短边居中裁成正方形再画，免得非正方形头像被拉变形。
+                if (isAvatar) canvas.DrawBitmap(targetIcon, SquareSrcOf(targetIcon), iconRect, _highQualitySampling);
+                else canvas.DrawBitmap(targetIcon, iconRect, _highQualitySampling);
                 canvas.Restore();
             }
             else

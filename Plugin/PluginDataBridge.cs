@@ -41,6 +41,11 @@ public sealed class ToastNotice
     public string Body { get; init; } = "";
     public string Aumid { get; init; } = "";
     public byte[]? IconPng { get; init; }
+
+    /// <summary>消息头像（如 QQ 好友 / 群头像）。**有值就优先于 <see cref="IconPng"/>**：
+    /// 插件 / HTTP / MSP 通道的通知可能带，Windows 系统通知拿不到头像，恒为 null。</summary>
+    public byte[]? AvatarPng { get; init; }
+
     public long Version { get; init; }
     public DateTime ReceivedUtc { get; init; }
 }
@@ -252,6 +257,7 @@ public static class PluginDataBridge
                 Body = toast.Body,
                 Aumid = toast.Aumid,
                 IconPng = EncodePng(ResolveFallbackIcon(toast)),
+                AvatarPng = EncodePng(Safe(() => toast.Avatar)),
                 Version = 1,
                 ReceivedUtc = DateTime.UtcNow,
             });
@@ -280,6 +286,8 @@ public static class PluginDataBridge
                     Body = toast.Body,
                     Aumid = toast.Aumid,
                     IconPng = png,
+                    // 头像走异步解析，此刻多半已落地：能补就跟着这一帧一起补上。
+                    AvatarPng = EncodePng(Safe(() => toast.Avatar)),
                     Version = 2,
                     ReceivedUtc = DateTime.UtcNow,
                 });

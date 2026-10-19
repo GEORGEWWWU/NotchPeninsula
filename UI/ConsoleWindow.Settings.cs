@@ -61,6 +61,15 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
+        // 液态玻璃 9 根滑轨的唯一落库口（参数是下标 + 档位）。
+        // 悬停拖拽与单击走同一条路，免得两处各写一遍导致设置对不上。
+        private void ApplyGlassLevel(int paramIndex, int level)
+        {
+            if (paramIndex < 0 || paramIndex >= LiquidGlass.ParamCount) return;
+            LiquidGlass.SetLevel(paramIndex, level);
+            Program.SaveSetting(LiquidGlass.ParamKeys[paramIndex], LiquidGlass.GetLevel(paramIndex));
+        }
+
         private const float THEME_CARD_Y = CARD_TOP_Y;
 
         private const float THEME_CARD_H = 112f;   // 两行：主题配色 + 背景材质
@@ -78,9 +87,11 @@ namespace NotchPeninsula
         private const float THEME_SEG_Y = 28f;
 
         // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟
-        private const float MAT_SEG_W = THEME_SEG_W;
+        // 三档里「液态玻璃」是四个字（13.5px 下约 54px），比主题那排的档位宽，
+        // 所以这一排单独加宽；副标题同步收短，避免文字撞到控件上。
+        private const float MAT_SEG_W = 176f;
 
-        private const float MAT_SEG_X = THEME_SEG_X;
+        private const float MAT_SEG_X = WIDTH - CONTENT_TEXT_RM - MAT_SEG_W;
 
         // 两行之间的行距：原 42 两行贴太近，2026-10-10 加大到 50（卡高同步 +8）
         private const float THEME_ROW_GAP = 50f;
@@ -91,6 +102,38 @@ namespace NotchPeninsula
         private const float MAT_TITLE_DY = MAT_SEG_Y - 2f;   // 76
 
         private const float MAT_SUB_DY = MAT_SEG_Y + 18f;    // 96
+
+        // 尺寸卡：4 行 × 34 + 上下各留 12
+        private const float SIZE_CARD_H = 148f;
+
+        // ---- 「液态玻璃」卡：只在材质选到液态玻璃时出现，挂在尺寸卡下面 ----
+        // 第一行并排两个分段控件（玻璃质量 / 抓屏方式），下面 9 根滑轨排成两列（5 行）。
+        private const float GLASS_CARD_Y = SIZE_CARD_Y + SIZE_CARD_H + CARD_GAP;   // 380
+
+        private const float GLASS_CARD_H = 218f;
+
+        private const float GLASS_SEG_Y = 12f;                  // 第一行：分段控件在卡内的顶部偏移
+
+        private const float GLASS_QUALITY_SEG_W = 150f;
+
+        private const float GLASS_QUALITY_SEG_X = 262f;
+
+        private const float GLASS_SOURCE_SEG_W = 90f;
+
+        private const float GLASS_SOURCE_SEG_X = 482f;
+
+        private const float GLASS_ROW0_Y = 56f;                 // 滑轨区第一行（卡内偏移）
+
+        private const float GLASS_ROW_H = 30f;
+
+        // 两列：左列标签/滑轨/档位名，右列整体右移 188px
+        private const float GLASS_COL_W = 188f;
+
+        private const float GLASS_SLIDER_X = CONTENT_TEXT_X + 50f;              // 252（让开标签）
+
+        private const float GLASS_SLIDER_END = GLASS_SLIDER_X + 90f;            // 342
+
+        private const float GLASS_LEVEL_TEXT_X = GLASS_SLIDER_END + 6f;         // 348
 
         private const float OPACITY_SLIDER_DY = 44f;
 
@@ -266,7 +309,30 @@ namespace NotchPeninsula
 
         // ---- 媒体设置页「全局快捷键」的录制 ----
 
-        private bool HandleHotkeyRecording(int vk)
+        // 钩子路径（KeyboardCapture）的入口：修饰键由钩子当场读好带过来，
+        // 窗口自己再读 GetKeyState 已经没有意义 —— 那会儿手早松了。
+        private bool HandleCapturedKey(int vk, uint mods)
+        {
+            if (_hotkeyRecordingIndex >= 0) return HandleHotkeyRecording(vk, mods);
+            if (_islandHotkeyRecording) return HandleIslandHotkeyRecording(vk, mods);
+            return false;
+        }
+
+        // 兜底路径（钩子装不上时的窗口键盘消息）：此刻按键状态还在本线程队列里。
+        private static uint ReadModsNow()
+        {
+            uint mods = 0;
+            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
+            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
+            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
+            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
+                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
+            return mods;
+        }
+
+        private bool HandleHotkeyRecording(int vk) => HandleHotkeyRecording(vk, ReadModsNow());
+
+        private bool HandleHotkeyRecording(int vk, uint mods)
         {
             if (_hotkeyRecordingIndex < 0) return false;
 
@@ -287,13 +353,6 @@ namespace NotchPeninsula
                 return true;
             }
 
-            uint mods = 0;
-            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
-            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
-            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
-            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
-                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
-
             string error = MediaHotkeys.SetBinding(_hotkeyRecordingIndex, mods, vk);
             if (error.Length > 0)
             {
@@ -312,9 +371,14 @@ namespace NotchPeninsula
         {
             int edited = _hotkeyRecordingIndex;
             _hotkeyRecordingIndex = -1;
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
-            _hotkeyHint = MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError : "";
+            // 键位存下来了 ≠ 立刻生效：总开关关着时一个都不注册。
+            // 这正是「设好快捷键按下去没反应」最常见的成因，所以宁可挂一句提示。
+            _hotkeyHint = edited >= 0 && MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError
+                : (edited >= 0 && !MediaHotkeys.IsEnabled && MediaHotkeys.IsBound(edited)
+                    ? "已保存，打开右上角开关后生效" : "");
             Render();
         }
 
@@ -323,6 +387,7 @@ namespace NotchPeninsula
             if (_hotkeyRecordingIndex < 0) return;
             _hotkeyRecordingIndex = -1;
             _hotkeyHint = "";
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
             Render();
@@ -330,7 +395,9 @@ namespace NotchPeninsula
 
         // ---- 交互设置页「唤出灵动岛」的录制（单键位，逻辑与上面那套同源） ----
 
-        private bool HandleIslandHotkeyRecording(int vk)
+        private bool HandleIslandHotkeyRecording(int vk) => HandleIslandHotkeyRecording(vk, ReadModsNow());
+
+        private bool HandleIslandHotkeyRecording(int vk, uint mods)
         {
             if (!_islandHotkeyRecording) return false;
 
@@ -352,13 +419,6 @@ namespace NotchPeninsula
                 return true;
             }
 
-            uint mods = 0;
-            if ((Win32.GetKeyState(Win32.VK_CONTROL) & 0x8000) != 0) mods |= Win32.MOD_CONTROL;
-            if ((Win32.GetKeyState(Win32.VK_MENU) & 0x8000) != 0) mods |= Win32.MOD_ALT;
-            if ((Win32.GetKeyState(Win32.VK_SHIFT) & 0x8000) != 0) mods |= Win32.MOD_SHIFT;
-            if ((Win32.GetKeyState(Win32.VK_LWIN) & 0x8000) != 0
-                || (Win32.GetKeyState(Win32.VK_RWIN) & 0x8000) != 0) mods |= Win32.MOD_WIN;
-
             string error = IslandHotkey.SetBinding(mods, vk);
             if (error.Length > 0)
             {
@@ -376,9 +436,13 @@ namespace NotchPeninsula
         private void EndIslandHotkeyRecording()
         {
             _islandHotkeyRecording = false;
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
-            _islandHotkeyHint = IslandHotkey.LastError;
+            // 同媒体验收：存下来但开关没开时并不生效，得说一声。
+            _islandHotkeyHint = IslandHotkey.LastError.Length > 0 ? IslandHotkey.LastError
+                : (!IslandHotkey.IsEnabled && IslandHotkey.IsBound
+                    ? "已保存，打开右上角开关后生效" : "");
             Render();
         }
 
@@ -387,6 +451,7 @@ namespace NotchPeninsula
             if (!_islandHotkeyRecording) return;
             _islandHotkeyRecording = false;
             _islandHotkeyHint = "";
+            KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
             Render();

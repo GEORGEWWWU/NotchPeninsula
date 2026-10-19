@@ -14,6 +14,26 @@ public enum PluginState
     Failed
 }
 
+/// <summary>
+/// 加载失败的具体原因。把「装不上」拆成用户看得懂、也能自己动手的那几种 ——
+/// 全都弹同一句「不兼容」等于什么都没说。
+/// </summary>
+public enum PluginFailureKind
+{
+    None,
+    /// <summary>程序集里找不到 INotchPlugin 实现：多半是插件自带了一份宿主接口副本，或根本不是 NPS 插件。</summary>
+    NotAPlugin,
+    /// <summary>不是合法的 .NET 程序集 / 位数不匹配（AnyCPU 以外的 x86 插件等）/ 文件损坏。</summary>
+    BadImage,
+    /// <summary>缺依赖文件：插件包没解全，或依赖的 dll 没一起放进来。</summary>
+    MissingDependency,
+    /// <summary>引用了当前宿主里不存在的类型或成员：按旧版 API 编译的插件。</summary>
+    HostMismatch,
+    /// <summary>构造实例或 Initialize 抛了异常。</summary>
+    InitFailed,
+    Other,
+}
+
 public sealed class PluginEntry
 {
     public string Key { get; init; } = "";
@@ -27,6 +47,9 @@ public sealed class PluginEntry
     public string Author { get; internal set; } = "";
     public PluginState State { get; internal set; } = PluginState.NotLoaded;
     public string? Error { get; internal set; }
+
+    /// <summary>加载失败的归类（<see cref="PluginFailureKind.None"/> = 没失败过）。错误原文仍在 <see cref="Error"/>。</summary>
+    public PluginFailureKind Failure { get; internal set; } = PluginFailureKind.None;
 
     internal string CachedName { get; set; } = "";
 
@@ -168,8 +191,19 @@ public sealed class PluginManager
     public bool IsDisabled(PluginEntry? e)
     {
         if (e == null || string.IsNullOrEmpty(e.Key)) return false;
-        lock (_lock) return _disabled.Contains(e.Key);
+        // 两个判据都要看：_disabled 是「用户按下过禁用」（重启后 Initialize 据此跳过它），
+        // State 是「这一次到底跑起来没有」（刚导入还没 Load、加载失败都算）。只看 _disabled
+        // 就会出现「插件在跑、市场页却写已禁用」—— 与插件页按 State 显示的「运行中」正好打架。
+        lock (_lock)
+        {
+            if (_disabled.Contains(e.Key)) return true;
+            return e.State != PluginState.Loaded;
+        }
     }
+
+    /// <summary>插件登记的「卸载时可删的数据目录」（插件没注册就是 null）。</summary>
+    public string? GetUninstallDirectory(PluginEntry? e)
+        => e == null || string.IsNullOrEmpty(e.Id) ? null : _host.GetUninstallDirectory(e.Id);
 
     public sealed class DisplayItem
     {
@@ -490,6 +524,10 @@ public sealed class PluginManager
         string? shadow = null;
         PluginLoadContext? ctx = null;
 
+        // 失败归因要看「走到哪一步」：程序集读不出来和 Initialize 抛异常是两类问题，
+        // 异常类型本身区分不了（Initialize 里什么都可能抛），所以用阶段做第一判据。
+        var stage = LoadStage.Assembly;
+
         if (e.Context != null)
         {
             var staleShadow = e.ShadowDir;
@@ -515,10 +553,12 @@ public sealed class PluginManager
                 TryDeleteDir(shadow);
                 e.State = PluginState.Failed;
                 e.Error = NoPluginError;
+                e.Failure = PluginFailureKind.NotAPlugin;
                 RaiseChanged();
                 return false;
             }
 
+            stage = LoadStage.Instance;
             var plugin = (INotchPlugin)Activator.CreateInstance(pluginType)!;
             e.Context = ctx;
             e.ShadowDir = shadow;
@@ -535,6 +575,7 @@ public sealed class PluginManager
             if (dedupSameId) RemoveSameIdDuplicates(e);
 
             _host.RegisterPlugin(e.Id, e.DisplayName, e.Version);
+            stage = LoadStage.Init;
             plugin.Initialize(_host.CreateScopedHost(e.Id));
 
             // 插件若实现了外部媒体会话源（见 Plugin/MediaSessionSource.cs），交给媒体链路。
@@ -552,6 +593,10 @@ public sealed class PluginManager
             }
 
             e.State = PluginState.Loaded;
+            // 加载成功就等于「用户要它跑」。重装 / 重载一个已禁用的插件只走到这里（不经过 SetEnabled），
+            // 不摘掉 _disabled 会同时坏两件事：市场页按 _disabled 判「已禁用」与实际运行状态自相矛盾；
+            // 下次启动 Initialize 又按 _disabled 把它跳过 —— 重装完看着好好的，重启就没了。
+            ClearDisabled(e.Key);
             // 新加载的插件若还没有顺序位置，追加到末尾并同步给宿主
             EnsureOrder();
             PushOrderToHost();
@@ -579,10 +624,50 @@ public sealed class PluginManager
 
             e.State = PluginState.Failed;
             e.Error = ex.Message;
-            Logger.Error($"[PluginManager] 加载失败: {e.Key}", ex);
+            e.Failure = stage is LoadStage.Instance or LoadStage.Init
+                ? PluginFailureKind.InitFailed
+                : ClassifyLoadException(ex);
+            Logger.Error($"[PluginManager] 加载失败: {e.Key} ({e.Failure})", ex);
             RaiseChanged();
             return false;
         }
+    }
+
+    private enum LoadStage { Assembly, Instance, Init }
+
+    /// <summary>
+    /// 把加载期异常翻成用户能行动的几类。只看异常链，不猜 —— 猜错比不分类更糟。
+    /// </summary>
+    private static PluginFailureKind ClassifyLoadException(Exception ex)
+    {
+        for (Exception? cur = ex; cur != null; cur = cur.InnerException)
+        {
+            switch (cur)
+            {
+                case BadImageFormatException:
+                    return PluginFailureKind.BadImage;
+
+                case ReflectionTypeLoadException rtle:
+                {
+                    // 加载类型时缺文件 → 依赖没齐；否则就是类型/成员对不上（旧版 API）
+                    foreach (Exception? le in rtle.LoaderExceptions)
+                        if (le is FileNotFoundException or FileLoadException) return PluginFailureKind.MissingDependency;
+                    return PluginFailureKind.HostMismatch;
+                }
+
+                case FileNotFoundException:
+                case FileLoadException:
+                    return PluginFailureKind.MissingDependency;
+
+                case TypeLoadException:
+                case MissingMethodException:
+                case MissingFieldException:
+                case MissingMemberException:
+                    return PluginFailureKind.HostMismatch;
+            }
+        }
+
+        return PluginFailureKind.Other;
     }
 
     private void RemoveSameIdDuplicates(PluginEntry loaded)
@@ -681,6 +766,8 @@ public sealed class PluginManager
                 MediaController.UnregisterExternalSource(mediaSource);
 
             if (!string.IsNullOrEmpty(id)) _host.UnregisterPlugin(id);
+            if (!string.IsNullOrEmpty(id)) _host.ClearUninstallDirectory(id);   // 重新加载会再注册一份
+            if (!string.IsNullOrEmpty(id)) _host.ClearUninstallAction(id);      // 委托拖着插件程序集，不清退不掉上下文
         }
         finally
         {
@@ -723,8 +810,13 @@ public sealed class PluginManager
         return Load(fresh);
     }
 
-    public void SetEnabled(PluginEntry e, bool enabled)
+    /// <summary>
+    /// 启用 / 禁用。返回值 = 「要的终态达成了没有」：禁用恒为 true，启用则等于这次加载的结果。
+    /// 以前这里是 void，调用方没法知道 Load 又失败了 —— 用户点「启用」看着没反应，也没人告诉他为什么。
+    /// </summary>
+    public bool SetEnabled(PluginEntry e, bool enabled)
     {
+        bool ok = true;
         if (enabled)
         {
             _disabled.Remove(e.Key);
@@ -734,7 +826,7 @@ public sealed class PluginManager
 
             Refresh();
             var fresh = Find(e.Key) ?? e;
-            if (fresh.State != PluginState.Loaded) Load(fresh);
+            if (fresh.State != PluginState.Loaded) ok = Load(fresh);
             PushOrderToHost();
         }
         else
@@ -745,15 +837,16 @@ public sealed class PluginManager
             Unload(cur);
         }
         RaiseChanged();
+        return ok;
     }
 
     // ---- 导入 / 移除 / 打开目录 ----
 
-    public (bool Ok, string Message) Import(string dllPath)
+    public (bool Ok, string Message, PluginFailureKind Failure) Import(string dllPath)
     {
         try
         {
-            if (!File.Exists(dllPath)) return (false, "文件不存在");
+            if (!File.Exists(dllPath)) return (false, "文件不存在", PluginFailureKind.Other);
 
             Directory.CreateDirectory(PluginsRoot);
             var target = Path.Combine(PluginsRoot, Path.GetFileName(dllPath));
@@ -765,28 +858,36 @@ public sealed class PluginManager
             Refresh();
 
             var e = Find(Path.GetFileName(target));
-            if (e == null) { TryDelete(target); return (false, "导入失败：无法识别插件"); }
+            if (e == null)
+            {
+                TryDelete(target);
+                return (false, "导入失败：无法识别插件", PluginFailureKind.NotAPlugin);
+            }
 
-            if (Load(e, dedupSameId: true)) return (true, $"已导入并加载：{e.FriendlyName}");
+            if (Load(e, dedupSameId: true)) return (true, $"已导入并加载：{e.FriendlyName}", PluginFailureKind.None);
 
             if (e.Error == NoPluginError)
             {
                 TryDelete(target);
                 lock (_lock) _entries.Remove(e);
                 RaiseChanged();
-                return (false, "所选 DLL 不是合法的 NotchPeninsula 插件");
+                return (false, "所选 DLL 不是合法的 NotchPeninsula 插件", PluginFailureKind.NotAPlugin);
             }
-            return (false, $"已导入但加载失败：{e.Error}");
+            return (false, $"已导入但加载失败：{e.Error}", e.Failure);
         }
         catch (Exception ex)
         {
             Logger.Error("[PluginManager] 导入插件失败", ex);
-            return (false, $"导入失败：{ex.Message}");
+            return (false, $"导入失败：{ex.Message}", PluginFailureKind.Other);
         }
     }
 
     public void Remove(PluginEntry e)
     {
+        // 插件登记的卸载前操作先跑：这一刻实例还活着、它自己的资源都拿得到，Unload 之后就没机会了。
+        // 禁用 / 重载 / 退出都不走这里，所以「只在真正卸载时执行一次」是成立的。
+        _host.RunUninstallAction(e.Id);
+
         Unload(e);
 
         lock (_lock)
@@ -797,6 +898,7 @@ public sealed class PluginManager
         SaveOrderList();
 
         if (_hidden.Remove(e.Key)) SaveHiddenList();
+        ClearDisabled(e.Key);   // 文件都进回收站了，禁用清单里再留着这个 key 只会越积越长
 
         try
         {
@@ -918,12 +1020,24 @@ public sealed class PluginManager
         catch (Exception ex) { Logger.Error("[PluginManager] 读取插件禁用清单失败", ex); }
     }
 
+    /// <summary>从禁用清单里摘掉一个 key（加载成功时调用）。清单真变了才落盘，避免每次加载都写注册表。</summary>
+    private void ClearDisabled(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+        bool removed;
+        lock (_lock) removed = _disabled.Remove(key);
+        if (removed) SaveDisabledList();
+    }
+
     private void SaveDisabledList()
     {
         try
         {
+            // 市场安装在后台线程也会走到这里，先拿快照再落盘：边序列化边被 UI 线程改会抛集合已修改。
+            string raw;
+            lock (_lock) raw = string.Join(";", _disabled);
             using var key = Registry.CurrentUser.CreateSubKey(RegistryBase);
-            key?.SetValue(DisabledListValue, string.Join(";", _disabled));
+            key?.SetValue(DisabledListValue, raw);
         }
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件禁用清单失败", ex); }
     }
