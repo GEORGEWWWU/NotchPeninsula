@@ -265,7 +265,6 @@ namespace NotchPeninsula
                 }
             }
             catch { }
-            try { sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {(Renderer.IslandAcrylic ? "亚克力" : "实体")}"); } catch { }
             try { sb.AppendLine($"目标显示器下标: {Renderer.TargetMonitorIndex}"); } catch { }
             try { sb.AppendLine($"岛体隐藏: {Renderer.IslandHidden}"); } catch { }
 

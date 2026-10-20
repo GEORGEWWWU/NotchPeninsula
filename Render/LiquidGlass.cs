@@ -47,20 +47,21 @@ namespace NotchPeninsula
         public const int P_Brightness = 8;    // 明度
         public const int P_CaptureHz = 9;     // 抓屏刷新间隔（多久读一次屏幕）
         public const int P_FrameRate = 10;    // 岛体渲染帧率上限（影响整个岛，不只是玻璃）
+        public const int P_Zoom = 11;         // 放大倍率：玻璃整体上把背景放大多少
 
-        public const int ParamCount = 11;
+        public const int ParamCount = 12;
 
         public static readonly string[] ParamNames =
         {
             "背景模糊", "折射强度", "边缘色散", "边缘高光", "玻璃厚度", "透镜感", "饱和度", "玻璃雾度", "明度",
-            "抓屏刷新", "岛体帧率"
+            "抓屏刷新", "岛体帧率", "放大倍率"
         };
 
         public static readonly string[] ParamKeys =
         {
             "LiquidGlassBlur", "LiquidGlassRefraction", "LiquidGlassDispersion", "LiquidGlassRim",
             "LiquidGlassThickness", "LiquidGlassDepth", "LiquidGlassSaturation", "LiquidGlassFrost",
-            "LiquidGlassBrightness", "LiquidGlassCaptureMs", "LiquidGlassFps"
+            "LiquidGlassBrightness", "LiquidGlassCaptureMs", "LiquidGlassFps", "LiquidGlassZoom"
         };
 
         // 抓屏刷新间隔（ms）：越短越跟手，代价是更频繁地读屏幕
@@ -83,6 +84,7 @@ namespace NotchPeninsula
                 case P_Blur: return ["不模糊", "2", "4", "6", "10"];
                 case P_CaptureHz: return ["1s", "0.5s", "250", "160", "60"];
                 case P_FrameRate: return ["30", "60", "90", "120", "144"];
+                case P_Zoom: return ["1.0x", "1.08x", "1.18x", "1.32x", "1.5x"];
                 default: return ["最低", "偏低", "标准", "偏高", "最高"];
             }
         }
@@ -91,7 +93,7 @@ namespace NotchPeninsula
         public const int MaxLevel = 4;
 
         // 各档默认值（下标 = 上面的 P_*）：刷新默认 250ms、帧率默认 60fps，都是表中下标 2
-        private static readonly int[] _levels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+        private static readonly int[] _levels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
 
         public static int GetLevel(int index) => index >= 0 && index < ParamCount ? _levels[index] : 0;
 
@@ -115,6 +117,11 @@ namespace NotchPeninsula
         private static readonly float[] SaturationTable = { 0.60f, 0.90f, 1.22f, 1.50f, 1.80f };
 
         private static readonly float[] BrightnessTable = { 0.80f, 0.90f, 1.00f, 1.08f, 1.15f };
+
+        // 放大倍率：1.0 = 原样（不放大），越大越像一块凸透镜。默认 1.18x
+        private static readonly float[] ZoomTable = { 1.00f, 1.08f, 1.18f, 1.32f, 1.50f };
+
+        public static float Zoom => ZoomTable[_levels[P_Zoom]];
 
         public static float RefractionAmount => _levels[P_Refraction] * 6f;      // 0 / 6 / 12 / 18 / 24
 
@@ -414,6 +421,25 @@ namespace NotchPeninsula
                     float pxX = gw / logicalW, pxY = gh / logicalH;   // 玻璃图层 px / 逻辑 px
                     float minHs = MathF.Min(hsx, hsy);
 
+                    // ── 折射自适应：按元素短边限制折射带与位移 ──
+                    // 这是"边缘白字变成整条渐变亮带"的根治。
+                    // demo 里元素 800x600（半高 300），refractionAmount=50、refractionHeight=20，
+                    // 相对半高只有 16.7% / 6.7%；而折叠态胶囊半高只有 20，若照搬 12px 位移就是 60%
+                    // —— 玻璃内部会被"搬进"外侧半屏的内容，于是边缘外的一行白字
+                    //    被整条拉成从边缘向中心渐变的亮带（看着就是条纹，不像玻璃）。
+                    // 所以位移与折射带都必须按短边缩放，让任何尺寸下比例都落在合理区间。
+                    float rhEff = RefractionHeight, raEff = RefractionAmount;
+                    float cap = minHs * 0.35f;
+                    if (cap < rhEff) rhEff = cap;
+                    cap = minHs * 0.20f;
+                    if (cap < raEff) raEff = cap;
+
+                    // 放大：以玻璃中心为原点收缩采样坐标（>1 = 背景被放大）。
+                    // 中心固定，所以放大不会让画面整体漂移，只是内容变"胖"。
+                    float invZoom = 1f / Zoom;
+                    float zoomCx = (src.Left + hsx * imgPerX - cx0) * invBs;
+                    float zoomCy = (src.Top + hsy * imgPerY - cy0) * invBs;
+
                     // ⚠️ 两个指针都必须先转成 IntPtr 才能进并行：
                     //    · fixed 指针不能被 lambda / 局部函数捕获（生命周期受 fixed 块限制）；
                     //    · 闭包是普通 class，**字段不能是指针类型**，直接捕获 dstBase 编译不过。
@@ -454,10 +480,20 @@ namespace NotchPeninsula
 
                                 // 深度：边缘 0，往里越深越负
                                 float sdi = sd < 0f ? sd : 0f;
-                                float t = 1f + sdi / RefractionHeight;
+                                float t = 1f + sdi / rhEff;
                                 if (t < 0f) t = 0f;
                                 // circleMap：边缘位移最大，往里平滑收敛到 0
-                                float d = (1f - MathF.Sqrt(1f - t * t)) * RefractionAmount;
+                                float d = (1f - MathF.Sqrt(1f - t * t)) * raEff;
+
+                                // ── 中心衰减：去掉中部的「拉丝」──
+                                // circleMap 的尾巴很长：深度到 2 倍折射带时 d 仍有峰值的百分之几，
+                                // 而中部的法线几乎全靠 DepthEffect 的径向分量撑着 —— 这点位移虽小，
+                                // 却被整片中部均匀共享，看起来就是一层横向拉丝/水波纹。
+                                // 折射本来就只该发生在边缘那圈；往里超过 1.6 个折射带宽度就彻底归零。
+                                // ⚠️ 用折射带宽度（玻璃厚度）为尺度，所以调「玻璃厚度」时衰减范围跟着走。
+                                float depth = -sdi;
+                                float centerFade = 1f - SmoothStep(rhEff * 0.3f, rhEff * 1.0f, depth);
+                                d *= centerFade;
 
                                 float disp = (ccx * ccy) / (hsx * hsy);
 
@@ -469,10 +505,22 @@ namespace NotchPeninsula
                                 ggx /= gl;
                                 ggy /= gl;
 
-                                float baseX = src.Left + (lx + d * ggx) * imgPerX - cx0;
-                                float baseY = src.Top + (ly + d * ggy) * imgPerY - cy0;
-                                float dxi = d * ggx * disp * Dispersion * imgPerX;
-                                float dyi = d * ggy * disp * Dispersion * imgPerY;
+                                // ⚠️ invBs 不能少：模糊缓冲可能是 2 倍降采样后的，
+                                //    少了这一步会采到两倍远的位置（玻璃内容整体错位）。
+                                float baseX = (src.Left + (lx + d * ggx) * imgPerX - cx0) * invBs;
+                                float baseY = (src.Top + (ly + d * ggy) * imgPerY - cy0) * invBs;
+                                float dxi = d * ggx * disp * Dispersion * imgPerX * invBs;
+                                float dyi = d * ggy * disp * Dispersion * imgPerY * invBs;
+
+                                // 放大：采样点朝中心收缩 → 采到的范围变小 → 视觉上被放大。
+                                // 中心固定，所以放大不会让画面整体漂移。
+                                if (invZoom != 1f)
+                                {
+                                    baseX = zoomCx + (baseX - zoomCx) * invZoom;
+                                    baseY = zoomCy + (baseY - zoomCy) * invZoom;
+                                    dxi *= invZoom;
+                                    dyi *= invZoom;
+                                }
 
                                 float ar = 0f, ag = 0f, ab = 0f;
 

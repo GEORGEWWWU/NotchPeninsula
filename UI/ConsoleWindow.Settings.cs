@@ -129,7 +129,7 @@ namespace NotchPeninsula
 
         private const float GLASS_ROW_H = 28f;
 
-        private const float GLASS_ROWS = 4f;        // 11 项 / 3 列
+        private const float GLASS_ROWS = 4f;        // 12 项 / 3 列
 
         // 3 列：每列 = 标签(46) + 滑轨(48) + 档位名
         private const float GLASS_COL_X = CONTENT_TEXT_X;      // 202
