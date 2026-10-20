@@ -131,22 +131,22 @@ namespace NotchPeninsula
                             newHoveredGlassSource = Math.Min(1, (int)((x - GLASS_SOURCE_SEG_X) / (GLASS_SOURCE_SEG_W / 2f)));
                     }
 
-                    // 9 根滑轨：先定位行，再看落在左列还是右列
-                    for (int row = 0; row < 5; row++)
+                    // 11 根滑轨：先定位行，再看落在哪一列
+                    for (int row = 0; row < GLASS_ROWS; row++)
                     {
                         float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
-                        if (y < ry - 13 || y > ry + 13) continue;
+                        if (y < ry - 12 || y > ry + 12) continue;
 
-                        for (int col = 0; col < 2; col++)
+                        for (int col = 0; col < 3; col++)
                         {
-                            int idx = row * 2 + col;
+                            int idx = (int)(row * 3) + col;
                             if (idx >= LiquidGlass.ParamCount) continue;
 
-                            float gx0 = GLASS_SLIDER_X + col * GLASS_COL_W;
-                            float gx1 = GLASS_SLIDER_END + col * GLASS_COL_W;
-                            if (x < gx0 - 20 || x > gx1 + 20) continue;
+                            float gx0 = GLASS_COL_X + col * GLASS_COL_W + GLASS_SLIDER_DX;
+                            float gx1 = gx0 + GLASS_SLIDER_W;
+                            if (x < gx0 - 16 || x > gx1 + 16) continue;
 
-                            int lvl = (int)Math.Round((x - gx0) / ((gx1 - gx0) / LiquidGlass.MaxLevel));
+                            int lvl = (int)Math.Round((x - gx0) / (GLASS_SLIDER_W / LiquidGlass.MaxLevel));
                             if (lvl < 0) lvl = 0;
                             if (lvl > LiquidGlass.MaxLevel) lvl = LiquidGlass.MaxLevel;
 

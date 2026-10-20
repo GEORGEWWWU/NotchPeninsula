@@ -32,7 +32,20 @@ namespace NotchPeninsula
         private static bool _available;      // 自检通过
         private static bool _disabled;       // 明确不可用（或出过异常），别再反复试
 
+        // 宿主窗口的落点：先试屏幕外（屏幕上什么都不多），不行再挪进屏幕内并做成近乎全透明
+        private static int _hostX, _hostY;
+
         private static int _magW, _magH;
+
+        // 重试：初始化失败过一次就允许用户在设置里手动再试（最多 4 次，避免每次点击都折腾）
+        private static int _attempts;
+
+        private const int MaxAttempts = 4;
+
+        // 环境诊断：给设置页显示"为什么不可用"
+        private static string _reason = "";
+
+        public static string UnavailableReason => _reason;
 
         // ---- 抓取结果（UI 线程写 / 渲染线程读）----
         private static readonly object _lock = new();
@@ -60,16 +73,40 @@ namespace NotchPeninsula
         public static bool IsDisabled => _disabled;
 
         /// <summary>UI 线程：建宿主窗口与放大镜窗口，并做一次可用性自检。</summary>
-        public static void Initialize(IntPtr island, IntPtr owner)
+        public static void Initialize(IntPtr island, IntPtr owner) => EnsureInitialized(island, owner, false);
+
+        /// <summary>
+        /// UI 线程：确保放大镜已初始化。force = true 会拆掉旧的重建一遍（设置里手动重试用）。
+        /// </summary>
+        public static void EnsureInitialized(IntPtr island, IntPtr owner, bool force)
         {
-            if (_inited) return;
+            if (_inited && !force) return;
+
+            if (force)
+            {
+                // 手动重试：把上一轮建的东西全部拆掉，状态清零后从头再来
+                DestroyWindows();
+                try { MagNative.MagUninitialize(); } catch { }
+                _inited = false;
+                _available = false;
+                _disabled = false;
+                _inScreen = false;
+                _magW = _magH = 0;
+                _pixW = _pixH = 0;
+                _version++;
+                lock (_lock) { _front = Array.Empty<byte>(); _back = Array.Empty<byte>(); }
+            }
+
+            if (_attempts >= MaxAttempts) { _disabled = true; return; }
+            _attempts++;
             _inited = true;
 
             try
             {
                 if (!MagNative.MagInitialize())
                 {
-                    Warn("[放大镜] MagInitialize 失败，抓屏回退 GDI");
+                    _reason = "MagInitialize 失败";
+                    Warn($"[放大镜] {_reason}，抓屏回退 GDI（{Marshal.GetLastWin32Error()}）");
                     _disabled = true;
                     return;
                 }
@@ -86,17 +123,22 @@ namespace NotchPeninsula
                 int vx = MagNative.GetSystemMetrics(MagNative.SM_XVIRTUALSCREEN);
                 int vy = MagNative.GetSystemMetrics(MagNative.SM_YVIRTUALSCREEN);
 
-                // 第一步：整窗丢到虚拟屏幕外侧（最干净 —— 屏幕上什么都不多）
+                // 第一步：整窗丢到虚拟屏幕外侧（最干净 —— 屏幕上什么都不多）。
+                // ⚠️ WS_EX_LAYERED 必须在这里就带上：第二步要靠 SetLayeredWindowAttributes 把整窗
+                //    做成近乎全透明，没有这个扩展样式那次调用会直接失败（窗口就真的一块白）。
+                _hostX = vx - 64 - 64;
+                _hostY = vy - 64 - 64;
                 _host = Win32.CreateWindowEx(
-                    Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE | MagNative.WS_EX_TRANSPARENT,
+                    Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE | Win32.WS_EX_LAYERED | MagNative.WS_EX_TRANSPARENT,
                     HostClassName, "NPS-MagHost",
                     Win32.WS_POPUP | Win32.WS_VISIBLE,
-                    vx - 300, vy - 300, 1, 1,
+                    _hostX, _hostY, 64, 64,
                     IntPtr.Zero, IntPtr.Zero, hInst, IntPtr.Zero);
 
                 if (_host == IntPtr.Zero)
                 {
-                    Warn($"[放大镜] 宿主窗口创建失败，抓屏回退 GDI（{Marshal.GetLastWin32Error()}）");
+                    _reason = "宿主窗口创建失败";
+                    Warn($"[放大镜] {_reason}，抓屏回退 GDI（{Marshal.GetLastWin32Error()}）");
                     MagNative.MagUninitialize();
                     _disabled = true;
                     return;
@@ -109,7 +151,8 @@ namespace NotchPeninsula
 
                 if (_mag == IntPtr.Zero)
                 {
-                    Warn($"[放大镜] 放大镜窗口创建失败，抓屏回退 GDI（{Marshal.GetLastWin32Error()}）");
+                    _reason = "放大镜窗口创建失败";
+                    Warn($"[放大镜] {_reason}，抓屏回退 GDI（{Marshal.GetLastWin32Error()}）");
                     DestroyWindows();
                     MagNative.MagUninitialize();
                     _disabled = true;
@@ -118,7 +161,8 @@ namespace NotchPeninsula
 
                 if (!MagNative.MagSetImageScalingCallback(_mag, _callback))
                 {
-                    Warn($"[放大镜] 注册缩放回调失败，抓屏回退 GDI（{Marshal.GetLastWin32Error()}）");
+                    _reason = "注册缩放回调失败";
+                    Warn($"[放大镜] {_reason}，抓屏回退 GDI（{Marshal.GetLastWin32Error()}）");
                     DestroyWindows();
                     MagNative.MagUninitialize();
                     _disabled = true;
@@ -132,22 +176,28 @@ namespace NotchPeninsula
 
                 if (!_available)
                 {
-                    // 第二步：屏幕外拿不到画面（部分环境的放大镜必须真的在屏幕内），
-                    // 挪到虚拟屏左上角并把整窗做成 alpha=0 —— 视觉上等于不存在。
+                    // 第二步：屏幕外拿不到画面（放大镜窗口必须真的被合成才会更新），
+                    // 挪进虚拟屏左上角并把整窗做成近乎全透明。
+                    // ⚠️ alpha 取 1 而不是 0：整窗 alpha=0 时 DWM 会直接跳过合成 → 放大镜又不更新了。
+                    //    1/255 的白在视觉上等于不存在，叠加 WS_EX_TRANSPARENT 也不会挡鼠标。
                     _inScreen = true;
-                    Win32.SetWindowPos(_host, IntPtr.Zero, vx, vy, 1, 1, Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
-                    MagNative.SetLayeredWindowAttributes(_host, 0, 0, MagNative.LWA_ALPHA);
+                    _hostX = vx;
+                    _hostY = vy;
+                    Win32.SetWindowPos(_host, IntPtr.Zero, _hostX, _hostY, 64, 64,
+                        Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+                    MagNative.SetLayeredWindowAttributes(_host, 0, 1, MagNative.LWA_ALPHA);
                     _available = Probe();
                 }
 
                 if (_available)
                 {
                     Info($"[放大镜] 抓屏就绪：宿主={_host}  放大镜={_mag}"
-                        + $"  位置={(_inScreen ? "屏幕内(全透明)" : "屏幕外")}");
+                        + $"  位置={(_inScreen ? "屏幕内(近乎全透明)" : "屏幕外")}  第 {_attempts} 次尝试");
                 }
                 else
                 {
-                    Warn("[放大镜] 两次自检都没有回调，抓屏回退 GDI");
+                    _reason = "所在环境不允许放大镜抓屏（屏幕外/屏幕内均未回调）";
+                    Warn($"[放大镜] {_reason}，抓屏回退 GDI");
                     DestroyWindows();
                     MagNative.MagUninitialize();
                     _disabled = true;
@@ -155,7 +205,8 @@ namespace NotchPeninsula
             }
             catch (Exception ex)
             {
-                Error("[放大镜] 初始化异常，抓屏回退 GDI", ex);
+                _reason = "初始化异常";
+                Error($"[放大镜] {_reason}，抓屏回退 GDI", ex);
                 try { DestroyWindows(); MagNative.MagUninitialize(); } catch { }
                 _disabled = true;
             }
@@ -186,13 +237,25 @@ namespace NotchPeninsula
         {
             if (_mag == IntPtr.Zero || w < 1 || h < 1) return;
 
-            // 放大镜窗口尺寸 = 源矩形尺寸 → 缩放比 1:1，回调给的 srcdata 就是全分辨率原始像素
+            // 放大镜窗口尺寸 = 源矩形尺寸 → 缩放比 1:1，回调给的 srcdata 就是全分辨率原始像素。
+            //
+            // ⚠️ 这里是「按钮按了没反应」的根因所在：放大镜窗口是宿主的 WS_CHILD，
+            //    只放大它自己而宿主还是 1×1 的话，子窗口会被父窗口**裁剪**成 1×1，
+            //    于是它实际不可见 → Magnification API 不再更新 → 回调永远不来 → 一直走 GDI。
+            //    所以宿主窗口必须跟着一起撑到至少 (w, h)。
             if (w != _magW || h != _magH)
             {
-                Win32.SetWindowPos(_mag, IntPtr.Zero, 0, 0, w, h,
-                    Win32.SWP_NOMOVE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
                 _magW = w;
                 _magH = h;
+
+                Win32.SetWindowPos(_host, IntPtr.Zero, _hostX, _hostY, w, h,
+                    Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+                Win32.SetWindowPos(_mag, IntPtr.Zero, 0, 0, w, h,
+                    Win32.SWP_NOMOVE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+
+                // 挪进屏幕内之后要重申一次透明：SetWindowPos 不会清掉 layered 属性，
+                // 但保险起见重设（有些驱动在窗口尺寸跨过阈值后会重算 layered 状态）
+                if (_inScreen) MagNative.SetLayeredWindowAttributes(_host, 0, 1, MagNative.LWA_ALPHA);
             }
 
             var rect = new Win32.RECT { Left = x, Top = y, Right = x + w, Bottom = y + h };
@@ -277,6 +340,8 @@ namespace NotchPeninsula
                 lock (_lock)
                 {
                     if (_back.Length < need) _back = new byte[(int)need];
+                    else if (_back.Length > need * 4 && _back.Length > (4 << 20))
+                        _back = new byte[(int)need];   // 抓取区缩小后把那几 MB 还给 GC
 
                     fixed (byte* dst = _back)
                     {

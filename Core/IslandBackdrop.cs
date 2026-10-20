@@ -172,7 +172,8 @@ namespace NotchPeninsula
         {
             while (_run)
             {
-                _work.WaitOne(RefreshMs);
+                // 等待时长跟随当前节拍：自定义成 60ms 时不能被固定的 250ms 等待拖住
+                _work.WaitOne(_glass ? LiquidGlass.RefreshMs : RefreshMs);
                 if (!_run) break;
 
                 if (_expire)

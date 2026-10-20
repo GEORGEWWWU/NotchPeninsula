@@ -433,9 +433,18 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 5 && _hoveredGlassSourceIndex != -1)
             {
-                // 抓屏方式：放大镜不可用时点它也无效（会静默回退兼容），所以这里顺手校一次
-                IslandBackdrop.UseMagnifier = _hoveredGlassSourceIndex == 0 && !MagnifierBackdrop.IsDisabled;
-                Program.SaveSetting("GlassUseMagnifier", IslandBackdrop.UseMagnifier ? 1 : 0);
+                bool want = _hoveredGlassSourceIndex == 0;
+
+                // ⚠️ 不要用 IsDisabled 否决用户的选择：那样按钮点下去状态纹丝不动，
+                //    看起来就是"没反应"。先按用户意图存下来，抓屏那侧自己判断能不能真的用上；
+                //    用不上时卡片上会写明原因（而不是假装没点过）。
+                IslandBackdrop.UseMagnifier = want;
+                Program.SaveSetting("GlassUseMagnifier", want ? 1 : 0);
+
+                // 想用放大镜但还没就绪 → 到 UI 线程上强制重建一次（宿主窗口尺寸/透明属性会重来）
+                if (want && !MagnifierBackdrop.IsAvailable && !MagnifierBackdrop.IsDisabled)
+                    NotchWindow.EnsureMagnifier(force: true);
+
                 IslandBackdrop.Expire();
                 NotchWindow.RequestAcrylicRebuild();
                 Render();

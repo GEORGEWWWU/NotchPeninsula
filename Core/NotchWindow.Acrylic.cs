@@ -118,9 +118,17 @@ namespace NotchPeninsula
             IslandBackdrop.Expire();
             // 启动时是「实体」材质的机器，切到玻璃时放大镜还没建过 —— 这里补一次，
             // 走消息是为了保证它一定发生在 UI 线程（本方法也可能被系统主题事件那条线调用）
+            EnsureMagnifier(force: false);
+        }
+
+        /// <summary>
+        /// 把「放大镜初始化」送到 UI 线程上执行。force = true 会拆掉旧的重建一遍（手动重试）。
+        /// </summary>
+        public static void EnsureMagnifier(bool force)
+        {
             IntPtr h = InstanceHandle;
             if (h != IntPtr.Zero)
-                Win32.PostMessage(h, MagNative.WM_APP_ENSURE_MAG, IntPtr.Zero, IntPtr.Zero);
+                Win32.PostMessage(h, MagNative.WM_APP_ENSURE_MAG, force ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
         }
 
         private static void ShutdownIslandBackdrop()
