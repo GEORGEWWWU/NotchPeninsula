@@ -1284,60 +1284,88 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
+                // ── 第一行：玻璃质量 + 抓屏方式 ──
                 float segY = gY + GLASS_SEG_Y;
                 float segTextY = segY + 20f;
                 canvas.DrawText("玻璃质量", CONTENT_TEXT_X, segTextY, _uiTextPaint);
                 DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
                     ["流畅", "均衡", "精细"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
 
-                // 抓屏方式：放大镜那条线 1:1 全分辨率；放大镜不可用时会静默回退「兼容」
-                bool magOn = IslandBackdrop.UseMagnifier && !MagnifierBackdrop.IsDisabled;
-                canvas.DrawText("抓屏", GLASS_SOURCE_SEG_X - 62f, segTextY, _uiTextPaint);
+                canvas.DrawText("抓屏", GLASS_SOURCE_SEG_X - 44f, segTextY, _uiTextPaint);
                 DrawSegmented(canvas, GLASS_SOURCE_SEG_X, segY, GLASS_SOURCE_SEG_W, SEG_H,
-                    ["放大镜", "兼容"], magOn ? 0 : 1, _hoveredGlassSourceIndex);
+                    ["放大镜", "兼容"], IslandBackdrop.UseMagnifier ? 0 : 1, _hoveredGlassSourceIndex);
 
-                // 9 根滑轨排成两列：左列第 0/2/4/6/8 项，右列第 1/3/5/7 项
-                for (int row = 0; row < 5; row++)
+                // ── 第二行：抓屏状态 ──
+                // ⚠️ 这行字是「按钮按了没反应」的正解：状态一律明说，绝不默默忽略点击。
+                //    不可用时点「放大镜」会再试一次初始化，试到上限才彻底停用并写出原因。
+                float seg2TextY = gY + GLASS_SEG2_Y + 20f;
+                string stateText;
+                SKColor stateColor;
+                if (MagnifierBackdrop.IsDisabled)
+                {
+                    stateText = "放大镜不可用：" + MagnifierBackdrop.UnavailableReason;
+                    stateColor = new SKColor(200, 120, 120);
+                }
+                else if (!MagnifierBackdrop.IsAvailable)
+                {
+                    stateText = IslandBackdrop.UseMagnifier ? "放大镜就绪中…（正在重试）" : "放大镜尚未初始化";
+                    stateColor = Neutral(150);
+                }
+                else if (!IslandBackdrop.UseMagnifier)
+                {
+                    stateText = "已就绪，当前用兼容抓屏";
+                    stateColor = Neutral(150);
+                }
+                else
+                {
+                    stateText = "放大镜抓屏中（1:1 全分辨率）";
+                    stateColor = new SKColor(0, 140, 240);
+                }
+                _dynamicTextPaint.Color = stateColor;
+                _dynamicTextPaint.TextSize = 11f;
+                canvas.DrawText(stateText, CONTENT_TEXT_X, seg2TextY, _dynamicTextPaint);
+                _dynamicTextPaint.TextSize = 13f;
+
+                // ── 11 根滑轨：3 列 × 4 行 ──
+                for (int row = 0; row < GLASS_ROWS; row++)
                 {
                     float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
-                    DrawGlassSlider(canvas, rowY, 0, row * 2);
-                    DrawGlassSlider(canvas, rowY, 1, row * 2 + 1);
+                    for (int col = 0; col < 3; col++)
+                        DrawGlassSlider(canvas, rowY, col, (int)(row * 3) + col);
                 }
             }
         }
 
-        // 液态玻璃的一根 5 档滑轨：标签 + 滑轨 + 右侧档位名，与背景透明度那根同口径。
-        // col 0 = 左列，1 = 右列（整体右移 GLASS_COL_W）。
+        // 液态玻璃的一根 5 档滑轨：标签 + 滑轨 + 档位值（数值型参数直接显示具体值）。
         private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
         {
             if (paramIndex >= LiquidGlass.ParamCount) return;
 
-            float dx = col * GLASS_COL_W;
-            float x0 = GLASS_SLIDER_X + dx, x1 = GLASS_SLIDER_END + dx;
+            float colX = GLASS_COL_X + col * GLASS_COL_W;
+            float x0 = colX + GLASS_SLIDER_DX, x1 = x0 + GLASS_SLIDER_W;
             float y = rowY + 17f;
 
-            canvas.DrawText(LiquidGlass.ParamNames[paramIndex], CONTENT_TEXT_X + dx, y, _subTextPaint);
+            canvas.DrawText(LiquidGlass.ParamNames[paramIndex], colX, y, _subTextPaint);
 
             int level = Math.Clamp(LiquidGlass.GetLevel(paramIndex), 0, LiquidGlass.MaxLevel);
             bool hovered = _hoveredGlassParamIndex == paramIndex;
             int hoveredLevel = hovered ? _hoveredGlassParamLevel : -1;
 
-            float w = x1 - x0;
             canvas.DrawLine(x0, y, x1, y, _separatorPaint);
             _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
             _dynamicStrokePaint.StrokeWidth = 2f;
-            canvas.DrawLine(x0, y, x0 + (w / LiquidGlass.MaxLevel) * level, y, _dynamicStrokePaint);
+            canvas.DrawLine(x0, y, x0 + (GLASS_SLIDER_W / LiquidGlass.MaxLevel) * level, y, _dynamicStrokePaint);
             _dynamicStrokePaint.StrokeWidth = 1.5f;
             for (int i = 0; i <= LiquidGlass.MaxLevel; i++)
             {
                 bool sel = level == i, hov = hoveredLevel == i;
                 if (!sel && !hov) continue;
-                float px = x0 + (w / LiquidGlass.MaxLevel) * i;
+                float px = x0 + (GLASS_SLIDER_W / LiquidGlass.MaxLevel) * i;
                 _dynamicFillPaint.Color = sel ? new SKColor(0, 120, 212) : Overlay(80);
-                canvas.DrawCircle(px, y, sel ? 6 : 4, _dynamicFillPaint);
+                canvas.DrawCircle(px, y, sel ? 5 : 4, _dynamicFillPaint);
             }
 
-            canvas.DrawText(GlassLevelLabels[level], GLASS_LEVEL_TEXT_X + dx, y, _subTextPaint);
+            canvas.DrawText(LiquidGlass.ValueTexts(paramIndex)[level], colX + GLASS_LEVEL_DX, y, _subTextPaint);
         }
 
         private void RenderTabPlugins(SKCanvas canvas)

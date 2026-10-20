@@ -6,16 +6,26 @@ namespace NotchPeninsula
     // 液态玻璃背景（Liquid Glass）—— C++ / HLSL 版 Liquid Glass Demo 的纯 C# + SkiaSharp 移植。
     //
     // 管线与 demo 一一对应：
-    //   1. 抓屏      ：IslandBackdrop（玻璃模式降采样 1/2，亚克力 1/12）
+    //   1. 抓屏      ：优先 MagnifierBackdrop（放大镜 API，1:1 全分辨率 + 排除岛体自身），
+    //                  不可用时回退 IslandBackdrop 的 GDI 抓屏
     //   2. 可分离高斯 ：ComputeGaussianWeights + 水平/垂直两趟（对应 BlurH_PS / BlurV_PS）
     //   3. 玻璃本体   ：SDF 圆角矩形 → 边缘折射位移 + RGB 色散 + 饱和度提升 + 玻璃本色
     //                  （对应 GlassDispersionPS 的 sdRoundedRect / gradSdRoundedRect / circleMap）
     //
-    // 为什么不用 SKRuntimeEffect（SKSL）：
-    //   岛体画布是 CPU 光栅面（SKSurface.Create 直写位图），没有 GPU 上下文，SKSL 也是走
-    //   SkRasterPipeline 逐像素算；而 demo 的 7 次采样在胶囊这么小的一块上（典型 300x30）
-    //   纯 C# 也就 1ms 量级，还省掉一层运行时编译与后端差异。代价是要自己做缓存 —— 见下面
-    //   「玻璃图层缓存」：静态时零成本，只有几何/抓屏变了才重算。
+    // 为什么不用 SKRuntimeEffect（SKSL）+ GPU 上下文：
+    //   1. 岛体画布是 CPU 光栅面（SKSurface.Create 直写位图），没有 GRContext 就没 GPU 后端，
+    //      此时 SKSL 走的仍是 SkRasterPipeline 逐像素，不比手写循环快，还要多付一次编译与 uniform 开销。
+    //   2. 要真拿到 GPU 后端，Windows 上得先有原生 3D 上下文，三条路都不便宜：
+    //      · ANGLE（libEGL/libGLESv2）：SkiaSharp 官方随包的那份在非 MSIX 打包应用里有已知缺陷
+    //        （两个 DLL 需要互相冲突的构建标志，见 SkiaSharp issue #2968），社区的解法是自己
+    //        从源码编两遍 ANGLE —— 对「单文件 exe」分发的项目是灾难。
+    //      · D3D12（GRContext.CreateDirect3D）：要先建 ID3D12Device / CommandQueue，
+    //        得额外引入 Vortice.Direct3D12 之类的包，且 SkiaSharp 的 D3D 后端在 2.88 仍属实验性。
+    //      · Vulkan：同样要额外的原生封装。
+    //   3. 即便有了上下文，玻璃图层算完还得 readback 回 CPU（岛体最终走 UpdateLayeredWindow
+    //      上屏，必须是 CPU 位图），这块回读又会吃掉一部分收益。
+    //   结论：收益（玻璃层毫秒级）配不上代价（+依赖 +发布复杂度 +崩溃面）。
+    //   真正拿到手的性能提升走的是另一条路：下面的按行并行（多核）+ 图层缓存与节流。
     internal static unsafe class LiquidGlass
     {
         // ==================== 固定参数（逻辑像素，与岛体其他尺寸同口径） ====================
@@ -35,26 +45,53 @@ namespace NotchPeninsula
         public const int P_Saturation = 6;    // 饱和度
         public const int P_Frost = 7;         // 玻璃雾度：掺白比例
         public const int P_Brightness = 8;    // 明度
+        public const int P_CaptureHz = 9;     // 抓屏刷新间隔（多久读一次屏幕）
+        public const int P_FrameRate = 10;    // 岛体渲染帧率上限（影响整个岛，不只是玻璃）
 
-        public const int ParamCount = 9;
+        public const int ParamCount = 11;
 
         public static readonly string[] ParamNames =
         {
-            "背景模糊", "折射强度", "边缘色散", "边缘高光", "玻璃厚度", "透镜感", "饱和度", "玻璃雾度", "明度"
+            "背景模糊", "折射强度", "边缘色散", "边缘高光", "玻璃厚度", "透镜感", "饱和度", "玻璃雾度", "明度",
+            "抓屏刷新", "岛体帧率"
         };
 
         public static readonly string[] ParamKeys =
         {
             "LiquidGlassBlur", "LiquidGlassRefraction", "LiquidGlassDispersion", "LiquidGlassRim",
             "LiquidGlassThickness", "LiquidGlassDepth", "LiquidGlassSaturation", "LiquidGlassFrost",
-            "LiquidGlassBrightness"
+            "LiquidGlassBrightness", "LiquidGlassCaptureMs", "LiquidGlassFps"
         };
+
+        // 抓屏刷新间隔（ms）：越短越跟手，代价是更频繁地读屏幕
+        private static readonly int[] CaptureMsTable = { 1000, 500, 250, 160, 60 };
+
+        // 岛体渲染帧率（fps）→ 帧间隔 ms
+        private static readonly int[] FrameFpsTable = { 30, 60, 90, 120, 144 };
+
+        /// <summary>后台抓屏线程的刷新节拍（ms）。</summary>
+        public static int RefreshMs => CaptureMsTable[_levels[P_CaptureHz]];
+
+        /// <summary>渲染线程的帧间隔（ms）。渲染循环每帧读一次，所以改完立刻生效。</summary>
+        public static int FrameIntervalMs => 1000 / FrameFpsTable[_levels[P_FrameRate]];
+
+        /// <summary>某根滑轨 5 个档位各自的显示文本（数值型参数显示具体值，其余显示强弱）。</summary>
+        public static string[] ValueTexts(int index)
+        {
+            switch (index)
+            {
+                case P_Blur: return ["不模糊", "2", "4", "6", "10"];
+                case P_CaptureHz: return ["1s", "0.5s", "250", "160", "60"];
+                case P_FrameRate: return ["30", "60", "90", "120", "144"];
+                default: return ["最低", "偏低", "标准", "偏高", "最高"];
+            }
+        }
 
         // 所有滑块统一 5 档（0..4），与背景透明度那根滑轨同口径
         public const int MaxLevel = 4;
 
-        // 各档默认值（下标 = 上面的 P_*）
-        private static readonly int[] _levels = { 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+        // 各档默认值（下标 = 上面的 P_*）：刷新默认 250ms、帧率默认 60fps，都是表中下标 2
+        private static readonly int[] _levels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
 
         public static int GetLevel(int index) => index >= 0 && index < ParamCount ? _levels[index] : 0;
 
@@ -140,32 +177,26 @@ namespace NotchPeninsula
         // 色散采样数：7 次（R/G/B 各一整套）或 3 次（每通道只采一次）
         private static int _samples = 7;
 
-        // 抓屏刷新间隔：质量档越高跟手越好，代价是屏幕读取更频繁
-        private static int _refreshMs = 250;
-
-        public static int RefreshMs => _refreshMs;
-
+        // 质量档只管「抓屏倍率 / 玻璃层上限 / 色散采样数」——
+        // 刷新间隔交给 P_CaptureHz 单独控制，免得两个控件抢同一个数。
         private static void ApplyQuality()
         {
             switch (_quality)
             {
-                case 0:                       // 流畅：抓屏更糊、色散只采 3 次、刷新最慢
+                case 0:                       // 流畅：抓屏更糊、色散只采 3 次
                     _downscale = 3f;
                     _maxGlassPixels = 40000;
                     _samples = 3;
-                    _refreshMs = 400;
                     break;
-                case 2:                       // 精细：1:1 抓屏 + 全分辨率玻璃层 + 刷新最快
+                case 2:                       // 精细：1:1 抓屏 + 全分辨率玻璃层
                     _downscale = 1f;
                     _maxGlassPixels = 260000;
                     _samples = 7;
-                    _refreshMs = 160;
                     break;
                 default:                      // 均衡
                     _downscale = 2f;
                     _maxGlassPixels = 90000;
                     _samples = 7;
-                    _refreshMs = 250;
                     break;
             }
 
@@ -180,6 +211,38 @@ namespace NotchPeninsula
 
         // 裁切区对齐粒度：胶囊小幅抖动时不必重算模糊
         private const int CropGrid = 32;
+
+        // 玻璃图层小于这个像素数就串行算（起线程不划算）
+        private const int ParallelMinPixels = 12000;
+
+        // ==================== 从 C++ demo 搬过来的「防卡顿」措施 ====================
+
+        // ① 缓动跟随：demo 的 g_smoothSrc += (g_targetSrc - g_smoothSrc) * g_easeSpeed，g_easeSpeed = 0.5。
+        //    作用不是"更准"，而是"更顺"：抓屏天然比画面滞后一帧到几帧，玻璃源矩形要是硬跟，
+        //    每次新抓屏落地都会跳一下；缓动之后读起来是玻璃的惯性，卡顿感就没了。
+        //    岛体不动，靠它吃的是胶囊宽度变化（居中，所以左右边缘会移）与滑出/滑入。
+        private const float EaseSpeed = 0.5f;
+
+        // ② 突变对齐：对应 demo 在 WM_SIZE 里把 smooth 重置成 target。
+        //    换显示器 / DPI 变化 / 从隐藏恢复时源矩形是"跳"过去的，这时候再缓动会露出一帧错位的玻璃。
+        private const float EaseSnapPx = 64f;
+
+        private static float _easeSx = float.NaN, _easeSy = float.NaN;
+
+        // ③ 内容未变就不重算：demo 用 g_texUpdated 门控全屏纹理上传（否则每帧 8MB 白传）。
+        //    岛体的等价问题反过来 —— 默认 250ms 一抓，version 每 4 秒 +16，
+        //    而桌面大多数时候是静止的，每次都重算整层玻璃纯属浪费。
+        //    所以对裁切区做个抽样哈希：内容没变就继续用上一帧的玻璃。
+        private static ulong _keyHash;
+
+        private static int _keyCropX, _keyCropY, _keyCropW, _keyCropH;
+
+        // 命中统计：诊断里能直接看到「缓存命中 / 内容未变跳过 / 真重算」的比例
+        private static int _statCache, _statHash, _statBuild;
+
+        public static string Stats => $"重算 {_statBuild} / 内容未变跳过 {_statHash} / 缓存命中 {_statCache}";
+
+        public static void ResetStats() { _statCache = _statHash = _statBuild = 0; }
 
         private static float[] _weights = new float[7];
 
@@ -202,6 +265,19 @@ namespace NotchPeninsula
         }
 
         // ---- 模糊工作区（只覆盖胶囊那一小块，不是整张抓屏）----
+        // _pad / _rowMap 是内层循环的预夹取缓冲，见 BuildBlur 里的说明
+        // _down 是"降采样后再模糊"的中转：模糊半径够大时，先 2×2 盒式降采样再糊，
+        // 抽头数与像素数同时减少，等效模糊半径不变 —— 见 BuildBlur。
+        private static byte[] _down = Array.Empty<byte>();
+
+        private static int _blurScale = 1;
+
+        private static int _blurScaleKey = 1;
+
+        private static byte[] _pad = Array.Empty<byte>();
+
+        private static int[] _rowMap = Array.Empty<int>();
+
         private static byte[] _blurA = Array.Empty<byte>();
 
         private static byte[] _blurB = Array.Empty<byte>();
@@ -262,12 +338,18 @@ namespace NotchPeninsula
                 gh = Math.Max(1, (int)(gh * q));
             }
 
+            // ── ① 缓动跟随（demo 的 g_smoothSrc*）──
+            ApplyEase(ref src);
+
             // 命中缓存：抓屏没换、几何没动 → 直接复用上一帧的玻璃
             if (_glass != null && _keyVersion == version && _keyW == gw && _keyH == gh
                 && MathF.Abs(_keySx - src.Left) < 0.5f && MathF.Abs(_keySy - src.Top) < 0.5f
                 && MathF.Abs(_keyLw - logicalW) < 0.5f && MathF.Abs(_keyLh - logicalH) < 0.5f
                 && MathF.Abs(_keyRt - rTop) < 0.5f && MathF.Abs(_keyRb - rBottom) < 0.5f)
+            {
+                _statCache++;
                 return _glass;
+            }
 
             using (var pixmap = backdrop.PeekPixels())
             {
@@ -299,12 +381,30 @@ namespace NotchPeninsula
                 int cw = cx1 - cx0, ch = cy1 - cy0;
                 if (cw < 4 || ch < 2) return null;
 
-                BuildBlur((byte*)pxs, istride, iw, ih, cx0, cy0, cw, ch, cB, cG, cR, version);
+                // ── ③ 内容未变 → 连模糊带折射全省掉 ──
+                // 抽样哈希（每 4 行、每 4 像素采一次）比糊一遍 + 算一遍折射便宜一到两个数量级，
+                // 而桌面绝大多数时候是静止的：默认 250ms 一抓，这一条能把稳态开销打到接近 0。
+                ulong hash = HashCrop((byte*)pxs, istride, cx0, cy0, cw, ch);
+                if (_glass != null && _keyHash == hash && _keyW == gw && _keyH == gh
+                    && _keyCropX == cx0 && _keyCropY == cy0 && _keyCropW == cw && _keyCropH == ch
+                    && MathF.Abs(_keySx - src.Left) < 0.5f && MathF.Abs(_keySy - src.Top) < 0.5f
+                    && MathF.Abs(_keyLw - logicalW) < 0.5f && MathF.Abs(_keyLh - logicalH) < 0.5f
+                    && MathF.Abs(_keyRt - rTop) < 0.5f && MathF.Abs(_keyRb - rBottom) < 0.5f)
+                {
+                    _keyVersion = version;   // 内容一致 → 认下这个版本，下一帧连哈希都不用比
+                    _statHash++;
+                    return _glass;
+                }
+
+                BuildBlur((byte*)pxs, istride, iw, ih, cx0, cy0, cw, ch, cB, cG, cR, version,
+                    out int bcw, out int bch);
 
                 var bmp = new SKBitmap(new SKImageInfo(gw, gh, SKColorType.Bgra8888, SKAlphaType.Premul));
                 byte* dstBase = (byte*)bmp.GetPixels();
                 int dstStride = bmp.RowBytes;
-                int blurStride = cw * 4;
+                // 模糊缓冲可能是降采样后的尺寸，采样端统一用它自己的宽高与缩放比
+                int blurStride = bcw * 4;
+                float invBs = 1f / _blurScale;
 
                 fixed (byte* blur = _blurB)
                 {
@@ -314,121 +414,145 @@ namespace NotchPeninsula
                     float pxX = gw / logicalW, pxY = gh / logicalH;   // 玻璃图层 px / 逻辑 px
                     float minHs = MathF.Min(hsx, hsy);
 
-                    for (int gy = 0; gy < gh; gy++)
+                    // ⚠️ 两个指针都必须先转成 IntPtr 才能进并行：
+                    //    · fixed 指针不能被 lambda / 局部函数捕获（生命周期受 fixed 块限制）；
+                    //    · 闭包是普通 class，**字段不能是指针类型**，直接捕获 dstBase 编译不过。
+                    //    换来的是多核：玻璃区典型几万~26 万像素，并行能省一半以上时间。
+                    IntPtr blurPtr = (IntPtr)blur;
+                    IntPtr dstPtr = (IntPtr)dstBase;
+
+                    void RenderRows(int y0, int y1)
                     {
-                        float ly = (gy + 0.5f) / pxY;
-                        float ccy = ly - hsy;
-                        byte* row = dstBase + gy * dstStride;
+                        byte* blurLocal = (byte*)blurPtr;
+                        byte* dstBaseL = (byte*)dstPtr;
 
-                        for (int gx = 0; gx < gw; gx++)
+                        for (int gy = y0; gy < y1; gy++)
                         {
-                            int p = gx * 4;
-                            float lx = (gx + 0.5f) / pxX;
-                            float ccx = lx - hsx;
+                            float ly = (gy + 0.5f) / pxY;
+                            float ccy = ly - hsy;
+                            byte* row = dstBaseL + gy * dstStride;
 
-                            float r = RadiusAt(ccx, ccy, rTop, rTop, rBottom, rBottom);
-                            float sd = SdRoundedRect(ccx, ccy, hsx, hsy, r);
-
-                            // 1 玻璃像素宽的边缘羽化（外层还有路径裁切的抗锯齿）
-                            float edge = 0.5f - sd * pxY;
-                            if (edge <= 0f)
+                            for (int gx = 0; gx < gw; gx++)
                             {
-                                row[p] = row[p + 1] = row[p + 2] = row[p + 3] = 0;
-                                continue;
+                                int p = gx * 4;
+                                float lx = (gx + 0.5f) / pxX;
+                                float ccx = lx - hsx;
+
+                                float r = RadiusAt(ccx, ccy, rTop, rTop, rBottom, rBottom);
+                                float sd = SdRoundedRect(ccx, ccy, hsx, hsy, r);
+
+                                // 边缘羽化：对齐 demo 的 edgeAA = 1 - smoothstep(-1, 1, sd)。
+                                // 原来是 1 像素线性过渡，比 demo 窄一半且是硬折线 —— 边缘显硬，
+                                // 动画时那圈锯齿还会一跳一跳的。换成 demo 同款 2 像素 smoothstep。
+                                float edge = 1f - SmoothStep(-1f, 1f, sd * pxY);
+                                if (edge <= 0.001f)
+                                {
+                                    row[p] = row[p + 1] = row[p + 2] = row[p + 3] = 0;
+                                    continue;
+                                }
+                                if (edge > 1f) edge = 1f;
+
+                                // 深度：边缘 0，往里越深越负
+                                float sdi = sd < 0f ? sd : 0f;
+                                float t = 1f + sdi / RefractionHeight;
+                                if (t < 0f) t = 0f;
+                                // circleMap：边缘位移最大，往里平滑收敛到 0
+                                float d = (1f - MathF.Sqrt(1f - t * t)) * RefractionAmount;
+
+                                float disp = (ccx * ccy) / (hsx * hsy);
+
+                                GradSdRoundedRect(ccx, ccy, hsx, hsy, MathF.Min(r * 1.5f, minHs), out float ggx, out float ggy);
+                                float ln = MathF.Sqrt(ccx * ccx + ccy * ccy) + 0.000001f;
+                                ggx += DepthEffect * (ccx / ln);
+                                ggy += DepthEffect * (ccy / ln);
+                                float gl = MathF.Sqrt(ggx * ggx + ggy * ggy) + 0.000001f;
+                                ggx /= gl;
+                                ggy /= gl;
+
+                                float baseX = src.Left + (lx + d * ggx) * imgPerX - cx0;
+                                float baseY = src.Top + (ly + d * ggy) * imgPerY - cy0;
+                                float dxi = d * ggx * disp * Dispersion * imgPerX;
+                                float dyi = d * ggy * disp * Dispersion * imgPerY;
+
+                                float ar = 0f, ag = 0f, ab = 0f;
+
+                                // 内部（位移≈0）时多次采样完全重合 → 只采一次，省下其余双线性
+                                if (dxi > -0.25f && dxi < 0.25f && dyi > -0.25f && dyi < 0.25f)
+                                {
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX, baseY, 1f, 1f, 1f, ref ar, ref ag, ref ab);
+                                }
+                                else if (_samples < 7)
+                                {
+                                    // 流畅档：每通道只采一次（R 前 / G 中 / B 后），色散更糙但省 4 次采样
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX + dxi, baseY + dyi,
+                                        1f, 0f, 0f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX, baseY,
+                                        0f, 1f, 0f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX - dxi, baseY - dyi,
+                                        0f, 0f, 1f, ref ar, ref ag, ref ab);
+                                }
+                                else
+                                {
+                                    // 与 GlassDispersionPS 完全同权：R 1.0 / G 1.0 / B 1.0
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX + dxi, baseY + dyi,
+                                        1f / 3.5f, 0f, 0f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX + dxi * (2f / 3f), baseY + dyi * (2f / 3f),
+                                        1f / 3.5f, 1f / 7f, 0f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX + dxi / 3f, baseY + dyi / 3f,
+                                        1f / 3.5f, 1f / 3.5f, 0f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX, baseY,
+                                        0f, 1f / 3.5f, 0f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX - dxi / 3f, baseY - dyi / 3f,
+                                        0f, 1f / 3.5f, 1f / 3f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX - dxi * (2f / 3f), baseY - dyi * (2f / 3f),
+                                        0f, 0f, 1f / 3f, ref ar, ref ag, ref ab);
+                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX - dxi, baseY - dyi,
+                                        1f / 7f, 0f, 1f / 3f, ref ar, ref ag, ref ab);
+                                }
+
+                                // 饱和度提升 → 压暗 → 掺玻璃本色
+                                float lum = ar * 0.213f + ag * 0.715f + ab * 0.072f;
+                                ar = lum + (ar - lum) * Saturation;
+                                ag = lum + (ag - lum) * Saturation;
+                                ab = lum + (ab - lum) * Saturation;
+                                ar *= Darkening;
+                                ag *= Darkening;
+                                ab *= Darkening;
+                                ar += (255f - ar) * TintAlpha;
+                                ag += (255f - ag) * TintAlpha;
+                                ab += (255f - ab) * TintAlpha;
+
+                                // 边缘反光：上边缘最亮（光从上方来），下边缘几乎不亮
+                                float rim = RimStrength * MathF.Exp(sdi / RimWidth) * MathF.Max(0f, 0.55f - 0.75f * ggy);
+                                if (rim > 0f)
+                                {
+                                    ar += (255f - ar) * rim;
+                                    ag += (255f - ag) * rim;
+                                    ab += (255f - ab) * rim;
+                                }
+
+                                if (ar < 0f) ar = 0f; else if (ar > 255f) ar = 255f;
+                                if (ag < 0f) ag = 0f; else if (ag > 255f) ag = 255f;
+                                if (ab < 0f) ab = 0f; else if (ab > 255f) ab = 255f;
+
+                                float a = 255f * edge;
+                                float k = a / 255f;
+                                row[p] = (byte)(ab * k);          // B
+                                row[p + 1] = (byte)(ag * k);      // G
+                                row[p + 2] = (byte)(ar * k);      // R
+                                row[p + 3] = (byte)a;
                             }
-                            if (edge > 1f) edge = 1f;
-
-                            // 深度：边缘 0，往里越深越负
-                            float sdi = sd < 0f ? sd : 0f;
-                            float t = 1f + sdi / RefractionHeight;
-                            if (t < 0f) t = 0f;
-                            // circleMap：边缘位移最大，往里平滑收敛到 0
-                            float d = (1f - MathF.Sqrt(1f - t * t)) * RefractionAmount;
-
-                            float disp = (ccx * ccy) / (hsx * hsy);
-
-                            GradSdRoundedRect(ccx, ccy, hsx, hsy, MathF.Min(r * 1.5f, minHs), out float ggx, out float ggy);
-                            float ln = MathF.Sqrt(ccx * ccx + ccy * ccy) + 0.000001f;
-                            ggx += DepthEffect * (ccx / ln);
-                            ggy += DepthEffect * (ccy / ln);
-                            float gl = MathF.Sqrt(ggx * ggx + ggy * ggy) + 0.000001f;
-                            ggx /= gl;
-                            ggy /= gl;
-
-                            float baseX = src.Left + (lx + d * ggx) * imgPerX - cx0;
-                            float baseY = src.Top + (ly + d * ggy) * imgPerY - cy0;
-                            float dxi = d * ggx * disp * Dispersion * imgPerX;
-                            float dyi = d * ggy * disp * Dispersion * imgPerY;
-
-                            float ar = 0f, ag = 0f, ab = 0f;
-
-                            // 内部（位移≈0）时多次采样完全重合 → 只采一次，省下其余双线性
-                            if (dxi > -0.25f && dxi < 0.25f && dyi > -0.25f && dyi < 0.25f)
-                            {
-                                AccumSample(blur, cw, ch, blurStride, baseX, baseY, 1f, 1f, 1f, ref ar, ref ag, ref ab);
-                            }
-                            else if (_samples < 7)
-                            {
-                                // 流畅档：每通道只采一次（R 前 / G 中 / B 后），色散更糙但省 4 次采样
-                                AccumSample(blur, cw, ch, blurStride, baseX + dxi, baseY + dyi,
-                                    1f, 0f, 0f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX, baseY,
-                                    0f, 1f, 0f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX - dxi, baseY - dyi,
-                                    0f, 0f, 1f, ref ar, ref ag, ref ab);
-                            }
-                            else
-                            {
-                                // 与 GlassDispersionPS 完全同权：R 1.0 / G 1.0 / B 1.0
-                                AccumSample(blur, cw, ch, blurStride, baseX + dxi, baseY + dyi,
-                                    1f / 3.5f, 0f, 0f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX + dxi * (2f / 3f), baseY + dyi * (2f / 3f),
-                                    1f / 3.5f, 1f / 7f, 0f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX + dxi / 3f, baseY + dyi / 3f,
-                                    1f / 3.5f, 1f / 3.5f, 0f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX, baseY,
-                                    0f, 1f / 3.5f, 0f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX - dxi / 3f, baseY - dyi / 3f,
-                                    0f, 1f / 3.5f, 1f / 3f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX - dxi * (2f / 3f), baseY - dyi * (2f / 3f),
-                                    0f, 0f, 1f / 3f, ref ar, ref ag, ref ab);
-                                AccumSample(blur, cw, ch, blurStride, baseX - dxi, baseY - dyi,
-                                    1f / 7f, 0f, 1f / 3f, ref ar, ref ag, ref ab);
-                            }
-
-                            // 饱和度提升 → 压暗 → 掺玻璃本色
-                            float lum = ar * 0.213f + ag * 0.715f + ab * 0.072f;
-                            ar = lum + (ar - lum) * Saturation;
-                            ag = lum + (ag - lum) * Saturation;
-                            ab = lum + (ab - lum) * Saturation;
-                            ar *= Darkening;
-                            ag *= Darkening;
-                            ab *= Darkening;
-                            ar += (255f - ar) * TintAlpha;
-                            ag += (255f - ag) * TintAlpha;
-                            ab += (255f - ab) * TintAlpha;
-
-                            // 边缘反光：上边缘最亮（光从上方来），下边缘几乎不亮
-                            float rim = RimStrength * MathF.Exp(sdi / RimWidth) * MathF.Max(0f, 0.55f - 0.75f * ggy);
-                            if (rim > 0f)
-                            {
-                                ar += (255f - ar) * rim;
-                                ag += (255f - ag) * rim;
-                                ab += (255f - ab) * rim;
-                            }
-
-                            if (ar < 0f) ar = 0f; else if (ar > 255f) ar = 255f;
-                            if (ag < 0f) ag = 0f; else if (ag > 255f) ag = 255f;
-                            if (ab < 0f) ab = 0f; else if (ab > 255f) ab = 255f;
-
-                            float a = 255f * edge;
-                            float k = a / 255f;
-                            row[p] = (byte)(ab * k);          // B
-                            row[p + 1] = (byte)(ag * k);      // G
-                            row[p + 2] = (byte)(ar * k);      // R
-                            row[p + 3] = (byte)a;
                         }
                     }
+
+                    // 图太小就别起线程了：Parallel.For 自身的调度开销比算这点像素还贵
+                    if (gw * gh >= ParallelMinPixels && Environment.ProcessorCount > 1)
+                    {
+                        int chunks = Math.Min(Environment.ProcessorCount, Math.Max(1, gh / 4));
+                        System.Threading.Tasks.Parallel.For(0, chunks,
+                            ci => RenderRows(gh * ci / chunks, gh * (ci + 1) / chunks));
+                    }
+                    else RenderRows(0, gh);
                 }
 
                 if (_glass != null) _glass.Dispose();
@@ -442,8 +566,65 @@ namespace NotchPeninsula
                 _keyLh = logicalH;
                 _keyRt = rTop;
                 _keyRb = rBottom;
+                _keyHash = hash;
+                _keyCropX = cx0;
+                _keyCropY = cy0;
+                _keyCropW = cw;
+                _keyCropH = ch;
+                _statBuild++;
                 return bmp;
             }
+        }
+
+        // ---- ① 缓动跟随（对应 demo 的 g_smoothSrc 插值）----
+        // 只缓动【源矩形的位置】，不动几何尺寸：玻璃层最终是按当前胶囊尺寸拉伸贴进去的，
+        // 尺寸要是缓动，折射带（refractionHeight）会被一起拉伸 —— 胶囊从 35 展开到 300 时
+        // 那条 14px 的折射带会被拉成 100 多 px，直接穿帮。位置缓动则完全安全。
+        private static void ApplyEase(ref SKRect src)
+        {
+            float tx = src.Left, ty = src.Top;
+
+            if (float.IsNaN(_easeSx) || float.IsNaN(_easeSy)
+                || MathF.Abs(tx - _easeSx) > EaseSnapPx || MathF.Abs(ty - _easeSy) > EaseSnapPx)
+            {
+                // 首帧 / 突变（换显示器、DPI 变化、从隐藏恢复）：立刻对齐，别缓上去
+                _easeSx = tx;
+                _easeSy = ty;
+                return;
+            }
+
+            _easeSx += (tx - _easeSx) * EaseSpeed;
+            _easeSy += (ty - _easeSy) * EaseSpeed;
+
+            src = new SKRect(_easeSx, _easeSy, _easeSx + src.Width, _easeSy + src.Height);
+        }
+
+        // ---- ③ 裁切区抽样哈希（FNV-1a 64）----
+        // 每 4 行、每 4 个像素取一次：既不会漏掉桌面内容的变化，又比真算一遍便宜得多。
+        private static ulong HashCrop(byte* src, int stride, int x0, int y0, int w, int h)
+        {
+            const ulong prime = 1099511628211UL;
+            ulong acc = 1469598103934665603UL;
+            for (int j = 0; j < h; j += 4)
+            {
+                byte* row = src + (y0 + j) * stride + x0 * 4;
+                for (int i = 0; i < w; i += 4)
+                {
+                    int p = i * 4;
+                    acc = (acc ^ row[p]) * prime;
+                    acc = (acc ^ row[p + 1]) * prime;
+                    acc = (acc ^ row[p + 2]) * prime;
+                }
+            }
+            return acc;
+        }
+
+        // ---- demo 的 smoothstep（HLSL 内建，C# 没有）----
+        private static float SmoothStep(float e0, float e1, float x)
+        {
+            float t = (x - e0) / (e1 - e0);
+            if (t < 0f) t = 0f; else if (t > 1f) t = 1f;
+            return t * t * (3f - 2f * t);
         }
 
         private static int AlignDown(int v, int grid) => (int)MathF.Floor(v / (float)grid) * grid;
@@ -452,13 +633,36 @@ namespace NotchPeninsula
 
         // ---- 可分离高斯：只糊裁切区，边缘夹取（对应 demo 的水平/垂直两趟）----
         private static void BuildBlur(byte* src, int srcStride, int iw, int ih,
-                                     int cx0, int cy0, int cw, int ch, int cB, int cG, int cR, int version)
+                                     int cx0, int cy0, int cw, int ch, int cB, int cG, int cR, int version,
+                                     out int outW, out int outH)
         {
-            int need = cw * ch * 4;
+            // ── 降采样后再模糊 ──
+            // 模糊是整次重算里最贵的一步（实测占九成）。半径 >= 4 时先把裁切区 2×2 盒式降采样，
+            // 抽头数同步减半（R/2），等效模糊半径保持不变 —— 结果几乎一致，工作量却是 1/8：
+            // 像素少 4 倍 × 抽头少 2 倍。半径 <= 2（用户要清晰）时保持 1:1，一点细节都不丢。
+            int bs = _radius >= 4 ? 2 : 1;
+            _blurScale = bs;
+
+            int bw = (cw + bs - 1) / bs;
+            int bh = (ch + bs - 1) / bs;
+            outW = bw;
+            outH = bh;
+
+            int need = Math.Max(cw * ch * 4, bw * bh * 4);
             if (_blurA.Length < need) _blurA = new byte[need];
             if (_blurB.Length < need) _blurB = new byte[need];
+            else if (_blurA.Length > need * 4 && _blurA.Length > (1 << 20))
+            {
+                // 岛体从大展开态收回折叠态后，裁切区会小一个数量级 —— 但数组只涨不缩，
+                // 那几 MB 会一直挂在进程里。超过实际用量 4 倍且大于 1MB 就按当前尺寸重开。
+                _blurA = new byte[need];
+                _blurB = new byte[need];
+            }
 
-            if (_blurValid && _blurVersion == version && _blurX == cx0 && _blurY == cy0 && _blurW == cw && _blurH == ch)
+            // 缩放比也要进缓存键：否则换模糊档位（bs 1↔2）而裁切区恰巧没变时，
+            // 会拿旧尺度的数据配上新尺度的输出宽高，采样整体错位一倍。
+            if (_blurValid && _blurVersion == version && _blurX == cx0 && _blurY == cy0
+                && _blurW == cw && _blurH == ch && _blurScaleKey == bs)
                 return;
 
             fixed (byte* pa = _blurA)
@@ -469,8 +673,11 @@ namespace NotchPeninsula
 
                 if (_radius <= 0 || cw * ch > MaxBlurPixels)
                 {
-                    // 模糊档位设成 0（最清晰），或超大岛体跳过核：直接搬像素。
+                    // 模糊档位设成 0（最清晰），或超大岛体跳过核：直接搬像素，不做降采样。
                     // 后者靠抓屏那一步的盒式降采样 / 放大镜 1:1，已经够用。
+                    _blurScale = 1;
+                    outW = cw;
+                    outH = ch;
                     for (int j = 0; j < ch; j++)
                     {
                         int sy = cy0 + j;
@@ -480,64 +687,142 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    int R = _radius;
+                    // 等效半径：降采样 bs 倍后抽头数同比减少，模糊观感不变
+                    int R = _radius / bs;
+                    if (R < 1) R = 1;
+                    int taps = R * 2 + 1;
 
-                    // 水平
-                    for (int j = 0; j < ch; j++)
+                    // 把边缘夹取从内层循环里挪出去：原来每个抽头都要 clamp 一次
+                    // （分支 + 地址不可预测的 gather），现在内层是一条直线扫描。
+                    int padW = bw + taps;
+                    if (_pad.Length < padW * 4) _pad = new byte[padW * 4];
+                    if (_rowMap.Length < bh + taps) _rowMap = new int[bh + taps];
+
+                    // ① 2×2 盒式降采样（bs=1 时就是原样拷贝）
+                    int downNeed = bw * bh * 4;
+                    if (_down.Length < downNeed) _down = new byte[downNeed];
+                    fixed (byte* pdn = _down)
                     {
-                        int sy = cy0 + j;
-                        if (sy < 0) sy = 0; else if (sy > ih - 1) sy = ih - 1;
-                        byte* rowSrc = src + sy * srcStride;
-                        byte* rowDst = pa + j * cw * 4;
-                        for (int i = 0; i < cw; i++)
+                        if (pdn == null) return;
+                        if (bs == 1)
                         {
-                            float accB = 0f, accG = 0f, accR = 0f;
-                            for (int t = -R; t <= R; t++)
+                            for (int j = 0; j < bh; j++)
                             {
-                                int sx = cx0 + i + t;
-                                if (sx < cx0) sx = cx0; else if (sx > cx0 + cw - 1) sx = cx0 + cw - 1;
-                                byte* q = rowSrc + sx * 4;
-                                float wt = wp[t < 0 ? -t : t];
-                                accB += q[cB] * wt;
-                                accG += q[cG] * wt;
-                                accR += q[cR] * wt;
+                                int sy = cy0 + j;
+                                if (sy < 0) sy = 0; else if (sy > ih - 1) sy = ih - 1;
+                                byte* q = src + sy * srcStride + cx0 * 4;
+                                byte* d = pdn + j * bw * 4;
+                                for (int i = 0; i < bw; i++)
+                                {
+                                    d[i * 4] = q[i * 4 + cB];
+                                    d[i * 4 + 1] = q[i * 4 + cG];
+                                    d[i * 4 + 2] = q[i * 4 + cR];
+                                    d[i * 4 + 3] = 255;
+                                }
                             }
-                            int o = i * 4;
-                            rowDst[o] = ClampByte(accB);
-                            rowDst[o + 1] = ClampByte(accG);
-                            rowDst[o + 2] = ClampByte(accR);
-                            rowDst[o + 3] = 255;
+                        }
+                        else
+                        {
+                            for (int j = 0; j < bh; j++)
+                            {
+                                byte* d = pdn + j * bw * 4;
+                                int y0 = cy0 + j * 2, y1 = y0 + 1;
+                                if (y0 < 0) y0 = 0; else if (y0 > ih - 1) y0 = ih - 1;
+                                if (y1 < 0) y1 = 0; else if (y1 > ih - 1) y1 = ih - 1;
+                                byte* r0 = src + y0 * srcStride;
+                                byte* r1 = src + y1 * srcStride;
+                                for (int i = 0; i < bw; i++)
+                                {
+                                    int x0 = cx0 + i * 2, x1 = x0 + 1;
+                                    if (x1 > cx0 + cw - 1) x1 = cx0 + cw - 1;
+                                    int a0 = x0 * 4, a1 = x1 * 4;
+                                    d[i * 4] = (byte)((r0[a0 + cB] + r0[a1 + cB] + r1[a0 + cB] + r1[a1 + cB]) >> 2);
+                                    d[i * 4 + 1] = (byte)((r0[a0 + cG] + r0[a1 + cG] + r1[a0 + cG] + r1[a1 + cG]) >> 2);
+                                    d[i * 4 + 2] = (byte)((r0[a0 + cR] + r0[a1 + cR] + r1[a0 + cR] + r1[a1 + cR]) >> 2);
+                                    d[i * 4 + 3] = 255;
+                                }
+                            }
                         }
                     }
 
-                    // 垂直
-                    for (int j = 0; j < ch; j++)
+                    fixed (byte* pdn = _down)
+                    fixed (byte* ppad = _pad)
+                    fixed (int* pmap = _rowMap)
                     {
-                        byte* rowDst = pb + j * cw * 4;
-                        for (int i = 0; i < cw; i++)
+                        if (pdn == null || ppad == null || pmap == null) return;
+
+                        for (int k = 0; k < bh + taps; k++)
                         {
-                            float accB = 0f, accG = 0f, accR = 0f;
-                            for (int t = -R; t <= R; t++)
+                            int y = k - R;
+                            _rowMap[k] = (y < 0 ? 0 : (y > bh - 1 ? bh - 1 : y)) * bw * 4;
+                        }
+
+                        // ② 水平
+                        for (int j = 0; j < bh; j++)
+                        {
+                            byte* rowSrc = pdn + j * bw * 4;
+                            for (int k = 0; k < padW; k++)
                             {
-                                int sy = j + t;
-                                if (sy < 0) sy = 0; else if (sy > ch - 1) sy = ch - 1;
-                                byte* q = pa + sy * cw * 4 + i * 4;
-                                float wt = wp[t < 0 ? -t : t];
-                                accB += q[0] * wt;
-                                accG += q[1] * wt;
-                                accR += q[2] * wt;
+                                int sx = k - R;
+                                if (sx < 0) sx = 0; else if (sx > bw - 1) sx = bw - 1;
+                                byte* q = rowSrc + sx * 4;
+                                int o = k * 4;
+                                ppad[o] = q[0];
+                                ppad[o + 1] = q[1];
+                                ppad[o + 2] = q[2];
                             }
-                            int o = i * 4;
-                            rowDst[o] = ClampByte(accB);
-                            rowDst[o + 1] = ClampByte(accG);
-                            rowDst[o + 2] = ClampByte(accR);
-                            rowDst[o + 3] = 255;
+
+                            byte* rowDst = pa + j * bw * 4;
+                            for (int i = 0; i < bw; i++)
+                            {
+                                byte* w0 = ppad + i * 4;        // 连续窗口起点
+                                float accB = 0f, accG = 0f, accR = 0f;
+                                for (int t = 0; t < taps; t++)
+                                {
+                                    int dt = t - R;
+                                    float wt = wp[dt < 0 ? -dt : dt];
+                                    int o = t * 4;
+                                    accB += w0[o] * wt;
+                                    accG += w0[o + 1] * wt;
+                                    accR += w0[o + 2] * wt;
+                                }
+                                int o2 = i * 4;
+                                rowDst[o2] = ClampByte(accB);
+                                rowDst[o2 + 1] = ClampByte(accG);
+                                rowDst[o2 + 2] = ClampByte(accR);
+                                rowDst[o2 + 3] = 255;
+                            }
+                        }
+
+                        // ③ 垂直
+                        for (int j = 0; j < bh; j++)
+                        {
+                            byte* rowDst = pb + j * bw * 4;
+                            for (int i = 0; i < bw; i++)
+                            {
+                                float accB = 0f, accG = 0f, accR = 0f;
+                                for (int t = 0; t < taps; t++)
+                                {
+                                    byte* q = pa + pmap[j + t] + i * 4;
+                                    int dt = t - R;
+                                    float wt = wp[dt < 0 ? -dt : dt];
+                                    accB += q[0] * wt;
+                                    accG += q[1] * wt;
+                                    accR += q[2] * wt;
+                                }
+                                int o = i * 4;
+                                rowDst[o] = ClampByte(accB);
+                                rowDst[o + 1] = ClampByte(accG);
+                                rowDst[o + 2] = ClampByte(accR);
+                                rowDst[o + 3] = 255;
+                            }
                         }
                     }
                 }
             }
 
             _blurValid = true;
+            _blurScaleKey = bs;
             _blurVersion = version;
             _blurX = cx0;
             _blurY = cy0;

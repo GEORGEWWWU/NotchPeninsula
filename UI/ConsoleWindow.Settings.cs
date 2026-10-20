@@ -107,12 +107,15 @@ namespace NotchPeninsula
         private const float SIZE_CARD_H = 148f;
 
         // ---- 「液态玻璃」卡：只在材质选到液态玻璃时出现，挂在尺寸卡下面 ----
-        // 第一行并排两个分段控件（玻璃质量 / 抓屏方式），下面 9 根滑轨排成两列（5 行）。
+        // 第一行：玻璃质量 + 抓屏方式两个分段；第二行：渲染后端 + 放大镜状态；
+        // 下面 11 根滑轨排成 3 列 × 4 行（窗口就这么高，两排放不下）。
         private const float GLASS_CARD_Y = SIZE_CARD_Y + SIZE_CARD_H + CARD_GAP;   // 380
 
-        private const float GLASS_CARD_H = 218f;
+        private const float GLASS_CARD_H = 204f;
 
-        private const float GLASS_SEG_Y = 12f;                  // 第一行：分段控件在卡内的顶部偏移
+        private const float GLASS_SEG_Y = 12f;      // 第一行分段控件
+
+        private const float GLASS_SEG2_Y = 46f;     // 第二行分段控件 + 状态文字
 
         private const float GLASS_QUALITY_SEG_W = 150f;
 
@@ -122,18 +125,22 @@ namespace NotchPeninsula
 
         private const float GLASS_SOURCE_SEG_X = 482f;
 
-        private const float GLASS_ROW0_Y = 56f;                 // 滑轨区第一行（卡内偏移）
+        private const float GLASS_ROW0_Y = 82f;     // 滑轨区第一行
 
-        private const float GLASS_ROW_H = 30f;
+        private const float GLASS_ROW_H = 28f;
 
-        // 两列：左列标签/滑轨/档位名，右列整体右移 188px
-        private const float GLASS_COL_W = 188f;
+        private const float GLASS_ROWS = 4f;        // 11 项 / 3 列
 
-        private const float GLASS_SLIDER_X = CONTENT_TEXT_X + 50f;              // 252（让开标签）
+        // 3 列：每列 = 标签(46) + 滑轨(48) + 档位名
+        private const float GLASS_COL_X = CONTENT_TEXT_X;      // 202
 
-        private const float GLASS_SLIDER_END = GLASS_SLIDER_X + 90f;            // 342
+        private const float GLASS_COL_W = 130f;
 
-        private const float GLASS_LEVEL_TEXT_X = GLASS_SLIDER_END + 6f;         // 348
+        private const float GLASS_SLIDER_DX = 46f;             // 滑轨相对列左端
+
+        private const float GLASS_SLIDER_W = 48f;
+
+        private const float GLASS_LEVEL_DX = 98f;              // 档位名相对列左端
 
         private const float OPACITY_SLIDER_DY = 44f;
 

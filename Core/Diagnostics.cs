@@ -257,6 +257,7 @@ namespace NotchPeninsula
                 if (Renderer.IslandLiquidGlass)
                 {
                     sb.Append($"液态玻璃: 质量={LiquidGlass.QualityName}  抓屏=");
+                    sb.AppendLine($"  玻璃层命中: {LiquidGlass.Stats}");
                     sb.AppendLine(IslandBackdrop.UsingMagnifier ? "放大镜(1:1)" : $"兼容(1/{LiquidGlass.CaptureDownscale})");
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
                         sb.Append($"  {LiquidGlass.ParamNames[i]}={LiquidGlass.GetLevel(i)}/{LiquidGlass.MaxLevel}");

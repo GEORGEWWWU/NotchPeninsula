@@ -306,7 +306,7 @@ namespace NotchPeninsula
             SetupIslandDropTarget();
 
             // 放大镜抓屏：宿主窗口与放大镜窗口必须建在消息泵这条线上，所以放在这里（构造函数跑在主线程）。
-            // 不可用会自己回退 GDI，不影响启动。
+            // 不可用会自己回退 GDI，不影响启动；之后随时可以重试（见 EnsureMagnifier）。
             if (Renderer.IslandLiquidGlass || Renderer.IslandAcrylic)
                 MagnifierBackdrop.Initialize(_hwnd, _ownerHwnd);
             _renderThread = new Thread(RenderThreadLoop)
@@ -351,7 +351,9 @@ namespace NotchPeninsula
         }
 
         // ---- 渲染线程主体 ----
-        private const int FrameIntervalMs = 16;
+        // 帧间隔不再是常量：用户在个性化中心可以把岛体帧率调成 30/60/90/120/144。
+        // 渲染循环每帧读一次（不是启动时快照），所以改完立刻生效。
+        private static int FrameIntervalMs => LiquidGlass.FrameIntervalMs;
 
         private const int FrameIdleWarnMs = 120;
 
@@ -1127,7 +1129,11 @@ namespace NotchPeninsula
                 throw;
             }
 
-            UpdateWindow();
+            // 完全隐藏且动画已停 → 整帧都是全透明的，画了也白画，更别提那次
+            // UpdateLayeredWindow 还要往 DWM 传一整张画布（540×450 约 1MB，60fps 就是 58MB/s）。
+            // ⚠️ 只在 FullHideAlpha 落到 0 且滑出动画结束时才跳过：这两个条件都意味着
+            //    「这一帧和上一帧一样、且屏幕上什么都看不见」，恢复时它会重新 >0，上屏自然继续。
+            if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow();
 
             // 只有「岛体真的卡住了」才会出现这一行，平时完全静音。
             long tFrameEnd = Environment.TickCount64;
@@ -1352,7 +1358,7 @@ namespace NotchPeninsula
             if (msg == MagNative.WM_APP_ENSURE_MAG)
             {
                 if (Renderer.IslandLiquidGlass || Renderer.IslandAcrylic)
-                    MagnifierBackdrop.Initialize(_hwnd, _ownerHwnd);
+                    MagnifierBackdrop.EnsureInitialized(_hwnd, _ownerHwnd, wParam != IntPtr.Zero);
                 return IntPtr.Zero;
             }
 
