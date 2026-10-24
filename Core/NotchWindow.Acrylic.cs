@@ -8,6 +8,8 @@ namespace NotchPeninsula
         private SKImage? _acrylicOwned;
         private int _acrFrames;
         private bool _acrLogged;
+        private bool _acrBootRefresh; // 启动后是否已做过一次「等价于点质量档」的刷新
+        private long _bootAtMs;       // 启动后第一次进入这里的时间戳
         private bool _lastGlassMode;
 
         // 亚克力背板：抓的是【整个画布框 ∩ 屏幕】，不是当前胶囊框。
@@ -32,6 +34,14 @@ namespace NotchPeninsula
             }
             IslandBackdrop.SetMode(glass);
 
+            // 背板刚从「全黑」跳到「有内容」（启动时桌面要十几秒才出来）→ 玻璃缓存作废重算。
+            // 等效于用户手动切一次质量档，这也是那个"必须手动刷新"的现象来源。
+            if (IslandBackdrop.TakeGlassWake())
+            {
+                Logger.Info("[亚克力] 背板从全黑变亮，作废玻璃缓存重算");
+                LiquidGlass.Invalidate();
+            }
+
             // 换材质 = 换降采样倍数：旧背板（另一倍率下抓的）先丢掉，
             // 否则新算出来的源矩形会指到旧图外面，切换瞬间会闪一块错位的色块。
             if (_lastGlassMode != glass)
@@ -52,10 +62,15 @@ namespace NotchPeninsula
             //    （真凶实证：app.log 出现过 屏幕矩形=(-663,0,4399,483) 背板平均 RGB=(0,0,0)）
             int dstX = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
             int dstY = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
+
+            // 抓取矩形只认**静态基准位置**，不跟 _currentY（滑动/下沉动画的偏移）。
+            // 实测启动时 _currentY 会卡在 500 左右，矩形跟着跑到 (0,510) 抓到屏幕中部，
+            // 玻璃拿到的是一块错位画面 —— 看着就是"没渲染，手动点一下才正常"。
+            int capBaseY = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale);
             int capX = Math.Max(_cachedMonitorX, dstX);
-            int capY = Math.Max(_cachedMonitorY, dstY);
+            int capY = Math.Max(_cachedMonitorY, capBaseY);
             int capW = Math.Min(_cachedMonitorX + _cachedMonitorWidth, dstX + _scaledWidth) - capX;
-            int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, dstY + _scaledHeight) - capY;
+            int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, capBaseY + _scaledHeight) - capY;
             // 放大镜是 1:1 全分辨率，"整块画布"那么大一张图没必要 —— 玻璃只用到屏幕上边一条。
             // 按 32px 量化，免得胶囊高度一动就重抓。
             if (glass && IslandBackdrop.UseMagnifier && MagnifierBackdrop.IsAvailable && capH > 120)
@@ -104,10 +119,25 @@ namespace NotchPeninsula
                 }
             }
 
-            // 开着一秒还没拿到背板 → 只报一次，说明后台线程没产出
             _acrFrames++;
-            if (_acrFrames == 120 && Renderer.AcrylicBackdrop == null)
-                Logger.Warn("[亚克力] 开启 120 帧仍未拿到背板（后台抓屏线程无产出）");
+
+            // 启动刷新：等岛体**完全落位**（淡入完成、没有滑动/下沉偏移）再做，
+            // 动作与设置页点一次「玻璃质量」逐句对应（见 ConsoleWindow.Click）：
+            //   LiquidGlass.Quality = 原档 → 强制走 ApplyQuality（ReapplyQuality），
+            //   再 RequestAcrylicRebuild() —— 就是点击分支最后那一句。
+            // ⚠️ 用户点的是「原来那档」，setter 会早退，所以必须用 ReapplyQuality 才等效。
+            long nowMs = Environment.TickCount64;
+            if (_bootAtMs == 0) _bootAtMs = nowMs;
+            if (!_acrBootRefresh
+                && nowMs - _bootAtMs >= 800
+                && Renderer.FullHideAlpha >= 0.9f
+                && Math.Abs(_currentY) < 0.5f)
+            {
+                _acrBootRefresh = true;
+                Logger.Info("[亚克力] 启动刷新玻璃（等价于设置里点一次玻璃质量）");
+                LiquidGlass.ReapplyQuality();
+                RequestAcrylicRebuild();
+            }
 
             Renderer.AcrylicBackdropSrc = new SKRect(srcL, srcT, srcL + srcW, srcT + srcH);
         }

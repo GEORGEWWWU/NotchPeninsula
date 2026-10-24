@@ -91,6 +91,20 @@ namespace NotchPeninsula
         private static bool _disabled;
         private static int _loggedX = int.MinValue, _loggedY = int.MinValue;
 
+        // 上一帧背板的整体亮度：用来抓「全黑 → 有内容」这一跳（见 Capture 尾部）
+        private static int _lastLum;
+
+        // 背板从全黑变亮的标记：渲染线程取走它再自己调 LiquidGlass.Invalidate()
+        private static volatile bool _glassWake;
+
+        /// <summary>渲染线程：背板刚从全黑变亮就要把玻璃缓存作废（后台线程不能碰 _glass 位图）。</summary>
+        public static bool TakeGlassWake()
+        {
+            if (!_glassWake) return false;
+            _glassWake = false;
+            return true;
+        }
+
         // 胶囊在背板图里的矩形（渲染线程每帧写 / 抓屏线程读）：用来把岛体自己那块抹掉。
         // 不用锁：读到的最多是上一帧的矩形，擦除区再放几像素余量即可兜住。
         private static volatile int _maskX0, _maskY0, _maskX1, _maskY1;
@@ -145,6 +159,14 @@ namespace NotchPeninsula
             EnsureThread();
             return Interlocked.Exchange(ref _pending, null);
         }
+
+        /// <summary>
+        /// 抓屏线程的状态快照：排查「启动不抓屏、要手动刷新」时看这一行就够。
+        /// target 一直是 0×0 = 渲染侧没给矩形；dirty=False 且 target 正常 = 线程没被唤醒。
+        /// </summary>
+        public static string DebugState
+            => $"target={_tw}x{_th}@{_tx},{_ty} dirty={_dirty} expire={_expire} "
+             + $"disabled={_disabled} thread={(_thread != null)} lastMs={_lastMs}";
 
         public static void Stop()
         {
@@ -295,6 +317,18 @@ namespace NotchPeninsula
             stale?.Dispose();
             Interlocked.Increment(ref _version);   // 液态玻璃据此重算折射层
 
+            // 桌面从「全黑」变成「有内容」的那一刻必须让玻璃重算一次。
+            // 实测启动后十几秒内抓到的都是 (0,0,0)（锁屏/壁纸还没加载完），玻璃就照着黑图生成，
+            // 用户看到的是"启动后玻璃不显示、手动切一次质量档才正常"——切质量做的正是 Invalidate。
+            // 这里盯住这一跳，替用户做掉。
+            // ⚠️ 只能置标记：_glass 位图归渲染线程所有，这里 Dispose 会直接 AV。
+            if (_glass)
+            {
+                int lum = SampleLuminance(sw, sh);
+                if (_lastLum < 6 && lum >= 6) _glassWake = true;
+                _lastLum = lum;
+            }
+
             if (x != _loggedX || y != _loggedY)
             {
                 _loggedX = x; _loggedY = y;
@@ -367,8 +401,14 @@ namespace NotchPeninsula
 
         private static bool _magForce;
 
-        // 把岛体自己占的那块（背板图坐标）用左右邻像素横向插值抹掉。
-        // 岛体在屏幕顶部居中，同一行左右两侧就是它背后的那层；1/12 缩略 + 平滑后完全看不出。
+        // 把岛体自己占的那块（背板图坐标）抹掉。
+        //
+        // 填法用「四方向最近邻延展」：每个像素取上下左右四条参考边里**距离最近**的那一个的颜色，
+        // 不做插值、也不偏向任何方向。
+        // ⚠️ 这里换过两版，都留下明显的方向性痕迹，别再退回去：
+        //    · 左右邻列横向插值 → 贯穿整个胶囊的横向渐变带（"条纹"）
+        //    · 上下邻行垂直插值 → 胶囊内容被纵向拉长（"上下拉太长了"）
+        // 最近邻延展只在 45° 方向留一条分界，玻璃自己的高斯模糊会把它揉开，观感最接近磨砂。
         private static void EraseIsland(int sw, int sh, int x0, int y0, int x1, int y1)
         {
             // 余量：兜住「遮挡矩形比实际岛体晚一帧」的滞后（动画中胶囊在变宽变窄）
@@ -379,41 +419,132 @@ namespace NotchPeninsula
             if (y1 > sh) y1 = sh;
             if (x1 - x0 < 1 || y1 - y0 < 1) return;
 
-            int lx = x0 - 1, rx = x1;                    // 左右参考列（必须落在擦除区之外）
-            bool hasL = lx >= 0, hasR = rx < sw;
-            if (!hasL && !hasR) return;
+            int lx = x0 - 1, rx = x1, ty = y0 - 1, by = y1;
+            bool hasL = lx >= 0, hasR = rx < sw, hasT = ty >= 0, hasB = by < sh;
+            if (!hasL && !hasR && !hasT && !hasB) return;
 
+            byte* bits = (byte*)_pBits;
             for (int j = y0; j < y1; j++)
             {
                 int row = j * sw * 4;
-                if (hasL && hasR)
+                for (int i = x0; i < x1; i++)
                 {
-                    int pl = row + lx * 4, pr = row + rx * 4;
-                    int bL = Marshal.ReadByte(_pBits, pl), gL = Marshal.ReadByte(_pBits, pl + 1), rL = Marshal.ReadByte(_pBits, pl + 2);
-                    int bR = Marshal.ReadByte(_pBits, pr), gR = Marshal.ReadByte(_pBits, pr + 1), rR = Marshal.ReadByte(_pBits, pr + 2);
-                    float inv = 1f / (rx - lx);
-                    for (int i = x0; i < x1; i++)
-                    {
-                        float t = (i - lx) * inv;
-                        int p = row + i * 4;
-                        Marshal.WriteByte(_pBits, p, (byte)(bL + (bR - bL) * t));
-                        Marshal.WriteByte(_pBits, p + 1, (byte)(gL + (gR - gL) * t));
-                        Marshal.WriteByte(_pBits, p + 2, (byte)(rL + (rR - rL) * t));
-                    }
-                }
-                else
-                {
-                    int ps = row + (hasL ? lx : rx) * 4;
-                    byte b = Marshal.ReadByte(_pBits, ps), g = Marshal.ReadByte(_pBits, ps + 1), r = Marshal.ReadByte(_pBits, ps + 2);
-                    for (int i = x0; i < x1; i++)
-                    {
-                        int p = row + i * 4;
-                        Marshal.WriteByte(_pBits, p, b);
-                        Marshal.WriteByte(_pBits, p + 1, g);
-                        Marshal.WriteByte(_pBits, p + 2, r);
-                    }
+                    int dl = hasL ? i - lx : int.MaxValue;
+                    int dr = hasR ? rx - i : int.MaxValue;
+                    int dt = hasT ? j - ty : int.MaxValue;
+                    int db = hasB ? by - j : int.MaxValue;
+                    int best = Math.Min(Math.Min(dl, dr), Math.Min(dt, db));
+
+                    int si;
+                    if (best == dl) si = row + lx * 4;
+                    else if (best == dr) si = row + rx * 4;
+                    else if (best == dt) si = ty * sw * 4 + i * 4;
+                    else si = by * sw * 4 + i * 4;
+
+                    int p = row + i * 4;
+                    bits[p] = bits[si];
+                    bits[p + 1] = bits[si + 1];
+                    bits[p + 2] = bits[si + 2];
                 }
             }
+
+            // 最近邻延展在 45° 会留硬分界：折叠态面积小看不出来，展开态整块胶囊被填成大色斑，
+            // 观感就是"尺寸一大背景就被放大了"。补一次盒式模糊把分界揉开（玻璃自己的高斯只有 4px）。
+            SoftenErasedRegion(sw, sh, x0, y0, x1, y1);
+        }
+
+        private static byte[] _eraseSrc = Array.Empty<byte>();
+        private static byte[] _eraseDst = Array.Empty<byte>();
+
+        // 只柔化擦除区：两趟盒式（水平 + 垂直）。
+        // 半径按擦除区短边自适应：折叠态面积小 6 就够；展开态整块都是填充，
+        // 半径小了色斑分界还在（观感就是"背景被放大了"），必须揉成均匀雾面。
+        private static void SoftenErasedRegion(int sw, int sh, int x0, int y0, int x1, int y1)
+        {
+            int w = x1 - x0, h = y1 - y0;
+            if (w < 6 || h < 6) return;
+
+            int need = w * h * 4;
+            if (_eraseSrc.Length < need)
+            {
+                _eraseSrc = new byte[need];
+                _eraseDst = new byte[need];
+            }
+
+            int R = Math.Max(6, Math.Min(w, h) / 8);
+            byte* bits = (byte*)_pBits;
+            fixed (byte* src = _eraseSrc)
+            fixed (byte* dst = _eraseDst)
+            {
+                for (int j = 0; j < h; j++)
+                    Buffer.MemoryCopy(bits + (long)(y0 + j) * sw * 4 + x0 * 4,
+                        src + (long)j * w * 4, w * 4, w * 4);
+
+                // 水平趟：src → dst
+                for (int j = 0; j < h; j++)
+                {
+                    byte* s = src + (long)j * w * 4;
+                    byte* d = dst + (long)j * w * 4;
+                    for (int i = 0; i < w; i++)
+                    {
+                        int i0 = i - R < 0 ? 0 : i - R;
+                        int i1 = i + R >= w ? w - 1 : i + R;
+                        int b = 0, g = 0, r = 0, n = 0;
+                        for (int k = i0; k <= i1; k++)
+                        {
+                            byte* q = s + k * 4;
+                            b += q[0]; g += q[1]; r += q[2];
+                            n++;
+                        }
+                        byte* o = d + i * 4;
+                        o[0] = (byte)(b / n); o[1] = (byte)(g / n); o[2] = (byte)(r / n);
+                    }
+                }
+
+                // 垂直趟：dst → src
+                for (int i = 0; i < w; i++)
+                {
+                    for (int j = 0; j < h; j++)
+                    {
+                        int j0 = j - R < 0 ? 0 : j - R;
+                        int j1 = j + R >= h ? h - 1 : j + R;
+                        int b = 0, g = 0, r = 0, n = 0;
+                        for (int k = j0; k <= j1; k++)
+                        {
+                            byte* q = dst + (long)k * w * 4 + i * 4;
+                            b += q[0]; g += q[1]; r += q[2];
+                            n++;
+                        }
+                        byte* o = src + (long)j * w * 4 + i * 4;
+                        o[0] = (byte)(b / n); o[1] = (byte)(g / n); o[2] = (byte)(r / n);
+                    }
+                }
+
+                for (int j = 0; j < h; j++)
+                    Buffer.MemoryCopy(src + (long)j * w * 4,
+                        bits + (long)(y0 + j) * sw * 4 + x0 * 4, w * 4, w * 4);
+            }
+        }
+
+        // 背板整体亮度（0..255）：抽样 64×32 网格，避开四周一圈，够判断"是不是全黑"就行
+        private static int SampleLuminance(int sw, int sh)
+        {
+            if (_pBits == IntPtr.Zero || sw < 8 || sh < 8) return 0;
+            byte* bits = (byte*)_pBits;
+            int stepX = Math.Max(1, sw / 64), stepY = Math.Max(1, sh / 32);
+            long sum = 0;
+            int n = 0;
+            for (int j = sh / 8; j < sh - sh / 8; j += stepY)
+            {
+                int row = j * sw * 4;
+                for (int i = sw / 8; i < sw - sw / 8; i += stepX)
+                {
+                    int p = row + i * 4;
+                    sum += bits[p] + bits[p + 1] + bits[p + 2];
+                    n++;
+                }
+            }
+            return n == 0 ? 0 : (int)(sum / (n * 3));
         }
 
         private static void EnsureBuffer(int sw, int sh)

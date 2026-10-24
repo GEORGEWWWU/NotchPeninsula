@@ -274,7 +274,9 @@ namespace NotchPeninsula
         //             列表行起点 +92
         // 渲染 / 命中 / 滚轮三处共用，改一处必须同步。
         //    收到 50 后两张卡各多显示一行。
-        private const float PluginListRowH = 50f;
+        // 48 而不是 50：列表区的可用高度只差一点点，"多放一行"就是靠这 2px 换来的
+        // （市场页 580/50=11 行 → 580/48=12 行；行内元素最大偏移 44，48 仍放得下）。
+        private const float PluginListRowH = 48f;
 
         private const float PluginTopCardH = 96f;   // 「我的插件」顶部操作卡高度
 
@@ -375,7 +377,7 @@ namespace NotchPeninsula
 
         private void GetMarketListLayout(out int visibleRows, out int maxFirstRow)
         {
-            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - MarketRowsTop - 8) / PluginListRowH));
+            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - MarketRowsTop) / PluginListRowH));
             int total = _marketView.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);

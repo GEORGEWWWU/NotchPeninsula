@@ -64,6 +64,15 @@ namespace NotchPeninsula
             "LiquidGlassBrightness", "LiquidGlassCaptureMs", "LiquidGlassFps", "LiquidGlassZoom"
         };
 
+        // 设置页用的两字简写。一列只有 123px（标签 24 + 滑轨 52 + 档位值 27），
+        // 四字标签会把滑轨挤回 36 以内 —— 那样比排版拥挤更糟。
+        // ParamNames 保留完整名：诊断日志要能和注册表键对得上。
+        public static readonly string[] ParamLabels =
+        {
+            "模糊", "折射", "色散", "高光", "厚度", "透镜", "饱和", "雾度", "明度",
+            "刷新", "帧率", "倍率"
+        };
+
         // 抓屏刷新间隔（ms）：越短越跟手，代价是更频繁地读屏幕
         private static readonly int[] CaptureMsTable = { 1000, 500, 250, 160, 60 };
 
@@ -81,7 +90,7 @@ namespace NotchPeninsula
         {
             switch (index)
             {
-                case P_Blur: return ["不模糊", "2", "4", "6", "10"];
+                case P_Blur: return ["无", "2", "4", "6", "10"];
                 case P_CaptureHz: return ["1s", "0.5s", "250", "160", "60"];
                 case P_FrameRate: return ["30", "60", "90", "120", "144"];
                 case P_Zoom: return ["1.0x", "1.08x", "1.18x", "1.32x", "1.5x"];
@@ -92,8 +101,15 @@ namespace NotchPeninsula
         // 所有滑块统一 5 档（0..4），与背景透明度那根滑轨同口径
         public const int MaxLevel = 4;
 
-        // 各档默认值（下标 = 上面的 P_*）：刷新默认 250ms、帧率默认 60fps，都是表中下标 2
-        private static readonly int[] _levels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+        // 各档默认值（下标 = 上面的 P_*）：刷新默认 250ms、帧率默认 60fps，都是表中下标 2。
+        // 倍率默认 0（1.0x）：放大是把背板内容整体撑开，边缘会被拉得更假，默认不放大。
+        private static readonly int[] DefaultLevels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0 };
+
+        private static readonly int[] _levels = (int[])DefaultLevels.Clone();
+
+        /// <summary>出厂默认档位（设置页「恢复默认参数」用）。</summary>
+        public static int DefaultLevelOf(int index)
+            => index >= 0 && index < ParamCount ? DefaultLevels[index] : 0;
 
         public static int GetLevel(int index) => index >= 0 && index < ParamCount ? _levels[index] : 0;
 
@@ -139,19 +155,33 @@ namespace NotchPeninsula
 
         public static float Darkening => BrightnessTable[_levels[P_Brightness]];
 
-        // ---- 高斯模糊（抓屏图像素口径；demo 里是 15-tap 可分离高斯）----
-        private static int _radius = 6;
+        // ---- 高斯模糊 ----
+        // ⚠️ _radius 是**背板像素**口径，不是逻辑像素：抓屏被降采样 1/2、1/3 时抽头数不变，
+        // 屏幕上的模糊半径就跟着放大同样倍数（均衡档 4px 实际是 8px），观感是"糊成一团、像折射过头"。
+        // Compose 里按「背板 px / 逻辑 px」把档位半径换算回来，这里只存换算后的值。
+        private static int _radius = 4;
+
+        // 档位原始半径（逻辑像素口径 0/2/4/6/10）。初值取默认档下标 2 的表值：
+        // 注册表值恰好等于默认时 SetLevel 会早退，ApplyBlur 根本不会被调用。
+        private static int _levelRadius = 4;
 
         private static float _sigma = 2.2f;
 
         public static int BlurRadius => _radius;
 
+        private static void SetRadius(int r)
+        {
+            if (r == _radius && _weights.Length > 0) return;
+            _radius = r;
+            _sigma = r <= 0 ? 0f : r / 2.7f;
+            _weights = new float[Math.Max(1, r + 1)];
+            if (r > 0) ComputeGaussianWeights(_sigma, r, _weights);
+        }
+
         private static void ApplyBlur()
         {
-            _radius = BlurRadiusTable[_levels[P_Blur]];
-            _sigma = _radius <= 0 ? 0f : _radius / 2.7f;
-            _weights = new float[Math.Max(1, _radius + 1)];
-            if (_radius > 0) ComputeGaussianWeights(_sigma, _radius, _weights);
+            _levelRadius = BlurRadiusTable[_levels[P_Blur]];
+            SetRadius(_levelRadius);
         }
 
         // ---- 质量档：抓屏倍率 / 色散采样数 / 玻璃层上限 / 刷新间隔 ----
@@ -179,10 +209,20 @@ namespace NotchPeninsula
         public static float CaptureDownscale => _downscale;
 
         // 玻璃图层分辨率上限：超出后按面积等比降采样（内容本来就模糊，看不出来）
-        private static int _maxGlassPixels = 90000;
+        // 玻璃图层分辨率上限：超出后按面积等比降采样。
+        // ⚠️ 这个上限一超，玻璃图就比胶囊小 → 贴图时被放大 → 观感是"展开态整个背景被放大、还糊"。
+        // 展开态 900×400 逻辑 @125% = 1125×500 ≈ 56 万像素，所以默认档必须给到 60 万。
+        // （折叠态 570×40 ≈ 2.8 万，怎么都够 —— 这也是折叠态一直正常的原因。）
+        private static int _maxGlassPixels = 600000;
 
         // 色散采样数：7 次（R/G/B 各一整套）或 3 次（每通道只采一次）
         private static int _samples = 7;
+
+        /// <summary>
+        /// 重新套一遍当前质量档（= 设置页点一次「玻璃质量」）。
+        /// 启动自愈走这条：手动刷新有效、单靠 Invalidate+Expire 无效，差别就在这一步。
+        /// </summary>
+        public static void ReapplyQuality() => ApplyQuality();
 
         // 质量档只管「抓屏倍率 / 玻璃层上限 / 色散采样数」——
         // 刷新间隔交给 P_CaptureHz 单独控制，免得两个控件抢同一个数。
@@ -192,17 +232,17 @@ namespace NotchPeninsula
             {
                 case 0:                       // 流畅：抓屏更糊、色散只采 3 次
                     _downscale = 3f;
-                    _maxGlassPixels = 40000;
+                    _maxGlassPixels = 200000;
                     _samples = 3;
                     break;
                 case 2:                       // 精细：1:1 抓屏 + 全分辨率玻璃层
                     _downscale = 1f;
-                    _maxGlassPixels = 260000;
+                    _maxGlassPixels = 900000;
                     _samples = 7;
                     break;
                 default:                      // 均衡
                     _downscale = 2f;
-                    _maxGlassPixels = 90000;
+                    _maxGlassPixels = 600000;
                     _samples = 7;
                     break;
             }
@@ -244,6 +284,10 @@ namespace NotchPeninsula
 
         private static int _keyCropX, _keyCropY, _keyCropW, _keyCropH;
 
+        // 诊断：上次打日志时的 src 与玻璃宽（变了才打，免得刷屏）
+        private static float _diagSx = float.NaN, _diagSy = float.NaN;
+        private static int _diagW = -1;
+
         // 命中统计：诊断里能直接看到「缓存命中 / 内容未变跳过 / 真重算」的比例
         private static int _statCache, _statHash, _statBuild;
 
@@ -280,6 +324,9 @@ namespace NotchPeninsula
         private static int _blurScale = 1;
 
         private static int _blurScaleKey = 1;
+
+        // 半径也要进缓存键：换抓屏倍率时 bs 可能不变（3px→4px 都在 bs=1），但抽头数变了
+        private static int _blurRadiusKey = -1;
 
         private static byte[] _pad = Array.Empty<byte>();
 
@@ -374,6 +421,11 @@ namespace NotchPeninsula
 
                 // 只需要「胶囊 + 折射位移 + 模糊半径」这一小块，别把整张抓屏都糊一遍
                 float imgPerX = src.Width / logicalW, imgPerY = src.Height / logicalH;
+
+                // 模糊半径换算成背板像素：抓屏降采样 1/2 时半径也要 ×2，否则视觉上糊一倍。
+                // 这一条是「只有精细档不糊」的根治 —— 抓屏倍率变了，抽头数不能原地不动。
+                SetRadius(Math.Max(0, (int)MathF.Round(_levelRadius * MathF.Max(imgPerX, imgPerY))));
+
                 float maxShift = RefractionAmount * (1f + Dispersion) + 4f;
                 int margin = (int)MathF.Ceiling(maxShift * MathF.Max(imgPerX, imgPerY)) + _radius + 2;
 
@@ -492,6 +544,26 @@ namespace NotchPeninsula
                                 // 折射本来就只该发生在边缘那圈；往里超过 1.6 个折射带宽度就彻底归零。
                                 // ⚠️ 用折射带宽度（玻璃厚度）为尺度，所以调「玻璃厚度」时衰减范围跟着走。
                                 float depth = -sdi;
+
+                                // ── 中部快路径 ──
+                                // centerFade 在 depth >= rhEff 时精确为 0：折射位移、色散、边缘高光全是 0，
+                                // 再算法线（GradSd + 两次 sqrt + 归一化）纯属白算。中部占面积九成以上，
+                                // 跳过它能把每像素的数学开销砍掉大半，观感完全一致。
+                                if (depth >= rhEff)
+                                {
+                                    float bx = (src.Left + lx * imgPerX - cx0) * invBs;
+                                    float by = (src.Top + ly * imgPerY - cy0) * invBs;
+                                    if (invZoom != 1f)
+                                    {
+                                        bx = zoomCx + (bx - zoomCx) * invZoom;
+                                        by = zoomCy + (by - zoomCy) * invZoom;
+                                    }
+                                    float cr = 0f, cg = 0f, cb = 0f;
+                                    AccumSample(blurLocal, bcw, bch, blurStride, bx, by, 1f, 1f, 1f, ref cr, ref cg, ref cb);
+                                    FinishColor(ref cr, ref cg, ref cb, 0f);
+                                    WritePixel(row, p, cr, cg, cb, edge, DitherAt(gx, gy));
+                                    continue;
+                                }
                                 float centerFade = 1f - SmoothStep(rhEff * 0.3f, rhEff * 1.0f, depth);
                                 d *= centerFade;
 
@@ -558,37 +630,10 @@ namespace NotchPeninsula
                                         1f / 7f, 0f, 1f / 3f, ref ar, ref ag, ref ab);
                                 }
 
-                                // 饱和度提升 → 压暗 → 掺玻璃本色
-                                float lum = ar * 0.213f + ag * 0.715f + ab * 0.072f;
-                                ar = lum + (ar - lum) * Saturation;
-                                ag = lum + (ag - lum) * Saturation;
-                                ab = lum + (ab - lum) * Saturation;
-                                ar *= Darkening;
-                                ag *= Darkening;
-                                ab *= Darkening;
-                                ar += (255f - ar) * TintAlpha;
-                                ag += (255f - ag) * TintAlpha;
-                                ab += (255f - ab) * TintAlpha;
-
                                 // 边缘反光：上边缘最亮（光从上方来），下边缘几乎不亮
                                 float rim = RimStrength * MathF.Exp(sdi / RimWidth) * MathF.Max(0f, 0.55f - 0.75f * ggy);
-                                if (rim > 0f)
-                                {
-                                    ar += (255f - ar) * rim;
-                                    ag += (255f - ag) * rim;
-                                    ab += (255f - ab) * rim;
-                                }
-
-                                if (ar < 0f) ar = 0f; else if (ar > 255f) ar = 255f;
-                                if (ag < 0f) ag = 0f; else if (ag > 255f) ag = 255f;
-                                if (ab < 0f) ab = 0f; else if (ab > 255f) ab = 255f;
-
-                                float a = 255f * edge;
-                                float k = a / 255f;
-                                row[p] = (byte)(ab * k);          // B
-                                row[p + 1] = (byte)(ag * k);      // G
-                                row[p + 2] = (byte)(ar * k);      // R
-                                row[p + 3] = (byte)a;
+                                FinishColor(ref ar, ref ag, ref ab, rim);
+                                WritePixel(row, p, ar, ag, ab, edge, DitherAt(gx, gy));
                             }
                         }
                     }
@@ -608,6 +653,27 @@ namespace NotchPeninsula
                 _keyVersion = version;
                 _keyW = gw;
                 _keyH = gh;
+
+                // 诊断：玻璃内容到底黑没黑，一行定位 —— src 错位/背板黑/合成黑，三者一眼分清
+                if (float.IsNaN(_diagSx) || MathF.Abs(_diagSx - src.Left) > 1f
+                    || MathF.Abs(_diagSy - src.Top) > 1f || _diagW != gw)
+                {
+                    _diagSx = src.Left; _diagSy = src.Top; _diagW = gw;
+                    long sr = 0, sg = 0, sb = 0;
+                    int n = 0;
+                    byte* bp0 = (byte*)bmp.GetPixels();
+                    int smpX0 = gw / 3, smpY0 = gh / 3, smpX1 = gw * 2 / 3, smpY1 = gh * 2 / 3;
+                    for (int j = smpY0; j < smpY1; j += 2)
+                        for (int i = smpX0; i < smpX1; i += 2)
+                        {
+                            int p = (j * gw + i) * 4;
+                            sb += bp0[p]; sg += bp0[p + 1]; sr += bp0[p + 2];
+                            n++;
+                        }
+                    if (n == 0) n = 1;
+                    Logger.Info($"[玻璃] src=({src.Left:F0},{src.Top:F0} {src.Width:F0}x{src.Height:F0})"
+                        + $" glass={gw}x{gh} 中心平均=({sr / n},{sg / n},{sb / n})");
+                }
                 _keySx = src.Left;
                 _keySy = src.Top;
                 _keyLw = logicalW;
@@ -685,16 +751,25 @@ namespace NotchPeninsula
                                      out int outW, out int outH)
         {
             // ── 降采样后再模糊 ──
-            // 模糊是整次重算里最贵的一步（实测占九成）。半径 >= 4 时先把裁切区 2×2 盒式降采样，
-            // 抽头数同步减半（R/2），等效模糊半径保持不变 —— 结果几乎一致，工作量却是 1/8：
-            // 像素少 4 倍 × 抽头少 2 倍。半径 <= 2（用户要清晰）时保持 1:1，一点细节都不丢。
-            int bs = _radius >= 4 ? 2 : 1;
+            // 模糊是整次重算里最贵的一步（实测占九成）。半径 >= 6 时先把裁切区 2×2 盒式降采样，
+            // 抽头数同步减半（R/2），等效模糊半径保持不变 —— 结果几乎一致，工作量却是 1/8。
+            // ⚠️ 阈值从 4 提到 6：整张玻璃（包括中部没折射的部分）采的都是这张模糊图，
+            //    默认档 4px 也降采样等于把"清晰的玻璃"再糊掉一半分辨率。
+            int bs = _radius >= 6 ? 2 : 1;
             _blurScale = bs;
 
             int bw = (cw + bs - 1) / bs;
             int bh = (ch + bs - 1) / bs;
             outW = bw;
             outH = bh;
+
+            // 权重表跟着 _radius 走（SetRadius 重建）。取局部引用再进 fixed：
+            // 半径刚变大、权重还没重建的那一帧直接用旧图，别拿短表当长表索引。
+            int R = _radius / bs;
+            if (R < 1) R = 1;
+            float[] weights = _weights;
+            bool skipKernel = _radius <= 0 || cw * ch > MaxBlurPixels;
+            if (!skipKernel && weights.Length < R + 1) return;
 
             int need = Math.Max(cw * ch * 4, bw * bh * 4);
             if (_blurA.Length < need) _blurA = new byte[need];
@@ -707,19 +782,19 @@ namespace NotchPeninsula
                 _blurB = new byte[need];
             }
 
-            // 缩放比也要进缓存键：否则换模糊档位（bs 1↔2）而裁切区恰巧没变时，
-            // 会拿旧尺度的数据配上新尺度的输出宽高，采样整体错位一倍。
+            // 缩放比与半径都要进缓存键：否则换模糊档位 / 换抓屏倍率而裁切区恰巧没变时，
+            // 会拿旧尺度的数据配上新尺度的输出宽高，采样整体错位。
             if (_blurValid && _blurVersion == version && _blurX == cx0 && _blurY == cy0
-                && _blurW == cw && _blurH == ch && _blurScaleKey == bs)
+                && _blurW == cw && _blurH == ch && _blurScaleKey == bs && _blurRadiusKey == _radius)
                 return;
 
             fixed (byte* pa = _blurA)
             fixed (byte* pb = _blurB)
-            fixed (float* wp = _weights)
+            fixed (float* wp = weights)
             {
                 if (pa == null || pb == null || wp == null) return;
 
-                if (_radius <= 0 || cw * ch > MaxBlurPixels)
+                if (skipKernel)
                 {
                     // 模糊档位设成 0（最清晰），或超大岛体跳过核：直接搬像素，不做降采样。
                     // 后者靠抓屏那一步的盒式降采样 / 放大镜 1:1，已经够用。
@@ -735,9 +810,7 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    // 等效半径：降采样 bs 倍后抽头数同比减少，模糊观感不变
-                    int R = _radius / bs;
-                    if (R < 1) R = 1;
+                    // 等效半径：降采样 bs 倍后抽头数同比减少，模糊观感不变（R 已在函数开头算好）
                     int taps = R * 2 + 1;
 
                     // 把边缘夹取从内层循环里挪出去：原来每个抽头都要 clamp 一次
@@ -871,11 +944,65 @@ namespace NotchPeninsula
 
             _blurValid = true;
             _blurScaleKey = bs;
+            _blurRadiusKey = _radius;
             _blurVersion = version;
             _blurX = cx0;
             _blurY = cy0;
             _blurW = cw;
             _blurH = ch;
+        }
+
+        // ── 8bit 输出的色带（banding）打散 ──
+        // 大范围高斯模糊出来是一整片平滑渐变，256 级输出必然分层：那圈一圈圈的"条纹"就是它。
+        // ±0.5LSB 的 4×4 有序抖动把色阶换成看不见的噪点，亮度均值不变、不改变任何几何。
+        private static readonly float[] Bayer4 =
+        {
+             0f,  8f,  2f, 10f,
+            12f,  4f, 14f,  6f,
+             3f, 11f,  1f,  9f,
+            15f,  7f, 13f,  5f
+        };
+
+        private static float DitherAt(int x, int y) => (Bayer4[((y & 3) << 2) | (x & 3)] * (1f / 16f)) - 0.5f;
+
+        // 玻璃着色末段（慢路径与中部快路径共用）
+        // lum 是采样到的原始亮度：拿它做**暗场散射补偿** —— 真实玻璃不会因为背后是黑墙就变成
+        // 一块死黑，它会把散射回来的光补上一点。背板越暗掺入的玻璃本色越多（最多 +0.10），
+        // 暗色壁纸下玻璃仍是一层雾面；亮环境补偿为 0，观感不变。
+        private static void FinishColor(ref float ar, ref float ag, ref float ab, float rim)
+        {
+            float lum = ar * 0.213f + ag * 0.715f + ab * 0.072f;
+            ar = lum + (ar - lum) * Saturation;
+            ag = lum + (ag - lum) * Saturation;
+            ab = lum + (ab - lum) * Saturation;
+            ar *= Darkening;
+            ag *= Darkening;
+            ab *= Darkening;
+
+            float tint = TintAlpha;
+            if (lum < 96f) tint += (96f - lum) * (0.10f / 96f);
+            ar += (255f - ar) * tint;
+            ag += (255f - ag) * tint;
+            ab += (255f - ab) * tint;
+
+            if (rim > 0f)
+            {
+                ar += (255f - ar) * rim;
+                ag += (255f - ag) * rim;
+                ab += (255f - ab) * rim;
+            }
+        }
+
+        // edge = 边缘羽化后的 alpha；抖动按 alpha 缩放，边缘不会出现噪点圈
+        private static void WritePixel(byte* row, int p, float ar, float ag, float ab, float edge, float dith)
+        {
+            float a = 255f * edge;
+            float k = a / 255f;
+            float ds = dith * k;
+            row[p] = ClampByte(ab * k + ds);        // B
+            row[p + 1] = ClampByte(ag * k + ds);    // G
+            row[p + 2] = ClampByte(ar * k + ds);    // R
+            row[p + 3] = (byte)a;
         }
 
         private static byte ClampByte(float v) => v < 0f ? (byte)0 : (v > 255f ? (byte)255 : (byte)v);

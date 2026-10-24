@@ -32,7 +32,8 @@ namespace NotchPeninsula
         private void GetPluginListLayout(out int visibleRows, out int maxFirstRow)
         {
             GetPluginListCardTop(out float listY);
-            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + 44) - 8) / PluginListRowH));
+            // 底部不再额外留 8px：这一扣把 7.96 行截成 7 行，明明放得下第 8 行（末行底 666，卡片底 672）
+            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + 44)) / PluginListRowH));
             int total = _pluginView.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);

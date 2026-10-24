@@ -71,9 +71,13 @@ namespace NotchPeninsula
             // 预计算颜色，避免在渲染树中生成新对象
             // 亚克力 = 模糊背板 + 上层的浅色/深色涂层（真实亚克力的"奶感"就来自这层）。
             // 上限 140/255 ≈ 55%，与设置窗口那套亚克力色调（0x8C）同口径；档位滑到最左 = 纯模糊。
-            // 液态玻璃本身已经带折射/色散/高光，涂层要比亚克力更薄，否则会把玻璃糊掉
+            // 液态玻璃的涂层固定为 0：玻璃的着色（明度/雾度/饱和）全在 LiquidGlass 合成里算，
+            // 再叠一层黑只会让背板变暗（暗壁纸下直接糊成一片死黑，就是"玻璃永远黑"的一半原因）。
+            // ⚠️ 唯一例外：背板还没产出时（启动头一瞬）必须垫一层 45 的深色底 ——
+            //    否则岛体整帧全透明，看起来就是"启动没渲染、岛体闪没"。
+            bool backdropReady = AcrylicBackdrop != null;
             byte bgAlpha = IslandLiquidGlass
-                ? (byte)Math.Clamp(BgOpacityLevel * 90 / 4, 0, 255)
+                ? (backdropReady ? (byte)0 : (byte)45)
                 : IslandAcrylic
                     ? (byte)Math.Clamp(BgOpacityLevel * 140 / 4, 0, 255)
                     : (byte)Math.Clamp(BgOpacityLevel * 255 / 4, 0, 255);

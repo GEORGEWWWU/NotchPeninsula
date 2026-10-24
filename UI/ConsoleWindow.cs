@@ -19,7 +19,8 @@ namespace NotchPeninsula
 
         private const int WIDTH = 600;
 
-        private const int HEIGHT = 660;
+        // 高 692 = 660 + 32：液态玻璃卡底部要放「恢复默认参数」按钮，原来 660 已顶到卡底
+        private const int HEIGHT = 692;
 
         private const int TITLE_BAR_HEIGHT = 32;
 
@@ -54,14 +55,21 @@ namespace NotchPeninsula
 
         private const float DISPLAY_FIRST_ROW_Y = 13f;    // 列表卡片顶部到首件 item 的距离（卡片无标题行）
 
-        private const int DISPLAY_MAX_ROWS = 8;
+        // 8 → 10：卡片底部原本空着两行多的高度，列表却只排 8 行。
+        // 多出来的两行靠**列表内部滚动**看，卡片本身不再变高 —— 显示设置页是整页排布的，
+        // 卡片一高就会把整页顶出滚动（那是不对的：该滚的是列表，不是整页）。
+        private const int DISPLAY_MAX_ROWS = 10;
 
         // 列表卡顶 = 双击切换行控件实际底（ROW_ANCHOR_Y + TOGGLE_TRACK_H/2，比 ROW_H 槽位低 2px）
         // 再留 CARD_GAP —— 槽位底只有 38，控制底在 +40，按槽位算间距会缩水成 8。
         private const float DISPLAY_CARD_Y =
             TOGGLE_ROW_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f + CARD_GAP;
 
-        private const float DISPLAY_CARD_H = DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H;
+        // 卡片高度取「窗口剩余空间」，不再由行数派生：
+        // 行数多了让列表自己滚（GetDisplayListLayout 按这个高度算可视行数），整页不滚。
+        private static float DISPLAY_CARD_H => Math.Min(
+            DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H,
+            HEIGHT - 20f - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y));
 
         private const float DISPLAY_ITEM_L = CONTENT_L;
 
@@ -666,7 +674,10 @@ namespace NotchPeninsula
 
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
         {
-            int maxRows = Math.Max(1, DISPLAY_MAX_ROWS);
+            // 可视行数按**卡片实际高度**算，而不是写死 MAX_ROWS ——
+            // 卡片被限制在窗口剩余空间里，行数超出的部分交给列表内部滚动。
+            int fitRows = Math.Max(1, (int)((DISPLAY_CARD_H - DISPLAY_FIRST_ROW_Y) / DISPLAY_ROW_H));
+            int maxRows = Math.Min(fitRows, DISPLAY_MAX_ROWS);
             int total = PluginManager.Instance.DisplayItems.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
@@ -763,6 +774,7 @@ namespace NotchPeninsula
         private int _hoveredGlassSourceIndex = -1;       // 抓屏方式：0放大镜 1兼容
         private int _hoveredGlassParamIndex = -1;        // 11 根滑轨里悬停的是哪一根（-1 = 没有）
         private int _hoveredGlassParamLevel = -1;        // 悬停到的档位 0..4
+        private bool _hoveredGlassReset;                 // 卡底「恢复默认参数」
 
         private int _hoveredOpacityIndex = -1;
         // DPI 缩放相关
