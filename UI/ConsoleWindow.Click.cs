@@ -249,7 +249,7 @@ namespace NotchPeninsula
             {
                 float pageMax = GetDisplayPageMaxScroll();
                 GetPageScrollbarLayout(out float top, out float trackH);
-                float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f;
+                float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f;
                 float thumbH = Math.Max(24f, trackH * HEIGHT / contentH);
                 float travel = Math.Max(1f, trackH - thumbH);
                 float ratio = Math.Clamp((clickY - top - thumbH / 2f) / travel, 0f, 1f);

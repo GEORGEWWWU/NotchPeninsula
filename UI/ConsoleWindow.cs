@@ -50,11 +50,15 @@ namespace NotchPeninsula
 
         private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
 
-        private const float DISPLAY_ROW_H = 34f;
+        // 34 → 33：行槽只让 1px（item 高 30 不变，行间距 4 → 3），
+        // 配合卡片底延到窗底上 6px，正好凑出第 10 行（9.29 行 → 10 行）。
+        private const float DISPLAY_ROW_H = 33f;
 
         private const float DISPLAY_ITEM_H = 30f;
 
-        private const float DISPLAY_FIRST_ROW_Y = 13f;    // 列表卡片顶部到首件 item 的距离（卡片无标题行）
+        // 13 → 9：列表与上面「双击空白切换待机模式」行离得太远，整体上移 4px；
+    // 卡高分分支 min(9+10*33=339, 343) 仍够 10 行。
+    private const float DISPLAY_FIRST_ROW_Y = 9f;     // 列表卡片顶部到首件 item 的距离（卡片无标题行）
 
         // 8 → 10：卡片底部原本空着两行多的高度，列表却只排 8 行。
         // 多出来的两行靠**列表内部滚动**看，卡片本身不再变高 —— 显示设置页是整页排布的，
@@ -68,9 +72,10 @@ namespace NotchPeninsula
 
         // 卡片高度取「窗口剩余空间」，不再由行数派生：
         // 行数多了让列表自己滚（GetDisplayListLayout 按这个高度算可视行数），整页不滚。
+        // 底部只留 6px：预留 20px 时 fitRows = 9.29 截成 9 行，末行底下白一大条。
         private static float DISPLAY_CARD_H => Math.Min(
             DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H,
-            HEIGHT - 20f - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y));
+            HEIGHT - 6f - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y));
 
         private const float DISPLAY_ITEM_L = CONTENT_L;
 
@@ -687,7 +692,7 @@ namespace NotchPeninsula
         }
 
         private static float GetDisplayPageMaxScroll()
-            => Math.Max(0f, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f - HEIGHT);
+            => Math.Max(0f, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f - HEIGHT);
 
         private static void GetPageScrollbarLayout(out float trackTop, out float trackH)
         {

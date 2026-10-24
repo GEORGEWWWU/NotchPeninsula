@@ -283,6 +283,9 @@ namespace NotchPeninsula
         private void GetPluginListCardTop(out float listY)
             => listY = TITLE_BAR_HEIGHT + CARD_TOP_Y + PluginTopCardH + CARD_GAP;   // 118
 
+        // listY 到行区顶：44 → 40，首行离「已安装插件」标题太近，整体上移 4px。
+        private const float PluginRowsTopPad = 40f;
+
         // ── 第一行：分类下拉（左）+ 搜索框 ──
         private const float MarketControlsY = TITLE_BAR_HEIGHT + 22f;   // 第一行顶（54，卡顶下留 10）
         private const float MarketControlH = 26f;                       // 控件行高（两行共用）
@@ -294,7 +297,7 @@ namespace NotchPeninsula
         private const float MarketStatusBaseline = MarketStatusRowY + 17f;
         private const float MarketRefreshW = 50f;
         private const float MarketRefreshX = WIDTH - MarketRightPad - MarketRefreshW;   // 514
-        private const float MarketRowsTop = TITLE_BAR_HEIGHT + 92f;
+        private const float MarketRowsTop = TITLE_BAR_HEIGHT + 96f;   // 92 → 96：首行离「只看已安装」那排太近，整体下移 4px
 
         private const float MarketChkX = CONTENT_TEXT_X;
         private const float MarketChkBoxSize = 16f;

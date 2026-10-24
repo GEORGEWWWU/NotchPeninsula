@@ -781,7 +781,7 @@ namespace NotchPeninsula
             if (pageMaxScroll > 0f)
             {
                 GetPageScrollbarLayout(out float pageTrackTop, out float pageTrackH);
-                float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f;
+                float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f;
                 DrawScrollBar(canvas, WIDTH - 8, pageTrackTop, pageTrackH,
                     HEIGHT / contentH, _displayPageScroll / pageMaxScroll, minThumbH: 24f);
             }
@@ -1448,13 +1448,13 @@ namespace NotchPeninsula
             float infoTextMax = PLUGIN_BTN_RELOAD_X - CONTENT_TEXT_X - 8;     // 信息止于按钮区之前
 
             if (_pluginView.Count == 0)
-                canvas.DrawText("暂无插件，点击「导入插件」或到「插件市场」下载", CONTENT_TEXT_X, listY + 66, _subTextPaint);
+                canvas.DrawText("暂无插件，点击「导入插件」或到「插件市场」下载", CONTENT_TEXT_X, listY + 62, _subTextPaint);
 
             for (int slot = 0; slot < visibleRows; slot++)
             {
                 int i = _pluginScroll + slot;
                 var entry = _pluginView[i];
-                float rowY = listY + 44 + slot * PluginListRowH;
+                float rowY = listY + PluginRowsTopPad + slot * PluginListRowH;
                 if (slot > 0) canvas.DrawLine(CONTENT_TEXT_X, rowY - 5, WIDTH - CONTENT_TEXT_RM, rowY - 5, _separatorPaint);
 
                 // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
@@ -1524,7 +1524,7 @@ namespace NotchPeninsula
 
             if (visibleRows > 0 && maxFirstRow > 0)
             {
-                float trackTop = listY + 44 - 2f;
+                float trackTop = listY + PluginRowsTopPad - 2f;
                 float trackH = visibleRows * PluginListRowH - 8f;
                 DrawScrollBar(canvas, WIDTH - 26, trackTop, trackH,
                     visibleRows / (float)_pluginView.Count, _pluginScroll / (float)maxFirstRow);
