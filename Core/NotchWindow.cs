@@ -225,7 +225,29 @@ namespace NotchPeninsula
             _cachedMonitorWidth = screens[idx].Bounds.Width;
             _cachedMonitorHeight = screens[idx].Bounds.Height;
             _cachedMonitorIndex = idx;
+            UpdateIslandWidthCap();
         }
+
+        /// <summary>
+        /// 按目标显示器的可用宽度收窄岛体上限：屏幕就是天花板，不能拿 1920 当死基准。
+        /// 枚举不到屏幕、或算出非正数时保持原值 —— 这类失败绝不能把上限写成 0，那会让插件全部消失。
+        /// </summary>
+        private void UpdateIslandWidthCap()
+        {
+            try
+            {
+                var screens = System.Windows.Forms.Screen.AllScreens;
+                if (screens.Length == 0) return;
+                int idx = _cachedMonitorIndex;
+                if (idx < 0 || idx >= screens.Length) idx = 0;
+                float dpi = _dpiScale > 0.01f ? _dpiScale : 1f;
+                float logical = screens[idx].WorkingArea.Width / dpi;
+                if (!(logical > 0f)) return;
+                Renderer.IslandWidthCap = Math.Min(Renderer.MAX_ISLAND_WIDTH, logical);
+            }
+            catch { /* 拿不到就沿用当前值，一次枚举失败不该改布局 */ }
+        }
+
 
         private const string OwnerClassName = "NotchPeninsulaOwnerClass";
         private static readonly Win32.WndProc _ownerWndProc = Win32.DefWindowProc; // 必须持有引用，否则被 GC 后回调直接崩
@@ -804,6 +826,7 @@ namespace NotchPeninsula
                     _dpiScale = currentTargetDpi;
                     _scaledWidth = targetScaledWidth;
                     _scaledHeight = targetScaledHeight;
+                    UpdateIslandWidthCap();   // 换缩放档位后逻辑宽度跟着变，上限要重算
 
                     _renderSurface?.Dispose();
                     if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero)
@@ -954,7 +977,7 @@ namespace NotchPeninsula
                     // （表现为「多出来的插件在灵动岛上就直接不显示」、
                     nativeWidth = Math.Max(nativeWidth, textWidth + 115f);
                 }
-                nativeWidth = Math.Min(nativeWidth, Renderer.MAX_ISLAND_WIDTH); // 岛体总长上限（1920），窄屏也不会被撑破
+                nativeWidth = Math.Min(nativeWidth, Renderer.IslandWidthCap); // 岛体总长上限（默认 1920，窄屏按工作区收窄）
 
                 // 插件贴上去只会把面板和岛体一起撑宽，见下面的分支。
                 bool mediaPanel = currentActive && Renderer.IsMediaExpanded;
@@ -966,11 +989,11 @@ namespace NotchPeninsula
                 }
                 else if (Renderer.CompositeModeEnabled)
                 {
-                    Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - Renderer.GetCompositeNativeWidth(_media));
+                    Renderer.SetPluginRowBudget(Renderer.IslandWidthCap - Renderer.GetCompositeNativeWidth(_media));
                 }
                 else if (!isToastActive && !detailOpen)
                 {
-                    Renderer.SetPluginRowBudget(Renderer.MAX_ISLAND_WIDTH - nativeWidth);
+                    Renderer.SetPluginRowBudget(Renderer.IslandWidthCap - nativeWidth);
                     pluginReserve = Renderer.GetPluginRowReserve();
                 }
                 else

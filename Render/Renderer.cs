@@ -164,6 +164,13 @@ namespace NotchPeninsula
 
         public const float MAX_ISLAND_WIDTH = 1920f;
 
+        /// <summary>
+        /// 岛体实际可用的宽度上限（逻辑像素）：目标显示器工作区宽度与 <see cref="MAX_ISLAND_WIDTH"/> 取小。
+        /// 屏幕就是天花板 —— 1366 / 1600 这类窄屏上，拿 1920 当预算基准会让岛体直接出界。
+        /// 由 <c>NotchWindow</c> 在显示器拓扑 / DPI 变化时更新。
+        /// </summary>
+        public static float IslandWidthCap { get; set; } = MAX_ISLAND_WIDTH;
+
         // 媒体控制器的长度完全放开，因此删掉了两个上限常量：
 
         // 动态计算最大边界，防止因刘海变大导致出界

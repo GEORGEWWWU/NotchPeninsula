@@ -316,6 +316,7 @@ dotnet build HelloPlugin.csproj -c Debug
 - **`AcceptsFileDropWhenCollapsed`**（默认 `false`）：要不要让「把文件拖到收起态的组件图标上」自动展开详情页并接收这次拖放。**组件本身就是文件入口**的插件应该打开它（文件中转站就是这么做的：用户从资源管理器把文件拖到岛上那个小图标上，面板自动打开、松手即加入，不必先点开面板）。前提是组件确实提供了 `DetailPage`。详见第八节。
 - **`MeasureWidth(float availableHeight)`**：程序需要知道你的组件占多宽，才能决定灵动岛整体多宽并排布大家。返回一个逻辑像素的宽度。内容（比如文字）变了，就返回一个不同的值，灵动岛会自动做宽度变化动画。高度一般不必自己决定，程序会统一处理，你按传入的高度来布局。
   这个返回值的语义是「**完整显示我的内容需要多宽**」，不是「我希望多宽」。程序会用它和本帧剩余空间比对：装得下就按这个宽度给你、内容完整显示；装不下这一帧就**整个组件都不显示**（程序不会替你压缩、截断或加省略号——那才是真正的显示不全）。所以别为了「挤进去」而少报宽度，也别用岛体总长上限（`1920`，常量 `Renderer.MAX_ISLAND_WIDTH`）去夹自己的返回值。详见第十节「开放接口清单」里 `IWidget` 那条。
+  **新插件建议直接用 AutoWidth 协议**（`IAutoWidthWidget`）：宽度交给程序算，你不用实现本成员，也不用自己留余量或算间距，见第十节「AutoWidth 协议」。
 - **`Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`**：每一帧都调用，把你想要的内容画出来。`rect` 是程序分给你的一块区域，含上下左右（`rect.MidY` 是垂直中线）；`frame` 是这一帧的上下文，见下一条。
 - **`WidgetFrame`（渲染帧）**：包含 `Theme`（当前主题色，如 `frame.Theme.TextColor` 是文字颜色）、`Alpha`（透明度，0–255，跟随程序的淡入和叠化）、`TextOffsetY`（文字垂直偏移，用来和整体布局对齐）。绘制时用 `颜色.WithAlpha(frame.Alpha)` 就能让你的内容配合程序动画淡入淡出，看起来浑然一体。
 - **`HitTest(...)` / `OnLeftClick` / `OnRightClick`**：鼠标交互三步。先 `HitTest` 判断点没点中，点中了返回一个动作名（随便起，比如 `"toggle"`）；之后程序调用 `OnLeftClick` 并把动作名交给你。`WidgetHit.None` 表示没点中；`new WidgetHit("toggle")` 表示点中并携带动作名。
@@ -696,7 +697,33 @@ window.SetMouse(
   `MeasureWidth` 的语义是「**完整显示本组件内容所需的宽度**」，不是「我希望多宽」，更不是「上限定多宽」。宿主拿它和本帧剩余空间比对：装得下就按这个宽度布局、内容完整显示；装不下就本帧整个组件不显示。
   `MeasureWidth` **只在组件注册表版本变化时被调用一次**（插件注册 / 注销 / 内容顺序变化），返回值被缓存进后续每一帧的布局，宿主不会每帧问你。所以宽度要随内容变化的插件，在内容更新后得主动调一次 `host.InvalidateWidgetLayout()`，否则宽度会一直停在首次测量值上（同理，宿主切换灵动岛字体后字宽会变，需要重测的话请订阅 `FontConfig.Changed`）。
   宿主不对组件宽度做上下限裁剪，但请务必返回**真实需求值**：为了「塞进去」而少报，只会让文字被压缩显示；用 `1920` 这类岛体上限去夹自己，会让宿主误判成「刚好装得下」。真要定上限，就往大了定（纯防异常值的保险丝），放不下交给宿主隐藏即可。
-- 岛体总长上限与「插件行取舍」：宿主岛体的总长上限是 `1920`（常量 `Renderer.MAX_ISLAND_WIDTH`），Toast 自适应宽度、组合模式总宽、插件行取舍都以它封顶。
+- **AutoWidth 协议（新插件推荐，老插件完全不受影响）**：实现 `IAutoWidthWidget` 后**不要再实现 `MeasureWidth`**，宽度全部交给宿主。
+  ```csharp
+  internal sealed class MyWidget : IAutoWidthWidget
+  {
+      // 只描述「我由哪几块组成」：不写 PadX、不写余量、不夹上限
+      public Box? Layout(float availableHeight) => WidgetKit.Row(
+          WidgetKit.Icon(13f),
+          WidgetKit.Gap(5f),
+          WidgetKit.Text(_text, 12.5f, TextWeight.SemiBold));
+
+      public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+      {
+          // 画的时候字体也用宿主这一份，别自己解析 —— 否则字重一换就量画不一致
+          using var paint = new SKPaint { Typeface = WidgetKit.Typeface(TextWeight.SemiBold), TextSize = 12.5f };
+          /* 直接用 rect 排版 */
+      }
+  }
+  ```
+  - 盒子只有六种：`WidgetKit.Text`（按宿主当前字体重测，字重可选 `Normal` / `SemiBold` / `Bold`）、`Icon`（定宽块）、`Gap`（纯间距）、`Row`（横向相加）、`Stack`（纵向叠放，取最宽）、`Min`（内容宽度下限，**不含**宿主的两侧留白 —— 想让槽位至少 132 就传 `132 − 2×AutoPadX`）。**不要自己派生 `Box`** —— 宿主只认这六种，未知类型按 0 宽处理（等于本帧不显示）。
+  - 宿主把「内容宽向上取整 + 两侧各 `WidgetKit.AutoPadX`（6px）」当成槽位宽度。所以插件里不该再出现 `+ 2f`、`PadX * 2` 这类补偿；要按内容区排版就用 `WidgetKit.ContentRect(rect)`。槽间距是 `WidgetKit.SlotGap`（16px），也不要再硬编码。
+  - 内容变了照旧调 `host.InvalidateWidgetLayout()`，宿主重新调 `Layout` 并用弹簧动画过渡宽度 —— 与 `MeasureWidth` 插件走的是同一条路径，没有额外开销。
+  - 判定靠 `is IAutoWidthWidget`：**旧插件一行都不用改**，宿主对它们的 `MeasureWidth` 返回值也不做任何加工（不取整、不加留白、不量化、不压缩），岛体宽度与升级前逐像素一致。
+  - `Layout` 抛异常时，宿主先退回该组件自己的 `MeasureWidth`（如果还实现着），再不行才熔断它 —— 一次布局 bug 不该让组件永久消失。
+  - **宽度会变的组件**：把 `WidthVaries` 置 `true`（默认 `false`）。宿主管两件事：宽度吸到 4px 栅格；**变宽立即生效**（等一帧文字就露裁切），**变窄要连续 600ms 确认才收**（长句 → 短句 → 长句来回换时，岛体不该跟着抽）。变化幅度 6px 以内视为抖动，不动。宽度固定的组件保持默认值，一分钱额外开销都不花。
+  - **拿额度挑内容**：`float host.GetSlotBudget(string widgetId)` —— 这个组件在本帧这一行里真正能占的槽位宽度，已扣掉原生内容、排在前面的组件以及它自己的槽间距（不用再减 16）。内容可选（一言、天气提示语）就在 `Layout` 之前比一次：盒子宽度超过额度，宿主这一帧会整块隐藏它，换条短的最划算。`0` = 本位置没空间，`+∞` = 宿主还没跑首帧。
+  - **现状（2026-10-24 起）**：仓库自带的六个组件（一言 / 天气 / 文件中转站 / 媒体混音器 / RayBurst / CDP）已**全部**迁到本协议，`MeasureWidth` 在它们身上只剩接口默认实现。老插件继续自己上报也完全没问题 —— 宿主按 `is IAutoWidthWidget` 分流，两条路长期都认；新写插件请直接用 AutoWidth，别再自己算余量。
+- 岛体总长上限与「插件行取舍」：上限默认 `1920`（常量 `Renderer.MAX_ISLAND_WIDTH`），实际取「目标显示器工作区宽度」与它的较小值（`Renderer.IslandWidthCap`）—— 窄屏（1366 / 1600）上岛体不会出界。Toast 自适应宽度、组合模式总宽、插件行取舍都以它封顶。
   规则一句话：**每个组件要么完整显示，要么完全不显示。** 宿主用「岛体总长上限 − 原生内容本帧占用宽度」得出插件行预算，按注册顺序逐个贪心放行——所需宽度能完整落进剩余空间的组件才显示，装不下的组件本帧整体不显示（不绘制、不留位、不响应点击），后面的组件仍可继续尝试。原生内容照常显示，岛体宽度也不会被撑过上限。
   典型场景：原生内容（媒体控制器 / 时间日期 / 硬件占用）吃掉大半宽度、剩余装不下你的组件时它就会暂时消失，等原生内容收窄后自动回来。
   宿主**不再**对媒体文本单独设上限（2026-09-20 起）：媒体控制器按标题 / 歌手 / 歌词的真实长度撑宽岛体，只受上面那个总长上限约束，长歌词不会被裁切。也就是说，在真实内容长度范围内，原生内容不会把预算吃光、插件不会因为「歌词变长」而消失。

@@ -29,6 +29,27 @@ namespace NotchPeninsula
 
         private static float _pluginRowReserve;
 
+        // ---- AutoWidth 动态宽度：量化 + 迟滞 ----
+        // 只对声明了 WidthVaries 的组件生效；其余组件测出多少就是多少，一个字节都不加工。
+        private static float[]? _pluginPendingWidth;
+
+        private static long[]? _pluginPendingSince;
+
+        // 换字体时字宽全变，宿主自己重测（以前把这件事推给插件订阅 FontConfig.Changed，漏订一个就永远错）。
+        private static string? _pluginFontKey;
+
+        private static bool _pluginFontCustom;
+
+        // 宽度栅格：只用来吸收字宽的浮点抖动（15.3 / 15.7 这类），不能把窄组件凑大 ——
+        // 以前是 4px，26 宽的图标会被凑成 28，视觉上就是「图标两侧各多一条白边」。
+        private const float WIDTH_BUCKET = 1f;
+
+        private const long WIDTH_SHRINK_HOLD_MS = 600;
+
+        private const float WIDTH_GROW_EPS = 0.5f;
+
+        private const float WIDTH_SHRINK_EPS = 6f;
+
         private const float PLUGIN_GAP = 16f;
 
         private const float MIN_NATIVE_AREA = 80f;
@@ -62,7 +83,12 @@ namespace NotchPeninsula
             {
                 bool ok = !broken[i] && widths[i] > 0f && used + PLUGIN_GAP + widths[i] <= budget;
                 if (ok) used += PLUGIN_GAP + widths[i];
-                if (visible[i] != ok) visible[i] = ok; // 只在变化时写：bool 写入原子，渲染线程不会看到中间态
+                if (visible[i] != ok)
+                {
+                    visible[i] = ok; // 只在变化时写：bool 写入原子，渲染线程不会看到中间态
+                    // 只在翻转时留痕，不会刷屏 —— 「一会显示一会不显示」这类问题靠这条日志定位。
+                    Logger.Debug($"[插件行] {widgets[i].Id} {(ok ? "放行" : "挡掉")} w={widths[i]:0.##} used={used:0.##} budget={budget:0.##}");
+                }
             }
 
             if (_pluginRowReserve != used) _pluginRowReserve = used;
@@ -121,6 +147,50 @@ namespace NotchPeninsula
                 }
 
                 return Math.Max(0f, budget - used);
+            }
+        }
+
+        /// <summary>
+        /// AutoWidth 组件的额度：<c>budget − 排在我前面的占用 − 我自己的槽间距</c>。
+        ///
+        /// <para>
+        /// 与 <see cref="GetPluginRowRemaining"/> 的差别有两处：按 <b>widgetId</b> 精确定位（一个插件可能注册多个组件），
+        /// 并且再扣掉一个 <see cref="PLUGIN_GAP"/> —— 那个间距是「我这一格与前一格之间」的，本来就该算在我头上，
+        /// 插件拿去做宽度判断时不必再自己减 16。
+        /// </para>
+        ///
+        /// <para>
+        /// 预算本身是正无穷（插件行还没被安排）时原样返回正无穷，让调用方自己决定要不要量化。
+        /// 组件不在快照里、或已经被预算挡掉时返回 0。
+        /// </para>
+        /// </summary>
+        public static float GetPluginRowRemainingForWidget(string widgetId)
+        {
+            if (string.IsNullOrEmpty(widgetId)) return 0f;
+
+            lock (_pluginSnapshotLock)
+            {
+                var widgets = _pluginWidgets;
+                var widths = _pluginWidths;
+                var broken = _pluginBroken;
+                var visible = _pluginVisible;
+                if (widgets == null || widths == null || broken == null) return 0f;
+
+                float budget = _pluginRowBudget;
+                if (float.IsPositiveInfinity(budget)) return float.PositiveInfinity;
+
+                float used = 0f;
+                int n = Math.Min(widgets.Length, widths.Length);
+                for (int i = 0; i < n; i++)
+                {
+                    if (string.Equals(widgets[i].Id, widgetId, StringComparison.Ordinal))
+                        return Math.Max(0f, budget - used - PLUGIN_GAP);
+
+                    if (broken[i] || widths[i] <= 0f) continue;
+                    if (visible == null || i >= visible.Length || !visible[i]) continue; // 没放行的不占宽
+                    used += PLUGIN_GAP + widths[i];
+                }
+                return 0f;
             }
         }
 
@@ -416,6 +486,8 @@ namespace NotchPeninsula
                 _pluginBroken = null;
                 _pluginDrawn = null;
                 _pluginVisible = null;
+                _pluginPendingWidth = null;
+                _pluginPendingSince = null;
                 _pluginWidgetsVersion = -1;   // 下一帧强制重建快照
                 _pluginSlots.Clear();
                 _pluginRowReserve = 0f;
@@ -503,26 +575,243 @@ namespace NotchPeninsula
             {
                 var host = Plugins.PluginManager.Instance.Host;
                 int version = host.WidgetsVersion;
-                if (_pluginWidgetsVersion == version && _pluginWidths != null)
-                    return _pluginWidgets!.Length > 0;
 
-                _pluginWidgetsVersion = version;
-                _pluginWidgets = host.Widgets as Plugins.IWidget[] ?? Array.Empty<Plugins.IWidget>();
-                _pluginWidths = _pluginWidgets.Length > 0 ? new float[_pluginWidgets.Length] : Array.Empty<float>();
-                _pluginBroken = _pluginWidgets.Length > 0 ? new bool[_pluginWidgets.Length] : Array.Empty<bool>();
-                _pluginDrawn = _pluginWidgets.Length > 0 ? new bool[_pluginWidgets.Length] : Array.Empty<bool>();
-                _pluginVisible = _pluginWidgets.Length > 0 ? new bool[_pluginWidgets.Length] : Array.Empty<bool>();
+                // 换字体 = 字宽全变，必须重测。以前这件事推给插件自己订阅 FontConfig.Changed，
+                // 漏订一个就永远停在旧宽度上（文字被裁）—— 宿主管字体，就该宿主管重测。
+                string fontKey = FontConfig.CustomFontPath;
+                bool fontCustom = FontConfig.HasCustomFont;
+                bool fontChanged = !ReferenceEquals(fontKey, _pluginFontKey) || fontCustom != _pluginFontCustom;
 
-                for (int i = 0; i < _pluginWidgets.Length; i++)
+                if (_pluginWidgetsVersion == version && _pluginWidths != null && !fontChanged)
                 {
-                    float w = 0f;
-                    try { w = Math.Max(_pluginWidgets[i].MeasureWidth(MEDIA_HEIGHT), 0f); }
-                    catch (Exception ex) { MarkPluginBroken(i, ex); }
-                    _pluginWidths[i] = w;
+                    FlushPendingWidths();   // 变窄的迟滞到期在这里收口，每帧一次 O(n)
+                    return _pluginWidgets!.Length > 0;
                 }
+
+                _pluginFontKey = fontKey;
+                _pluginFontCustom = fontCustom;
+                _pluginWidgetsVersion = version;
+
+                var next = host.Widgets as Plugins.IWidget[] ?? Array.Empty<Plugins.IWidget>();
+                int n = next.Length;
+
+                // 组件集合没变（只是某个插件改了内容、请求重测）：**原地复用**宽度 / 可见性数组。
+                // 以前这里一律 new 一套数组，宽度先全归零再逐个填回 —— 岛宽在那一拍会塌一下再撑开，
+                // 插件还会因为宽度短暂为 0 被判「本帧不显示」，肉眼就是「一会收进去一会出来」。
+                if (_pluginWidgets != null && _pluginWidths != null && _pluginBroken != null
+                    && _pluginWidgets.Length == n && SameWidgetIds(_pluginWidgets, next))
+                {
+                    for (int i = 0; i < n; i++)
+                        CommitWidgetWidth(i, _pluginWidths[i], MeasureWidgetWidth(next[i], i, _pluginWidths[i]));
+                    RecomputePluginVisibility();
+                    return n > 0;
+                }
+
+                var oldWidgets = _pluginWidgets;
+                var oldWidths = _pluginWidths;
+
+                _pluginWidgets = next;
+                _pluginWidths = n > 0 ? new float[n] : Array.Empty<float>();
+                _pluginBroken = n > 0 ? new bool[n] : Array.Empty<bool>();
+                _pluginDrawn = n > 0 ? new bool[n] : Array.Empty<bool>();
+                _pluginVisible = n > 0 ? new bool[n] : Array.Empty<bool>();
+                _pluginPendingWidth = n > 0 ? new float[n] : Array.Empty<float>();
+                _pluginPendingSince = n > 0 ? new long[n] : Array.Empty<long>();
+
+                for (int i = 0; i < n; i++)
+                {
+                    // 必须沿用上一次已提交的宽度当基准：否则每次重测都被当成「首次测量」直接生效，迟滞等于没做。
+                    // 它同时兼作 AutoWidth 布局异常时的兜底宽度 —— 一次异常不该让组件凭空消失。
+                    float current = FindOldWidth(oldWidgets, oldWidths, _pluginWidgets[i].Id);
+                    CommitWidgetWidth(i, current, MeasureWidgetWidth(_pluginWidgets[i], i, current));
+                }
+
                 RecomputePluginVisibility();
-                return _pluginWidgets.Length > 0;
+                return n > 0;
             }
+        }
+
+        /// <summary>组件集合是否与旧快照同序同 Id（只比较 Id，不比较实例）。</summary>
+        private static bool SameWidgetIds(Plugins.IWidget[] a, Plugins.IWidget[] b)
+        {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+                if (!string.Equals(a[i].Id, b[i].Id, StringComparison.Ordinal)) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// 把一次测量结果落到 <c>_pluginWidths</c>。三种组件三种待遇：
+        ///
+        /// <list type="bullet">
+        /// <item>老协议 / AutoWidth 但宽度固定：直接落定，宿主不加工。</item>
+        /// <item>AutoWidth 且 <c>WidthVaries</c>：内容变宽立即生效（等一帧就露裁切），
+        ///       变窄先进 pending，连续 <see cref="WIDTH_SHRINK_HOLD_MS"/> 都这么窄才收 —— 长句短句来回换时岛体不该跟着抽。</item>
+        /// <item>变化幅度在 <see cref="WIDTH_SHRINK_EPS"/> 以内：当抖动，不动。</item>
+        /// </list>
+        /// </summary>
+        private static void CommitWidgetWidth(int index, float current, float raw)
+        {
+            if (_pluginWidths == null || index < 0 || index >= _pluginWidths.Length) return;
+
+            string id = _pluginWidgets != null && index < _pluginWidgets.Length ? _pluginWidgets[index].Id : "?";
+            float before = _pluginWidths[index];
+
+            try
+            {
+                bool varies = _pluginWidgets != null && index < _pluginWidgets.Length
+                    && _pluginWidgets[index] is Plugins.IAutoWidthWidget { WidthVaries: true };
+
+                if (!varies)
+                {
+                    _pluginWidths[index] = raw;
+                    ClearPendingWidth(index);
+                    return;
+                }
+
+                float next = QuantizeWidth(raw);
+
+                // 0 宽是「本帧不显示」的明确语义，不是「变窄」—— 挂 600ms 迟滞只会让消失晚一拍，
+                // 恢复时还要跟残留的 pending 打架，所以直接落定。
+                if (!(next > 0f))
+                {
+                    _pluginWidths[index] = 0f;
+                    ClearPendingWidth(index);
+                    return;
+                }
+
+                if (current <= 0f || next > current + WIDTH_GROW_EPS)
+                {
+                    _pluginWidths[index] = next;
+                    ClearPendingWidth(index);
+                    return;
+                }
+
+                if (next >= current - WIDTH_SHRINK_EPS)
+                {
+                    // 抖动带内不动，多出来的几像素当留白。但数组刚重建时下标里是 0，
+                    // 这里必须把值落下去，否则组件会带着 0 宽被判「本帧不显示」。
+                    if (!(_pluginWidths[index] > 0f)) _pluginWidths[index] = next;
+                    ClearPendingWidth(index);
+                    return;
+                }
+
+                var pending = _pluginPendingWidth;
+                var since = _pluginPendingSince;
+                if (pending == null || since == null || index >= pending.Length || index >= since.Length) return;
+
+                // 目标宽度变了就重新计时：只有「一直想收窄」才算数。
+                if (since[index] == 0 || Math.Abs(pending[index] - next) > 0.5f)
+                {
+                    pending[index] = next;
+                    since[index] = Environment.TickCount64;
+                    Logger.Debug($"[插件测宽] {id} 记下待收窄 {current:0.##} → {next:0.##}（{WIDTH_SHRINK_HOLD_MS}ms 后确认）");
+                }
+            }
+            finally
+            {
+                float after = _pluginWidths[index];
+                if (Math.Abs(after - before) > 0.5f)
+                    Logger.Debug($"[插件测宽] {id} 提交 {before:0.##} → {after:0.##}（本次测量 {raw:0.##}）");
+            }
+        }
+
+        /// <summary>收口到期的变窄请求。只在版本未变的那条路径上跑（每帧一次）。</summary>
+        private static void FlushPendingWidths()
+        {
+            var pending = _pluginPendingWidth;
+            var since = _pluginPendingSince;
+            var widths = _pluginWidths;
+            if (pending == null || since == null || widths == null) return;
+
+            long now = Environment.TickCount64;
+            bool changed = false;
+
+            int n = Math.Min(since.Length, Math.Min(pending.Length, widths.Length));
+            for (int i = 0; i < n; i++)
+            {
+                if (since[i] == 0) continue;
+                if (now - since[i] < WIDTH_SHRINK_HOLD_MS) continue;
+                widths[i] = pending[i];
+                since[i] = 0;
+                pending[i] = 0f;
+                changed = true;
+                if (_pluginWidgets != null && i < _pluginWidgets.Length)
+                    Logger.Debug($"[插件测宽] {_pluginWidgets[i].Id} 迟滞到期，收窄到 {widths[i]:0.##}");
+            }
+
+            if (changed) RecomputePluginVisibility();
+        }
+
+        private static float QuantizeWidth(float w)
+            => w > 0f ? MathF.Ceiling(w / WIDTH_BUCKET) * WIDTH_BUCKET : 0f;
+
+        private static void ClearPendingWidth(int index)
+        {
+            if (_pluginPendingSince != null && index >= 0 && index < _pluginPendingSince.Length) _pluginPendingSince[index] = 0;
+            if (_pluginPendingWidth != null && index >= 0 && index < _pluginPendingWidth.Length) _pluginPendingWidth[index] = 0f;
+        }
+
+        private static float FindOldWidth(Plugins.IWidget[]? oldWidgets, float[]? oldWidths, string id)
+        {
+            if (oldWidgets == null || oldWidths == null) return 0f;
+            int n = Math.Min(oldWidgets.Length, oldWidths.Length);
+            for (int i = 0; i < n; i++)
+                if (string.Equals(oldWidgets[i].Id, id, StringComparison.Ordinal)) return oldWidths[i];
+            return 0f;
+        }
+
+        /// <summary>
+        /// 量一个组件的折叠态槽位宽度。两条路，按接口判定：
+        ///
+        /// <para>
+        /// <b>AutoWidth</b>（<see cref="Plugins.IAutoWidthWidget"/>）：宿主从 <c>Layout</c> 返回的盒子算宽度，
+        /// 口径全在 <see cref="Plugins.WidgetKit"/>（向上取整 + 统一留白），插件不再上报宽度。
+        /// </para>
+        ///
+        /// <para>
+        /// <b>老协议</b>：原样用插件的 <c>MeasureWidth</c>，<b>不做任何加工</b>。这是兼容性红线 ——
+        /// 这里加一个 ceil 或 2px 余量，现存插件的岛体宽度就会集体变化，连带影响预算放行结果。
+        /// </para>
+        ///
+        /// AutoWidth 的 <c>Layout</c> 抛异常时先退回它自己可能还实现的 <c>MeasureWidth</c>，
+        /// 最后才熔断：新协议的一次布局 bug 不该让整个组件永久消失。
+        /// </summary>
+        private static float MeasureWidgetWidth(Plugins.IWidget widget, int index, float fallbackWidth)
+        {
+            if (widget is Plugins.IAutoWidthWidget auto)
+            {
+                try
+                {
+                    float w = Plugins.WidgetKit.Measure(auto.Layout(MEDIA_HEIGHT));
+                    // 0 宽 = 宿主这一帧不画它。间歇为 0 就是「一会显示一会不显示」的直接来源，
+                    // 所以这里必须留痕（含 null 盒子 / 内容为空两种情形）。
+                    if (!(w > 0f))
+                        Logger.Debug($"[插件测宽] {widget.Id} 量到 0 宽 → 本帧不显示（Layout 返回 null 或内容为空）");
+                    return w;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"[Renderer] 插件组件 {widget.Id} 的 AutoWidth 布局异常，沿用上次有效宽度", ex);
+                    // 新协议插件不实现 MeasureWidth（默认 0），拿它兜底等于把组件变没；
+                    // 所以先试它自报的值（万一还实现着），再退回上一次有效宽度。
+                    try
+                    {
+                        float self = Math.Max(widget.MeasureWidth(MEDIA_HEIGHT), 0f);
+                        if (self > 0f) return self;
+                    }
+                    catch (Exception ex2) { MarkPluginBroken(index, ex2); return 0f; }
+                    return fallbackWidth > 0f ? fallbackWidth : 0f;
+                }
+            }
+
+            try
+            {
+                float w = Math.Max(widget.MeasureWidth(MEDIA_HEIGHT), 0f);
+                if (!(w > 0f)) Logger.Debug($"[插件测宽] {widget.Id} 自报 0 宽 → 本帧不显示");
+                return w;
+            }
+            catch (Exception ex) { MarkPluginBroken(index, ex); return 0f; }
         }
 
         private static float SumPluginRowWidth(string? pluginIdFilter)
