@@ -781,7 +781,7 @@ namespace NotchPeninsula
             if (pageMaxScroll > 0f)
             {
                 GetPageScrollbarLayout(out float pageTrackTop, out float pageTrackH);
-                float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 20f;
+                float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f;
                 DrawScrollBar(canvas, WIDTH - 8, pageTrackTop, pageTrackH,
                     HEIGHT / contentH, _displayPageScroll / pageMaxScroll, minThumbH: 24f);
             }
