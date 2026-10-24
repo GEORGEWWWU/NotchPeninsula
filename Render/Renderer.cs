@@ -120,6 +120,10 @@ namespace NotchPeninsula
         // 灵动岛背景材质：true = 亚克力（胶囊内铺模糊后的真实桌面）
         public static bool IslandAcrylic { get; set; } = false;
 
+        // 灵动岛背景材质：true = 液态玻璃（胶囊内铺折射后的桌面：SDF 边缘弯折 + 色散）
+        // 与亚克力互斥，两者共用同一份抓屏背板（IslandBackdrop），只是降采样倍数不同。
+        public static bool IslandLiquidGlass { get; set; } = false;
+
         // 亚克力背板：已模糊好的桌面截图，由 NotchWindow 每帧喂进来（只允许渲染线程读写）
         public static SKImage? AcrylicBackdrop { get; set; }
 
@@ -266,15 +270,31 @@ namespace NotchPeninsula
                 _bgPath.ConicTo(islandRight, 0, islandRight - rTopX, 0, w);
                 _bgPath.Close();
 
-                // 亚克力：胶囊内先铺「模糊后的真实桌面像素」，再叠自绘涂层当色调。
-                // ⚠️ 顺序不能颠倒 —— 涂层必须画在模糊之上，否则会被背板整块盖掉（看起来就只剩"假玻璃"）。
+                // 亚克力 / 液态玻璃：胶囊内先铺「真实桌面像素」，再叠自绘涂层当色调。
+                // ⚠️ 顺序不能颠倒 —— 涂层必须画在背板之上，否则会被背板整块盖掉（看起来就只剩"假玻璃"）。
                 var backdrop = AcrylicBackdrop;
-                if (IslandAcrylic && backdrop != null)
+                if (backdrop != null && (IslandAcrylic || IslandLiquidGlass))
                 {
                     canvas.Save();
                     canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-                    canvas.DrawImage(backdrop, AcrylicBackdropSrc,
-                        new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
+                    if (IslandLiquidGlass)
+                    {
+                        // 液态玻璃：折射 + 色散后的桌面。读不到像素时（极端后端）退回普通模糊背板
+                        var glass = LiquidGlass.Compose(backdrop, IslandBackdrop.Version, AcrylicBackdropSrc,
+                            currentWidth, currentHeight,
+                            MathF.Abs(rTopY) < 1f ? 1f : MathF.Abs(rTopY),
+                            rBottom < 1f ? 1f : rBottom);
+                        if (glass != null)
+                            canvas.DrawBitmap(glass, new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
+                        else
+                            canvas.DrawImage(backdrop, AcrylicBackdropSrc,
+                                new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
+                    }
+                    else
+                    {
+                        canvas.DrawImage(backdrop, AcrylicBackdropSrc,
+                            new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
+                    }
                     canvas.Restore();
                 }
 

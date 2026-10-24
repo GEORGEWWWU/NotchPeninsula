@@ -89,6 +89,14 @@ namespace NotchPeninsula
                     Renderer.TargetMonitorIndex = loadedMonitor;
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
                     Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
+                    Renderer.IslandLiquidGlass = (int)key.GetValue("IslandLiquidGlass", 0) != 0;
+                    if (Renderer.IslandLiquidGlass) Renderer.IslandAcrylic = false;   // 两者互斥，玻璃优先
+
+                    // 液态玻璃：质量档 + 9 根滑轨 + 抓屏方式（越界一律夹回，老配置/手改注册表都不怕）
+                    LiquidGlass.Quality = (int)key.GetValue("LiquidGlassQuality", 1);
+                    for (int i = 0; i < LiquidGlass.ParamCount; i++)
+                        LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], 2));
+                    IslandBackdrop.UseMagnifier = (int)key.GetValue("GlassUseMagnifier", 1) != 0;
 
                     // 本来就开着的，沿用注册表里的勾选状态。
                     // 不勾的话升级后媒体会整个消失。

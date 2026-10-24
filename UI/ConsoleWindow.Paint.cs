@@ -120,5 +120,6 @@ namespace NotchPeninsula
         }
 
         private static readonly string[] OpacityStopLabels = ["0%", "25%", "50%", "75%", "100%"];
+
     }
 }

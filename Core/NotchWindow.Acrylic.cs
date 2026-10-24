@@ -8,13 +8,16 @@ namespace NotchPeninsula
         private SKImage? _acrylicOwned;
         private int _acrFrames;
         private bool _acrLogged;
+        private bool _lastGlassMode;
 
         // 亚克力背板：抓的是【整个画布框 ∩ 屏幕】，不是当前胶囊框。
         // 这样胶囊变大变小（悬停展开 / 待机↔媒体切换）时只挪源矩形，完全不用重抓 —— 尺寸变换期间的闪烁就没了。
         // 渲染线程这里只写「要抓哪块」+「岛体占哪块」+ 取成品，真正的抓屏在 NPS-Backdrop 线程上（屏幕读取要 20ms 量级）。
         private void SyncIslandBackdrop()
         {
-            if (!Renderer.IslandAcrylic || Renderer.FullHideAlpha < 0.5f)
+            // 亚克力与液态玻璃共用同一条抓屏管线，只是降采样倍数不同
+            bool glass = Renderer.IslandLiquidGlass;
+            if ((!Renderer.IslandAcrylic && !glass) || Renderer.FullHideAlpha < 0.5f)
             {
                 IslandBackdrop.SetTarget(0, 0, 0, 0);
                 IslandBackdrop.ClearMask();
@@ -24,7 +27,24 @@ namespace NotchPeninsula
                     _acrylicOwned.Dispose();
                     _acrylicOwned = null;
                 }
+                LiquidGlass.Invalidate();   // 材质切走就把玻璃缓存也放掉，别白占内存
                 return;
+            }
+            IslandBackdrop.SetMode(glass);
+
+            // 换材质 = 换降采样倍数：旧背板（另一倍率下抓的）先丢掉，
+            // 否则新算出来的源矩形会指到旧图外面，切换瞬间会闪一块错位的色块。
+            if (_lastGlassMode != glass)
+            {
+                _lastGlassMode = glass;
+                if (_acrylicOwned != null)
+                {
+                    Renderer.AcrylicBackdrop = null;
+                    _acrylicOwned.Dispose();
+                    _acrylicOwned = null;
+                }
+                LiquidGlass.Invalidate();
+                IslandBackdrop.Expire();
             }
 
             // 岛体画布比屏幕宽：中心对齐屏幕中心后，画布两侧各挂出屏幕外一截（给展开/滑动留余量）。
@@ -36,6 +56,16 @@ namespace NotchPeninsula
             int capY = Math.Max(_cachedMonitorY, dstY);
             int capW = Math.Min(_cachedMonitorX + _cachedMonitorWidth, dstX + _scaledWidth) - capX;
             int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, dstY + _scaledHeight) - capY;
+            // 放大镜是 1:1 全分辨率，"整块画布"那么大一张图没必要 —— 玻璃只用到屏幕上边一条。
+            // 按 32px 量化，免得胶囊高度一动就重抓。
+            if (glass && IslandBackdrop.UseMagnifier && MagnifierBackdrop.IsAvailable && capH > 120)
+            {
+                int need = (int)Math.Ceiling((_currentHeight + 60f) * _dpiScale);
+                if (need < 120) need = 120;
+                need = (need + 31) / 32 * 32;
+                if (capH > need) capH = need;
+            }
+
             // 交矩形与胶囊尺寸无关 → 胶囊变大变小只挪源矩形，不重抓，尺寸变换期间不闪
             if (capW < 16 || capH < 16)
             {
@@ -48,11 +78,14 @@ namespace NotchPeninsula
             // 画布 x 原点 = dstX，胶囊左边缘 = dstX + left·dpi，所以相对交矩形要再减 capX。
             float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
             float topY = 12f * _currentStyleProgress;
-            float k = IslandBackdrop.Downscale;
-            float srcL = (dstX + left * _dpiScale - capX) / k;
-            float srcT = (dstY + topY * _dpiScale - capY) / k;
-            float srcW = _currentWidth * _dpiScale / k;
-            float srcH = _currentHeight * _dpiScale / k;
+            // 用【实际产出图】的比例与原点换算：放大镜是 1:1，GDI 是 1/k，切换材质时也不会错位
+            float inv = IslandBackdrop.LastScale;
+            float orgX = IslandBackdrop.LastOriginX;
+            float orgY = IslandBackdrop.LastOriginY;
+            float srcL = (dstX + left * _dpiScale - orgX) * inv;
+            float srcT = (dstY + topY * _dpiScale - orgY) * inv;
+            float srcW = _currentWidth * _dpiScale * inv;
+            float srcH = _currentHeight * _dpiScale * inv;
 
             // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
             IslandBackdrop.SetMask(srcL, srcT, srcL + srcW, srcT + srcH);
@@ -80,8 +113,28 @@ namespace NotchPeninsula
         }
 
         // 设置面板切材质 / 换主题后调用（UI 线程）：标记过期，后台线程下一轮重抓
-        public static void RequestAcrylicRebuild() => IslandBackdrop.Expire();
+        public static void RequestAcrylicRebuild()
+        {
+            IslandBackdrop.Expire();
+            // 启动时是「实体」材质的机器，切到玻璃时放大镜还没建过 —— 这里补一次，
+            // 走消息是为了保证它一定发生在 UI 线程（本方法也可能被系统主题事件那条线调用）
+            EnsureMagnifier(force: false);
+        }
 
-        private static void ShutdownIslandBackdrop() => IslandBackdrop.Stop();
+        /// <summary>
+        /// 把「放大镜初始化」送到 UI 线程上执行。force = true 会拆掉旧的重建一遍（手动重试）。
+        /// </summary>
+        public static void EnsureMagnifier(bool force)
+        {
+            IntPtr h = InstanceHandle;
+            if (h != IntPtr.Zero)
+                Win32.PostMessage(h, MagNative.WM_APP_ENSURE_MAG, force ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
+        }
+
+        private static void ShutdownIslandBackdrop()
+        {
+            IslandBackdrop.Stop();
+            MagnifierBackdrop.Stop();
+        }
     }
 }

@@ -75,6 +75,10 @@ namespace NotchPeninsula
             int newHoveredTheme = -1;
             int newHoveredMaterial = -1;
             int newHoveredOpacityIndex = -1;
+            int newHoveredGlassQuality = -1;      // 液态玻璃卡：质量分段控件
+            int newHoveredGlassSource = -1;       // 抓屏方式分段控件
+            int newHoveredGlassParam = -1;        // 9 根滑轨里悬停的是哪一根
+            int newHoveredGlassParamLevel = -1;   // 悬停到的档位
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             if (_selectedTab == 5)
             {
@@ -86,7 +90,7 @@ namespace NotchPeninsula
                 float matSegY = TITLE_BAR_HEIGHT + MAT_SEG_Y;
                 if (y >= matSegY && y <= matSegY + SEG_H
                     && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
-                    newHoveredMaterial = Math.Min(1, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 2f)));
+                    newHoveredMaterial = Math.Min(2, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 3f)));
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
@@ -113,6 +117,51 @@ namespace NotchPeninsula
                         }
                     }
                 } 
+
+                // 液态玻璃卡：材质不是玻璃时整张卡都不画，命中也跟着关掉
+                if (Renderer.IslandLiquidGlass)
+                {
+                    float gCardY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
+                    float segY = gCardY + GLASS_SEG_Y;
+                    if (y >= segY && y <= segY + SEG_H)
+                    {
+                        if (x >= GLASS_QUALITY_SEG_X && x <= GLASS_QUALITY_SEG_X + GLASS_QUALITY_SEG_W)
+                            newHoveredGlassQuality = Math.Min(2, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 3f)));
+                        else if (x >= GLASS_SOURCE_SEG_X && x <= GLASS_SOURCE_SEG_X + GLASS_SOURCE_SEG_W)
+                            newHoveredGlassSource = Math.Min(1, (int)((x - GLASS_SOURCE_SEG_X) / (GLASS_SOURCE_SEG_W / 2f)));
+                    }
+
+                    // 11 根滑轨：先定位行，再看落在哪一列
+                    for (int row = 0; row < GLASS_ROWS; row++)
+                    {
+                        float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
+                        if (y < ry - 12 || y > ry + 12) continue;
+
+                        for (int col = 0; col < 3; col++)
+                        {
+                            int idx = (int)(row * 3) + col;
+                            if (idx >= LiquidGlass.ParamCount) continue;
+
+                            float gx0 = GLASS_COL_X + col * GLASS_COL_W + GLASS_SLIDER_DX;
+                            float gx1 = gx0 + GLASS_SLIDER_W;
+                            if (x < gx0 - 16 || x > gx1 + 16) continue;
+
+                            int lvl = (int)Math.Round((x - gx0) / (GLASS_SLIDER_W / LiquidGlass.MaxLevel));
+                            if (lvl < 0) lvl = 0;
+                            if (lvl > LiquidGlass.MaxLevel) lvl = LiquidGlass.MaxLevel;
+
+                            newHoveredGlassParam = idx;
+                            newHoveredGlassParamLevel = lvl;
+                            if (dragging && LiquidGlass.GetLevel(idx) != lvl)
+                            {
+                                ApplyGlassLevel(idx, lvl);
+                                Render();   // 与透明度滑轨同款：跨档立刻跟手
+                            }
+                            break;
+                        }
+                        break;
+                    }
+                }
 
                 int newHintRow = -1;
                 if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM)
@@ -697,6 +746,10 @@ namespace NotchPeninsula
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
                 newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
                 newHoveredMaterial != _hoveredMaterialIndex ||
+                newHoveredGlassQuality != _hoveredGlassQualityIndex ||
+                newHoveredGlassSource != _hoveredGlassSourceIndex ||
+                newHoveredGlassParam != _hoveredGlassParamIndex ||
+                newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
@@ -763,6 +816,10 @@ namespace NotchPeninsula
                 _hoveredResetIndex = newHoverReset;
                 _hoveredThemeIndex = newHoveredTheme;
                 _hoveredMaterialIndex = newHoveredMaterial;
+                _hoveredGlassQualityIndex = newHoveredGlassQuality;
+                _hoveredGlassSourceIndex = newHoveredGlassSource;
+                _hoveredGlassParamIndex = newHoveredGlassParam;
+                _hoveredGlassParamLevel = newHoveredGlassParamLevel;
                 _mediaExpToggleHovered = newMediaExpToggleHovered;
                 _appLaunchToggleHovered = newAppLaunchToggleHovered;
                 _hoveredOpacityIndex = newHoveredOpacityIndex;

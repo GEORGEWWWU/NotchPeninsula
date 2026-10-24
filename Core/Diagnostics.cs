@@ -251,7 +251,20 @@ namespace NotchPeninsula
             sb.AppendLine($"命令行  : {Environment.CommandLine}");
 
             try { sb.AppendLine($"应用内缩放: {Renderer.GLOBAL_DPI:F2}"); } catch { }
-            try { sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {(Renderer.IslandAcrylic ? "亚克力" : "实体")}"); } catch { }
+            try { sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {(Renderer.IslandLiquidGlass ? "液态玻璃" : Renderer.IslandAcrylic ? "亚克力" : "实体")}"); } catch { }
+            try
+            {
+                if (Renderer.IslandLiquidGlass)
+                {
+                    sb.Append($"液态玻璃: 质量={LiquidGlass.QualityName}  抓屏=");
+                    sb.AppendLine($"  玻璃层命中: {LiquidGlass.Stats}");
+                    sb.AppendLine(IslandBackdrop.UsingMagnifier ? "放大镜(1:1)" : $"兼容(1/{LiquidGlass.CaptureDownscale})");
+                    for (int i = 0; i < LiquidGlass.ParamCount; i++)
+                        sb.Append($"  {LiquidGlass.ParamNames[i]}={LiquidGlass.GetLevel(i)}/{LiquidGlass.MaxLevel}");
+                    sb.AppendLine();
+                }
+            }
+            catch { }
             try { sb.AppendLine($"目标显示器下标: {Renderer.TargetMonitorIndex}"); } catch { }
             try { sb.AppendLine($"岛体隐藏: {Renderer.IslandHidden}"); } catch { }
 

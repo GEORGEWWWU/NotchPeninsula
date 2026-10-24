@@ -19,10 +19,55 @@ namespace NotchPeninsula
     //
     // 内存口径：GDI 直接 StretchBlt 成 1/12 小图（约 200x37），绝不把 4MB 的整屏原图搬进托管堆；
     //          每次只新产一张 ~30KB 的 SKImage，旧的那张在渲染线程手里、由它释放。
-    internal static class IslandBackdrop
+    internal static unsafe class IslandBackdrop
     {
         private const int RefreshMs = 250;      // 背板刷新节拍（屏幕读取很贵，别太频繁）
         public const float Downscale = 12f;     // 缩略倍数：越大越糊（实测 k=8→std31 / k=16→std6.6）
+
+        // 液态玻璃用的降采样：折射位移得看得出来，1/12 那种糊度会把玻璃拍成一团色块。
+        // 随「玻璃质量」变（精细档 1:1），所以是属性不是常量。
+        public static float GlassDownscale => LiquidGlass.CaptureDownscale;
+
+        // 渲染线程每帧告知一次当前材质；切换会触发过期重抓
+        private static volatile bool _glass;
+
+        // 抓屏方式：true = 走放大镜 API（玻璃模式 1:1 全分辨率），false = 老 GDI StretchBlt。
+        // 放大镜不可用时会自动回退到 GDI，这个开关只是用户偏好。
+        public static bool UseMagnifier { get; set; } = true;
+
+        private static volatile bool _magUsed;
+
+        public static bool UsingMagnifier => _magUsed;
+
+        // 本帧背板对应的【屏幕原点】：源矩形换算要用它，不能假定等于请求值
+        // （放大镜在屏幕边界处可能裁掉一截，GDI 则严格等于请求值）
+        private static volatile int _originX, _originY;
+
+        public static int LastOriginX => _originX;
+
+        public static int LastOriginY => _originY;
+
+        // 背板图 1 像素 = 屏幕多少像素（= 1 / 降采样倍数，放大镜就是 1）。
+        // 用实际产出图的尺寸反推，而不是用请求值 —— 首帧/边界裁剪时也不会算错源矩形。
+        private static volatile float _scale = 1f / Downscale;
+
+        public static float LastScale => _scale > 0f ? _scale : 1f / Downscale;
+
+        public static float CurrentDownscale => _magUsed ? 1f : (_glass ? GlassDownscale : Downscale);
+
+        // 每次产出新背板 +1：液态玻璃靠它判断「要不要重算」（几何没动就不用再糊一遍）
+        private static volatile int _version;
+
+        public static int Version => _version;
+
+        public static void SetMode(bool glass)
+        {
+            if (_glass == glass) return;
+            _glass = glass;
+            _expire = true;      // 换降采样倍数 → 缓冲尺寸变了，必须重抓
+            _dirty = true;
+            _work.Set();
+        }
 
         // ⚠️ 这里的平滑**绝不能用 SKImageFilter.CreateBlur**：Skia 会把「每次过滤的产物」按源图的 uniqueID
         // 缓存起来，而背板每 250ms 就产出一张**新图** → 缓存只增不减。实测（纯管道 200s）：
@@ -53,6 +98,10 @@ namespace NotchPeninsula
         // 渲染线程：告诉抓屏线程「岛体占的是背板图里的哪一块」（图像像素坐标）
         public static void SetMask(float x0, float y0, float x1, float y1)
         {
+            // 放大镜抓屏已经通过「排除窗口列表」把岛体剔掉了，不用再抹自己 ——
+            // 遮罩一动还会触发重抓，白白浪费一次屏幕读取。
+            if (_magUsed && _glass) return;
+
             int nx0 = (int)MathF.Floor(x0), ny0 = (int)MathF.Floor(y0);
             int nx1 = (int)MathF.Ceiling(x1), ny1 = (int)MathF.Ceiling(y1);
             bool moved = Math.Abs(nx1 - _maskX1) > 3 || Math.Abs(nx0 - _maskX0) > 3 || Math.Abs(ny1 - _maskY1) > 3;
@@ -79,7 +128,7 @@ namespace NotchPeninsula
         // ---- 交给渲染线程的成品（交换后由渲染线程释放）----
         private static SKImage? _pending;
 
-        public static void Expire() { _expire = true; _dirty = true; _work.Set(); }
+        public static void Expire() { _expire = true; _dirty = true; _magForce = true; _work.Set(); }
 
         // 渲染线程：告诉后台线程「要抓这块屏幕矩形」。矩形没变就不会重新抓。
         public static void SetTarget(int x, int y, int w, int h)
@@ -123,7 +172,8 @@ namespace NotchPeninsula
         {
             while (_run)
             {
-                _work.WaitOne(RefreshMs);
+                // 等待时长跟随当前节拍：自定义成 60ms 时不能被固定的 250ms 等待拖住
+                _work.WaitOne(_glass ? LiquidGlass.RefreshMs : RefreshMs);
                 if (!_run) break;
 
                 if (_expire)
@@ -138,7 +188,8 @@ namespace NotchPeninsula
                 if (_disabled || _tw < 16 || _th < 16) continue;
 
                 long now = Environment.TickCount64;
-                if (!_dirty && now - _lastMs < RefreshMs) continue;
+                int gap = _glass ? LiquidGlass.RefreshMs : RefreshMs;
+                if (!_dirty && now - _lastMs < gap) continue;
                 _dirty = false;
 
                 try
@@ -160,12 +211,17 @@ namespace NotchPeninsula
             int w = _tw, h = _th, x = _tx, y = _ty;
             if (w < 16 || h < 16) return false;
 
+            // 玻璃 + 放大镜可用 → 走全分辨率那条线（亚克力仍走 GDI：1/12 缩略对它绰绰有余）
+            if (_glass && UseMagnifier && MagnifierBackdrop.IsAvailable)
+                return CaptureMagnified(x, y, w, h);
+
             // 还不知道岛体占哪块 → 先别抓（不然会把岛体自己拍进去，画面会往涂层色糊成一坨）
             int mx0 = _maskX0, my0 = _maskY0, mx1 = _maskX1, my1 = _maskY1;
             if (mx1 <= mx0 || my1 <= my0) return false;
 
-            int sw = Math.Max(1, (int)(w / Downscale));
-            int sh = Math.Max(1, (int)(h / Downscale));
+            float ds = CurrentDownscale;
+            int sw = Math.Max(1, (int)(w / ds));
+            int sh = Math.Max(1, (int)(h / ds));
             EnsureBuffer(sw, sh);
             if (_memDc == IntPtr.Zero) return false;
 
@@ -198,25 +254,46 @@ namespace NotchPeninsula
             using var src = SKImage.FromPixels(info, _pBits, sw * 4);
             if (src == null) return false;
 
-            // 无滤镜等效模糊：先降到 1/2（双线性 = 盒式平均），再升回原尺寸
-            int hw = Math.Max(1, sw / 2), hh = Math.Max(1, sh / 2);
-            using var half = SKSurface.Create(new SKImageInfo(hw, hh, SKColorType.Bgra8888, SKAlphaType.Premul));
-            if (half == null) return false;
-            half.Canvas.DrawImage(src, new SKRect(0, 0, hw, hh), _resample);
-            half.Canvas.Flush();
-            using var halfImg = half.Snapshot();
-            if (halfImg == null) return false;
+            SKImage? img;
+            if (_glass)
+            {
+                // 液态玻璃：这里只做 1:1 搬运，保留抓屏原始清晰度
+                // （StretchBlt 的降采样本身已是一次盒式平均）。真正的高斯模糊交给
+                // LiquidGlass 只在「胶囊 + 折射余量」那一小块上做 —— 全屏糊一遍太贵。
+                using var raw = SKSurface.Create(new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Premul));
+                if (raw == null) return false;
+                raw.Canvas.DrawImage(src, 0f, 0f, _resample);
+                raw.Canvas.Flush();
+                img = raw.Snapshot();
+            }
+            else
+            {
+                // 无滤镜等效模糊：先降到 1/2（双线性 = 盒式平均），再升回原尺寸
+                int hw = Math.Max(1, sw / 2), hh = Math.Max(1, sh / 2);
+                using var half = SKSurface.Create(new SKImageInfo(hw, hh, SKColorType.Bgra8888, SKAlphaType.Premul));
+                if (half == null) return false;
+                half.Canvas.DrawImage(src, new SKRect(0, 0, hw, hh), _resample);
+                half.Canvas.Flush();
+                using var halfImg = half.Snapshot();
+                if (halfImg == null) return false;
 
-            using var smooth = SKSurface.Create(new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Premul));
-            if (smooth == null) return false;
-            smooth.Canvas.DrawImage(halfImg, new SKRect(0, 0, sw, sh), _resample);
-            smooth.Canvas.Flush();
-            var img = smooth.Snapshot();
+                using var smooth = SKSurface.Create(new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Premul));
+                if (smooth == null) return false;
+                smooth.Canvas.DrawImage(halfImg, new SKRect(0, 0, sw, sh), _resample);
+                smooth.Canvas.Flush();
+                img = smooth.Snapshot();
+            }
             if (img == null) return false;
 
             // 旧的那张还没被渲染线程取走 → 直接丢掉它（我们自己产的，安全）
+            _originX = x;
+            _originY = y;
+            _scale = sw / (float)w;
+            _magUsed = false;
+
             var stale = Interlocked.Exchange(ref _pending, img);
             stale?.Dispose();
+            Interlocked.Increment(ref _version);   // 液态玻璃据此重算折射层
 
             if (x != _loggedX || y != _loggedY)
             {
@@ -234,11 +311,61 @@ namespace NotchPeninsula
                         ar += Marshal.ReadByte(_pBits, p + 2);
                         cnt++;
                     }
-                Info($"[亚克力] 抓屏 ok：屏幕矩形=({x},{y},{w},{h})  缩略图={sw}x{sh}"
+                Info($"[{(_glass ? "液态玻璃" : "亚克力")}/{(CurrentDownscale == 1f ? "原分辨率" : "1/" + CurrentDownscale)}]"
+                    + $" 抓屏 ok：屏幕矩形=({x},{y},{w},{h})  图={sw}x{sh}"
                     + $"  背板中央平均 RGB=({(cnt == 0 ? -1 : ar / cnt)},{(cnt == 0 ? -1 : ag / cnt)},{(cnt == 0 ? -1 : ab / cnt)})");
             }
             return true;
         }
+
+        // ---- 放大镜路径：UI 线程抓，这里只取走成品 ----
+        // 与 GDI 那条线的差别：1:1 全分辨率（不降采样）、岛体被排除列表直接剔掉（不用再抹自己）。
+        private static bool CaptureMagnified(int x, int y, int w, int h)
+        {
+            // 告诉宿主窗口"抓这块"，真正的抓取在 UI 线程的下一条消息里发生（异步，不阻塞渲染线程）
+            MagnifierBackdrop.Request(x, y, w, h);
+
+            if (!MagnifierBackdrop.Take(out byte[] buf, out int bw, out int bh,
+                    out int ox, out int oy, out int ver))
+                return false;
+
+            // 同一张图就别重复做一遍快照（放大镜回调频率可能高于刷新节拍）
+            if (ver == _magVersion && !_magForce) return false;
+            _magVersion = ver;
+            _magForce = false;
+
+            // 放大镜裁过一截时以它给的原点为准，否则源矩形会偏
+            if (ox == 0 && oy == 0) { ox = x; oy = y; }
+
+            fixed (byte* p = buf)
+            {
+                var info = new SKImageInfo(bw, bh, SKColorType.Bgra8888, SKAlphaType.Opaque);
+                using var src = SKImage.FromPixels(info, (IntPtr)p, bw * 4);
+                if (src == null) return false;
+
+                // 玻璃模式：原样搬运，模糊留给 LiquidGlass 只在胶囊那一小块上做
+                using var raw = SKSurface.Create(new SKImageInfo(bw, bh, SKColorType.Bgra8888, SKAlphaType.Premul));
+                if (raw == null) return false;
+                raw.Canvas.DrawImage(src, 0f, 0f, _resample);
+                raw.Canvas.Flush();
+                var img = raw.Snapshot();
+                if (img == null) return false;
+
+                _originX = ox;
+                _originY = oy;
+                _scale = bw / (float)w;
+                _magUsed = true;
+
+                var stale = Interlocked.Exchange(ref _pending, img);
+                stale?.Dispose();
+                Interlocked.Increment(ref _version);
+                return true;
+            }
+        }
+
+        private static int _magVersion;
+
+        private static bool _magForce;
 
         // 把岛体自己占的那块（背板图坐标）用左右邻像素横向插值抹掉。
         // 岛体在屏幕顶部居中，同一行左右两侧就是它背后的那层；1/12 缩略 + 平滑后完全看不出。
