@@ -75,6 +75,8 @@ namespace NotchPeninsula
             // 再叠一层黑只会让背板变暗（暗壁纸下直接糊成一片死黑，就是"玻璃永远黑"的一半原因）。
             // ⚠️ 唯一例外：背板还没产出时（启动头一瞬）必须垫一层 45 的深色底 ——
             //    否则岛体整帧全透明，看起来就是"启动没渲染、岛体闪没"。
+            // ⚠️ 这里算出来的只是初值：玻璃模式下 Renderer.Draw 每帧按"背板在不在"重定 ——
+            //    本方法在启动时跑在首帧抓屏之前，那时背板必然为 null，一把梭定成 45 就再也下不来了。
             bool backdropReady = AcrylicBackdrop != null;
             byte bgAlpha = IslandLiquidGlass
                 ? (backdropReady ? (byte)0 : (byte)45)
@@ -88,7 +90,8 @@ namespace NotchPeninsula
             {
                 _acrylicLogged = wantBackdrop;
                 Logger.Info($"[背景材质] 材质={(IslandLiquidGlass ? "液态玻璃" : IslandAcrylic ? "亚克力" : "实体")}"
-                    + $"  涂层alpha={bgAlpha}  档位={BgOpacityLevel}  主题={(isLight ? "浅" : "深")}  底色={(isLight ? "白" : "黑")}");
+                    + $"  涂层alpha={(IslandLiquidGlass ? "按背板每帧重定" : bgAlpha.ToString())}"
+                    + $"  档位={BgOpacityLevel}  主题={(isLight ? "浅" : "深")}  底色={(isLight ? "白" : "黑")}");
             }
             var baseBg = isLight ? SKColors.White : SKColors.Black;
             var bg = baseBg.WithAlpha(bgAlpha); // 只改变背景色的透明度，不影响内部元素
@@ -123,6 +126,11 @@ namespace NotchPeninsula
         // 全局复用池 (彻底实现 60FPS 零 GC 分配)
 
         private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
+
+        // 液态玻璃的涂层：每帧按"背板在不在"重定（见 Renderer.Draw）。
+        // ⚠️ 故意与 _bgPaint 分开：_bgPaint 还要经 GetCurrentTheme 交给插件当主题底色，
+        //    在玻璃模式下每帧把它改成透明会让插件自己画的底色一起消失。
+        private static readonly SKPaint _coatPaint = new() { Color = SKColors.Black, IsAntialias = true };
 
         // 亚克力背板画笔。
         // 这里**故意不带 ImageFilter** —— 每帧带高斯画一次会让 Skia 每帧开临时缓冲，帧率和内存都会崩。

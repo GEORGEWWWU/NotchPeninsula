@@ -10,6 +10,8 @@ namespace NotchPeninsula
         private bool _acrLogged;
         private bool _acrBootRefresh; // 启动后是否已做过一次「等价于点质量档」的刷新
         private long _bootAtMs;       // 启动后第一次进入这里的时间戳
+        private long _acrBootRetryMs; // 背板还没内容时，下一次催重抓的时间戳
+        private int _acrBootRetries;  // 催抓次数（封顶，别无限刷）
         private bool _lastGlassMode;
 
         // 亚克力背板：抓的是【整个画布框 ∩ 屏幕】，不是当前胶囊框。
@@ -89,21 +91,30 @@ namespace NotchPeninsula
                 return;
             }
 
-            // 胶囊在画布里的物理位置 → 换算成背板图像素（背板 = 交矩形 ÷ Downscale）。
-            // 画布 x 原点 = dstX，胶囊左边缘 = dstX + left·dpi，所以相对交矩形要再减 capX。
+            // 胶囊在屏幕上的物理矩形：抓屏线程要靠它把岛体自己从背板里抹掉。
+            // ⚠️ 遮罩一律记【屏幕物理像素】。换成图像坐标就必须借 LastScale/LastOrigin，
+            //    而那两个值在首帧还没产出过图、是默认的 1/12，于是遮罩只有 1/12 大小、位置也不对，
+            //    岛体自己原封不动留在背板里；玻璃的源矩形又正好是岛体那块 ⇒ 玻璃采到自己的输出，
+            //    45/46 的灰度成了不动点（"无法透过玻璃看到后面，点一下质量档才好"就是这么来的）。
             float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
             float topY = 12f * _currentStyleProgress;
-            // 用【实际产出图】的比例与原点换算：放大镜是 1:1，GDI 是 1/k，切换材质时也不会错位
+            float islandX = dstX + left * _dpiScale;
+            float islandY = dstY + topY * _dpiScale;
+            float islandW = _currentWidth * _dpiScale;
+            float islandH = _currentHeight * _dpiScale;
+
+            // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
+            IslandBackdrop.SetMask(islandX, islandY, islandX + islandW, islandY + islandH);
+
+            // 贴图用的源矩形仍按【实际产出图】的比例与原点换算：放大镜是 1:1，GDI 是 1/k，切换材质时也不会错位
             float inv = IslandBackdrop.LastScale;
             float orgX = IslandBackdrop.LastOriginX;
             float orgY = IslandBackdrop.LastOriginY;
-            float srcL = (dstX + left * _dpiScale - orgX) * inv;
-            float srcT = (dstY + topY * _dpiScale - orgY) * inv;
-            float srcW = _currentWidth * _dpiScale * inv;
-            float srcH = _currentHeight * _dpiScale * inv;
+            float srcL = (islandX - orgX) * inv;
+            float srcT = (islandY - orgY) * inv;
+            float srcW = islandW * inv;
+            float srcH = islandH * inv;
 
-            // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
-            IslandBackdrop.SetMask(srcL, srcT, srcL + srcW, srcT + srcH);
             IslandBackdrop.SetTarget(capX, capY, capW, capH);
 
             var fresh = IslandBackdrop.TakePending();
@@ -126,17 +137,50 @@ namespace NotchPeninsula
             //   LiquidGlass.Quality = 原档 → 强制走 ApplyQuality（ReapplyQuality），
             //   再 RequestAcrylicRebuild() —— 就是点击分支最后那一句。
             // ⚠️ 用户点的是「原来那档」，setter 会早退，所以必须用 ReapplyQuality 才等效。
+            //
+            // ⚠️ 但这把刷新**必须等到背板真的有内容**再收工：启动时显示器/会话可能还没出画面，
+            //    首帧背板就是全黑，0.8 秒一把梭刷新等于白做（实测刷完玻璃依旧是 45/46 的死灰）。
+            //    抓屏线程的内容守卫（IslandBackdrop.TrackContent）会判定并重抓；这里只在
+            //    "有内容"之后做那一次等价点击的刷新，之前按 600ms 节奏催一下。
             long nowMs = Environment.TickCount64;
             if (_bootAtMs == 0) _bootAtMs = nowMs;
-            if (!_acrBootRefresh
-                && nowMs - _bootAtMs >= 800
-                && Renderer.FullHideAlpha >= 0.9f
-                && Math.Abs(_currentY) < 0.5f)
+
+            bool settled = nowMs - _bootAtMs >= 400
+                           && Renderer.FullHideAlpha >= 0.9f
+                           && Math.Abs(_currentY) < 0.5f;
+
+            // 非玻璃材质没有内容守卫（TrackContent 只在液态玻璃下跑），按老规矩一把梭
+            bool contentReady = !Renderer.IslandLiquidGlass || IslandBackdrop.IsContentAlive;
+
+            if (settled && !_acrBootRefresh)
             {
-                _acrBootRefresh = true;
-                Logger.Info("[亚克力] 启动刷新玻璃（等价于设置里点一次玻璃质量）");
-                LiquidGlass.ReapplyQuality();
-                RequestAcrylicRebuild();
+                if (contentReady)
+                {
+                    _acrBootRefresh = true;
+                    Logger.Info("[亚克力] 启动刷新玻璃（等价于设置里点一次玻璃质量）");
+                    LiquidGlass.ReapplyQuality();
+                    RequestAcrylicRebuild();
+                }
+                else if (nowMs - _acrBootRetryMs >= 600)
+                {
+                    _acrBootRetryMs = nowMs;
+                    _acrBootRetries++;
+                    if (_acrBootRetries <= 8)
+                    {
+                        // 背板还是黑的：先按点击的同款动作强推一次（新建 DC/DIB 能治好"GDI 抓住黑帧"），
+                        // 但自愈不在这里收工 —— 等守卫判出"有内容"，再走上面那一支。
+                        Logger.Info($"[亚克力] 启动时背板还没有内容，第 {_acrBootRetries} 次强制重抓");
+                        IslandBackdrop.Expire();
+                        LiquidGlass.Invalidate();
+                    }
+                    else
+                    {
+                        // 约 5 秒都没内容：交给内容守卫（死黑超时自己重建、恢复时自己 Invalidate），
+                        // 这里收工，别每帧再惦记。
+                        _acrBootRefresh = true;
+                        Logger.Warn("[亚克力] 启动自愈放弃：背板长时间无内容，转交内容守卫");
+                    }
+                }
             }
 
             Renderer.AcrylicBackdropSrc = new SKRect(srcL, srcT, srcL + srcW, srcT + srcH);

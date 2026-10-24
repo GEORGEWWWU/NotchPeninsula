@@ -11,7 +11,7 @@
 ![C#](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp&logoColor=white)
 ![NAudio](https://img.shields.io/badge/NAudio-2.2-5C2D91)
 ![SkiaSharp](https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2)
-![Version](https://img.shields.io/badge/version-2.0.2-blue)
+![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
 
 <p>

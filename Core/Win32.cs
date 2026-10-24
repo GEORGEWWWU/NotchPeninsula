@@ -401,6 +401,12 @@ namespace NotchPeninsula
         [DllImport("gdi32.dll")]
         public static extern int SetStretchBltMode(IntPtr hdc, int mode);
 
+        // ⚠️ 画完 GDI 又要用 CPU 直接读 DIB 的位，必须先刷批：
+        // StretchBlt 只是在 GDI 批处理队列里排了一条命令，批没落地时 DIB 里还是上一帧/全黑。
+        // 抓屏线程读 _pBits 做擦除、算亮度、建 SKImage 都属于"直接读位"，漏了这一句就会偶发黑帧。
+        [DllImport("gdi32.dll")]
+        public static extern bool GdiFlush();
+
         public const int HALFTONE = 4;
 
         public const uint SRCCOPY = 0x00CC0020;

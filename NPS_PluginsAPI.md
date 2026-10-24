@@ -1,123 +1,254 @@
 # NotchPeninsula 插件开发文档
 
-这份文档面向完全没有写过插件的人：介绍程序的插件系统是什么、插件怎么装进程序、以及最重要的——怎么写一个属于自己的 dll 插件。文档全程对着本项目的真实代码编写，文中的接口名、调用方式都可以直接在 `Plugin/` 目录的源码里找到。
-
----
-
-## 一、插件系统是什么
-
-`NotchPeninsula` 程序会把一个系统托盘区变成一个“灵动岛”，在屏幕上方显示时间、硬件占用、媒体控制等内容。原生自带的内容是写死在程序里的；而**插件**允许任何人用 C# 写一小段代码，编译出一个 dll，为这个灵动岛增加全新的内容，比如课表、天气、倒计时、系统监控，甚至一个你自己的小窗口。
-
-插件做的事情，本质上是向程序“注册”下面这几类东西：
-
-- **组件**（Widget）：显示在灵动岛主区域里的一段内容，可点击。
-- **详情页**（DetailPage）：右键某个组件后展开的更详细内容页。它有完整的鼠标事件（按下 / 移动 / 抬起），也能接收文件的拖入与拖出。
-  组件把 `AcceptsFileDropWhenCollapsed` 声明为 `true` 之后，**把文件直接拖到收起态的组件图标上也会自动展开它**（不用先点开）。
-  想在面板里做右键菜单或「双击打开」，就把 `AcceptsDoubleClick` 声明为 `true` —— 右键双击与左右键双击会交回给你的插件（见第八节第 4 条）。
-- **刷新定时器**（ScheduleRefresh）：程序按指定时间间隔在后台调用你的代码，比如每 30 秒更新一次数据。
-- **提醒**（PostReminder）：弹出灵动岛顶部那种几秒钟的提示消息。
-- **自定义窗口**（CreateWindow）：你自己独立于灵动岛的一个可绘制、可被鼠标和键盘操作的小窗口。它还支持**文件拖放**——把资源管理器里的文件拖进来（拖动过程中有悬停回调，可以高亮提示）、把窗口里的条目拖出去。
-
-程序的插件管理器（`PluginManager`）会扫描一个专门的插件目录，把里面的每个 dll 当作一个插件加载。关于加载的技术细节这里先不展开，你只需要知道：**只要把一个合法的插件 dll 放进那个目录，重启程序（或点“重载”）后它就会被程序发现并运行。**
-
----
-
-## 二、插件怎么安装进程序
-
-插件目录的位置：**程序 exe 所在文件夹下的 `plugins` 文件夹**。也就是说，如果程序装在 `C:\NotchPeninsula\`，那插件目录就是 `C:\NotchPeninsula\plugins\`。
-
-如果你不想自己从头写插件，也可以**直接从官方插件市场下载现成的插件**：在程序里打开 **设置窗口 → 插件市场** 页签即可浏览 / 搜索 / 一键安装（推荐），或者在浏览器打开 `https://nps.georgewu.top/market`，按分类挑一个插件下载，拿到 dll 后再用下面几种方式之一装进程序。市场里每一个插件的简介、版本、作者、下载量与用户评分都会列出来，方便你挑选和更新。
-
-同时，项目**欢迎并允许所有人发布自己写好的插件**。任何人都可以把整理好的插件（单个 dll，或 dll + 依赖打成的 zip）投递到这个市场，让其他用户搜索、下载、使用。发布前建议先按下文把插件在自己电脑上跑通、测试稳定再上传，并在简介里写清楚它能做什么、怎么用。
-
-> 💡 **插件作者要知道的两件事**：① 用户在程序内安装你的插件后会被邀请打一次分（0.5 ~ 5 分，半星粒度，每人一次且不可修改），平均分与评分人数会显示在市场的列表与详情里 —— 简介写得清楚、功能稳定，评分自然好看。② 市场是靠插件自报的 `Id`、入口文件名和你在市场的 slug 三者互相匹配本地版本的，**`Id` 一旦发布就不要改**（改名会被当成一个全新插件，老用户的「更新」按钮会失效）。
-
-把已经拿到的插件装进程序有两种方式，你选哪种都行：
-
-1. **手动复制文件夹**：直接把编译好的 dll 复制到 `plugins` 文件夹里，然后启动程序（或使用程序里的“重载”功能）。
-2. **用程序的导入功能**：在程序的“我的插件”里点导入按钮，选择一个 dll 文件，程序会自动把它复制进 `plugins` 目录并立即尝试加载。
-3. **程序内置的插件市场**（最省事）：设置窗口 → **插件市场** 页签里可以直接浏览、搜索、下载安装。列表按分类（全部插件 / 主题外观 / 媒体增强 / 效率工具 / 开发者）筛选，右上角搜索框支持按名称 / 作者 / 标签过滤。每一行右侧三颗按钮：
-   - 第一颗 **下载 / 更新 / 重装** —— 按本地状态自动切换：本机没装 → 下载；市场版本比本地新 → 更新；版本相同 → 重装。安装完成后会自动弹出评分窗，你可以给这个插件打 0.5 ~ 5 分（半星粒度，每人只能评一次，评分会同步回市场）。
-   - 第二颗 **卸载** —— 会先弹确认窗，确认后把插件文件移进 `plugins\_recycle\`（和“我的插件”里的移除是同一个回收策略，可手动找回）。
-   - 第三颗 **详情** —— 弹出小窗显示插件简介、版本 / 作者 / 更新日期 / 下载量、标签。
-   安装完成后**无需重启**，插件会立即加载；「我的插件」列表与市场行的按钮状态会当场刷新。
-
-> 📦 **给要发布插件的作者**：市场支持两种上传形态，程序都认。
-> - **单个 dll**：插件没有额外依赖时用这种，下载后直接落进 `plugins\`。
-> - **zip 包**：把 dll 连同依赖文件打包成 zip 上传。程序会解压到 `plugins\<市场标识>\`（**目录名用的是你在市场里的 slug，不是 zip 里的文件名**），也就是自动变成「目录布局」，zip 里的依赖会被一并加载。
->   打包时请把 dll 放在 zip 的**根**或任意一层子目录都行（程序会把文件摊平到同一层）；如果 zip 里存在多个 dll，请务必带一个 `plugin.json` 写明 `{ "dll": "入口.dll" }`，否则程序只能按「与目录同名 → 第一个非宿主组件」的规则猜，可能挑错。
-
-插件目录支持两种放置方式：
-
-- **单文件布局**：插件没有任何外部依赖，就把 `MyPlugin.dll` 直接放在 `plugins` 根目录下即可。
-- **目录布局**：插件还需要别的 dll 一起运行（比如引用了第三方库），就把 `MyPlugin.dll` 连同那些依赖一起放进一个子文件夹 `plugins\MyPlugin\` 里。程序会自动挑选这个文件夹里的入口 dll（优先读取该文件夹下的 `plugin.json`，里面可以写 `{ "dll": "MyPlugin.dll" }` 来指定哪个是入口；没有的话就找和文件夹同名的 dll；再没有就找第一个不是宿主组件的 dll）。目录里的依赖 dll 会被一并加载，这样带依赖的插件也能工作。
-
-在“我的插件”里，每个插件都可以被**启用 / 禁用 / 热重载 / 移除**：
-
-- 启用 = 加载并运行；禁用 = 卸载并停止，下次启动也不会加载。
-- 移除 = 先卸载，再把文件移进 `plugins\_recycle\` 回收站（不是直接删除，还能手动找回）。
-- 列表里每行显示的 `运行中 · v1.0.0 · 作者` 就是入口类声明的版本号与作者（作者没写时退回程序集元数据，见下文「开放接口清单」）。
-
-> ⚠️ **显示与排序不在我的插件**：一个插件在灵动岛上显示与否、排在前面还是后面，统一在 **设置窗口 → 显示设置 → 显示内容** 那张列表里勾选与调整（内置模块与插件共用同一张顺序表，位置会在重启后保留）。
+> 面向要从零写一个插件的人，也面向要查某个成员到底怎么用的人。
 >
-> 在那张列表里，**「显示」和「启用」是两件事**：取消勾选只是把插件从岛上收起来，**插件照常运行**（定时刷新、提醒这些后台能力都不受影响）；勾上显示会自动把它启用，而禁用插件会自动把它收起。对插件作者来说，这意味着「被隐藏」时 `IWidget` 仍然活着 —— 别把「岛上看不到」当成「插件被卸载」。
+> 文中每个接口、默认值、上限都对着仓库里的源码核过。权威来源是这几个文件，文档与代码不一致时以代码为准：
+>
+> | 文件 | 内容 |
+> |---|---|
+> | `Plugin/PluginApi.cs` | 全部插件接口与数据模型（唯一的接口契约） |
+> | `Plugin/WidgetKit.cs` | AutoWidth 协议与布局盒子 |
+> | `Plugin/PluginLoader.cs` | 插件目录发现与入口 DLL 挑选 |
+> | `Plugin/PluginManager.cs` | 加载 / 启用 / 禁用 / 重载 / 导入 / 移除 / 失败归类 |
+> | `Plugin/PluginHost.cs` | 宿主侧实现（注册、刷新、提醒、设置、窗口） |
 
-程序启动时会清理上一次加载留下的临时影子目录，然后自动加载所有已启用且没有失败的插件，所以你不用担心残留旧版本文件。
+## 目录
+
+- [1. 五分钟上手](#1-五分钟上手)
+- [2. 加载、安装与生命周期](#2-加载安装与生命周期)
+- [3. 工程配置](#3-工程配置)
+- [4. 概念模型](#4-概念模型)
+- [5. 第一个完整插件](#5-第一个完整插件)
+- [6. 组件 IWidget](#6-组件-iwidget)
+- [7. 详情页 IDetailPage](#7-详情页-idetailpage)
+- [8. 常用能力](#8-常用能力)
+- [9. 字体、主题与渲染上下文](#9-字体主题与渲染上下文)
+- [10. 常见坑速查](#10-常见坑速查)
+- [11. API 速查](#11-api-速查)
+- [12. 排错](#12-排错)
+- [附录 A：接入自己的媒体来源](#附录-a接入自己的媒体来源)
+- [附录 B：术语对照](#附录-b术语对照)
 
 ---
 
-## 三、写插件前要认识的几个名词
+## 1. 五分钟上手
 
-整个插件 API 定义在程序源码的 `Plugin/PluginApi.cs` 文件里（另有少数宿主公共设施类不在这个文件中，见第六节与第十节）。写插件时，你会和这几个名词打交道，每个名词就是一句话能讲清的概念，理解了它们就能读懂任何插件代码：
+### 1.1 插件是什么
 
-- **入口类（INotchPlugin）**：每个插件必须有一个类实现这个接口。程序加载你的 dll 后，会找到这个类，调用它的 `Initialize` 方法，把刚才讲的那些能力通过参数递给你。它的四个属性 `Id`、`DisplayName`、`Version`、`Author` 用来标识这个插件，其中 `Author`（作者）会显示在「我的插件」的列表里（`运行中 · v1.0.0 · 作者`）。
+NotchPeninsula 在屏幕顶部显示一条「灵动岛」。岛上的原生内容（时间、硬件、媒体）是写死的；**插件**让你用 C# 写一个类库，编译成 dll，往岛上加自己的内容。
 
-- **宿主（IPluginHost）**：程序递给你入口类的那个对象就是宿主。你通过它调用 `RegisterWidget`、`PostReminder`、`ScheduleRefresh`、`GetSetting`、`CreateWindow` 等方法来使用程序的能力。简单说，**宿主就是插件向主程序请求服务的通道**。
+一个插件 dll 里必须有**一个** `public`、非抽象、带无参构造函数的类实现 `INotchPlugin`。程序靠这一点识别「这是不是插件」。
 
-- **组件（IWidget）**：灵动岛上显示的一段内容。实现这个接口的类负责两件事：告诉程序自己需要多大（`MeasureWidth`），以及把自己画出来（`Draw`）；同时还能响应鼠标点击（`HitTest` / `OnLeftClick` / `OnRightClick`）。
+插件能做的事，全部通过 `Initialize(IPluginHost host)` 拿到的那只 `host` 发起：
 
-- **注册（Register）**：程序默认不知道你的插件里有什么，你在 `Initialize` 里调用 `host.RegisterWidget(...)` 就是把你做好的组件“上架”给程序，告诉程序“我有个组件，请把它放进灵动岛”。不注册的东西不会出现在界面上。
+| 想做的事 | 调用 |
+|---|---|
+| 在岛上放一段内容 | `host.RegisterWidget(new MyWidget())` |
+| 每 N 秒后台刷一次数据 | `host.ScheduleRefresh(...)` |
+| 弹一条几秒的提示 | `host.PostReminder(...)` |
+| 记住用户的设置 | `host.GetSetting / SetSetting` |
+| 开一个自己的小窗口 | `host.CreateWindow(...)` |
+| 展开 / 收起详情页 | `host.OpenDetailPage / CloseDetailPage` |
 
-- **刷新回调 + 提醒 + 设置**：`ScheduleRefresh` 让程序每隔固定时间在后台调用你的一段逻辑（比如拉取数据）；`PostReminder` 弹一条几秒钟的提示；`GetSetting` / `SetSetting` 用来把插件自己的配置（比如开关状态、数字、选项）写到 Windows 注册表里并读回来——下次启动程序时你的插件还能记住上次的设置。
+### 1.2 最小可运行插件
 
-- **渲染帧（WidgetFrame / RenderTheme）**：程序在屏幕上每一帧绘制时，会准备一个包含当前主题颜色、透明度、文字偏移量等信息的“快照”交给你的 `Draw` 方法。你在绘制时用这些信息，就能让你的内容和程序自带的主题、动画表现一致——比如白色和黑色主题下都能看清。
+```csharp
+using NotchPeninsula.Plugins;
+using SkiaSharp;
+
+namespace MiniPlugin;
+
+public sealed class MiniPlugin : INotchPlugin
+{
+    public string Id => "com.example.mini";      // 反域名，全局唯一，发布后不要改
+    public string DisplayName => "最小插件";
+    public string Version => "1.0.0";
+    public string Author => "你的名字";
+
+    public void Initialize(IPluginHost host) => host.RegisterWidget(new MiniWidget());
+}
+
+internal sealed class MiniWidget : IWidget
+{
+    public string Id => "com.example.mini.widget";
+    public string DisplayName => "Mini";
+    public IDetailPage? DetailPage => null;
+
+    public float MeasureWidth(float availableHeight) => 56f;   // 完整显示需要多宽（逻辑像素）
+
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+    {
+        using var paint = new SKPaint
+        {
+            IsAntialias = true,
+            TextSize = 12.5f,
+            Color = frame.Theme.TextColor.WithAlpha(frame.Alpha),
+        };
+        canvas.DrawText("Hi", rect.Left + 8f, rect.MidY + frame.TextOffsetY + 4.5f, paint);
+    }
+
+    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;  // 不响应点击
+    public void OnLeftClick(string? action, float x, float y) { }
+    public void OnRightClick() { }
+    public void OnActivate(IPluginHost host) { }
+    public void OnDeactivate() { }
+}
+```
+
+编译后把 dll 丢进 `plugins\`，重启程序（或在「我的插件」里点重载），岛上就多了一个 `Hi`。
+
+这个例子用的是**老协议**（自己上报宽度）。新插件建议用 [6.2](#62-宽度协议autowidth推荐) 的 AutoWidth：宽度交给宿主量，少一半口径问题。
+
+### 1.3 装进程序
+
+三种方式，效果一样：
+
+1. 把 `MyPlugin.dll` 复制进 **exe 同级的 `plugins\`** 文件夹。
+2. 程序里「我的插件」→ 导入 → 选 dll（会自动复制进 `plugins\` 并立即加载）。
+3. 程序里「设置中心 → 插件市场」直接装（最省事，见 [2.5](#25-插件市场)）。
 
 ---
 
-## 四、编写你的第一个插件（完整示例）
+## 2. 加载、安装与生命周期
 
-写插件不需要改动主程序，你只需要新建一个独立的类库工程。下面给出一个能直接编译运行的完整示例：一个“Hello 插件”，它会在灵动岛上显示一个圆点和一个文字，点击圆点可以切换开关并弹提醒，同时每 30 秒在后台刷新一次运行秒数。
+### 2.1 目录布局与入口 DLL 的挑选
 
-### 步骤 1：新建工程
+插件根目录固定是：**程序 exe 所在目录下的 `plugins\`**。
 
-创建一个类库工程。关键点有三条，请逐一对照：
+```
+plugins\
+├─ HelloPlugin.dll                 ← 单文件布局：没有第三方依赖时用这个
+├─ MyPlugin\                       ← 目录布局：带依赖时用这个
+│  ├─ MyPlugin.dll
+│  ├─ SomeLibrary.dll
+│  └─ plugin.json                  ← 可选：{ "dll": "MyPlugin.dll" }
+└─ _recycle\                       ← 程序自己的回收站，启动时跳过
+```
 
-1. **目标框架**必须和主程序完全一致，否则程序加载不了你。当前是 `net10.0-windows10.0.19041.0`，写在你的 `.csproj` 里。
-2. 项目类型必须是 **类库**（`OutputType` 为 `Library`），最终产物是 dll 而不是 exe。
-3. **引用主程序工程**。插件本身不定义这些接口，接口都在主程序里，你要通过 ProjectReference 引用 `NotchPeninsula.csproj`，然后在代码里 `using NotchPeninsula.Plugins;` 才能拿到 `INotchPlugin`、`IPluginHost`、`IWidget` 这些类型。
+发现规则（`PluginLoader.Discover`）：
 
-下面是 `.csproj` 文件内容（假设你的插件叫 `HelloPlugin`）：
+- 根目录下每个 `*.dll` 都是一个候选插件。
+- 每个**子目录**是一个候选插件；以 `_` 或 `.` 开头的目录**直接跳过**（`_recycle` 就是这么排除的）。
+- 子目录里挑入口 DLL 的顺序：
+  1. `plugin.json` 里的 `"dll"` 字段（文件不存在会记警告，继续往下找）；
+  2. 与目录同名的 `<目录名>.dll`；
+  3. 目录里第一个「不是宿主自带组件」的 dll。
+- 宿主自带组件（`NotchPeninsula` / `SkiaSharp` / `NAudio.*` / `System.Text.Json` 等）永远不会被当成插件加载，所以把依赖 dll 一起放在目录里是安全的。
+
+> 一个目录里**只能有一个**入口 DLL。放多个插件请分多个目录 —— 否则只会加载第一个，其余被忽略。
+
+### 2.2 影子副本：哪些文件会被复制
+
+加载时宿主把插件**复制到临时目录再从那里加载**（`%TEMP%\NotchPeninsula\plugins\<guid>\`），所以 `plugins\` 里的文件不会被进程锁住，可以随时覆盖、删除、重装。
+
+复制的白名单（**目录布局只看第一层**，**不复制子目录**）：
+
+```
+.dll  .json  .pdb  .config  .xml  .txt
+```
+
+由此得到两条硬约束：
+
+1. **第三方依赖必须直接放在插件目录的一层**，不能塞进 `lib\` 之类的子目录 —— 子目录不会被复制，加载时就是「缺依赖」。
+2. **图片 / 音频 / 数据库这类数据文件不会被复制**。`Assembly.Location` 指向的是临时影子目录，也别指望在那里读到它们。要带资源请用 `<EmbeddedResource>` 嵌进 dll，或首次运行时释放到 `%LOCALAPPDATA%\<你的插件>\`。
+
+### 2.3 依赖如何解析
+
+每个插件在自己的 `AssemblyLoadContext`（可回收）里加载，规则很简单：
+
+- **宿主已经加载过的程序集，一律用宿主那份**（`SkiaSharp`、`NotchPeninsula` 本身等）。你自己目录里再放一份 `SkiaSharp.dll` 会被忽略 —— 不要试图自带，版本不一致只会更难查。
+- 其余程序集从插件目录找同名 dll。
+
+所以：**插件与宿主必须引用同一个 SkiaSharp 版本**（跟着主程序的包版本走），并且**不要**把 `NotchPeninsula.dll` 复制进插件目录。
+
+### 2.4 启用 / 禁用 / 重载 / 移除
+
+在「我的插件」里每行都有这几个动作：
+
+| 动作 | 行为 | 落盘 |
+|---|---|---|
+| 启用 | 加载并运行 | 从「已禁用」清单移除 |
+| 禁用 | 卸载并停止，下次启动也不加载 | 写进 `Plugins_Disabled` |
+| 重载 | 卸载 → 重新发现 → 重新加载（热更新用） | — |
+| 移除 | 卸载 → 文件移进 `plugins\_recycle\`（不是删除，可以手动找回） | 清掉顺序 / 隐藏项 |
+
+列表里每行的 `运行中 · v1.0.0 · 作者` 来自入口类的 `Version` / `Author`。
+
+### 2.5 插件市场
+
+- 程序内：**设置中心 → 插件市场**（可浏览、搜索、分类筛选、装 / 更新 / 卸载 / 评分 / 看详情）。
+- 浏览器：`https://nps.georgewu.top/market`。
+
+市场对上传包认两种形态：
+
+| 形态 | 落点 | 说明 |
+|---|---|---|
+| 单文件 `.dll` | `plugins\<文件名>` | 没有额外依赖时用 |
+| `.zip` | `plugins\<市场 Id>\` | 解压后**摊平到同一层**（丢掉子目录结构） |
+
+发布 zip 的注意事项：
+
+- 目录名用的是**市场里那个插件的 Id**，不是 zip 里的文件名。
+- zip 里 dll 放在根或任意一层子目录都行，安装时都会被摊平。
+- **zip 里有多于一个 dll 时必须带 `plugin.json`**，写明 `{ "dll": "入口.dll" }`；否则宿主只能按「同名 → 第一个非宿主组件」猜，可能挑错。
+
+市场里安装 / 更新都是**即时生效**的，不需要重启（宿主会把旧版本卸载、文件移入 `_recycle` 后再装新的）。
+
+> 发布前请把 `Id` 定下来：市场靠 `Id` + 入口文件名 + 市场 slug 匹配本地版本，**发布后改 `Id` 会被当成另一个插件**，老用户的「更新」就失效了。
+
+### 2.6 加载失败的六种原因
+
+宿主会把失败归类，提示语直接告诉你该修哪里（`PluginFailureKind`）：
+
+| 归类 | 通常的原因 |
+|---|---|
+| `NotAPlugin` | dll 里没有实现 `INotchPlugin` 的 public 类；或者你**自己复制了一份宿主接口**导致类型对不上 |
+| `BadImage` | 不是 .NET 程序集 / 位数不对（x86 插件）/ 文件损坏 |
+| `MissingDependency` | 依赖 dll 没一起放（尤其是放在子目录里，见 [2.2](#22-影子副本哪些文件会被复制)） |
+| `HostMismatch` | 按旧版 API 编译，引用了宿主里已经不存在的类型或成员 |
+| `InitFailed` | 构造函数或 `Initialize` 抛异常 —— 去日志看堆栈 |
+| `Other` | 其他，错误原文在「我的插件」那一行里 |
+
+最常见的三个：**目标框架写错**（必须与宿主一致）、**缺依赖**、**没实现入口类**。
+
+### 2.7 「显示」与「启用」不是一回事
+
+在 **设置中心 → 显示设置 → 显示内容** 那张列表里勾选 / 排序，只影响**是否画在岛上**和**先后顺序**：
+
+- 取消勾选 = 从岛上收起来，**插件照常运行**（定时刷新、提醒、后台能力都不受影响）；
+- 勾上显示会自动启用它；禁用插件会自动把它收起来。
+
+对插件作者的含义：**`IWidget` 被隐藏时依然活着**，别把「岛上看不到」当成「插件被卸载」。同理，`Draw` 不被调用期间后台数据要照常维护。
+
+---
+
+## 3. 工程配置
+
+### 3.1 csproj
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 必须与主程序保持一致，否则无法被加载 -->
+    <!-- 必须与主程序完全一致，否则加载不了 -->
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Library</OutputType>
     <AssemblyName>HelloPlugin</AssemblyName>
-    <Version>1.0.0</Version>
     <RootNamespace>HelloPlugin</RootNamespace>
+
+    <Version>1.0.0</Version>
+    <!-- 没写 Author 时，宿主会退回读这个字段 -->
+    <Company>你的名字</Company>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 引用主程序，拿到 INotchPlugin / IPluginHost / IWidget 等接口定义 -->
+    <!-- 引用主程序工程，拿到 INotchPlugin / IPluginHost / IWidget / WidgetKit -->
     <ProjectReference Include="..\NotchPeninsula.csproj" />
   </ItemGroup>
 
-  <!-- 编译后自动把 dll 复制到主程序输出目录的 plugins 文件夹，省得手动搬 -->
+  <!-- 可选：编译完自动复制到主程序的 plugins 目录，省得手动搬 -->
   <Target Name="InstallToHostPlugins" AfterTargets="Build">
     <PropertyGroup>
       <HostPluginDir>$(MSBuildThisFileDirectory)..\bin\$(Configuration)\$(TargetFramework)\plugins</HostPluginDir>
@@ -131,689 +262,950 @@
 </Project>
 ```
 
-### 步骤 2：写入口类和组件
+要点：
 
-新建一个源码文件（可以是一个文件里同时放入口类和组件，也可以分开放在两个文件里）。下面是完整代码，可以直接复制，注释说明了每一段在做什么：
+1. `TargetFramework` **必须逐字一致**（当前是 `net10.0-windows10.0.19041.0`）。写错就是 `BadImage` 或 `HostMismatch`。
+2. `OutputType` 必须是 `Library`。
+3. 需要 `System.Windows.Forms` 的东西（例如 `SystemInformation.DragSize`）请在自己的工程里加 `<UseWindowsForms>true</UseWindowsForms>` —— 宿主用了 WinForms **不会**传递给你。
+4. 需要多文件资源就加 `<EmbeddedResource>`，别指望数据文件跟着插件目录走（[2.2](#22-影子副本哪些文件会被复制)）。
+
+### 3.2 引用方式
+
+- **开发期推荐**：`ProjectReference` 指向主程序 `NotchPeninsula.csproj`（上面就是）。
+- **不想拉整个源码**：引用主程序输出目录里的 `NotchPeninsula.dll` 也可，但要把 `<Private>false</Private>` 设上，**别让它出现在你的输出目录**（插件目录里出现宿主 dll 会让人误以为要一起发布）。
+- 无论哪种，插件产物里**只带自己的 dll 和第三方依赖**，不带 `NotchPeninsula.dll` / `SkiaSharp.dll`。
+
+### 3.3 编译与部署
+
+```
+dotnet build HelloPlugin.csproj -c Release
+```
+
+然后按 [2.1](#21-目录布局与入口-dll-的挑选) 放进 `plugins\`。带依赖就把整个输出目录（去掉宿主 dll）作为一个子目录放进去，配上 `plugin.json`。
+
+### 3.4 命名与元数据
+
+- `Id`：反域名风格、全局唯一、**发布后不要改**（市场匹配、设置隔离、禁用清单都靠它）。
+- `DisplayName`：用户看到的名字。
+- `Version`：语义化版本；市场「更新」按它比较。
+- `Author`：列表里显示；不写会退回程序集 `Company`。
+- 组件 `Id`：**全局唯一**（宿主按 `Id` 建立「组件 → 插件」映射），建议 `<插件Id>.widget` 这种前缀风格。
+
+---
+
+## 4. 概念模型
+
+| 名词 | 接口 | 一句话 |
+|---|---|---|
+| 入口类 | `INotchPlugin` | 每个插件唯一的入口，宿主实例化后调 `Initialize` |
+| 宿主 | `IPluginHost` | 插件向主程序要服务的唯一通道 |
+| 组件 | `IWidget` | 岛上一段内容：量宽、绘制、点击 |
+| 详情页 | `IDetailPage` | 右键组件后整块展开的大面板 |
+| 渲染帧 | `WidgetFrame` | 每帧递给 `Draw` 的上下文（主题色、透明度、频谱…） |
+| 主题 | `RenderTheme` | 颜色 / DPI / 圆角 |
+| 命中 | `WidgetHit` | `HitTest` 的返回值，携带动作名 |
+| 提醒 | `ReminderData` | 弹一条 Toast 的描述对象 |
+
+数据流：
+
+```
+加载 dll
+  → 找到 INotchPlugin，实例化
+  → Initialize(host)                     插件在这里注册组件 / 定时器
+  → RegisterWidget(w)                    宿主立刻回调 w.OnActivate(host)
+  → 每帧：w.Layout(...) 或 w.MeasureWidth(...) → w.Draw(canvas, rect, frame)
+  → 鼠标：w.HitTest(x, y, rect) → w.OnLeftClick(action, x, y)
+  → 右键：有 DetailPage 就展开详情页，否则打开设置窗口
+  → 卸载：插件 Dispose() → 各组件 OnDeactivate()
+```
+
+---
+
+## 5. 第一个完整插件
+
+一个圆点 + 一段文字，点击切换开关、记住状态、每 30 秒后台刷新一次。
 
 ```csharp
 using System;
-using System.Threading;
 using NotchPeninsula.Plugins;
 using SkiaSharp;
 
 namespace HelloPlugin;
 
-/// <summary>
-/// 插件入口：程序找到实现 INotchPlugin 的类后，会实例化它并调用 Initialize。
-/// </summary>
 public sealed class HelloPlugin : INotchPlugin, IDisposable
 {
-    private IPluginHost? _host;
-    private IDisposable? _timer;
-    private HelloWidget? _widget;
-    private int _seconds; // 后台线程写，渲染线程读，用内存操作保证安全
-
-    // 反域名风格的唯一标识，避免和其他插件撞车；显示名、版本、作者用于列表展示。
     public string Id => "com.example.hello";
     public string DisplayName => "Hello 插件";
     public string Version => "1.0.0";
-    public string Author => "你的名字";   // 显示在我的插件的「运行中 · v1.0.0 · 作者」里
+    public string Author => "你的名字";
+
+    private IDisposable? _timer;
+    private int _seconds;                  // 后台线程写、渲染线程读
+
+    internal int Seconds => Volatile.Read(ref _seconds);
 
     public void Initialize(IPluginHost host)
     {
-        _host = host;
+        // 1) 注册组件：宿主会同步回调组件的 OnActivate(host)
+        host.RegisterWidget(new HelloWidget(this));
 
-        // 1) 立刻弹一条提醒，直观证明插件被加载了。
+        // 2) 每 30 秒在后台刷一次（最小间隔 100ms）
+        //    文案里的秒数会变 → 宽度也会变 → 刷完顺手让宿主重测一次。
+        //    InvalidateWidgetLayout 只改一个版本号（加锁），后台线程直接调是安全的。
+        _timer = host.ScheduleRefresh(TimeSpan.FromSeconds(30), () =>
+        {
+            Interlocked.Add(ref _seconds, 30);
+            host.InvalidateWidgetLayout();
+        });
+
+        // 3) 证明自己活着
         host.PostReminder(new ReminderData
         {
             Title = "Hello 插件已加载",
-            Body = "灵动岛右上角出现了一个圆点，可以点它",
-        });
-
-        // 2) 每 30 秒在后台给秒数 +30，展示“定时刷新”怎么用。
-        _timer = host.ScheduleRefresh(TimeSpan.FromSeconds(30),
-            () => Interlocked.Add(ref _seconds, 30));
-
-        // 3) 把组件“注册”给程序，它才会出现在灵动岛上。
-        _widget = new HelloWidget(this);
-        host.RegisterWidget(_widget);
-    }
-
-    // 渲染线程安全地读取后台累计的秒数。
-    internal int Seconds => Volatile.Read(ref _seconds);
-
-    // 点击圆点后由组件回调进来：保存开关状态 + 给用户反馈。
-    internal void OnToggled(bool enabled)
-    {
-        if (_host is not IPluginHost h) return;
-        h.SetSetting("enabled", enabled ? "1" : "0"); // 写入注册表，下次启动还记得
-        h.PostReminder(new ReminderData
-        {
-            Title = "Hello 插件",
-            Body = enabled ? "已开启（再点一次关闭）" : "已关闭（再点一次开启）",
+            Body = "灵动岛上多了一个圆点，点它可以切换",
         });
     }
 
-    // 程序卸载插件时会调用 Dispose，把申请的资源还回去。
-    public void Dispose()
-    {
-        _timer?.Dispose();
-        _widget?.Dispose();
-    }
+    public void Dispose() => _timer?.Dispose();   // 卸载 / 重载 / 退出时宿主会调
 }
 
-/// <summary>
-/// 灵动岛组件：一个圆点 + 一段文字，点击切换开关。
-/// </summary>
-internal sealed class HelloWidget : IWidget
+internal sealed class HelloWidget : IAutoWidthWidget
 {
     private readonly HelloPlugin _plugin;
+    private IPluginHost? _host;
     private volatile bool _on = true;
-
-    // 文字内容变化时才重新测量，避免无意义地重复计算。
-    private string _lastText = "";
-    private float _lastTextWidth;
-    private bool _lastOn;
-    private int _lastSeconds = -1;
 
     public HelloWidget(HelloPlugin plugin) => _plugin = plugin;
 
     public string Id => "com.example.hello.widget";
     public string DisplayName => "Hello";
-    public IDetailPage? DetailPage => null; // 不提供详情页
+    public IDetailPage? DetailPage => null;
 
-    // 告诉程序这个组件要多宽（逻辑像素）：圆点 + 间距 + 文字宽。
-    public float MeasureWidth(float availableHeight)
+    // 文字会在「开 / 关」之间变长变短 → 告诉宿主宽度会变
+    public bool WidthVaries => true;
+
+    public void OnActivate(IPluginHost host)
     {
-        RefreshText();
-        return 10f + 8f + _lastTextWidth + 4f;
+        _host = host;
+        _on = host.GetSetting("on", "1") != "0";
     }
 
-    // 每帧被调用：把你的内容画到灵动岛上。rect 是程序分给你的区域。
+    public void OnDeactivate() { }
+
+    // 演示用：每帧现拼字符串（正式插件建议在数据变化时算好缓起来，避免每帧分配）
+    private string Label => _on ? $"Hello {_plugin.Seconds}s" : "Hello 已关闭";
+
+    // 只描述「由哪几块组成」。不写余量、不夹上限 —— 宽度由宿主量。
+    public Box? Layout(float availableHeight) => WidgetKit.Row(
+        WidgetKit.Icon(11f),        // 圆点占位
+        WidgetKit.Gap(5f),
+        WidgetKit.Text(Label, 12.5f, TextWeight.SemiBold));
+
     public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
-        RefreshText();
-        float cy = rect.MidY + frame.TextOffsetY; // 垂直居中
+        if (frame.Alpha == 0) return;
 
-        // 圆点：开启=绿，关闭=灰；透明度跟随程序的淡入动画。
-        // 注意：画笔在这里“临时创建、用完即释放”，不要存在字段里跨线程复用，
-        // 否则插件开关时可能因为原生对象被释放而崩溃（详见文末“踩坑”）。
+        // 槽位里有宿主加的 1px 留白，按内容区排版
+        var content = WidgetKit.ContentRect(rect);
+        float cy = content.MidY + frame.TextOffsetY;
+
+        // ⚠️ 画笔临时创建、画完释放；不要存字段跨线程复用
         using var dot = new SKPaint
         {
             IsAntialias = true,
-            Color = (_on ? new SKColor(76, 175, 80) : new SKColor(130, 130, 130))
-                        .WithAlpha(frame.Alpha),
+            Color = (_on ? new SKColor(76, 175, 80) : new SKColor(120, 120, 120)).WithAlpha(frame.Alpha),
         };
-        canvas.DrawCircle(rect.Left + 6f, cy, 4f, dot);
+        canvas.DrawCircle(content.Left + 5.5f, cy, 5f, dot);
 
-        // 文字用程序当前的主题色，黑/白主题下都能看清。
         using var text = new SKPaint
         {
             IsAntialias = true,
             TextSize = 12.5f,
+            Typeface = WidgetKit.Typeface(TextWeight.SemiBold),   // 与 Layout 用同一字体面
             Color = frame.Theme.TextColor.WithAlpha(frame.Alpha),
         };
-        canvas.DrawText(_lastText, rect.Left + 18f, cy + 4.5f, text);
+        canvas.DrawText(Label, content.Left + 16f, cy + 4.5f, text);
     }
 
-    // 命中检测：判断鼠标点在了组件范围内没有。返回一个“动作名”表示这次点击要做什么。
+    // ⚠️ x / y 是「相对本组件矩形左上角」的坐标，不是岛内绝对坐标
     public WidgetHit HitTest(float x, float y, SKRect rect)
-        => x >= 0 && x <= rect.Width && y >= 0 && y <= rect.Height
+        => x >= 0f && x <= rect.Width && y >= 0f && y <= rect.Height
             ? new WidgetHit("toggle")
             : WidgetHit.None;
 
-    // 左键点击触发，动作名就是 HitTest 返回的那个。
     public void OnLeftClick(string? action, float x, float y)
     {
-        _on = !_on; // 切换开关，volatile 保证下一帧渲染就能看到新状态
-        _plugin.OnToggled(_on);
+        if (action != "toggle") return;
+        _on = !_on;
+        _host?.SetSetting("on", _on ? "1" : "0");
+        _host?.InvalidateWidgetLayout();   // 文案变了 → 让宿主重测宽度
     }
 
-    // 右键点击；我们没有详情页，这里什么都不做。
     public void OnRightClick() { }
+}
+```
 
-    // 程序启动加载时调用，把上次保存的开关状态读回来。
-    public void OnActivate(IPluginHost host)
-        => _on = host.GetSetting("enabled", "1") != "0";
+这段代码里已经包含了新手最容易踩的四件事：`OnActivate` 读回设置、画笔用完即释放、命中坐标是相对的、文案变化要通知重测宽度。下面逐条展开。
 
-    // 程序停止时调用。
-    public void OnDeactivate() { }
+---
 
-    // 只在内容变化时才重建文字并重新测量宽度。
-    private void RefreshText()
+## 6. 组件 IWidget
+
+### 6.1 必须实现什么
+
+| 成员 | 默认 | 说明 |
+|---|---|---|
+| `string Id` | — | 全局唯一，宿主按它做映射 |
+| `string DisplayName` | — | 设置里的显示名 |
+| `IDetailPage? DetailPage` | — | 没有就返回 `null`（右键将打开设置窗口） |
+| `void Draw(SKCanvas, SKRect, WidgetFrame)` | — | 每帧调用 |
+| `WidgetHit HitTest(float x, float y, SKRect)` | — | 命中检测 |
+| `void OnLeftClick(string? action, float x, float y)` | — | 左键点击 |
+| `void OnRightClick()` | — | 右键点击（无坐标） |
+| `void OnActivate(IPluginHost)` | — | 注册进宿主时**同步**调用 |
+| `void OnDeactivate()` | — | 卸载摘登记时调用 |
+| `float MeasureWidth(float availableHeight)` | `0` | 老协议的宽度上报，见 [6.3](#63-宽度协议measurewidth老协议) |
+| `bool AcceptsFileDropWhenCollapsed` | `false` | 收起态接收文件，见 [6.8](#68-收起态接文件) |
+| `bool AcceptsRightClick` | `false` | 右键单击透传，见 [6.7](#67-点击右键双击) |
+| `bool AcceptsDoubleClick` | `false` | 左右键双击透传 |
+| `void OnLeftDoubleClick / OnRightDoubleClick(float, float)` | 空 | 双击回调 |
+
+> 接口里有默认实现的成员，都是**后加的**。它们必须带默认实现，否则老插件会因为 `TypeLoadException` 直接加载失败 —— 你自己给接口加成员时也要守这条规矩。
+
+### 6.2 宽度协议：AutoWidth（推荐）
+
+新插件直接实现 `IAutoWidthWidget`，**不要再写 `MeasureWidth`**。你只描述「我由哪几块组成」，宽度由宿主量、由宿主加留白。
+
+```csharp
+internal sealed class MyWidget : IAutoWidthWidget
+{
+    public bool WidthVaries => true;    // 宽度会随内容变化时才置 true
+
+    public Box? Layout(float availableHeight) => WidgetKit.Row(
+        WidgetKit.Icon(13f),                                   // 固定宽块
+        WidgetKit.Gap(5f),                                     // 纯间距
+        WidgetKit.Text("23°C", 12.5f, TextWeight.SemiBold));   // 按宿主当前字体重测
+
+    // 绘制时用同一份字体，量画才一致
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
-        int sec = _plugin.Seconds;
-        if (sec == _lastSeconds && _on == _lastOn && _lastText.Length > 0) return;
-
-        _lastSeconds = sec;
-        _lastOn = _on;
-        _lastText = _on
-            ? (sec <= 0 ? "Hello" : $"Hello · {sec}s")
-            : $"OFF · {sec}s";
-        using var measure = new SKPaint { IsAntialias = true, TextSize = 12.5f };
-        _lastTextWidth = measure.MeasureText(_lastText);
+        using var paint = new SKPaint
+        {
+            IsAntialias = true, TextSize = 12.5f,
+            Typeface = WidgetKit.Typeface(TextWeight.SemiBold),
+            Color = frame.Theme.TextColor.WithAlpha(frame.Alpha),
+        };
+        var content = WidgetKit.ContentRect(rect);
+        canvas.DrawText("23°C", content.Left + 18f, content.MidY + frame.TextOffsetY + 4.5f, paint);
     }
+
+    // 其余成员同 IWidget
 }
 ```
 
-### 步骤 3：编译并放进程序
+盒子只有六种，**不要自己派生 `Box`**（未知类型按 0 宽处理 = 这帧不显示）：
 
-在命令行进入你的插件工程目录，运行下面这条命令：
+| 工厂 | 宽度 |
+|---|---|
+| `WidgetKit.Text(text, size, weight?)` | 按宿主当前字重实测 |
+| `WidgetKit.Icon(width)` | 固定宽度块（图标、色块、进度点） |
+| `WidgetKit.Gap(width)` | 纯间距 |
+| `WidgetKit.Row(params Box[])` / `Row(gap, params Box[])` | 横向相加（默认块间距 0） |
+| `WidgetKit.Stack(params Box[])` | 纵向叠放，取最宽的一行 |
+| `WidgetKit.Min(minWidth, inner)` | 内容宽度下限（**不含**宿主留白） |
 
+口径（全部由宿主独占，插件侧不该再出现 `+2f` / `PadX*2` 这类补偿）：
+
+- 槽位宽 = `ceil(内容宽) + 2 × WidgetKit.AutoPadX`（`AutoPadX = 1f`）。
+- 组件间距 = `WidgetKit.SlotGap`（16px），别再硬编码。
+- 内容区 = `WidgetKit.ContentRect(slot)`（去掉那 1px 留白）。
+- `WidthVaries = true` 时：宽度量化到 **1px**（吸收字宽浮点抖动）；**变宽立即生效**（等一帧文字就会露裁切）；**变窄要连续 600ms 确认**（避免长句→短句→长句来回抽）；变化幅度 ≤6px 视为抖动，不动。宽度固定的组件保持默认 `false`，一分钱额外开销都没有。
+- `Layout` 返回 `null` / 空盒子 = 0 宽 = 本帧不显示。**不要在里面做 IO、加锁或耗时计算** —— 宿主只在注册表版本变化或你主动通知重测时调用它。
+- `Layout` 抛异常时，宿主先退回该组件的 `MeasureWidth`（如果还实现着），再不行才熔断。一次布局 bug 不该让组件永久消失。
+
+内容变了要主动通知：
+
+```csharp
+_host.InvalidateWidgetLayout();   // 宿主重新 Layout → 弹簧动画过渡到新宽度
 ```
-dotnet build HelloPlugin.csproj -c Debug
+
+### 6.3 宽度协议：MeasureWidth（老协议）
+
+已经发布的插件、以及自绘复杂度高不想用盒子的插件继续用这个，行为完全不变。
+
+```csharp
+public float MeasureWidth(float availableHeight) => 文本宽 + 图标宽 + 间距;
 ```
 
-如果 `csproj` 里包含了我们写的那段 `InstallToHostPlugins` 目标，编译完成后 dll 会自动出现在主程序输出目录的 `plugins` 文件夹里；如果没有，你手动把生成的 `HelloPlugin.dll` 复制到 `plugins` 文件夹即可。然后启动（或重启)主程序，插件就会出现在灵动岛和“我的插件”里。
+语义只有一条：**完整显示我的内容需要多宽**（逻辑像素）。
+
+- 不是「我希望多宽」，更不是「上限定多宽」。
+- 宿主拿它和本帧剩余空间比：**装得下就按这个宽给、内容完整显示；装不下这一帧整个组件都不显示**（宿主不压缩、不截断、不加省略号）。
+- 所以：别为了「挤进去」少报（结果是被压缩显示），也别用 `1920` 这类岛体上限去夹自己（会让宿主误判成刚好装得下）。真要保险丝，就往大了定。
+
+**返回值会被缓存**：宿主只在「组件注册表版本变化」时调一次 `MeasureWidth`（插件注册 / 注销 / 顺序变化），之后每帧复用缓存值 —— 稳态 60FPS 零测量开销。所以：
+
+- 宽度随内容变 → 内容变了必须调 `host.InvalidateWidgetLayout()`，否则宽度永远停在首次测量值；
+- 宿主切换字体后会自动重测（内部按字体名 + 自定义路径做 key），**你不需要**再自己订阅 `FontConfig.Changed`。
+
+### 6.4 预算与取舍
+
+插件行不是无限宽。规则一句话：**每个组件要么完整显示，要么完全不显示。**
+
+- 行预算 = `min(1920, 目标显示器工作区宽度)` − 原生内容本帧占用（`Renderer.IslandWidthCap` − 原生宽）。
+- 按**显示顺序**（设置 → 显示内容 里那张列表，未调整过时就是注册顺序）贪心放行：所需宽度能完整放进剩余空间才显示；装不下的本帧整体隐藏（不绘制、不留位、不响应点击），后面的组件仍可继续尝试。
+- 每个组件占 `宽 + 16px` 间距。
+
+插件可以提前问预算，主动挑一条塞得进的内容：
+
+```csharp
+float budget = host.GetPluginRowBudget();    // 「不显示本插件时，我这个位置还剩多宽」
+float slot   = host.GetSlotBudget(widgetId); // AutoWidth 专用：再扣掉我自己的 16px 槽间距
+
+// 0          = 本位置没空间了
+// +∞         = 宿主还没跑过首帧
+// 其他        = 逻辑像素
+```
+
+- `GetPluginRowBudget()` 是按**插件**算的（扣掉原生 + 排在它前面的插件，含那些间距）。
+- `GetSlotBudget(widgetId)` 是按**单个组件**算的（再扣掉它自己的槽间距），AutoWidth 插件在 `Layout` 前挑内容用它最准。
+- 两个都随帧刷新，渲染线程和后台线程都能调。
+
+### 6.5 坐标系
+
+这是最容易写错的一处，务必分清：
+
+| 位置 | `rect` | `x` / `y` |
+|---|---|---|
+| `Draw` | 你在岛上的矩形（**岛内绝对坐标**）：`Left`/`Right` 是横位置，`Top = 0`、`Bottom = 岛高` | — |
+| `HitTest` | 同上（绝对） | **相对矩形左上角**（`0 ~ rect.Width`、`0 ~ rect.Height`） |
+| `OnLeftClick` / `OnLeftDoubleClick` | — | **相对矩形左上角** |
+| 详情页的 `HitTest` / `OnAction` / `OnMouse*` | 详情页矩形（绝对） | **相对矩形左上角** |
+
+所以命中判断永远写成 `x >= 0 && x <= rect.Width`，**不要**写 `x >= rect.Left` —— `rect.Left` 不是 0。
+
+垂直方向：`rect.Top` 是 0、`rect.Bottom` 是整条岛的高度，画面中线是 `rect.MidY`；再叠加 `frame.TextOffsetY` 做文字基线对齐（宿主自己的文字也是这么摆的）。
+
+### 6.6 Draw 的三条规矩
+
+1. **画笔（`SKPaint`）在 `Draw` 里临时 `new`、画完 `using` 释放**。不要缓存成字段跨线程复用 —— 卸载 / 重载时宿主会释放相关原生对象，你下次再用就是 use-after-free（`0xC0000005`）。
+2. **透明度一律乘上 `frame.Alpha`**（`颜色.WithAlpha(frame.Alpha)`），否则启动淡入、Toast 叠化时你的内容会「不跟着淡」，看起来像贴上去的。`frame.Alpha == 0` 直接 `return`。
+3. **异常会熔断**：`Draw` / `MeasureWidth` / `Layout` 抛异常，这个组件会被标记为 broken、从此不再绘制（日志里有记录）。别在这里做可能长时间阻塞的事。
+
+### 6.7 点击、右键、双击
+
+**左键**：`HitTest` 返回 `new WidgetHit("动件名")` → 宿主调 `OnLeftClick(action, x, y)`。动作名由你定义（`"toggle"`、`"next"`、`"open"`…），`WidgetHit.None` 表示没点中。
+
+**右键**默认行为是「展开详情页 → 没有详情页就打开设置窗口」。两档可选的透传，互相独立，默认都关：
+
+| 声明 | 行为 | 代价 |
+|---|---|---|
+| `AcceptsRightClick => true` | 命中本组件的右键**不再**展开详情页 / 打开设置，只回调 `OnRightClick()` 并消费 | 放弃了「右键展开详情页」这个默认入口 |
+| `AcceptsDoubleClick => true` | 左右键双击回调 `OnLeftDoubleClick(x, y)` / `OnRightDoubleClick(x, y)` | 只开这一档时，右键单击会先等一个系统双击判定窗口（`GetDoubleClickTime()`，默认约 500ms）才执行默认行为 |
+
+规则与代价：
+
+- 宿主**不做**「延迟单击等双击」的排队。所以一次左键双击 = 先一次普通单击（`HitTest` + `OnLeftClick`）+ 再补一次双击回调。**双击动作必须幂等**。
+- 右键两档都开时不等待：单击当场回调，双击随后再补一次。只开双击时，第一下先挂起、窗口内来了第二下才算双击（此时不执行默认行为），窗口过了才执行原行为。
+- 组件这层的右键回调签名是 `OnRightClick()`（**不带坐标**）；详情页那层才带 `(x, y)`。
+
+右键的分层消费顺序（知道就行，不用写代码）：收起详情页 → 广播给命中的组件 → 展开媒体面板 → 打开设置窗口。**原生媒体区域平时不消费右键**，所以插件组件只要不画到那上面，右键就归你。
+
+### 6.8 收起态接文件
+
+```csharp
+public bool AcceptsFileDropWhenCollapsed => true;
+```
+
+置 `true`（并且提供了 `DetailPage`）后，用户把文件拖到**还没展开**的组件图标上时，宿主会自己把详情页展开、光标变成「可放入」，接着走详情页那套拖入回调，松手即落下。适合「组件本身就是文件入口」的插件（文件中转站就是这么做的）。
+
+边界：展开**不等于**接受（落点仍要在详情页矩形内）；已有别的详情页开着时不会抢。
+
+### 6.9 生命周期与熔断
+
+- `OnActivate(IPluginHost)`：`host.RegisterWidget(w)` **内部同步调用**。这是读回持久化设置、缓存宿主引用的时机 —— 注意它可能在你 `Initialize` 还没返回时就跑到了。
+- `OnDeactivate()`：卸载摘登记时调用。宿主保证**先**切断渲染侧对组件的引用（`InvalidatePluginSnapshot`），**再**回调它，所以在这里 `Dispose` 自己持有的原生资源是安全的。
+- 卸载顺序：`插件.Dispose()`（如果实现了 `IDisposable`）→ 组件的 `OnDeactivate()` → 反注册 → 卸载程序集。
+- 两边都可能跑到，释放逻辑请写成幂等的（`try { x?.Dispose(); } catch { }`）。
 
 ---
 
-## 五、组件（IWidget）详解——把内容画到灵动岛上
+## 7. 详情页 IDetailPage
 
-这是最常见也最核心的部分。组件负责一段显示内容，必需的是下面这几个方法，外加两个生命周期方法，每帧和每次点击都会用到它们。逐个解释：
+### 7.1 最小实现
 
-- **`DisplayName` / `DetailPage`**：显示名用于把组件区分开来；`DetailPage` 指向这个组件的详情页，没有就返回 `null`（右键点击程序会默认展开详情页，没有就不展开）。
-- **`AcceptsFileDropWhenCollapsed`**（默认 `false`）：要不要让「把文件拖到收起态的组件图标上」自动展开详情页并接收这次拖放。**组件本身就是文件入口**的插件应该打开它（文件中转站就是这么做的：用户从资源管理器把文件拖到岛上那个小图标上，面板自动打开、松手即加入，不必先点开面板）。前提是组件确实提供了 `DetailPage`。详见第八节。
-- **`MeasureWidth(float availableHeight)`**：程序需要知道你的组件占多宽，才能决定灵动岛整体多宽并排布大家。返回一个逻辑像素的宽度。内容（比如文字）变了，就返回一个不同的值，灵动岛会自动做宽度变化动画。高度一般不必自己决定，程序会统一处理，你按传入的高度来布局。
-  这个返回值的语义是「**完整显示我的内容需要多宽**」，不是「我希望多宽」。程序会用它和本帧剩余空间比对：装得下就按这个宽度给你、内容完整显示；装不下这一帧就**整个组件都不显示**（程序不会替你压缩、截断或加省略号——那才是真正的显示不全）。所以别为了「挤进去」而少报宽度，也别用岛体总长上限（`1920`，常量 `Renderer.MAX_ISLAND_WIDTH`）去夹自己的返回值。详见第十节「开放接口清单」里 `IWidget` 那条。
-  **新插件建议直接用 AutoWidth 协议**（`IAutoWidthWidget`）：宽度交给程序算，你不用实现本成员，也不用自己留余量或算间距，见第十节「AutoWidth 协议」。
-- **`Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`**：每一帧都调用，把你想要的内容画出来。`rect` 是程序分给你的一块区域，含上下左右（`rect.MidY` 是垂直中线）；`frame` 是这一帧的上下文，见下一条。
-- **`WidgetFrame`（渲染帧）**：包含 `Theme`（当前主题色，如 `frame.Theme.TextColor` 是文字颜色）、`Alpha`（透明度，0–255，跟随程序的淡入和叠化）、`TextOffsetY`（文字垂直偏移，用来和整体布局对齐）。绘制时用 `颜色.WithAlpha(frame.Alpha)` 就能让你的内容配合程序动画淡入淡出，看起来浑然一体。
-- **`HitTest(...)` / `OnLeftClick` / `OnRightClick`**：鼠标交互三步。先 `HitTest` 判断点没点中，点中了返回一个动作名（随便起，比如 `"toggle"`）；之后程序调用 `OnLeftClick` 并把动作名交给你。`WidgetHit.None` 表示没点中；`new WidgetHit("toggle")` 表示点中并携带动作名。
-- **`AcceptsDoubleClick`（默认 `false`）+ `OnLeftDoubleClick` / `OnRightDoubleClick`**：要不要接收**双击**。默认关，双击完全走程序原有行为（左键留给媒体封面跳转 / 待机切换，右键就是展开详情页）；置 `true` 后，程序在**真的检测到双击**时才回调你（单击不回调，程序也不做「延迟单击等双击」的排队）。右键那一档程序会等一个系统双击判定窗口（约 500ms）—— 细节和代价见第八节。
-- **`OnActivate(IPluginHost host)` / `OnDeactivate()`**：组件被启用和停止时各调用一次（2026-10-05 起宿主真的会调了，之前只有声明没有调用点）。`OnActivate` 是你读回持久化设置、拿到宿主引用做初始化（包括按当前字体算一次宽度）的好时机；`OnDeactivate` 是你归还自己持有的 native 资源（画笔等）的机会，**前提是你真的想主动释放**——留 `SKPaint` 给终结器也是安全的。详见第十节「生命周期」那条。
-
-绘制所用的 `skiaSharp` 画笔（`SKPaint`）有一个非常重要的约定：**在 `Draw` 方法里临时创建、画完就释放，绝不要把它们缓存成字段在多个线程之间复用**。原因见文末“踩坑”部分，这是你写插件必须遵守的安全规则。
-
----
-
-## 六、字体接入——让插件文字和灵动岛同源
-
-上面示例里的 `Draw` 直接 `new SKPaint { TextSize = 12.5f }` 就画字了，能跑，但用的是 **SkiaSharp 的默认字体**：既不是灵动岛当前在用的字体，用户在控制台「切换灵动岛字体」时你的文字也不会跟着变。想让插件文字和岛体同源（同一套字形、同一个自定义字体、一起热切换），就要向宿主**借字体**。
-
-### 字体在哪：`FontConfig`
-
-宿主把「全岛用哪套字体」收在一个静态类里：`NotchPeninsula.FontConfig`（源码在 `Render/FontConfig.cs`）。它**不在** `Plugin/PluginApi.cs` 里，而是和 `Logger` 一样属于宿主的公共设施类；因为你的插件工程引用了主程序，所以直接就能用，只要在文件顶部加上命名空间：
+组件上挂一个对象即可：
 
 ```csharp
-using NotchPeninsula;   // FontConfig 在这个命名空间，不是 NotchPeninsula.Plugins
-using SkiaSharp;
-```
-
-常用的成员只有这几个：
-
-- `Normal` / `Bold` / `SemiBold` —— 三档字重的 `SKTypeface`，就是岛体当前在用的字体。**正文类文字用 `Normal` 就对了**；想和标题、时间那种粗体对齐，再用 `Bold` / `SemiBold`。
-- `Fallback` —— 缺字兜底，恒为系统字体。用户选了只含拉丁字形的字体时中文会落到它上面，不至于满屏方块。
-- `HasCustomFont` / `CustomFontPath` / `DisplayName` —— 当前字体的状态与名字（`DisplayName` 就是控制台卡片上显示的那个），`CustomFontPath` 可以拿来当「排版缓存」的失效键。
-- `event Action? Changed` —— 用户切换 / 重置字体时触发，用来做「换字体后重测宽度」。
-
-> ⚠️ `ApplyCustomFont` / `ResetToSystemFont` / `Restore` 是**宿主自己**换字体用的（对应控制台「切换灵动岛字体」），插件不要调。
-
-### 两条铁律
-
-1. **绝不缓存 `SKTypeface`。** 宿主换字体时会 `Dispose` 掉旧的字体面，你把 `FontConfig.Normal` 存进字段，下一帧再拿它绘制就是 use-after-dispose，直接 `0xC0000005` 访问违例。所以 **每次 `Draw` / `MeasureWidth` 现取一次**。
-2. **绝不 `Dispose` 宿主的字体面。** 它是进程级共享资源（全岛每一支文本画笔都用它），插件只能借、不能还 —— 你把它释放掉，下一帧整个岛体（含原生内容）会一起崩。只有你自己 `SKTypeface.FromFile(...)` 创建出来的字体面才归你释放。
-
-### 标准写法
-
-官方插件（天气、一言、文件中转站）都放了一份同名小工具 `PluginFont.cs`，把上面两条铁律封起来，绘制处只管取一次：
-
-```csharp
-using NotchPeninsula;
-using SkiaSharp;
-
-namespace MyPlugin;
-
-/// <summary>
-/// 字体解析器：直接用宿主的字体，插件不自带任何字体文件。
-/// 每次现取、绝不缓存 —— 宿主换字体会 Dispose 旧字体面，缓存下来就是 use-after-dispose。
-/// </summary>
-internal static class PluginFont
+internal sealed class MyDetailPage : IDetailPage
 {
-    /// <summary>借一个当前可用的字体面；拿不到时返回 null，调用方保持 Skia 默认字体。</summary>
-    public static SKTypeface? Resolve()
+    public float MeasureWidth() => 320f;
+    public float MeasureHeight() => 140f;
+
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
-        try { return FontConfig.Normal; }      // 和岛上其余文字同一套
-        catch { }                              // 旧宿主没有 FontConfig 这个类型 → 降级
-        try { return FontConfig.Fallback; }
-        catch { return null; }
+        using var paint = new SKPaint
+        {
+            IsAntialias = true, TextSize = 13f,
+            Typeface = WidgetKit.Typeface(),
+            Color = frame.Theme.TextColor.WithAlpha(frame.Alpha),
+        };
+        canvas.DrawText("详情页内容", rect.Left + 16f, rect.Top + 28f, paint);
     }
+
+    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
+    public void OnAction(string? action, float x, float y) { }
 }
 ```
 
-绘制和测宽各取一次、都要设上 `Typeface`，而且**两次必须是同一个字体面** —— 否则量出来的宽度和实际画出来的宽度对不上，`MeasureWidth` 报的尺寸就是错的：
+组件里：`public IDetailPage? DetailPage { get; } = new MyDetailPage();`（建一次就缓存，别每次访问都 `new`）。
+
+### 7.2 尺寸与裁剪
+
+- `MeasureWidth()` / `MeasureHeight()` 返回**你想要的尺寸**（逻辑像素），宿主只做保护性裁剪：
+  - 宽 `180 ~ 1000`
+  - 高 `48 ~ 480`
+- 返回 `NaN` / `<= 0` 会按最小尺寸兜底并记日志。
+- **同一次展开期间尺寸是固定的**：内容变了想让岛变大，得等下次展开。所以要么保证内容落在已报尺寸内，要么自己按当前尺寸重新排版（见下一条）。
+- 展开 / 收起带弹簧动画，不用你自己做。
+
+### 7.3 坐标系与展开动画
+
+`Draw` 拿到的 `rect` 是**岛内绝对坐标**，但**动画进行中的每一帧它是插值尺寸**（目标 380×108，前几帧可能只有 130×34）。
+
+⚠️ **不要拿 `rect` 当排版基准**。按它换行会让文字每帧重排、每帧跳位（肉眼就是「展开不丝滑」），任何以 `rect` 尺寸为 key 的缓存都会每帧失效。
+
+正确做法：**排版永远按你 `MeasureWidth` / `MeasureHeight` 的目标尺寸算**，绘制时把整块内容对齐 / 缩放到当前 `rect`：
 
 ```csharp
-public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
-{
-    using var paint = new SKPaint
-    {
-        IsAntialias = true,
-        TextSize = 12.5f,
-        Typeface = PluginFont.Resolve(),   // ← 不设这行，画出来就是 Skia 默认字体
-        Color = frame.Theme.TextColor.WithAlpha(frame.Alpha),
-    };
-    canvas.DrawText("你好", rect.Left, rect.MidY + 4.5f, paint);
-}
+float layoutW = 320f, layoutH = 140f;             // 与 MeasureWidth/Height 一致
+float scale = Math.Min(Math.Min(rect.Width / layoutW, rect.Height / layoutH), 1f);  // 封顶 1，免得过冲被裁
 
-public float MeasureWidth(float availableHeight)
-{
-    using var measure = new SKPaint { IsAntialias = true, TextSize = 12.5f, Typeface = PluginFont.Resolve() };
-    return measure.MeasureText("你好") + 8f;
-}
+canvas.Save();
+canvas.Translate(rect.MidX, rect.MidY);
+canvas.Scale(scale);
+canvas.Translate(-layoutW * 0.5f, -layoutH * 0.5f);
+// 之后都按 (0, 0, layoutW, layoutH) 这个固定坐标系画
+canvas.Restore();
 ```
 
-> 官方插件里 `Resolve()` 返回的是一个带「归属标记」的 `FontLease` 而不是裸 `SKTypeface`。那是为**插件自己也会 `FromFile` 加载字体文件**（自带字体）的情况准备的：`using` 释放时只释放自己 new 的那份，宿主共用的原样放过。只借宿主字体的话，上面这个简化版就够用，效果完全一致。
+动画期间内容随容器一起放大，展开完成时 `scale = 1`，与设计尺寸 1:1。
 
-### 换字体后要主动重测宽度
+### 7.4 鼠标事件
 
-宿主换字体 → 字宽全变 → 之前 `MeasureWidth` 报的「完整显示所需宽度」就作废了。不通知宿主重测，文字会被省略号砍掉半截。所以订阅 `FontConfig.Changed`，在回调里让宿主重测一次：
+除了 `HitTest` / `OnAction`（老那套，一次点击只有一个回调），详情页还有完整的鼠标事件：
 
 ```csharp
-public void Initialize(IPluginHost host)
-{
-    _host = host;
-    // 订阅放在独立方法 + try/catch：旧宿主没有 FontConfig 这个类型时，
-    // 只让这一个优化失效，插件其余功能照常（JIT 失败不牵连 Initialize）。
-    try { TrySubscribeFontChanged(); } catch { }
-}
-
-private void TrySubscribeFontChanged() => FontConfig.Changed += OnFontChanged;
-private void OnFontChanged() => _host?.InvalidateWidgetLayout();   // 回调可能在任意线程，本方法是安全的
-
-// OnDeactivate / Dispose 里记得退订：FontConfig.Changed -= OnFontChanged;
+void OnMouseDown(float x, float y);
+void OnMouseMove(float x, float y);
+void OnMouseUp(float x, float y);
+void OnMouseLeave();
 ```
 
-一句话总结：**字体现取现用、绝不缓存也绝不释放；画字与测宽用同一个字体面；换字体时通知宿主重测宽度。** 这样插件包只有几十 KB，用户换一次字体，全岛（含你的插件）一起热切换。
+坐标同样是**相对详情页矩形左上角**。两套并存：让 `HitTest` 返回 `WidgetHit.None` 就自动从老那套退出，只走鼠标事件。
+
+⚠️ **按住之后把鼠标拖出岛外再松手，`OnMouseUp` 不会来**（只有 `OnMouseLeave`），所以「按住」状态必须靠 `OnMouseLeave` 兜底复位。
+
+### 7.5 拖入 / 拖出
+
+拖入（四个成员都带默认实现，默认拒绝）：
+
+```csharp
+bool OnFilesDragEnter(int count);      // 返回 true 才接受这次拖放
+void OnFilesDragOver(float x, float y);
+void OnFilesDragLeave();
+void OnFilesDrop(string[] paths);
+```
+
+拖出用宿主代发（详情页没有自己的窗口）：
+
+```csharp
+bool ok = host.StartFileDrag(paths, allowMove: false);   // 阻塞到用户松手
+```
+
+标准写法是**在 `OnMouseMove` 里判断「左键仍按下 + 位移超过阈值」再发起**，别放在 `OnMouseDown`（否则每次普通单击都会进一次 OLE 拖放循环，观感是「点一下卡一下」）。
+
+约定：
+
+- 落点必须落在详情页矩形内，拖到岛体别处算「不接受」。
+- `StartFileDrag` 会**静默过滤**不存在的路径；全无效时直接返回 `false`，不进入拖放循环。
+- `allowMove: true` 才允许「移动」效果（拖到同盘目录会真的移动文件），慎用。
+- 只认文件系统上真实存在的路径：从网页拖文字 / 从画图工具拖位图一律拿不到。
+
+**要用户离开面板去取文件**（拖入文件就是这样）的详情页，必须调长或关掉自动收起，否则鼠标刚移开面板就没了、拖放目标当场消失 —— 见下一条。
+
+### 7.6 自动收起
+
+```csharp
+public TimeSpan AutoCollapseDelay => TimeSpan.Zero;
+```
+
+| 取值 | 行为 |
+|---|---|
+| `TimeSpan.Zero`（默认） | 用宿主内置的 **900ms** 延迟：鼠标离开岛 → 等 900ms → 收起；期间回到岛上就取消 |
+| 正数 | 自定义时长，宿主夹到 `0.5s ~ 60s` |
+| 负数（惯例 `Timeout.InfiniteTimeSpan`） | **全局屏蔽自动收起**：鼠标离开不收，**点到岛外也不收** |
+
+「不收起」时关闭入口只剩两个：**岛内右键**（没把右键透传给插件时）和插件自己调 `CloseDetailPage()`。所以选这一档的详情页**务必留一个看得见的关闭出口**。
+
+> 为什么默认有 900ms：详情页尺寸由插件决定，展开动画结束后鼠标可能刚好落在新面板之外。
+
+### 7.7 右键 / 双击透传
+
+详情页上同样是两档独立开关，语义与组件一致，只是回调带坐标：
+
+| 声明 | 行为 |
+|---|---|
+| `AcceptsRightClick => true` + `OnRightClick(x, y)` | 岛内右键**不再收起面板**，当场回调；双击随后再补一次 |
+| `AcceptsDoubleClick => true` + `OnLeftDoubleClick/OnRightDoubleClick(x, y)` | 左右键双击回调；只开这档时右键单击会晚一个双击窗口才收起 |
+
+⚠️ 开了 `AcceptsRightClick` 等于把「右键关面板」这个手势整个让给插件 —— 请自己留关闭出口（面板里的 ×，或调 `CloseDetailPage()`）。若 `AutoCollapseDelay` 又是负数，那就只剩这一个出口了。
+
+⚠️ 左键双击的第一下**仍会照常走一次单击**（`HitTest`/`OnAction` 与 `OnMouseDown`/`OnMouseUp` 都会来），动作要幂等。
+
+### 7.8 主动开合
+
+```csharp
+host.OpenDetailPage("组件Id");                 // 不带结果，目标不存在/没有详情页时静默无操作
+bool ok = host.TryOpenDetailPage("组件Id");    // 带结果：展开成功或本来开着 → true
+host.CloseDetailPage();
+bool now = host.ToggleDetailPage("组件Id");    // 切换语义：已展开则收起
+```
+
+典型用法：数据加载完了自动弹出来（`TryOpenDetailPage`），或在面板里放一个 × 按钮（`CloseDetailPage`）。
+
+### 7.9 熔断与尺寸固定
+
+- `MeasureWidth` / `MeasureHeight` / `Draw` 抛异常 → 该详情页被熔断并自动收起，主程序照常运行（日志有原因）。
+- 一次展开期间尺寸固定；想变尺寸只能等下次展开。
+- 详情页展开时：岛内左键只走详情页；来了 Toast 会先显示通知，通知结束后详情页自动回来。
 
 ---
 
-## 七、经常用到的其他能力
+## 8. 常用能力
 
-这些能力和组件配合，能让插件真正实用起来。每个都只用一段话说明怎么用，写法在示例里已有体现的部分会用示例回指。
+### 8.1 定时刷新
 
-**定时刷新（ScheduleRefresh）**：`host.ScheduleRefresh(interval, 回调)` 让程序每隔一段时间在后台线程调用你的回调（最小间隔 100 毫秒）。回调里更新你自己的数据即可，渲染线程会自动读到最新值，无需手动触发重绘。它返回一个 `IDisposable`，`Dispose` 就停止刷新。适合做“每 5 分钟拉一次课表”“每 30 秒轮询一次状态”这类事情。注意回调在后台线程运行，更新数据时要保证渲染线程的安全读取（用 `volatile`、`Interlocked` 或 `lock`）。示例如第五节和示例代码里的 `_seconds`。
+```csharp
+IDisposable timer = host.ScheduleRefresh(TimeSpan.FromSeconds(5), () => { /* 后台线程 */ });
+timer.Dispose();   // 停止
+```
 
-**提醒（PostReminder）**：`host.PostReminder(new ReminderData { Title = ..., Body = ..., Duration = ... })` 弹出一条灵动岛顶部提示，**默认停留 4 秒**（`Duration` 可覆盖，宿主会夹到 1~60 秒；传 0 / 负数退回默认 4 秒）。`ReminderData` 里 `IconPath` 可以配图标（可选），`OnClick` 可以配**点击这条提醒时的回调**（可选）—— 宿主在用户点中通知时调用它，会先把通知收起再回调，你可以在里面弹详情页、再发一条提醒或者干别的；回调里的异常由宿主捕获记日志，不会影响你的插件。适合做“数据更新了”“事件已提醒，点一下看详情”这类反馈。
+- 间隔最小 **100ms**（更小的会被夹到 100ms）。
+- 回调在**后台线程**（`System.Timers.Timer`）。
+- **上一次回调还没跑完时，这一次直接跳过**（不排队、不叠加）—— 所以回调里可以放心做几秒的活。
+- 回调抛异常会被宿主吞掉并记日志，定时器继续跑。
+- 回调里更新数据、`Draw` / `Layout` 里读：用 `volatile` / `Interlocked` / `lock` 保证可见性与一致性。
 
-> `IconPath` 虽然叫 Path，实际接受四种写法，程序会按前缀自动识别：本地文件路径（`C:/icons/a.png`）、图片链接（`https://...`，下载后缓存）、内联图（`data:image/png;base64,...`）、内置别名（`"qq"` / `"windows"`）。
-> 想让某个 App 名也能当别名用，把 `wechat-icon.png` 这样的文件丢进程序目录的 `data/image/` 即可（`<别名>-icon.*` 或 `<别名>-logo.*`）。
-> `AvatarPath`（可选）是**消息头像**，写法与 `IconPath` 完全相同，但**优先级高于 `IconPath`**：聊天类提醒（QQ 消息的那张好友 / 群头像）带你自己的头像时就走它，宿主保证头像压过图标 —— 显示优先级固定为 `头像 > icon > 兜底`，同一帧里两者都在也只会画头像。
-> 图标 / 头像是异步解析的：提醒会先用兜底图标弹出来，解析完成后自动换图（先到头像就先显头像）。任何一步失败都静默回退到下一级。
+### 8.2 提醒
 
-**持久化设置（GetSetting / SetSetting）**：插件自己的配置存在 Windows 注册表里，程序会自动给每个插件的配置 key 加上 `Plugin.<你的Id>.` 前缀，所以你和其他插件不会互相覆盖。`GetSetting(key, 默认值)` 读，`SetSetting(key, value)` 写，存的是字符串。组件加载时在 `OnActivate` 里读回，运行时用 `host.SettingsChanged` 事件监听配置被改动（`SetSetting` 写入后触发）。这是让插件“记住上次状态”的机制，示例图里的开关就是用这套实现的。
+```csharp
+host.PostReminder(new ReminderData
+{
+    Title = "下载完成",
+    Body = "3 个文件已就绪",
+    Duration = TimeSpan.FromSeconds(6),   // 可选
+    IconPath = "qq",                      // 可选
+    AvatarPath = "https://example.com/a.png",  // 可选，优先级高于 IconPath
+    OnClick = () => host.TryOpenDetailPage("com.example.hello.widget"),  // 可选
+});
+```
 
-> **想让用户配置你的插件？** 程序**不提供**「在设置窗口里给插件一块配置区域」的能力（相关接口未接线，注册了也不会显示）。
-> 需要配置项就用上面这套自己存、自己做 UI：最省事的做法是把配置做成**详情页**里的内容（右键组件展开，见第八节），或者用 `CreateWindow` 开一个独立小窗口。
+| 字段 | 说明 |
+|---|---|
+| `Title` / `Body` | 标题 / 正文 |
+| `Source` | 左上角来源标签，不填就是「插件提醒」 |
+| `IconPath` | 图标，四种写法：本地路径 / `https://` 图片 / `data:image/png;base64,...` / 内置别名（`"qq"`、`"windows"`…） |
+| `AvatarPath` | 头像，写法同 `IconPath`，**优先级高于 `IconPath`**（头像 > 图标 > 兜底） |
+| `Duration` | 停留时长：`<= 0` → 4 秒；`< 1s` → 1 秒；`> 60s` → 60 秒 |
+| `OnClick` | 用户点中这条提示时的回调；宿主先收起通知再回调，回调异常自吞 |
 
-**详情页（IDetailPage）**：右键组件展开的详细内容页。在组件的 `DetailPage` 属性里返回一个实现 `IDetailPage` 的对象即可（没有就返回 `null`，右键就只会打开设置窗口）。它的方法和组件类似：`MeasureWidth` / `MeasureHeight` 报尺寸、`Draw` 画内容、`HitTest` / `OnAction` 处理点击，只是画面更大，可以展示更多信息或做成一个小设置面板。**已开放**：右键组件后灵动岛会按你报的尺寸整块展开成详情页，展开 / 收起都带和原生一致的弹簧动画；岛内左键会按 `HitTest` 命中的动作名回调 `OnAction`。约定与细节见第八节。
+- 图标 / 头像是**异步解析**的：先用兜底图标弹出来，解析完自动换图；任何一步失败都静默回退到下一级。
+- 想加新的内置别名：把 `wechat-icon.png` 这类文件丢进程序目录的 `data/image/`（`<别名>-icon.*` 或 `<别名>-logo.*`）。
 
-**自定义窗口（CreateWindow）**：`host.CreateWindow(title, width, height)` 创建一个独立于灵动岛的、可用 SkiaSharp 绘制、支持鼠标和键盘的小窗口（自动居中、右上角有关闭按钮、Esc 可关闭）。它返回一个 `IPluginWindow`，你可以 `SetDraw` 设置绘制回调 `(canvas, width, height)`，`SetMouse` 设置鼠标按下/移动/松开回调，`SetKey` 设置键盘字符回调，画完调用 `RequestRedraw()` 刷新，用完 `Close()` 关闭。适合做“悬浮工具面板”这类不依赖灵动岛的小工具。
+### 8.3 设置持久化
 
-**文件拖放（SetFilesDrop / SetDragHover / StartDragFiles）**：插件窗口支持双向的文件拖放。**拖入**用 `win.SetFilesDrop(files => ...)` 拿「松手时落下的文件」、用 `win.SetDragHover(onEnter, onOver, onLeave)` 拿「拖动过程中的悬停状态」；**拖出**用 `win.StartDragFiles(paths)` 发起，用户就能把窗口里的条目拖到桌面、资源管理器或任何接受文件的程序里，也可以拖到另一个插件窗口上。两边都只**传递路径**，宿主不会替你移动、复制或删除任何文件——是引用原路径，还是拷贝到你自己的暂存目录，完全由你决定。这正是做「文件中转站」这类插件需要的能力。
+```csharp
+string v = host.GetSetting("on", "1");   // key, 默认值
+host.SetSetting("on", "0");              // 只存字符串
+```
 
-拖入分成「过程」和「松手」两条线，分开订阅：
+- 存在 `HKCU\SOFTWARE\NotchPeninsula`，key 自动加 `Plugin.<你的 Id>.` 前缀，插件之间不会互相覆盖。
+- 存的是字符串：数字用 `int.TryParse`、布尔用 `"1"/"0"`，自己定规矩。
+- `host.SettingsChanged`：**`SetSetting` 写入时会同步触发你自己注册的处理器**（在调用 `SetSetting` 的那条线程上），适合「改完立刻重算」。
+- 读回的最佳时机是组件的 `OnActivate`。
 
-- `SetDragHover(onEnter, onOver, onLeave)` —— 拖动的**过程**，用来做视觉反馈。`onEnter` 在拖入项进入窗口时触发一次，参数是本次拖入的条目数（适合显示「将导入 3 项」）；`onOver` 在鼠标移动时持续触发，参数是鼠标在窗口内的逻辑坐标（和 `SetMouse` 同一套坐标系）；`onLeave` 在拖出窗口、取消拖放、松手放下时触发，用来复位。
-- `SetFilesDrop(files => ...)` —— **松手**那一刻，参数是完整的路径数组。
+> 宿主**不提供**「在设置窗口里给插件一块配置区」的能力（`RegisterSettingsPage` 未接线，注册了也不会显示）。要配置项就自己做 UI：做进详情页最省事，或用 `CreateWindow` 开独立窗口。
 
-两条线互不依赖，只订阅其中一个也行。宿主内部走的是 OLE 的 `IDropTarget` 而不是 `WM_DROPFILES` —— 这是能拿到悬停事件和实时坐标的唯一办法。
+### 8.4 自定义窗口
 
-> ⚠️ **`onLeave` 一定会来，高亮必须靠它复位。** 用户中途按 Esc、把鼠标拖出窗口、或者直接松手放下，宿主都会调一次 `onLeave`。正确的配对是「`onEnter` 点亮、`onLeave` 熄灭」——千万别把高亮只挂在 `onOver` 上，那样鼠标一停或者拖放被取消，高亮就永远留在界面上了。
->
-> ⚠️ **只接受文件拖入。** 拖动内容里没有文件系统路径时（从网页拖一段文字、从画图工具拖一块位图），宿主直接拒绝：三个悬停回调一个都不触发、光标显示为禁止、`SetFilesDrop` 也不会响。
->
-> ⚠️ **想在 `SetFilesDrop` 里知道「用户在哪松的手」**，就在 `onOver` 里把坐标记进自己的字段——宿主会在松手前最后发一次 `onOver` 报出准确落点，所以 `files` 回调里读到的一定是最新值（可以拿它决定「插到第几项」）。
->
-> ⚠️ **拖出会阻塞，而且吞掉鼠标抬起回调**。`StartDragFiles` 内部走的是 OLE 的 `DoDragDrop`，它会阻塞到用户松手或按 Esc 才返回（期间系统接管鼠标）——`SetMouse` 注册的 **up 回调不会触发**。所以有两条纪律：① 别在 `SetDraw` 里调用它；② 别用 up 回调复位「我正在拖动」这类状态，要在 `StartDragFiles` 返回之后自己复位。
->
-> 标准写法是**在 move 回调里按阈值发起**（不是 down——放在 down 里会让普通单击也进一次拖放循环）：
+```csharp
+var win = host.CreateWindow("我的面板", 420, 260);   // 自动居中、有关闭按钮、Esc 可关
+
+win.SetDraw((canvas, w, h) =>
+{
+    canvas.Clear(new SKColor(30, 30, 30));
+    // 按 (0, 0, w, h) 画内容
+});
+win.SetMouse(down: (x, y) => { }, move: (x, y) => { }, up: (x, y) => { });
+win.SetKey(ch => { });
+
+win.RequestRedraw();   // 请求重绘（宿主在下一拍调你的 SetDraw）
+// ...用户关掉窗口或你主动收工时
+win.Close();
+```
+
+- `SetDraw` 的宽高与坐标系都是**逻辑像素**（宿主内部已按系统 DPI 缩放画布），和岛体口径一致。
+- 鼠标 / 键盘回调也在同一套逻辑坐标里。
+- 窗口归宿主管理：自动居中、右上角关闭按钮、Esc 关闭；插件 `Close()` 之外不要自己销毁句柄。
+
+### 8.5 窗口的拖放
+
+拖入分「过程」和「松手」两条独立的线，只订阅其中一条也行：
+
+```csharp
+win.SetDragHover(
+    onEnter: count => { /* 拖入项进入窗口：显示「将导入 N 项」 */ },
+    onOver:  (x, y) => { /* 移动中：记下坐标、画高亮 */ },
+    onLeave: ()     => { /* 离开 / 取消 / 放下：复位高亮 */ });
+
+win.SetFilesDrop(paths => { /* 松手：完整路径数组 */ });
+```
+
+四条硬约定：
+
+1. **`onLeave` 一定会来，高亮必须挂在它上面复位**。只挂在 `onOver` 上，用户拖出去再松手，高亮就永远留在界面上。
+2. **只接受文件拖入**：拖动内容里没有文件系统路径时（网页文字、画图位图），三个悬停回调都不触发、光标显示禁止、`SetFilesDrop` 也不响。
+3. **拖出会阻塞**：`StartDragFiles` 走 OLE 的 `DoDragDrop`，阻塞到用户松手或按 Esc，而且**期间 `SetMouse` 的 up 回调不会触发**。所以状态要在 `StartDragFiles` 返回后自己复位（`finally`）。也**别在 `SetDraw` 里调它**。
+4. **拖出要在 move 回调里按阈值发起**（不是 down）。
 
 ```csharp
 private readonly List<string> _files = new();
-private bool _hovering;                // 有拖入项悬在窗口上：用来把边框画亮
-private int _hoverCount;               // 本次拖入几项
-private float _hoverX, _hoverY;        // 鼠标在窗口内的位置（松手时它就是落点）
-private bool _pressed;                 // 左键是否按下
-private float _pressX, _pressY;        // 按下位置，用来算位移
-private bool _dragging;                // 拖放已发起，等 StartDragFiles 返回后复位
+private bool _pressed, _dragging;
+private float _pressX, _pressY;
 
-// ① 拖动过程：点亮 / 跟坐标 / 复位
-window.SetDragHover(
-    onEnter: count => { _hovering = true; _hoverCount = count; window.RequestRedraw(); },
-    onOver:  (x, y) => { _hoverX = x; _hoverY = y; window.RequestRedraw(); },
-    onLeave: ()     => { _hovering = false; window.RequestRedraw(); });
-
-// ② 松手：拿到落下的文件（此时 _hoverX / _hoverY 就是落点）
-window.SetFilesDrop(paths =>
-{
-    _files.AddRange(paths);            // 引用模式：只记路径，不动原文件
-    window.RequestRedraw();
-});
-
-window.SetMouse(
+win.SetMouse(
     down: (x, y) => { _pressed = true; _pressX = x; _pressY = y; },
     move: (x, y) =>
     {
-        const float Threshold = 4f;    // 起拖阈值（逻辑像素）
         if (!_pressed || _dragging || _files.Count == 0) return;
-        if (Math.Abs(x - _pressX) < Threshold && Math.Abs(y - _pressY) < Threshold) return;
+        if (Math.Abs(x - _pressX) < 4f && Math.Abs(y - _pressY) < 4f) return;
 
         _pressed = false;
         _dragging = true;
-        try
-        {
-            // 阻塞到用户松手或按 Esc；true = 目标接受了这次拖放
-            if (window.StartDragFiles(_files)) { /* 已拖出，视需要更新你的列表 */ }
-        }
-        finally
-        {
-            _dragging = false;         // ⚠️ 必须在这里复位，up 回调不会来
-        }
+        try { win.StartDragFiles(_files); }   // 阻塞到松手 / Esc
+        finally { _dragging = false; }        // ⚠️ up 回调不会来，必须在这里复位
     },
     up: (x, y) => _pressed = false);
 ```
 
-在 `SetDraw` 里就按 `_hovering` 决定要不要把边框画亮、要不要显示「松手即导入 N 项」——宿主不干预你画什么，只负责把时机和坐标告诉你。
+`StartDragFiles(paths, allowMove: false)` 同样会静默过滤不存在的路径，全无效直接返回 `false`。
 
-> `StartDragFiles` 只会把**真实存在**的路径交给系统，不存在的会被静默过滤掉；路径全部无效时直接返回 `false`，不进入拖放循环。第二个参数 `allowMove` 默认 `false`（只允许复制），传 `true` 会同时允许「移动」效果——用户拖到同一个盘的目标目录时会真的**移动**文件，慎用。
->
-> 想让起拖阈值和系统一致，可以用 `SystemInformation.DragSize`（`System.Windows.Forms`），但那需要你在**自己的插件 csproj** 里加上 `<UseWindowsForms>true</UseWindowsForms>`——宿主用了 WinForms 不代表会传递给你。
->
-> **拖放期间窗口不会被销毁**：宿主已做保护——拖放进行中若收到关闭请求（插件被卸载 / 热重载），会推迟到拖放结束后再关，不会让你崩在 OLE 里。
+> 拖放期间宿主会**推迟关闭请求**（插件被卸载 / 热重载），不会让窗口在 OLE 里被销毁 —— 但你自己也别在拖放中调 `Close()`。
 
----
+### 8.6 卸载钩子
 
-## 八、详情页（IDetailPage）怎么用
+```csharp
+// 插件自己建的数据目录：卸载时宿主会多问一句「要不要一起删」
+host.RegisterUninstallDirectory(@"C:\Users\me\AppData\Local\HelloPlugin");
 
-详情页就是「右键组件后，灵动岛整块展开成你的内容」。它不占用灵动岛的常驻位置，只在用户主动右键时才出现，所以适合放“详细信息、设置项、操作按钮”这类平时不该露出来的东西。用法只有三步：
+// 宿主看不见的东西（注册表项、外部进程、临时文件）：只在真正卸载时执行一次
+host.RegisterUninstallAction(() => { /* 清理 */ });
+```
 
-1. **给组件挂上详情页**：在组件的 `DetailPage` 属性里返回一个实现 `IDetailPage` 的对象（建议建一次就缓存起来，别每次访问都 `new`）。返回 `null` 表示这个组件没有详情页，右键它仍然只是打开设置窗口。
-2. **报尺寸**：`MeasureWidth()` / `MeasureHeight()` 返回你想要的大小，单位是逻辑像素。**尺寸完全由你决定**，宿主只做一层保护性裁剪：宽度会被限制在 `180 ~ 1000`，高度限制在 `48 ~ 480`，免得插件把岛体撑到屏幕外。灵动岛会用弹簧动画平滑过渡到这个尺寸，不用你自己做动画。
-3. **画内容 + 处理点击**：`Draw(canvas, rect, frame)` 里的 `rect` 就是整个岛体区域（左上角是 `rect.Left / rect.Top`，`rect.MidX / rect.MidY` 是中心），照着它布局即可；`HitTest(x, y, rect)` 返回动作名，用户左键点中后宿主回调 `OnAction(action, x, y)`。`x / y` 都是相对 `rect` 左上角的逻辑坐标，和你 `HitTest` 里判断的坐标系完全一致。
-
-   **要做「按住拖动」这类交互，就改用鼠标事件那一套**：详情页另有 `OnMouseDown` / `OnMouseMove` / `OnMouseUp` / `OnMouseLeave` 四个回调（都带默认实现，不写就是空操作），参数同样是详情页内的逻辑坐标。它和 `HitTest` / `OnAction` 并存 —— 让 `HitTest` 返回 `WidgetHit.None`，就自动从老那套退出，只走鼠标事件，两套不会互相干扰。
-   ⚠️ **按下之后把鼠标拖出灵动岛再松手，`OnMouseUp` 不会来**（`OnMouseLeave` 会来），所以「按住」状态必须靠它兜底复位。
-
-   ⚠️ **但 `rect` 在展开 / 收起动画期间是「插值尺寸」，不能拿它当排版基准。** 宿主用弹簧动画把岛体从折叠态尺寸过渡到你报的目标尺寸，动画进行中的每一帧 `rect` 都只是过程值（例如目标 380×108，前几帧可能只有 130×34）。按它换行会导致文字每帧重排、每帧跳位——肉眼就是「展开动画不丝滑」；而且任何拿 `rect` 尺寸当 key 的分行缓存都会每帧失效，等于每帧全量重排一次（长文本尤其明显）。
-
-   正确做法：**排版永远按你 `MeasureWidth` / `MeasureHeight` 返回的目标尺寸算**，绘制时再把整块内容对齐 / 缩放到当前 `rect`：
-
-   ```csharp
-   float layoutW = /* 你的目标宽度 */, layoutH = /* 你的目标高度 */;
-   float scale = Math.Min(rect.Height / layoutH, 1f); // 弹簧有过冲，封顶 1 免得边缘被裁
-   canvas.Save();
-   canvas.Translate(rect.MidX, rect.MidY);
-   canvas.Scale(scale);
-   canvas.Translate(-layoutW * 0.5f, -layoutH * 0.5f);
-   // ...按 (0, 0, layoutW, layoutH) 这个固定坐标系绘制...
-   canvas.Restore();
-   ```
-
-   这样动画期间内容随容器一起放大，展开完成后 `scale = 1`，与设计尺寸 1:1。
-
-4. **（可选）在面板里吃右键 / 双击**：详情页上有三档默认关闭的可选能力，互相独立，不开就跟老插件一模一样。
-
-   - **右键单击透传**（`bool AcceptsRightClick => true`）：详情页展开时，岛内右键本来是程序的「关闭面板」手势（**立即**折叠），插件在这个手势里拿不到任何坐标。声明之后，面板**不再折叠** —— 第一下右键当场回调 `OnRightClick(x, y)`；第二下（双击）在同时开了下面那档时再补一次 `OnRightDoubleClick(x, y)`。
-     这一档**没有等待**：单击立刻通知，双击只是「再来一次」。
-     ⚠️ 它把「右键关面板」的手势整个让给了你，所以**务必自己留一个看得见的关闭出口**（面板里的 × 按钮，或自己调 `CloseDetailPage()`），否则面板只剩「鼠标移开自动收起」这一条路 —— 若 `AutoCollapseDelay` 又设成负数，那就彻底关不掉了。
-   - **右键双击透传**（`bool AcceptsDoubleClick => true`，只开它不开上面那档时）：第一下右键**不立即折叠**，而是先等一个系统双击判定窗口（`GetDoubleClickTime`，默认 500ms）：
-       · 窗口内来了第二下 → 回调 `OnRightDoubleClick(x, y)`，**面板保持展开不折叠**；
-       · 窗口过了还没来 → 按原行为折叠面板。
-     也就是「**只有检测到双击才通知插件**」—— 单击不会触发任何回调，只是折叠晚约一个双击窗口。这一档保住了「右键单击关面板」这个逃生出口，代价是关面板的手感慢半拍。**两档都开时走的是上面那条（不等待）。**
-   - **左键双击**（同一个 `AcceptsDoubleClick` 开关）：左键双击时回调 `OnLeftDoubleClick(x, y)`。
-     ⚠️ 双击的第一下**仍会照常走一次单击**（`HitTest` / `OnAction` 与 `OnMouseDown` / `OnMouseUp` 都会来一遍），程序不做「延迟单击等双击」的排队 —— 插件要自己保证连点两次是幂等的（例如「打开这一项」这类动作，第二下重复执行也不会出错）。
-
-   三个回调的 (x, y) 都是详情页内的逻辑坐标，和 `HitTest` / `OnMouseDown` 完全同一套口径。
-   组件（收起态）上也有对应的 `AcceptsRightClick` / `AcceptsDoubleClick` / `OnLeftDoubleClick` / `OnRightDoubleClick`，语义一致；
-   区别只是组件那层的右键默认行为是「展开详情页 / 打开设置窗口」，而且组件的右键回调沿用原签名 `OnRightClick()`（不带坐标）。
-
-交互上还有几条约定，知道就行，不用你写代码：
-
-- **右键展开 / 收起**：右键组件展开详情页；详情页展开时再在岛内右键一次就收起（不会再弹设置窗口）。
-  （插件可以声明 `AcceptsDoubleClick` 把「右键双击」要回去，见上面第 4 条 —— 那时单击仍然收起，只是晚一个双击窗口。）
-  注意岛内的右键是**分层消费**的，顺序为：收起详情页 → 广播给命中的组件 → 展开媒体面板 → 打开设置窗口。
-  **原生媒体控制器区域（标题 / 歌词 / 频谱 / 播放按钮 / 空白）平时不消费右键** —— 那里的右键一律打开设置窗口
-  （并按区域直达页签：媒体控制器 → 「媒体设置」，时间 / 日期、CPU / RAM → 「显示设置」），
-  **唯一例外**是「媒体交互方式」（展开功能总闸）开启、**且**交互设置里「双击封面跳转应用」也开启、
-  并且媒体面板**还没展开**时，右键折叠态的媒体区域会展开媒体面板（跳转关掉时这个入口变成**左键单击**，右键仍然直达「媒体设置」）；媒体面板已展开时右键仍然只打开「媒体设置」。
-  所以插件组件只要不画到那上面去，右键就完全归你。
-  另外通知（Toast）/ 详情页显示期间，岛体被整块接管，这些原生命中区都会作废，右键不会误触发。
-- **拖到收起态的组件上也会自动展开**（组件声明 `AcceptsFileDropWhenCollapsed = true` 时才生效）：
-  用户从资源管理器把文件拖到岛上那个**还没展开**的组件图标上，宿主自己把详情页展开，光标变成「可放入」，
-  接着就是平常那套拖入回调、松手即落。这是给「组件本身就是文件入口」的插件准备的（文件中转站：拖到岛上的小图标 → 面板自动开 → 松手就进去了）。
-  两条边界：展开**不等于**接受（仍要求落点在详情页矩形内）；已有别的详情页开着时不会抢。
-- **鼠标移开就收起**：鼠标离开灵动岛，详情页会自动收起（原生媒体控制面板同理）。详情页带约 **0.9s 延迟** ——
-  它的尺寸由插件决定，展开动画结束后鼠标可能刚好落在新面板之外，宿主会等 0.9s 再收，这期间鼠标回到岛上就取消。
-  鼠标移到岛外点一下左键则立即收起。
-  所以插件不用自己做关闭按钮——当然你想加也行（调用 `host.CloseDetailPage()` 即可）。
-  **这段延迟插件可以自己改**：实现 `TimeSpan AutoCollapseDelay` —— 返回**正数**覆盖内置的 0.9s（夹在 0.5s ~ 60s），
-  返回**负数**（`Timeout.InfiniteTimeSpan`）则**鼠标离开也不收起**。
-  需要用户离开面板去别处取东西的面板（最典型就是拖入文件：得先去资源管理器挑）要么调长、要么直接不收起，
-  否则鼠标刚移开面板就没了、拖放目标当场消失。
-  **选「不收起」= 全局屏蔽自动收起**：鼠标离开不收，**点到岛外也不收**（拖文件时鼠标必然经过岛外，
-  那种「点到别处」不算「想关面板」）。这时只剩**岛内右键**和插件自己调 `CloseDetailPage()` 能关掉它 ——
-  所以选这一档的详情页最好给用户留个看得见的关闭出口。
-- **左键优先给详情页**：详情页展开期间，岛内左键只会走详情页的 `HitTest` / `OnAction`，不会误触到原生媒体按钮。
-- **通知优先**：详情页展开时如果来了新的通知（Toast），灵动岛会先显示通知，通知结束后详情页自动回来。
-- **异常熔断**：`MeasureWidth` / `MeasureHeight` / `Draw` 里抛异常，这个详情页会被停用并自动收起，主程序照常运行（日志里能看到原因）。所以别在里面做可能阻塞很久的事。
-- **尺寸变化要主动报**：详情页内容变了、想让岛体跟着变大变小，直接让 `MeasureWidth` / `MeasureHeight` 返回新值即可；宿主在下一次展开时会重新测量（同一次展开期间尺寸是固定的，不会每帧抖动）。
-  反过来说：**同一次展开期间，即使你的内容变了，岛体尺寸也不会跟着变**（宿主没有「请重测详情页」的接口）。所以要么保证内容能落在已报的尺寸内显示完整，要么在内容变化时自行按当前尺寸重新排版（例如上面那段 `scale` 写法，空间不够时内容整体缩一点，而不是被裁掉）。
-- **主动开合**：`host.OpenDetailPage("你的组件Id")` / `host.CloseDetailPage()` 可以让插件自己控制详情页的开合（比如数据加载完了自动弹出来）。传入的 Id 必须是组件 `Id` 属性那个字符串。`OpenDetailPage` 不返回结果，想知道「到底有没有展开成功」就用 `host.TryOpenDetailPage("你的组件Id")`（返回 `bool`）；**别拿 `ToggleDetailPage` 顶替** —— 它是切换语义，目标已展开时会把面板收起来。
-- **一个组件一个详情页**：详情页是挂在组件上的，一个组件最多对应一个详情页；多个组件可以各自有自己的详情页。
+- 目录：**最多登记一个**，重复调用只认第一次。宿主**绝不擅自删除** —— 卸载时弹窗把路径摆给用户看，点「删除」才递归删，点「保留」就只卸载。路径要是绝对路径、且是插件独占的子目录（`%USERPROFILE%`、桌面、系统目录、盘符根、宿主程序目录会被拒绝）。
+- 动作：只在**真正卸载**时执行，禁用 / 重载 / 退出都不执行，也不弹窗；执行时机是「实例还活着、文件还没删」；抛异常只记日志、不会挡住卸载；重复注册以最后一次为准；在 UI 线程同步执行，别长时间阻塞。
 
 ---
 
-## 九、几个必须避开的坑
+## 9. 字体、主题与渲染上下文
 
-新手写插件最容易在这几处出问题，提前知道能省下大把调试时间：
+### 9.1 字体
 
-1. **画笔（SKPaint）不要缓存跨线程复用。** SkiaSharp 的画笔是原生对象，你把它存在字段里，在别的线程（绘制线程）使用，会在开关插件卸载时因为“原生对象已被释放”直接触发崩溃（`0xC0000005` 访问冲突）。正确做法是：在 `Draw` 方法里临时 `new` 一个、画完 `using` 释放。这是本项目已经踩过的真实教训。Typeface 等原生字体对象同理，也应避免无谓缓存；只做英文/数字内容的组件直接走默认字体即可；要和岛体同源（中文、自定义字体热切换）见第六节。
+宿主把「全岛用哪套字体」放在 `NotchPeninsula.FontConfig`（注意命名空间是 `NotchPeninsula`，不是 `NotchPeninsula.Plugins`）：
 
-2. **后台线程写、渲染线程读的数据必须安全。** `ScheduleRefresh` 的回调在后台线程执行，而 `Draw` / `MeasureWidth` 在渲染线程执行。两边共用同一个变量时，用 `volatile`、`Interlocked` 或 `lock` 来保证正确性，否则会出现数据读到一半、状态不同步的问题。
+| 成员 | 说明 |
+|---|---|
+| `Normal` / `SemiBold` / `Bold` | 三档字重的 `SKTypeface`，就是岛体当前在用的字体 |
+| `Fallback` | 缺字兜底（恒为系统字体），用户选了纯拉丁字体时中文会落到它上面 |
+| `HasCustomFont` / `CustomFontPath` / `DisplayName` | 当前字体状态；`CustomFontPath` 可当排版缓存的失效键 |
+| `event Action? Changed` | 用户切换 / 重置字体时触发 |
 
-3. **目标框架必须和主程序一致。** `TargetFramework` 写错（比如用低版本的 .NET）程序就加载不了你的 dll，会在“我的插件”里显示加载失败。当前主程序是 `net10.0-windows10.0.19041.0`，照抄示例即可。
+**两条铁律**：
 
-4. **一定要 `using NotchPeninsula.Plugins;` 并引用主程序工程。** 接口类型都在主程序里，不引用、不写 `using`，代码根本编译不过。
+1. **绝不缓存 `SKTypeface`**。宿主换字体时会 `Dispose` 旧字体面，你存进字段下一帧拿去画就是 use-after-dispose（`0xC0000005`）。**每次 `Draw` / `Layout` 现取一次**。
+2. **绝不 `Dispose` 宿主的字体面**。它是进程级共享资源（全岛每一支文字画笔都在用）。只有你自己 `SKTypeface.FromFile(...)` 创建的才归你释放。
 
-5. **入口类必须实现 `INotchPlugin`。** 程序是靠“dll 里有没有实现 `INotchPlugin` 的类”来识别一个 dll 是不是合法插件的。如果你的 dll 里没有这样的类，程序会判定“不是合法插件”并拒绝加载（或直接删除导入的文件）。类要写成 `public`，不能是抽象类或接口。
+AutoWidth 插件直接用 `WidgetKit.Typeface(weight)` —— 它与 `Layout` 测量用的是同一份，天然「量画一致」。老协议插件的标准写法：
 
-6. **不要在 `Initialize` 里做耗时阻塞。** `Initialize` 里应该尽量只做注册和启动后台刷新，不要在这里长时间卡住主程序。重活放到 `ScheduleRefresh` 回调或独立线程去完成。
+```csharp
+internal static class PluginFont
+{
+    public static SKTypeface? Resolve()
+    {
+        try { return FontConfig.Normal; } catch { }
+        try { return FontConfig.Fallback; } catch { return null; }
+    }
+}
+```
 
-7. **给资源一个清理机会。** 如果插件申请了定时器、线程、句柄等，让入口类实现 `IDisposable` 并在 `Dispose` 里释放。程序卸载插件时会调用它，这样热重载（升级插件）时旧代码才能真正被回收干净。
+用 `try/catch` 包住是为了「旧宿主没有这个类型」时只让字体优化失效，其余功能照常。
 
-8. **组件不注册就不会显示。** 你在 `Initialize` 里 `new` 了组件对象还不够，必须 `host.RegisterWidget(...)` 把组件交给程序。同样的，二级内容要 `RegisterSecondaryWidget`。
+> 宿主换字体后会**自己重测插件宽度**（内部按字体名 + 自定义路径做 key），你不需要订阅 `FontConfig.Changed` 来触发重测。自己另存了「按字体算好的排版缓存」时，才需要用 `Changed` / `CustomFontPath` 作失效依据。
 
-9. **拖出要在 move 回调里发起，不要在 down 里。** 放在 down 里会让用户的每一次普通单击都进一次 OLE 拖放循环（观感就是「点一下卡一下」）。正确做法是记下按下位置，在 move 里判断位移超过阈值（如 4px，或自己的策略）再调 `StartDragFiles`。
+### 9.2 主题与 WidgetFrame
 
-10. **别指望拖放结束会收到鼠标抬起回调。** `StartDragFiles` 走 OLE 的 `DoDragDrop`，期间系统接管鼠标，`SetMouse` 的 up 回调**不会**触发。所有「我正在拖动」之类的状态请在 `StartDragFiles` 返回后用 `finally` 复位，否则下一次交互就卡在错误状态里。
+```csharp
+public readonly record struct WidgetFrame(
+    RenderTheme Theme,
+    byte Alpha,
+    float TextOffsetY,
+    float[]? Bars,
+    bool IsHovered);
+```
 
-11. **拖放期间别关窗口。** 宿主已挡住这个坑（拖放中的关闭请求会推迟到拖放结束），但你自己的代码也别在拖放过程中调 `Close()` 或销毁窗口——`DoDragDrop` 还在用这个窗口句柄。
+| 字段 | 说明 |
+|---|---|
+| `Theme` | 本帧主题快照（见下） |
+| `Alpha` | 合成透明度 `0~255`；启动淡入、Toast / 详情页叠化都反映在这里 |
+| `TextOffsetY` | 文字垂直偏移（逻辑像素），加到文字基线上 |
+| `IsHovered` | 鼠标是否悬停在本组件（或详情页）矩形内 |
+| `Bars` | 音频频谱，长度 5（低音→高音，归一化到 `0~1`）；没有音频时全 0 |
 
-12. **拖入的高亮必须挂在 `onLeave` 上复位，不能只挂 `onOver`。** 拖到一半按 Esc、把鼠标拖出窗口，这些情况都不会再有后续回调，只有 `onLeave` 会来。「`onEnter` 点亮 + `onLeave` 熄灭」是唯一可靠的配对；只靠 `onOver` 的话，用户把鼠标拖出窗口再松手，高亮就永远留在界面上了。
+```csharp
+public readonly record struct RenderTheme(
+    SKColor TextColor,
+    SKColor SubTextColor,
+    SKColor BackgroundColor,
+    float GlobalDpi,
+    float NotchBottomRadius);
+```
 
-13. **别指望拖入能收到文字或图片。** 从网页拖一段文字、从画图工具拖一块位图，宿主一律拒绝（三个悬停回调都不触发，光标显示禁止）。只认文件系统上真实存在的路径——邮件附件、压缩包内的条目这类「虚拟文件」也拿不到。
+- 颜色一律 `xxx.WithAlpha(frame.Alpha)`，才能跟着淡入 / 叠化。
+- `GlobalDpi`：宿主把逻辑像素换成物理像素用的系数（设置里可改，默认 1.0）。你自己做坐标换算时必须用同一个，否则高 DPI 下会偏。
+- `NotchBottomRadius`：岛体底部圆角（宿主夹在 0~28），贴边画内容时用。
 
-14. **详情页拖出要用 `host.StartFileDrag`，而且要在 `OnMouseMove` 里按阈值发起。** 详情页画在灵动岛上、没有自己的窗口，所以 `IPluginWindow.StartDragFiles` 那套用不了，得走 `IPluginHost.StartFileDrag`。发起时机同理：放在 `OnMouseDown` 里会让用户每一次普通单击都进一次 OLE 拖放循环（观感是「点一下卡一下」）。
+### 9.3 频谱
 
-15. **双击不是「单击的替代」，而是「单击之上再补一次」。** 宿主不做「延迟单击等双击」的排队（那会给每一次普通点击都加半个双击窗口的迟滞），
-    所以声明 `AcceptsDoubleClick` 之后，一次左键双击 = 先来一次普通单击（`OnLeftClick`，详情页则是 `HitTest` / `OnAction` + `OnMouseDown` / `OnMouseUp`）+ 再来一次双击回调。
-    「打开这一项」「提交」这类动作要么做成幂等，要么在双击回调里自己判断「是不是同一处的第二下」。
-    （右键双击没有这个问题：第一下被宿主挂起等窗口，第二下没来才会执行原来的右键行为。）
+`frame.Bars` 是宿主传进来的同一份数组（每帧数值变化，长度 5）。**可以当帧读，别存进字段当快照**，也别改它。
 
-16. **`OnDeactivate` 与 `Dispose` 的分工。** 宿主卸载插件时两个都会调：先 `插件.Dispose()`（一定会被调到），摘登记时再对每个组件调 `OnDeactivate()`。
-    想释放画笔，放哪边都行 —— 宿主在调 `OnDeactivate` 之前已经断掉了渲染侧对组件的引用（`InvalidatePluginSnapshot`），
-    不会出现「你刚 Dispose、宿主又画一帧」的 native 崩溃（这正是 rayburst 之前担心的那个窗口）。
-    两边都释放时记得写成幂等的（`try { x?.Dispose(); } catch { }`），因为卸载路径上它们会先后跑到。
+```csharp
+if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
+{
+    // 画一根随低音跳动的条
+}
+```
 
-看完这些、再对照示例代码动手写一遍，你就能做出自己的灵动岛插件了。遇到问题可以从“我的插件”看每个插件的加载状态和错误信息，多数加载失败（缺依赖、框架不符、没实现入口类）都会在那里给出提示。
+### 9.4 RequestRedraw 是空操作
+
+`host.RequestRedraw()` 目前**什么都不做** —— 宿主是常驻 60FPS 渲染，画布每帧都会重画。数据变了只要把字段更新掉（注意线程安全），下一帧自然就看到了；宽度变了再补一个 `InvalidateWidgetLayout()`。
 
 ---
 
-## 十、开放接口清单（面向有经验的人）
+## 10. 常见坑速查
 
-这一节给有经验的开发者一份“接线总览”：程序对外开放了哪些接口、每个接口负责衔接哪一段能力、有哪些成员。用一句话概括——**你只需要实现好入口类，其余能力全部由下面的接口自由组合**。所有接口定义都在 `Plugin/PluginApi.cs` 一个文件里，翻源码就能逐行核对（`FontConfig` / `Logger` 这类宿主公共设施类不在其中，属于「非冻结契约」，见第六节）。需要特别说明：**接口定义了、但主程序还没有真正接线实现（注册了也不会在界面上出现，或只有占位逻辑）的，会在后面标上（暂未开放）**。正式开放的接口可以放心用；标了（暂未开放）的接口建议你真正要用之前先确认它已经转正，否则写了也看不到效果。
+| # | 症状 | 原因 | 正确做法 |
+|---|---|---|---|
+| 1 | 加载失败 / 列表里显示不兼容 | `TargetFramework` 与宿主不一致 | 逐字用 `net10.0-windows10.0.19041.0` |
+| 2 | `NotAPlugin` | dll 里没有 `public` 的 `INotchPlugin` 实现；或自己复制了一份宿主接口 | 引用主程序工程，不要自带接口定义 |
+| 3 | `MissingDependency` | 依赖放在子目录里（不会被影子复制） | 依赖 dll 直接放插件目录一层 |
+| 4 | 偶发 `0xC0000005` | 缓存了 `SKPaint` / `SKTypeface` 跨线程复用 | `Draw` 里临时 `new`、`using` 释放；字体现取 |
+| 5 | 文字被裁 / 岛宽不跟着变 | 宽度变了没通知 | 内容变化后 `InvalidateWidgetLayout()` |
+| 6 | 文字被压缩、显示不全 | `MeasureWidth` 为了挤进去少报了 | 报真实需求宽度，装不下让宿主隐藏 |
+| 7 | 点不中 / 点错位置 | 把 `HitTest` 的 `x/y` 当成绝对坐标 | 它们是相对矩形左上角的 `0..Width` |
+| 8 | 插件内容不跟着淡入 | 颜色没乘 `frame.Alpha` | `Color.WithAlpha(frame.Alpha)` |
+| 9 | 后台数据与画面不同步 / 读到半新半旧 | 后台线程写、渲染线程读没有同步 | `volatile` / `Interlocked` / `lock` |
+| 10 | 详情页展开动画卡顿、文字每帧跳 | 用 `rect`（动画插值）当排版基准 | 按 `MeasureWidth/Height` 的目标尺寸排版，再整体缩放 |
+| 11 | 鼠标移开面板就没了，拖不进文件 | 自动收起太短 | `AutoCollapseDelay` 调长或返回负数 |
+| 12 | 右键关不掉详情页 | 开了 `AcceptsRightClick` 又没留出口 | 面板里放 × 或自己 `CloseDetailPage()` |
+| 13 | 拖入高亮永远不消失 | 只靠 `onOver` 复位 | `onEnter` 点亮 + `onLeave` 熄灭 |
+| 14 | 拖出后交互卡在「拖动中」 | 以为 up 回调会来 | `StartDragFiles` 返回后用 `finally` 复位 |
+| 15 | 每次单击都卡一下 | 在 down 回调里发起拖出 | 在 move 里按位移阈值发起 |
+| 16 | 双击动作执行了两次副作用 | 第一下已经走过一次单击 | 双击动作做幂等 |
+| 17 | 卸载后旧 dll 删不掉 / 热重载没生效 | 插件自己持有程序集或文件句柄 | 别在静态字段里存插件类型；资源在 `Dispose` 里放 |
+| 18 | 数据文件读不到 | 影子副本只复制 dll/json/pdb/config/xml/txt | 用嵌入资源，或释放到 `%LOCALAPPDATA%` |
+| 19 | 装好却不在岛上 | 显示设置里没勾 | 显示设置 → 显示内容里勾上（与「启用」是两回事） |
+| 20 | 组件偶尔整个消失 | 插件行预算不够，装不下就整块隐藏 | 用 `GetSlotBudget` / `GetPluginRowBudget` 提前挑内容 |
 
-**入口类 `INotchPlugin`**（每个插件唯一必须实现的接口）
-- 属性：`Id` / `DisplayName` / `Version`，用来标识插件并在列表里展示。
-- 属性：`Author`（作者），显示在我的插件的列表里。**带默认实现（返回空串），可以不写**：它是后加的成员，写成必填会让所有已编译好的老插件直接加载失败。不写作者时，程序会退回读你程序集里的 `Company` / `Authors` 元数据（即 csproj 的 `<Authors>` / `<Company>`）。
-- 方法：`void Initialize(IPluginHost host)`，程序加载后调用，在这里注册组件、申请定时刷新等。
+---
 
-**宿主 `IPluginHost`**（`Initialize` 注入给你的对象，插件向程序请求全部服务的通道）
-- 注册：`RegisterWidget(IWidget)`（已开放，注册后渲染侧真正绘制）/ `RegisterSecondaryWidget(ISecondaryWidget)`（暂未开放，注册后无界面绘制）/ `RegisterSettingsPage(ISettingsPage)`（暂未开放，注册后只被存下来、**没有任何界面消费**，详见下面「设置页」一条）。
-- 主题：`RenderTheme CurrentTheme { get; }` 取当前帧主题快照。
-- 提醒：`void PostReminder(ReminderData)`。
-- 设置持久化：`string GetSetting(string key, string fallback)` / `void SetSetting(string key, string value)`，键会自动加 `Plugin.<你的Id>.` 前缀隔离，不会互相覆盖；`event Action? SettingsChanged` 在设置被写入后触发。
-- 刷新：`IDisposable ScheduleRefresh(TimeSpan interval, Action callback)`，后台线程周期性回调，返回对象 `Dispose` 即停止。
-- 交互：`void RequestRedraw()`（常驻 60FPS 渲染下为空操作，事件驱动化预留）/ `void OpenDetailPage(string widgetId)`（已开放，展开指定组件的详情页；组件不存在或它没有详情页时**静默无操作**，**不返回结果**）/ `bool TryOpenDetailPage(string widgetId)`（已开放，同一动作的**带结果版本**：展开成功、或目标本来就开着 → `true`；组件不存在 / 没有详情页 / 读取详情页抛异常 → `false`。想「有就开、没有就算」时用它）/ `void CloseDetailPage()`（已开放，收起当前详情页）/ `bool ToggleDetailPage(string widgetId)`（已开放，已展开则收起、没展开则展开 —— 就是「右键组件」的宿主默认行为，想让左键和右键表现一致就用它。它虽然也返回 `bool`，但语义是**切换**：目标已展开时会收起，不是「只开不收」）。
-- 布局：`void InvalidateWidgetLayout()`（已开放，请求宿主重新测量本插件组件的宽度）。
-  宿主的组件宽度是按「组件注册表版本」缓存的——只在插件注册 / 注销 / 排序时调一次 `MeasureWidth`，之后每帧直接复用缓存值（稳态 60FPS 零测量开销）。
-  所以**组件宽度随内容变化的插件**（例如按文本长度自适应），在内容变化后必须调用它通知宿主，下一帧才会重新测量并用新宽度布局；岛体宽度会走既有弹簧动画平滑过渡到新值。
-  内容没变、宽度没变就别调（会让宿主重测一次所有插件组件）。
-- 布局：`float GetPluginRowBudget()`（已开放，**本插件所在位置的剩余可用宽度**）。
-  语义是「**不显示本插件时，它那个位置还剩多少长度**」（含与原生内容之间的 16px 间距）。宿主按组件从左到右的优先级分配，把原生内容（媒体控制器及其长标题自适应、组合模式下的时间日期 / 硬件占用）以及**排在前面（更高优先级）的插件**已经占掉的宽度都扣掉了，剩下的就是这个值。
-  **宽度随内容自适应的插件应该用它来决定内容取多长**：拿到的内容如果「完整显示所需宽度 > 这个剩余」，宿主下一帧会把该组件整体隐藏（见下一条），此时换一条更短的更划算。
-  为什么不给插件写死阈值：原生占用与岛体尺寸都是可配置的（控制台 `Custom_StandbyW` / `Custom_MediaW` 等），组合显示开着时原生模块还会占掉一大截 —— 写死任何值都会在某个场景下失准。
-  返回 `0` = 本位置已无空间（原生吃满，或本帧插件行被通知 / 详情页接管）；返回正无穷 = 宿主还没跑过首帧。这两种情况都不适合判断内容长短，插件应退回自己的保守估值。
-  该值随帧刷新，无需缓存；渲染线程与后台线程调用都安全。
-- 窗口：`IPluginWindow CreateWindow(string title, int width, int height)`。
-- 卸载清理（已开放）：`void RegisterUninstallDirectory(string path)` —— 把**插件自己创建的数据目录**登记给宿主，之后用户卸载这个插件时，宿主会多问一句「这个目录要不要一起删」，并在弹窗里给一个「打开目录」按钮让用户先看一眼。
-  - **最多登记一个**，重复调用只认第一次（第二份会被忽略并写进日志）。要清多个位置，请自己在目录里再分子目录。
-  - **宿主不会擅自删除**：不登记就完全没有这个弹窗（老插件零改动、行为不变）；登记了也要用户点「删除」才递归删，点「保留」只卸载插件、目录原样留着。
-  - 路径请给**绝对路径**，并且是「插件独占的子目录」——`%USERPROFILE%`、`%APPDATA%`、`%LOCALAPPDATA%`、桌面、文档、系统目录、盘符根、宿主程序目录本身会被宿主的兜底校验拒绝，弹窗里不会出现删除选项（日志里有原因）。
-  - 卸载动作本身仍会先弹一次「确定卸载吗」的确认框——这是所有插件都有的，和有没有登记目录无关。
-- 卸载前操作（已开放）：`void RegisterUninstallAction(Action action)` —— 插件自己清理宿主看不见的东西（注册表项、外部进程、临时文件……）。
-  - 只在**真正卸载这个插件**时由宿主调一次：禁用、重载、程序退出都不执行，**也不弹任何窗**。
-  - 执行时机是「插件实例还活着、文件还没删」，所以里面可以照常用自己的资源；反过来，别在里面假设界面还在（详情页可能已经收起）。
-  - 抛异常只会记一条日志，不会挡住卸载 —— 但也别指望它提示用户，要留痕请自己写日志。
-  - 重复注册以**最后一次**为准（与目录那条不同：目录只认第一次）。它在 UI 线程上同步执行，别在里面做长时间阻塞。
+## 11. API 速查
 
-**主显示组件 `IWidget`**（灵动岛主区域里的一段内容，一个插件可注册多个）
-- 属性：`Id` / `DisplayName` / `IDetailPage? DetailPage`（已开放：非空时右键该组件会在灵动岛展开这个详情页；为 null 则右键只打开设置窗口）。
-- 收起态接文件（已开放）：`bool AcceptsFileDropWhenCollapsed`，**带默认实现**，默认 `false`。
-  置 `true` 后，用户把文件拖到**未展开**的组件图标上时，宿主会自动展开它的详情页并继续走详情页的拖入回调（松手即落到 `OnFilesDrop`）。
-  前提是组件有 `DetailPage`，且当前没有别的详情页开着。带默认实现是硬要求 —— 组件是插件实现的接口，加抽象成员会让老插件抛 `TypeLoadException`。
-- 测量与绘制：`float MeasureWidth(float availableHeight)` / `void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`。
-  `MeasureWidth` 的语义是「**完整显示本组件内容所需的宽度**」，不是「我希望多宽」，更不是「上限定多宽」。宿主拿它和本帧剩余空间比对：装得下就按这个宽度布局、内容完整显示；装不下就本帧整个组件不显示。
-  `MeasureWidth` **只在组件注册表版本变化时被调用一次**（插件注册 / 注销 / 内容顺序变化），返回值被缓存进后续每一帧的布局，宿主不会每帧问你。所以宽度要随内容变化的插件，在内容更新后得主动调一次 `host.InvalidateWidgetLayout()`，否则宽度会一直停在首次测量值上（同理，宿主切换灵动岛字体后字宽会变，需要重测的话请订阅 `FontConfig.Changed`）。
-  宿主不对组件宽度做上下限裁剪，但请务必返回**真实需求值**：为了「塞进去」而少报，只会让文字被压缩显示；用 `1920` 这类岛体上限去夹自己，会让宿主误判成「刚好装得下」。真要定上限，就往大了定（纯防异常值的保险丝），放不下交给宿主隐藏即可。
-- **AutoWidth 协议（新插件推荐，老插件完全不受影响）**：实现 `IAutoWidthWidget` 后**不要再实现 `MeasureWidth`**，宽度全部交给宿主。
-  ```csharp
-  internal sealed class MyWidget : IAutoWidthWidget
-  {
-      // 只描述「我由哪几块组成」：不写 PadX、不写余量、不夹上限
-      public Box? Layout(float availableHeight) => WidgetKit.Row(
-          WidgetKit.Icon(13f),
-          WidgetKit.Gap(5f),
-          WidgetKit.Text(_text, 12.5f, TextWeight.SemiBold));
+标注「未开放」的接口**定义了但主程序没有接线**（注册了也不会显示），别依赖。
 
-      public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
-      {
-          // 画的时候字体也用宿主这一份，别自己解析 —— 否则字重一换就量画不一致
-          using var paint = new SKPaint { Typeface = WidgetKit.Typeface(TextWeight.SemiBold), TextSize = 12.5f };
-          /* 直接用 rect 排版 */
-      }
-  }
-  ```
-  - 盒子只有六种：`WidgetKit.Text`（按宿主当前字体重测，字重可选 `Normal` / `SemiBold` / `Bold`）、`Icon`（定宽块）、`Gap`（纯间距）、`Row`（横向相加）、`Stack`（纵向叠放，取最宽）、`Min`（内容宽度下限，**不含**宿主的两侧留白 —— 想让槽位至少 132 就传 `132 − 2×AutoPadX`）。**不要自己派生 `Box`** —— 宿主只认这六种，未知类型按 0 宽处理（等于本帧不显示）。
-  - 宿主把「内容宽向上取整 + 两侧各 `WidgetKit.AutoPadX`（6px）」当成槽位宽度。所以插件里不该再出现 `+ 2f`、`PadX * 2` 这类补偿；要按内容区排版就用 `WidgetKit.ContentRect(rect)`。槽间距是 `WidgetKit.SlotGap`（16px），也不要再硬编码。
-  - 内容变了照旧调 `host.InvalidateWidgetLayout()`，宿主重新调 `Layout` 并用弹簧动画过渡宽度 —— 与 `MeasureWidth` 插件走的是同一条路径，没有额外开销。
-  - 判定靠 `is IAutoWidthWidget`：**旧插件一行都不用改**，宿主对它们的 `MeasureWidth` 返回值也不做任何加工（不取整、不加留白、不量化、不压缩），岛体宽度与升级前逐像素一致。
-  - `Layout` 抛异常时，宿主先退回该组件自己的 `MeasureWidth`（如果还实现着），再不行才熔断它 —— 一次布局 bug 不该让组件永久消失。
-  - **宽度会变的组件**：把 `WidthVaries` 置 `true`（默认 `false`）。宿主管两件事：宽度吸到 4px 栅格；**变宽立即生效**（等一帧文字就露裁切），**变窄要连续 600ms 确认才收**（长句 → 短句 → 长句来回换时，岛体不该跟着抽）。变化幅度 6px 以内视为抖动，不动。宽度固定的组件保持默认值，一分钱额外开销都不花。
-  - **拿额度挑内容**：`float host.GetSlotBudget(string widgetId)` —— 这个组件在本帧这一行里真正能占的槽位宽度，已扣掉原生内容、排在前面的组件以及它自己的槽间距（不用再减 16）。内容可选（一言、天气提示语）就在 `Layout` 之前比一次：盒子宽度超过额度，宿主这一帧会整块隐藏它，换条短的最划算。`0` = 本位置没空间，`+∞` = 宿主还没跑首帧。
-  - 老插件继续自己上报也完全没问题 —— 宿主按 `is IAutoWidthWidget` 分流，两条路长期都认；新写插件请直接用 AutoWidth，别再自己算余量。
-- 岛体总长上限与「插件行取舍」：上限默认 `1920`（常量 `Renderer.MAX_ISLAND_WIDTH`），实际取「目标显示器工作区宽度」与它的较小值（`Renderer.IslandWidthCap`）—— 窄屏（1366 / 1600）上岛体不会出界。Toast 自适应宽度、组合模式总宽、插件行取舍都以它封顶。
-  规则一句话：**每个组件要么完整显示，要么完全不显示。** 宿主用「岛体总长上限 − 原生内容本帧占用宽度」得出插件行预算，按注册顺序逐个贪心放行——所需宽度能完整落进剩余空间的组件才显示，装不下的组件本帧整体不显示（不绘制、不留位、不响应点击），后面的组件仍可继续尝试。原生内容照常显示，岛体宽度也不会被撑过上限。
-  典型场景：原生内容（媒体控制器 / 时间日期 / 硬件占用）吃掉大半宽度、剩余装不下你的组件时它就会暂时消失，等原生内容收窄后自动回来。
-  宿主**不再**对媒体文本单独设上限（2026-09-20 起）：媒体控制器按标题 / 歌手 / 歌词的真实长度撑宽岛体，只受上面那个总长上限约束，长歌词不会被裁切。也就是说，在真实内容长度范围内，原生内容不会把预算吃光、插件不会因为「歌词变长」而消失。
-  这是宿主侧行为，**对所有插件一视同仁**，插件不用做任何处理、也无法阻止。组合模式（`GetCompositeWidth`）走同一套预算规则，插件的显示与否同样只取决于「能不能完整放下」。
-  **插件能做的**：拿 `host.GetPluginRowBudget()` 在取内容时就比一次，主动避开「抽了一条塞不进去的内容 → 被隐藏」这种情况（本插件 OneSaying 就是这么做的：内容太长就换一条短的）。
-- 命中与点击：`WidgetHit HitTest(float x, float y, SKRect rect)` / `void OnLeftClick(string? action, float x, float y)` / `void OnRightClick()`。
-- 右键单击透传（已开放，**带默认实现**）：`bool AcceptsRightClick`（默认 `false`）。
-  置 `true` 后，命中本组件的右键**不再展开详情页 / 打开设置窗口**，只回调 `OnRightClick()` 并消费掉这次右键 ——
-  由插件自己决定做什么（弹菜单、自己调 `OpenDetailPage`）。⚠️ 等于主动放弃「右键展开详情页」这个默认入口。
-- 双击（已开放，**带默认实现**）：`bool AcceptsDoubleClick`（默认 `false`）+ `void OnLeftDoubleClick(float x, float y)` / `void OnRightDoubleClick(float x, float y)`。
-  置 `true` 后，宿主在**真的检测到双击**时才回调（单击不回调，宿主也不做「延迟单击等双击」的排队）。
-  在**没开** `AcceptsRightClick` 的前提下，组件上的右键双击会先等一个系统双击判定窗口（`GetDoubleClickTime`）再决定走到哪边 ——
-  窗口内有第二下就回调插件、一次都不执行默认行为；窗口过了才执行原来的「展开详情页 / 打开设置窗口」。
-  所以只开双击时，右键单击的响应会晚约 500ms（单击行为本身不变）；两档都开则不需要等。详见第八节第 4 条。
-- 生命周期：`void OnActivate(IPluginHost host)` / `void OnDeactivate()`，**均已接线**（2026-10-05 补上，此前只有接口声明、零调用点）：
-  组件注册进宿主时调一次 `OnActivate`（读回持久化设置、拿宿主引用做初始化的好时机），
-  插件卸载摘登记时调一次 `OnDeactivate`。
-  ⚠️ 宿主保证「**先**切断渲染侧对组件的引用（`InvalidatePluginSnapshot`），**再**回调 `OnDeactivate`」——
-  所以你可以放心在里面 `Dispose` 自己的画笔。反过来，如果你的插件在 `Dispose()` 里已经放过一遍，
-  `OnDeactivate` 里那几行必须是幂等的（`try { x?.Dispose(); } catch { }` 这种写法就够）。
+### `INotchPlugin`（入口，必须实现）
 
-**副显示组件 `ISecondaryWidget`**（副显示区的只读信息）（暂未开放）
-- 只有 `Id` 和 `void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)`。当前注册后不会在任何地方真正绘制。
+| 成员 | 说明 |
+|---|---|
+| `string Id` | 反域名唯一标识，发布后不要改 |
+| `string DisplayName` | 显示名 |
+| `string Version` | 版本 |
+| `string Author` | 作者；默认空 → 退回程序集 `Company` |
+| `void Initialize(IPluginHost host)` | 加载后调用 |
 
-**设置页 `ISettingsPage` / `ICustomSettingsPage`**（暂未开放）
-- `ISettingsPage`：`string Title { get; }` + `IReadOnlyList<SettingControl> Controls { get; }`，是**声明式**的控件列表，设计意图是「宿主替你绘制、命中、持久化」。
-- 控件模型 `SettingControl`：抽象基类，带 `Key` / `Label`；派生出三个密封记录 —— `ToggleSetting(Key, Label, DefaultValue)`（开关）、`ChoiceSetting(Key, Label, Options, DefaultIndex)`（单选）、`NumberSetting(Key, Label, Min, Max, Step, Default)`（数值）。
-- `ICustomSettingsPage`：`float MeasureHeight()` / `void Draw(SKCanvas, SKRect, RenderTheme)` / `OnMouseDown` / `OnMouseMove` / `OnMouseUp`，让插件自己画整个设置页；一个页可以同时实现这两个接口（设计意图是「两套都渲染」）。
-- ⚠️ **现状是「注册了也不会显示」**：`host.RegisterSettingsPage(...)` 只把页存进宿主列表（`PluginHost.SettingsPages`），而全程序**没有任何地方读这个列表去渲染**；`ICustomSettingsPage` 除定义外零引用。所以给插件做配置请走第七节那套「自己存、自己做 UI」（做进详情页，或用 `CreateWindow` 开独立窗口），不要依赖这几个接口。
+入口类**可选**实现 `IDisposable`，卸载 / 重载 / 退出时宿主会调。
 
-**详情页 `IDetailPage`**（右键组件展开后的详细内容）（已开放）
-- 绘制与命中的老一套：`float MeasureWidth()` / `float MeasureHeight()` / `void Draw(SKCanvas, SKRect, WidgetFrame)` / `WidgetHit HitTest(float, float, SKRect)` / `void OnAction(string? action, float x, float y)`。
-- 鼠标事件（已开放）：`void OnMouseDown(float,float)` / `OnMouseMove(float,float)` / `OnMouseUp(float,float)` / `OnMouseLeave()`，参数是详情页内的逻辑坐标，用来实现「按住拖动」这类老那套做不了的交互。
-- 文件拖放（已开放）：`bool OnFilesDragEnter(int)` / `OnFilesDragOver(float,float)` / `OnFilesDragLeave()` / `OnFilesDrop(string[])`，拖出用 `IPluginHost.StartFileDrag`。
-- 自动收起时长（已开放）：`TimeSpan AutoCollapseDelay`，三种取值 ——
-  `TimeSpan.Zero`（默认）= 用宿主内置的 `900ms`；**正数** = 自定义时长（宿主夹到 `0.5s ~ 60s`）；
-  **负数**（惯例写 `Timeout.InfiniteTimeSpan`）= **全局屏蔽自动收起**：鼠标离开不收、**点到岛外也不收**，面板一直开着。
-  **需要用户离开面板去别处取东西**的详情页应当调长它 —— 最典型就是拖入文件：用户得把鼠标移到资源管理器挑文件，900ms 根本来不及，鼠标刚移开面板就收了、拖放目标当场消失。要翻目录找一阵子的话直接用「不收起」更省事。
-  「不收起」时的关闭入口只剩两个：**岛内右键**（用户明确冲着面板来的手势，不受这一档影响）和插件自己调 `CloseDetailPage()`。
-- 右键 / 双击透传（已开放，**带默认实现**，两档独立）：
-  · `bool AcceptsRightClick`（默认 `false`）+ `void OnRightClick(float x, float y)` —— 右键**单击**也交回插件，面板不再折叠，当场通知、不需要等；
-    打开它等于放弃宿主的「右键关面板」手势，务必自己留关闭出口（面板里的 ×，或调 `CloseDetailPage()`）。
-  · `bool AcceptsDoubleClick`（默认 `false`）+ `void OnLeftDoubleClick(float x, float y)` / `void OnRightDoubleClick(float x, float y)` —— 左右键双击回调。
-    只开这一档（没开上一档）时，右键第一下会先等一个系统双击判定窗口（`GetDoubleClickTime`，默认 500ms）：
-    窗口内来了第二下就回调 `OnRightDoubleClick`（面板保持展开），窗口过了才折叠（单击仍然收起，只是晚约 500ms）。
-    两档都开时不需要等 —— 单击当场通知，双击随后再补一次。
-  · ⚠️ 左键双击的第一下仍会照常走一次单击（`HitTest` / `OnAction` 与 `OnMouseDown` / `OnMouseUp`），插件自己保证幂等。
-  坐标口径与 `HitTest` / `OnMouseDown` 完全一致。详见第八节第 4 条。
-- 尺寸由插件决定，宿主只把宽裁剪到 `180 ~ 1000`、高裁剪到 `48 ~ 480`；右键组件展开，鼠标离开岛体（默认约 0.9s 后，或插件通过 `AutoCollapseDelay` 指定的时长）/ 岛内再右键 / 点击岛外都会收起，`OpenDetailPage` / `CloseDetailPage` 也可用。细节见第八节。
+### `IPluginHost`（宿主，`Initialize` 注入）
 
-**自定义窗口 `IPluginWindow`**（`CreateWindow` 的返回值）
-- `SetDraw(Action<SKCanvas, int, int>)` 设置绘制回调；`SetMouse(down, move, up)` 设置鼠标三个事件；`SetKey(Action<char>)` 设置键盘字符；`RequestRedraw()` 请求重绘；`Close()` 关闭。
-- 文件拖放（已开放）：`void SetFilesDrop(Action<string[]>? onFiles)` 订阅拖入（传 null 取消订阅，同时关闭本窗口的拖放接收；窗口默认不接收），回调参数是拖入条目的完整路径数组；`void SetDragHover(Action<int>? onEnter, Action<float,float>? onOver, Action? onLeave)` 订阅拖入**过程**（条目数 / 窗口内逻辑坐标 / 结束），用来做悬停高亮这类反馈；`bool StartDragFiles(IReadOnlyList<string> paths, bool allowMove = false)` 发起拖出，阻塞到用户松手，返回是否被目标接受。
-  实现上走的是 OLE 的 `IDropTarget`（`RegisterDragDrop`），而不是 `WM_DROPFILES` —— 后者只在松手时投递一次，拿不到悬停事件和实时坐标。若注册失败会自动退回 `WM_DROPFILES`：拖入仍可用，但没有任何悬停回调（日志里会记一行警告）。
-  与拖放配套的四个约定：只接受带文件系统路径的拖入（文字 / 位图直接拒绝）；`onLeave` 一定会来，高亮要在它里面复位；`StartDragFiles` 期间鼠标 up 回调不会触发，状态要自己复位；拖放期间宿主会推迟任何关闭请求，不会让窗口在拖放中途被销毁。
+| 分类 | 成员 | 状态 |
+|---|---|---|
+| 注册 | `RegisterWidget(IWidget)` | 开放 |
+| 注册 | `RegisterSecondaryWidget(ISecondaryWidget)` | **未开放** |
+| 注册 | `RegisterSettingsPage(ISettingsPage)` | **未开放** |
+| 主题 | `RenderTheme CurrentTheme` | 开放 |
+| 提醒 | `PostReminder(ReminderData)` | 开放 |
+| 设置 | `GetSetting(key, fallback)` / `SetSetting(key, value)` / `event SettingsChanged` | 开放 |
+| 刷新 | `IDisposable ScheduleRefresh(TimeSpan, Action)` | 开放 |
+| 交互 | `RequestRedraw()` | 空操作 |
+| 交互 | `OpenDetailPage(id)` / `TryOpenDetailPage(id)` / `CloseDetailPage()` / `ToggleDetailPage(id)` | 开放 |
+| 布局 | `InvalidateWidgetLayout()` | 开放 |
+| 布局 | `GetPluginRowBudget()` / `GetSlotBudget(widgetId)` | 开放 |
+| 窗口 | `CreateWindow(title, w, h)` | 开放 |
+| 拖放 | `StartFileDrag(paths, allowMove)` | 开放 |
+| 卸载 | `RegisterUninstallDirectory(path)` / `RegisterUninstallAction(action)` | 开放 |
 
-**详情页里的鼠标与拖放**（`IDetailPage`，已开放）
-- **鼠标**：`void OnMouseDown(float x, float y)` / `OnMouseMove(float x, float y)` / `OnMouseUp(float x, float y)` / `void OnMouseLeave()`，参数都是**详情页内**的逻辑坐标。它比老的 `HitTest` / `OnAction` 细一层：老的只回调「点了哪个动作」，一次点击只有一个回调，做不了「按住拖动」；新的这套把完整的按下 / 移动 / 抬起交给你。两者并存 —— `HitTest` 返回 `WidgetHit.None` 就自动从老那套里摘出去。
-  ⚠️ **按住之后把鼠标拖出灵动岛再松手，`OnMouseUp` 不会来**，只有 `OnMouseLeave` 会到，所以「按住」状态必须靠它兜底复位。
-- **拖入**：`bool OnFilesDragEnter(int count)`（返回 true = 接受这次拖放）/ `void OnFilesDragOver(float x, float y)` / `void OnFilesDragLeave()` / `void OnFilesDrop(string[] paths)`。
-- **拖出**：用 `IPluginHost.StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false)` —— 详情页画在灵动岛上、没有自己的窗口，所以拖出必须由宿主在岛体上代为发起。语义与 `IPluginWindow.StartDragFiles` 一致（阻塞到松手；不存在的路径会被静默过滤）。
-  标准写法是在 `OnMouseMove` 里判断「左键仍按下 + 位移超过阈值」再发起，别在 `OnMouseDown` 里发起。
-- 这四个拖放成员都带**默认实现**（默认拒绝拖放）。这是刻意的：详情页是插件实现的接口，加抽象成员会让所有已编译好的老插件加载失败。
-- 落点必须落在详情页矩形内，拖到岛体别处会被当作「不接受」（光标显示禁止）。
-- **拖到「收起态」的组件上会自动展开**（已开放）：组件把 `AcceptsFileDropWhenCollapsed` 声明为 `true`、并且提供了详情页时，
-  用户从资源管理器把文件拖到岛上那个**还没展开**的组件图标上，宿主会自己把详情页展开，
-  随后照常走上面那套拖入回调、松手即落下 —— **用户不必先点开面板**。
-  默认 `false`：不声明就完全维持原行为（拖到收起态组件上什么都不会发生）。
-  最适合「组件本身就是文件入口」的插件（文件中转站就是靠它做到「拖到岛上那个小图标上就自动打开并收下文件」）。
-  ⚠️ 自动展开**不代表**自动接受 —— 展开之后仍然要求落点在详情页矩形内，判定条件和平时完全一样。
+### `IWidget`
 
-**渲染上下文 `WidgetFrame` / `RenderTheme`**（`Draw` 每帧收到的快照）
-- `WidgetFrame.Theme`：这一帧的主题快照（字段见下一条）。颜色一律用 `xxx.WithAlpha(frame.Alpha)` 取，才能跟随淡入 / 叠化。
-- `WidgetFrame.Alpha`：合成透明度 `0–255`。启动淡入、详情页与 Toast 的叠化都反映在这里；值为 `0` 时直接 `return` 即可。
-- `WidgetFrame.TextOffsetY`：文字的垂直偏移（逻辑像素），加到文字基线的 Y 上，用于和岛体整体排版对齐。
-- `WidgetFrame.IsHovered`：鼠标当前是否悬停在本组件（或详情页）的矩形内，可用来做 hover 高亮。
-- `WidgetFrame.Bars`：**音频频谱**，固定 `float[5]`（5 个频段，低音→高音），每个值已归一化到 `0–1`。没有音频 / 没在播放时**全为 `0`，不是 `null`**；走 LyricServer「独奏」频谱时也会映射成同样的 5 柱格式。想画随音乐跳动的波形就用它。⚠️ 这个数组**每帧都会被宿主换新（无锁双缓冲交换）**，只能在 `Draw` 里当帧读，别存进字段跨帧复用。
-- `RenderTheme.TextColor` / `SubTextColor`：主文字色 / 次要文字色；`BackgroundColor`：岛体背景色。
-- `RenderTheme.GlobalDpi`：全局 DPI 缩放系数（控制台 `Custom_Dpi`，默认 `1.0`）。宿主窗口的物理像素尺寸 = 逻辑尺寸 × 它 —— 你自己做坐标换算（比如把鼠标物理坐标换成逻辑坐标）时必须用同一个系数，否则高 DPI 下会偏移。
-- `RenderTheme.NotchBottomRadius`：岛体底部圆角半径（控制台 `Custom_NotchBottomR`，宿主夹在 `0 ~ 28`）。自绘内容要贴着圆角对齐时用得上。
+| 分类 | 成员 | 默认 |
+|---|---|---|
+| 标识 | `Id` / `DisplayName` / `DetailPage` | — |
+| 尺寸 | `MeasureWidth(availableHeight)` | `0` |
+| 绘制 | `Draw(canvas, rect, frame)` | — |
+| 交互 | `HitTest(x, y, rect)` / `OnLeftClick(action, x, y)` / `OnRightClick()` | — |
+| 交互 | `AcceptsRightClick` | `false` |
+| 交互 | `AcceptsDoubleClick` / `OnLeftDoubleClick(x,y)` / `OnRightDoubleClick(x,y)` | `false` / 空 |
+| 拖入 | `AcceptsFileDropWhenCollapsed` | `false` |
+| 生命周期 | `OnActivate(host)` / `OnDeactivate()` | — |
 
-**命中模型 `WidgetHit`**——`readonly record struct WidgetHit(string? Action)`。`Action` 由组件自己定义（如 `"toggle"` / `"next"`），未命中用 `WidgetHit.None`，`IsHit` 判断是否命中。`OnLeftClick` 收到的动作名就是这里返回的。
+### `IAutoWidthWidget`（推荐）
 
-**提醒数据 `ReminderData`**——`Title`（标题）、`Body`（正文）、`IconPath`（可选图标：本地路径 / 图片链接 / `data:image` base64 / 内置别名，见第七节）、`AvatarPath`（可选头像，写法同 `IconPath`，**优先级高于 `IconPath`**）、`Duration`（停留时长，默认 4 秒，宿主夹到 1~60 秒，非正数退回默认值）、`OnClick`（可选：用户点中这条通知时的回调，**已接线** —— 宿主会先收起通知再回调，异常自吞）。
+| 成员 | 默认 | 说明 |
+|---|---|---|
+| `Box? Layout(float availableHeight)` | — | 描述组成；`null` / 空盒 = 本帧不显示 |
+| `bool WidthVaries` | `false` | 宽度随内容变化时置 `true`（1px 量化、变宽立即、变窄 600ms 确认） |
 
-**宿主公共设施（非冻结契约，插件可直接调用）**
-下面这几个是宿主的公共静态成员，**不在** `Plugin/PluginApi.cs` 里，也不属于「冻结的插件 API」。插件引用主程序后可以直接用，官方插件也都在用 —— 但**一律用 `try/catch` 包住并允许永久降级**（宿主将来把它们挪走时，只让对应的小优化失效，插件其余功能照常）。
-- **`NotchPeninsula.FontConfig`** —— 全岛字体中心（`Normal` / `Bold` / `SemiBold` / `Fallback` / `Changed` …），完整用法见第六节。
-- **`NotchPeninsula.Logger`** —— 往宿主日志写字：`Debug(msg)` / `Info(msg)` / `Warn(msg)` / `Error(msg, ex = null)`，以及 `DebugThrottled(template)`（同一条**常量模板**在 10 秒窗口内只写第一行，窗口结束时补一行「期间重复 N 次」，专给按秒重试的路径用；模板必须是常量，含歌名 / 路径的动态消息无法归并）。日志路径 `%LocalAppData%\NotchPeninsula\app.log`，1 MB 轮转、连当前共保留 3 个文件；内部加锁、任何异常都自吞，不会影响主流程。**这是插件排错的第一手工具** —— 出问题先 `Logger.Warn("[我的插件] " + ex.Message)`，再去看那个文件。
-- **`NotchPeninsula.NotchWindow.IsAutoHideEnabled`**（公开静态字段）/ **`IsAutoHideEffective`**（属性）—— 用户有没有开「自动隐藏」（无媒体 / 失焦时整条岛体滑出屏幕）。想知道「我此刻画在岛上的东西用户到底看不看得见」就问它；天气 / 一言用它决定拿到新数据后要不要主动弹详情页。
-- **`NotchPeninsula.MediaController.Instance`**（**可空**单例）—— 宿主当前的媒体状态与操作：`IsActive` / `IsPlaying` / `Title` / `Artist` / `Thumbnail` / `CurrentLyric` / 时间轴（`Duration` / `TimelineElapsed` / `TimelineProgress`），以及 `TogglePlayPause()` / `Next()` / `Previous()` / `OpenCurrentApp()`。nps-media-mixer 靠它读当前会话。⚠️ 它是宿主内部单例，`Instance` 可能为 `null`（尚未初始化）；`Thumbnail`、歌词这类属性会在换歌时被并发替换，读取要短、不要缓存位图、也不要在后台线程长时间持有。
+### `WidgetKit`
 
-一句话总结整个数据流：程序加载 dll → 找到 `INotchPlugin` 入口并调 `Initialize` → 插件借 `IPluginHost` 注册 `IWidget`、申请定时刷新 → 渲染循环每帧调组件的 `MeasureWidth` + `Draw` 画到灵动岛 → 鼠标命中后调 `HitTest` / `OnLeftClick`（右键则展开 `DetailPage`，详情页自己的 `HitTest` / `OnAction` 接管岛内左键）→ 卸载时调 `OnDeactivate` / `Dispose`。当前真正开放、能立刻看到效果的是主显示组件、详情页、双击 / 右键透传、定时刷新、提醒（含 `Duration` / `OnClick`）、设置持久化和自定义窗口（含文件拖放）；副显示组件、设置页这两组接口已冻结可用，但主程序还未完成接线（暂未开放），等待后续版本补齐。整个开放面就这么多，剩下的就是把你想展示的数据填进 `Draw` 里。
+| 成员 | 说明 |
+|---|---|
+| `const float SlotGap` | `16f`，组件间距 |
+| `const float AutoPadX` | `1f`，宿主给槽位加的左右留白（单侧） |
+| `Text / Icon / Gap / Row / Stack / Min` | 六种盒子工厂 |
+| `Measure(Box?, padX)` | 盒子 → 槽位宽（宿主内部用；插件一般不需要） |
+| `ContentRect(SKRect slot)` | 槽位 → 内容区 |
+| `Typeface(TextWeight)` | 与测量同一份字体面，**借来的，不要 Dispose** |
+
+### `IDetailPage`
+
+| 分类 | 成员 | 默认 |
+|---|---|---|
+| 尺寸 | `MeasureWidth()` / `MeasureHeight()` | — |
+| 绘制 | `Draw(canvas, rect, frame)` | — |
+| 交互 | `HitTest(x, y, rect)` / `OnAction(action, x, y)` | — |
+| 鼠标 | `OnMouseDown/OnMouseMove/OnMouseUp(x, y)` / `OnMouseLeave()` | 空 |
+| 拖入 | `OnFilesDragEnter(count)` / `OnFilesDragOver(x,y)` / `OnFilesDragLeave()` / `OnFilesDrop(paths)` | `false` / 空 |
+| 透传 | `AcceptsRightClick` + `OnRightClick(x,y)` | `false` |
+| 透传 | `AcceptsDoubleClick` + `OnLeftDoubleClick/OnRightDoubleClick(x,y)` | `false` |
+| 收起 | `AutoCollapseDelay` | `Zero`（= 900ms） |
+
+### `IPluginWindow`
+
+| 成员 | 说明 |
+|---|---|
+| `SetDraw(Action<SKCanvas, int, int>?)` | 绘制回调（宽高为逻辑像素） |
+| `SetMouse(down, move, up)` | 鼠标回调（逻辑坐标） |
+| `SetKey(Action<char>?)` | 键盘字符 |
+| `SetFilesDrop(Action<string[]>?)` | 拖入（松手）；传 `null` 取消并关闭接收 |
+| `SetDragHover(onEnter, onOver, onLeave)` | 拖入过程 |
+| `StartDragFiles(paths, allowMove = false)` | 拖出，阻塞到松手，返回是否被接受 |
+| `RequestRedraw()` / `Close()` | 请求重绘 / 关闭 |
+
+### 数据模型
+
+```csharp
+readonly record struct WidgetHit(string? Action);   // WidgetHit.None / .IsHit
+readonly record struct RenderTheme(SKColor TextColor, SKColor SubTextColor,
+    SKColor BackgroundColor, float GlobalDpi, float NotchBottomRadius);
+readonly record struct WidgetFrame(RenderTheme Theme, byte Alpha, float TextOffsetY,
+    float[]? Bars, bool IsHovered);
+
+class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClick }
+```
+
+### 未开放的接口（定义了但没接线）
+
+- `ISecondaryWidget`：副显示区只读信息。注册后不绘制。
+- `ISettingsPage` / `ICustomSettingsPage` / `SettingControl`：声明式设置页。`RegisterSettingsPage` 只把页存进宿主列表，**全程序没有任何地方读它去渲染**。
+
+做配置请走「自己存 + 自己做 UI」（详情页或 `CreateWindow`）。
+
+---
+
+## 12. 排错
+
+1. **看日志**：`%LocalAppData%\NotchPeninsula\app.log`（1MB 轮转，连当前共 3 个文件）。加载、失败原因、你的 `Logger.Warn` 都在里面。
+2. **看「我的插件」的状态**：`运行中 · vX · 作者` = 正常；失败会带归类与错误原文。
+3. **在自己的代码里留痕**：
+
+```csharp
+using NotchPeninsula;   // Logger 在这个命名空间
+
+try { /* 可能出错的初始化 */ }
+catch (Exception ex) { Logger.Warn($"[我的插件] 初始化失败: {ex.Message}"); }
+```
+
+`Logger` 的工具：`Debug / Info / Warn / Error(msg, ex?)`，以及 `DebugThrottled(template)`（同一条**常量模板** 10 秒内只写第一行，窗口结束时补一行「期间重复 N 次」，专给按秒重试的路径用；模板必须是常量，含歌名 / 路径的动态消息无法归并）。日志内部加锁、任何异常自吞，不会影响主流程。
+
+4. **常见定位顺序**：加载失败（先看归类）→ 组件不显示（看显示设置勾选 / 预算）→ 显示但画错（坐标系 / alpha / 字体）→ 点了没反应（`HitTest` 返回值 / 右键透传开关）→ 偶发崩溃（缓存画笔 / 跨线程访问原生对象）。
+
+---
+
+## 附录 A：接入自己的媒体来源
+
+如果你写的是「替某个播放器取歌词 / 进度」的插件，可以实现 `IMediaSessionSource`（`Plugin/PluginApi.cs` 之外，`Plugin/MediaSessionSource.cs`）：
+
+```csharp
+// 示意骨架：字段略。每个属性都要线程安全地返回「当前快照」。
+public sealed class MyPlugin : INotchPlugin, IMediaSessionSource
+{
+    public string SourceId => "com.example.myplayer";    // 稳定标识（日志 / 去重）
+    public string SourceName => "我的播放器时间轴";
+    public int Priority => 100;                          // 多路源同时可用时，大的赢
+
+    public bool IsActive => _hasSession;                 // 暂停也算有会话
+    public bool IsPlaying => _playing;
+    public TimeSpan Position => _position;               // 宿主会按墙钟继续推算
+    public TimeSpan Duration => _duration;               // 未知给 TimeSpan.Zero
+    public string Title => _title;                       // 宿主不消费，你自己用
+    public string Artist => _artist;                     // 同上
+    public string? CoverUrl => _coverUrl;                // 同上
+
+    public event Action? Changed;                        // 换歌 / 播放状态变化时触发
+
+    public void TogglePlayPause() { }
+    public void Next() { }
+    public void Previous() { }
+    public void OpenApp() { }
+}
+```
+
+- 不需要额外注册：宿主在 `Initialize` **之后**用 `plugin is IMediaSessionSource` 自动登记，卸载时反登记。
+- 若日志里出现「未实现 IMediaSessionSource，跳过外部媒体源登记」而你确实实现了它 —— 九成是**你把宿主的接口文件复制进了插件工程**：两边是不同 `Type`，判等必然为 false，而且不报错。引用主程序工程即可，别自带接口定义。
+- 约定：所有属性都是「当前快照」，随取随用、线程安全；实现方自己在后台按自己的节奏刷新，宿主每帧只读缓存值。
+- `Changed` **只**在「歌曲变了 / 播放状态变了 / 有无会话变了」时触发，**不**在秒级进度推进时触发（进度靠 `Position` + 墙钟推算）。
+- `IsActive == false` 时其余字段一律视为无意义，宿主会回落到 SMTC。
+
+## 附录 B：术语对照
+
+| 中文 | 代码 |
+|---|---|
+| 灵动岛 | 岛体 / `NotchWindow` + `Renderer` |
+| 插件根目录 | `plugins\`（`PluginManager.PluginsRoot`） |
+| 入口类 | `INotchPlugin` |
+| 宿主 | `IPluginHost`（实际注入的是按插件隔离的 `ScopedPluginHost`） |
+| 组件 | `IWidget` |
+| 详情页 | `IDetailPage` |
+| 槽位 | 组件在插件行里占的那一格（`WidgetLayout.Slot`） |
+| 插件行预算 | `Renderer.GetPluginRowBudget()`，见 [6.4](#64-预算与取舍) |
+| 熔断 | 组件 / 详情页抛异常后被停用，不再绘制 |
+| 影子副本 | 加载前复制到临时目录的那份插件文件，见 [2.2](#22-影子副本哪些文件会被复制) |
