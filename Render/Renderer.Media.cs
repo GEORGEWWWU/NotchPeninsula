@@ -365,9 +365,9 @@ namespace NotchPeninsula
             RefreshPluginWidgets(); // 插件宽度需与快照同版本，才能算准总宽
 
             // 第一趟：只量原生模块，定出插件行还能用多少宽度
-            SetPluginRowBudget(MAX_ISLAND_WIDTH - MeasureCompositeWidth(media, includePlugins: false));
+            SetPluginRowBudget(IslandWidthCap - MeasureCompositeWidth(media, includePlugins: false));
 
-            return Math.Clamp(MeasureCompositeWidth(media, includePlugins: true), 60f, MAX_ISLAND_WIDTH);
+            return Math.Clamp(MeasureCompositeWidth(media, includePlugins: true), 60f, IslandWidthCap);
         }
 
         public static float GetCompositeNativeWidth(MediaController media)

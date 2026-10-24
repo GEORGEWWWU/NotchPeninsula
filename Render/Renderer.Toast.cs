@@ -27,7 +27,7 @@ namespace NotchPeninsula
             if (IsToastFullMode) w += TOAST_FULL_MODE_RIGHT_RESERVE;
             if (IsToastCompactMode) w += Math.Max(COMPACT_RIGHT_WIDTH, _cachedToastCompactRightWidth);
             w += TOAST_TEXT_MARGIN;
-            return Math.Min(Math.Max(TOAST_WIDTH, w), MAX_ISLAND_WIDTH);
+            return Math.Min(Math.Max(TOAST_WIDTH, w), IslandWidthCap);
         }
 
         private static uint _lastToastId = 0;

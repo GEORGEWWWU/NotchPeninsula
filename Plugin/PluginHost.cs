@@ -284,6 +284,8 @@ public sealed class PluginHost
 
     public float GetPluginRowBudget() => Renderer.GetPluginRowBudget();
 
+    public float GetSlotBudget(string widgetId) => Renderer.GetPluginRowRemainingForWidget(widgetId);
+
     public float GetPluginRowBudgetFor(string pluginId) => Renderer.GetPluginRowRemaining(pluginId);
 
     public IPluginHost CreateScopedHost(string pluginId) => new ScopedPluginHost(this, pluginId);
@@ -739,6 +741,8 @@ public sealed class ScopedPluginHost : IPluginHost
     public void RequestRedraw() { /* 常驻 60FPS 渲染下为空操作，事件驱动化预留 */ }
     public void InvalidateWidgetLayout() => _host.InvalidateWidgetLayout();
     public float GetPluginRowBudget() => _host.GetPluginRowBudgetFor(_pluginId);
+
+    public float GetSlotBudget(string widgetId) => _host.GetSlotBudget(widgetId);
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public bool TryOpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
