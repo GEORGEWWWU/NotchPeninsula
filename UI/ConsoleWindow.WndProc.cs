@@ -76,7 +76,6 @@ namespace NotchPeninsula
             int newHoveredMaterial = -1;
             int newHoveredOpacityIndex = -1;
             int newHoveredGlassQuality = -1;      // 液态玻璃卡：质量分段控件
-            int newHoveredGlassSource = -1;       // 抓屏方式分段控件
             int newHoveredGlassParam = -1;        // 9 根滑轨里悬停的是哪一根
             int newHoveredGlassParamLevel = -1;   // 悬停到的档位
             bool newHoveredGlassReset = false;    // 卡底「恢复默认参数」
@@ -130,8 +129,6 @@ namespace NotchPeninsula
                     {
                         if (x >= GLASS_QUALITY_SEG_X && x <= GLASS_QUALITY_SEG_X + GLASS_QUALITY_SEG_W)
                             newHoveredGlassQuality = Math.Min(2, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 3f)));
-                        else if (x >= GLASS_SOURCE_SEG_X && x <= GLASS_SOURCE_SEG_X + GLASS_SOURCE_SEG_W)
-                            newHoveredGlassSource = Math.Min(1, (int)((x - GLASS_SOURCE_SEG_X) / (GLASS_SOURCE_SEG_W / 2f)));
                     }
 
                     // 11 根滑轨：先定位行，再看落在哪一列
@@ -165,8 +162,8 @@ namespace NotchPeninsula
                         break;
                     }
 
-                    // 卡底「恢复默认参数」：滑轨之后判，命中就把滑轨悬停清掉
-                    float grY = gCardY + GLASS_RESET_Y;
+                    // 「恢复默认参数」（与质量分段同一行）：滑轨之后判，命中就把滑轨悬停清掉
+                    float grY = segY + (SEG_H - GLASS_RESET_H) / 2f;
                     if (x >= GLASS_RESET_X && x <= GLASS_RESET_X + GLASS_RESET_W
                         && y >= grY && y <= grY + GLASS_RESET_H)
                     {
@@ -259,6 +256,7 @@ namespace NotchPeninsula
             bool newHoveredMarketChk = false;
             bool newMarketSearchHovered = false;
             bool newMarketRefreshHovered = false;
+            bool newHoveredMarketUpdateAll = false;
             bool newFontPickHovered = false;
             bool newFontResetHovered = false;
 
@@ -550,6 +548,11 @@ namespace NotchPeninsula
                     newMarketRefreshHovered = x >= MarketRefreshX && x <= MarketRefreshX + MarketRefreshW
                         && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
 
+                    // 「一键更新全部」条：几何与 RenderTabMarket / MarketUpdateBarRect 同源
+                    newHoveredMarketUpdateAll = MarketUpdateCount > 0
+                        && x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM
+                        && y >= MarketUpdateBarTop && y <= MarketUpdateBarTop + MarketUpdateBarH;
+
                     newHoveredMarketSortBox = x >= MarketSortX && x <= MarketSortX + MarketSortW
                         && y >= MarketStatusRowY && y <= MarketStatusRowY + MarketControlH;
 
@@ -760,7 +763,6 @@ namespace NotchPeninsula
                 newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
                 newHoveredMaterial != _hoveredMaterialIndex ||
                 newHoveredGlassQuality != _hoveredGlassQualityIndex ||
-                newHoveredGlassSource != _hoveredGlassSourceIndex ||
                 newHoveredGlassParam != _hoveredGlassParamIndex ||
                 newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
                 newHoveredGlassReset != _hoveredGlassReset ||
@@ -795,6 +797,7 @@ namespace NotchPeninsula
                 newHoveredMarketCategoryIndex != _hoveredMarketCategoryIndex ||
                 newMarketSearchHovered != _marketSearchHovered ||
                 newMarketRefreshHovered != _hoveredMarketRefresh ||
+                newHoveredMarketUpdateAll != _hoveredMarketUpdateAll ||
                 newHoveredMarketSortIndex != _hoveredMarketSortIndex ||
                 newHoveredMarketSortBox != _hoveredMarketSortBox ||
                 newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered ||
@@ -831,7 +834,6 @@ namespace NotchPeninsula
                 _hoveredThemeIndex = newHoveredTheme;
                 _hoveredMaterialIndex = newHoveredMaterial;
                 _hoveredGlassQualityIndex = newHoveredGlassQuality;
-                _hoveredGlassSourceIndex = newHoveredGlassSource;
                 _hoveredGlassParamIndex = newHoveredGlassParam;
                 _hoveredGlassParamLevel = newHoveredGlassParamLevel;
                 _hoveredGlassReset = newHoveredGlassReset;
@@ -870,6 +872,7 @@ namespace NotchPeninsula
                 _hoveredMarketCategoryIndex = newHoveredMarketCategoryIndex;
                 _marketSearchHovered = newMarketSearchHovered;
                 _hoveredMarketRefresh = newMarketRefreshHovered;
+                _hoveredMarketUpdateAll = newHoveredMarketUpdateAll;
                 _hoveredMarketSortIndex = newHoveredMarketSortIndex;
                 _hoveredMarketSortBox = newHoveredMarketSortBox;
                 _fontPickHovered = newFontPickHovered;

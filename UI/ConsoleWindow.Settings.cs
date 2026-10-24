@@ -122,16 +122,13 @@ namespace NotchPeninsula
         private const float SIZE_CARD_H = 148f;
 
         // ---- 「液态玻璃」卡：只在材质选到液态玻璃时出现，挂在尺寸卡下面 ----
-        // 第一行：玻璃质量 + 抓屏方式两个分段；第二行：放大镜状态；
-        // 下面 12 根滑轨排成 3 列 × 4 行（窗口就这么高，两排放不下）；
-        // 最后一行留「恢复默认参数」—— 参数一共 12 根，没有它只能一根根往回拨。
+        // 第一行：玻璃质量分段（左）+「恢复默认参数」按钮（右）—— 抓屏方式已改为自动，
+        // 没有独立设置也没有状态行；下面 12 根滑轨排成 3 列 × 4 行（窗口就这么高，两排放不下）。
         private static float GLASS_CARD_Y => SIZE_CARD_Y + SIZE_CARD_H + CARD_GAP;   // 222 或 380
 
-        private const float GLASS_CARD_H = 236f;
+        private const float GLASS_CARD_H = 176f;
 
-        private const float GLASS_SEG_Y = 12f;      // 第一行分段控件
-
-        private const float GLASS_SEG2_Y = 46f;     // 第二行分段控件 + 状态文字
+        private const float GLASS_SEG_Y = 12f;      // 第一行：质量分段 + 恢复默认按钮
 
         // 玻璃卡元素多、横向最挤：左右缩进比别的卡各放 8px（16 → 8），
         // 腾出来的 16px 全给滑轨（48 → 56），拖动时手感也更稳。
@@ -144,14 +141,7 @@ namespace NotchPeninsula
 
         private const float GLASS_QUALITY_SEG_X = 254f;
 
-        // 抓屏那组分段与卡片文字右缘对齐（580）
-        private const float GLASS_SOURCE_SEG_W = 108f;
-
-        private const float GLASS_SOURCE_SEG_X = GLASS_TEXT_R - GLASS_SOURCE_SEG_W;   // 472
-
-        private const float GLASS_SOURCE_LABEL_DX = 34f;      // 「抓屏」标签相对分段左端
-
-        private const float GLASS_ROW0_Y = 74f;     // 滑轨区第一行（字号 13 下 4 行到 187 基线）
+        private const float GLASS_ROW0_Y = 46f;     // 滑轨区第一行（分段行 12~42，留 4 呼吸）
 
         private const float GLASS_ROW_H = 32f;
 
@@ -173,12 +163,10 @@ namespace NotchPeninsula
 
         private const float GLASS_VALUE_RIGHT = 116f;          // 档位值右缘（相对列左端，= 列宽 −6）
 
-        // 「恢复默认参数」：卡内最后一行，右对齐到卡片文字右缘
+        // 「恢复默认参数」：与质量分段同一行，右对齐到卡片文字右缘；纵向在分段内居中
         private const float GLASS_RESET_W = 96f;
 
         private const float GLASS_RESET_H = 26f;
-
-        private const float GLASS_RESET_Y = 198f;              // 相对卡顶
 
         private const float GLASS_RESET_X = GLASS_TEXT_R - GLASS_RESET_W;   // 484
 

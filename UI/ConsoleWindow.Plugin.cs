@@ -45,6 +45,8 @@ namespace NotchPeninsula
             int version = PluginManager.Instance.ChangeVersion;
             if (_pluginViewVersion == version) return;   // 插件页每帧都会调；没变就直接复用
             _pluginViewVersion = version;
+            // 插件集合 / 启用状态真的变了：市场「可更新」计数（侧栏角标 + 一键更新按钮）作废重算
+            InvalidateMarketUpdateCount();
 
             var mgr = PluginManager.Instance;
             _pluginView = mgr.Entries.ToList();
@@ -89,6 +91,7 @@ namespace NotchPeninsula
             _hoveredDialogButton = -1;
             _rateStars = 0;
             _hoveredMarketChk = false;
+            _hoveredMarketUpdateAll = false;
         }
 
         private static string? ShowOpenFileDialog(IntPtr owner, string title, string filter)

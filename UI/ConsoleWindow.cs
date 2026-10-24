@@ -19,7 +19,8 @@ namespace NotchPeninsula
 
         private const int WIDTH = 600;
 
-        // 高 692 = 660 + 32：液态玻璃卡底部要放「恢复默认参数」按钮，原来 660 已顶到卡底
+        // 高 692 = 660 + 32：2026-10-24 液态玻璃卡加「恢复默认参数」时加高；
+        // 后该按钮挪进卡内第一行（抓屏设置移除腾位），卡高收回 176，窗口高度保留 692 不动。
         private const int HEIGHT = 692;
 
         private const int TITLE_BAR_HEIGHT = 32;
@@ -238,13 +239,13 @@ namespace NotchPeninsula
         private const float CARD_PAD_RIGHT = CONTENT_TEXT_RM;   // 卡片内右对齐控件的基准（与文字右边界同源）
 
         //   · 行 1「系统消息通知」行首 156 = 首卡 + 两张单行开关卡（各带一个 CARD_GAP）
-        //   · 分隔线放在每一对行之间：+222、+284
+        //   · 分隔线放在每一对行之间（行带 2026-10-24 由 62 压到 54，整卡收 38）
 
         private const float TOPMOST_CARD_Y = CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;          // 84 窗口置顶
 
         private const float TOAST_ROW1_Y = CARD_TOP_Y + (TOGGLE_CARD_H + CARD_GAP) * 2f;     // 156
 
-        private const float TOAST_ROW2_Y = TOAST_ROW1_Y + 62f;
+        private const float TOAST_ROW2_Y = TOAST_ROW1_Y + 54f;
 
         // 分隔线以下两行（消息通知内容 / 消息提示音）的内容整体下移：
         // 贴着分隔线显得顶对齐（上隙 ~11px、下隙 ~18px）。只动文本与右侧控件，
@@ -286,7 +287,7 @@ namespace NotchPeninsula
 
         private const float TOAST_MODE_CTRL_X = WIDTH - CARD_PAD_RIGHT - TOAST_MODE_CTRL_W;
 
-        private const float SOUND_ROW3_Y = TOAST_ROW2_Y + 62f;
+        private const float SOUND_ROW3_Y = TOAST_ROW2_Y + 54f;
 
         private const float SOUND_SEP_Y = SOUND_ROW3_Y + 4f;
 
@@ -296,7 +297,7 @@ namespace NotchPeninsula
 
         private const float TOAST_TOGGLE_ROW_Y = TOAST_ROW1_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f;
 
-        private const float SOUND_ROW_Y = SOUND_ROW3_Y + 62f;
+        private const float SOUND_ROW_Y = SOUND_ROW3_Y + 54f;
 
         private const float SOUND_ROW_TITLE_Y = SOUND_ROW_Y + ROW_TEXT_BASELINE_SINGLE;
 
@@ -304,7 +305,7 @@ namespace NotchPeninsula
 
         private const float SOUND_BOX_Y = SOUND_ROW_Y + ROW_DROPDOWN_TOP;
 
-        private const float TOAST_CARD_BOTTOM = SOUND_BOX_Y + SOUND_ROW_H + 16f;
+        private const float TOAST_CARD_BOTTOM = SOUND_BOX_Y + SOUND_ROW_H + 10f;
 
         private const float SOUND_ROW_GAP = 12f;
 
@@ -320,9 +321,11 @@ namespace NotchPeninsula
 
         private const float SOUND_PREVIEW_X = SOUND_RESET_X - SOUND_BTN_GAP - SOUND_BTN_W;
 
-        private const float SOUND_VOL_W = 58f;
+        // 音量框 58 装不下「100%」（截成 10...）：加宽到 72，中心不动 ——
+        // 右缘链固定，左缘按加宽量的一半回退，两侧到相邻控件各剩 5px。
+        private const float SOUND_VOL_W = 72f;
 
-        private const float SOUND_VOL_X = SOUND_PREVIEW_X - SOUND_ROW_GAP - SOUND_VOL_W;
+        private const float SOUND_VOL_X = SOUND_PREVIEW_X - SOUND_ROW_GAP - 58f - (SOUND_VOL_W - 58f) / 2f;
 
         private const float SOUND_LABEL_X = CONTENT_TEXT_X;
 
@@ -771,10 +774,9 @@ namespace NotchPeninsula
 
         private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力, 2:液态玻璃
         private int _hoveredGlassQualityIndex = -1;      // 液态玻璃：0流畅 1均衡 2精细
-        private int _hoveredGlassSourceIndex = -1;       // 抓屏方式：0放大镜 1兼容
         private int _hoveredGlassParamIndex = -1;        // 11 根滑轨里悬停的是哪一根（-1 = 没有）
         private int _hoveredGlassParamLevel = -1;        // 悬停到的档位 0..4
-        private bool _hoveredGlassReset;                 // 卡底「恢复默认参数」
+        private bool _hoveredGlassReset;                 // 「恢复默认参数」（质量分段同一行右侧）
 
         private int _hoveredOpacityIndex = -1;
         // DPI 缩放相关
@@ -864,6 +866,10 @@ namespace NotchPeninsula
             ToastSoundConfig.RefreshBuiltins();
             if (ToastSoundConfig.SelectedIndex == ToastSoundConfig.CustomIndex)
                 ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out _soundHint);
+
+            // 提前拉一次市场数据：侧栏「插件市场」的更新角标不等你进市场页才有数。
+            // EnsureMarketData 自带幂等闸（_marketTriedFetch），后进市场页不会重复拉。
+            EnsureMarketData();
 
             if (!_classRegistered)
             {
@@ -1429,6 +1435,10 @@ namespace NotchPeninsula
             // 后台安装 / 更新的结论要在这一帧就消费掉：页内容与弹窗都得用刷新后的状态。
             // 放在页签分派之前、且不分页签 —— 用户在别的页签时失败也必须当场看见。
             ApplyPendingMarketResult();
+            // 一键更新的队列推进也挂在这里：后台任务装完一份就 Post 一帧，
+            // 帧里接着踢下一条。放渲染入口而不是 WM_ASYNC_RERENDER，是拖动期丢掉的
+            // 重绘消息不至于把队列卡死（EndDragMove 补的那一帧会继续走）。
+            KickUpdateAllQueue();
 
             if (_selectedTab == 0) RenderTabGeneral(canvas);
             else if (_selectedTab == 1) RenderTabDisplay(canvas);

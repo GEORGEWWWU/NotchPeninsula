@@ -418,8 +418,9 @@ namespace NotchPeninsula
                 Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                 Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
                 // 切走玻璃时那张参数卡当场消失，悬停索引一并清掉，别留着下一帧误命中
-                _hoveredGlassQualityIndex = _hoveredGlassSourceIndex = _hoveredGlassParamIndex
+                _hoveredGlassQualityIndex = _hoveredGlassParamIndex
                     = _hoveredGlassParamLevel = -1;
+                _hoveredGlassReset = false;
                 NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
                 Render();
             }
@@ -428,24 +429,6 @@ namespace NotchPeninsula
                 // 换质量 = 换抓屏倍率 + 模糊核：抓屏那边已经 Expire 过，这里再兜一次重建
                 LiquidGlass.Quality = _hoveredGlassQualityIndex;
                 Program.SaveSetting("LiquidGlassQuality", _hoveredGlassQualityIndex);
-                NotchWindow.RequestAcrylicRebuild();
-                Render();
-            }
-            else if (_selectedTab == 5 && _hoveredGlassSourceIndex != -1)
-            {
-                bool want = _hoveredGlassSourceIndex == 0;
-
-                // ⚠️ 不要用 IsDisabled 否决用户的选择：那样按钮点下去状态纹丝不动，
-                //    看起来就是"没反应"。先按用户意图存下来，抓屏那侧自己判断能不能真的用上；
-                //    用不上时卡片上会写明原因（而不是假装没点过）。
-                IslandBackdrop.UseMagnifier = want;
-                Program.SaveSetting("GlassUseMagnifier", want ? 1 : 0);
-
-                // 想用放大镜但还没就绪 → 到 UI 线程上强制重建一次（宿主窗口尺寸/透明属性会重来）
-                if (want && !MagnifierBackdrop.IsAvailable && !MagnifierBackdrop.IsDisabled)
-                    NotchWindow.EnsureMagnifier(force: true);
-
-                IslandBackdrop.Expire();
                 NotchWindow.RequestAcrylicRebuild();
                 Render();
             }
@@ -829,6 +812,12 @@ namespace NotchPeninsula
                     _marketCategoryOpen = true;
                     _marketSortOpen = false;
                     _marketSearchFocused = false;
+                    Render();
+                }
+                else if (_hoveredMarketUpdateAll)             // 一键更新全部：逐个进安装队列
+                {
+                    if (_marketSearchFocused) _marketSearchFocused = false;
+                    StartUpdateAll();                          // 队列推进挂在渲染入口（KickUpdateAllQueue）
                     Render();
                 }
                 else if (_hoveredMarketRefresh)               // 刷新按钮：重新拉取市场数据

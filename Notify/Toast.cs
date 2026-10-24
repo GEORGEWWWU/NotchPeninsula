@@ -461,72 +461,109 @@ namespace NotchPeninsula
         
         private ToastData? ExtractToastData(UserNotification notification)
         {
+            // WinRT 投影访问器会对个别通知抛 TargetInvocationException（常见：通知在读到它之前
+            // 已被系统/应用撤走）。外层 Message 永远是那句模板话，真因全在 InnerException ——
+            // 逐段取数、逐段兜底，一个访问器炸掉不再连带丢掉整条通知可用的部分。
+            string appName = "系统通知";
+            string aumid = "";
+
             try
             {
                 var appInfo = notification.AppInfo;
-                var displayInfo = appInfo?.DisplayInfo;
-                
-                string appName = displayInfo?.DisplayName ?? "系统通知";
-                string aumid = appInfo?.AppUserModelId ?? "";
-                
-                var toastNotification = notification.Notification;
-                var visual = toastNotification?.Visual;
-                
+                appName = appInfo?.DisplayInfo?.DisplayName ?? appName;
+                aumid = appInfo?.AppUserModelId ?? "";
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"[Toast] 读应用信息失败：{DescribeException(ex)}（ID: {notification.Id}），应用名用占位");
+            }
+
+            ToastData toast;
+            try
+            {
+                var visual = notification.Notification?.Visual;
+
                 if (visual == null)
                 {
                     Logger.Warn($"[Toast] 提取失败：通知没有 Visual 内容（应用: {appName}, ID: {notification.Id}）");
                     return null;
                 }
-                
-                var binding = visual.GetBinding("ToastGeneric");
-                
-                if (binding == null)
-                {
-                    Logger.Warn($"[Toast] 提取失败：没有 ToastGeneric 绑定（应用: {appName}, ID: {notification.Id}）");
-                    return null;
-                }
-                
-                var textElements = binding.GetTextElements();
-                
+
+                var textElements = visual.GetBinding("ToastGeneric")?.GetTextElements();
+
                 if (textElements == null || textElements.Count == 0)
                 {
                     Logger.Warn($"[Toast] 提取失败：ToastGeneric 里没有文本元素（应用: {appName}, ID: {notification.Id}）");
                     return null;
                 }
-                
-                string title = textElements[0]?.Text ?? "";
-                string body = string.Join(" ", textElements.Skip(1).Select(t => t.Text));
 
-                if (title.Contains("微信") || title.Contains("WeChat") ||
-    body.Contains("微信") || body.Contains("WeChat"))
-                {
-                    Logger.Debug($"[Toast] 已过滤微信通知 -> 应用: {appName}, 标题: {title}, ID: {notification.Id}");
-                    return null;
-                }
-
-                Logger.Info($"[Toast] 捕获系统通知 -> 应用: {appName} ({aumid}), 标题: {title}, 内容: {body}, ID: {notification.Id}");
-
-                var toast = new ToastData
+                toast = new ToastData
                 {
                     AppName = appName,
-                    Title = title,
-                    Body = body,
+                    Title = textElements[0]?.Text ?? "",
+                    Body = string.Join(" ", textElements.Skip(1).Select(t => t.Text)),
                     Aumid = aumid,
                     InternalNotification = notification,
                     NotificationId = notification.Id,
-                    ProcessName = appInfo?.AppUserModelId ?? appName
+                    ProcessName = aumid.Length > 0 ? aumid : appName
                 };
-
-                // toast 里的头像（QQ 聊天通知带的好友/群头像）WinRT 读不到，去通知库里取证；后台做，不挡轮询。
-                ToastAvatarProbe.ResolveInBackground(toast);
-
-                return toast;
             }
             catch (Exception ex)
             {
-                Logger.Warn($"[Toast] 提取异常：{ex.GetType().Name}: {ex.Message}（ID: {notification.Id}）");
+                Logger.Warn($"[Toast] 提取异常：{DescribeException(ex)}（ID: {notification.Id}）");
                 return null;
             }
+
+            if (toast.Title.Contains("微信") || toast.Title.Contains("WeChat") ||
+                toast.Body.Contains("微信") || toast.Body.Contains("WeChat"))
+            {
+                Logger.Debug($"[Toast] 已过滤微信通知 -> 应用: {appName}, 标题: {toast.Title}, ID: {notification.Id}");
+                return null;
+            }
+
+            Logger.Info($"[Toast] 捕获系统通知 -> 应用: {appName} ({aumid}), 标题: {toast.Title}, 内容: {toast.Body}, ID: {notification.Id}");
+
+            // 应用图标必须趁快照新鲜时就地取：InternalNotification 随时可能被系统撤走，
+            // 拖到后台再读 AppInfo 大概率扑空 —— 这就是「部分应用图标读不到」的来源。
+            try
+            {
+                var logo = Plugins.PluginDataBridge.TryGetAppLogo(toast);
+                if (logo != null)
+                {
+                    toast.CustomIcon = logo;
+                    toast.OwnsCustomIcon = true;   // 就地解码的私有位图：退场由宿主 Dispose
+                }
+                else
+                {
+                    // DisplayInfo 没给 logo（不少应用如此，尤其 AUMID 不带「!」段的）：
+                    // 退到 AppIconProvider 的四级解析（shell:AppsFolder / 进程 exe 图标）。
+                    ToastAppIconFallback.ResolveInBackground(toast);
+                }
+            }
+            catch { }
+
+            // toast 里的头像（QQ 聊天通知带的好友/群头像）WinRT 读不到，去通知库里取证；后台做，不挡轮询。
+            ToastAvatarProbe.ResolveInBackground(toast);
+
+            return toast;
+        }
+
+        // 把 TargetInvocationException 这类包装异常剥到内层真因，附上传入侧最上面几帧堆栈。
+        private static string DescribeException(Exception ex)
+        {
+            var parts = new List<string>();
+            for (var e = (Exception?)ex; e != null && parts.Count < 5; e = e.InnerException)
+                parts.Add($"{e.GetType().Name}: {e.Message}");
+
+            string frames = ex.InnerException?.StackTrace ?? ex.StackTrace ?? "";
+            string top = string.Join(" | ", frames.Split('\n')
+                .Select(l => l.Trim())
+                .Where(l => l.StartsWith("   于 ") || l.StartsWith("at "))
+                .Take(3));
+
+            return top.Length > 0
+                ? string.Join(" <- ", parts) + " @ " + top
+                : string.Join(" <- ", parts);
         }
 
         public async Task ClearAllNotificationsAsync()
@@ -615,6 +652,13 @@ namespace NotchPeninsula
             set => Volatile.Write(ref _customIcon, value);
         }
 
+        /// <summary>
+        /// true = CustomIcon 是这条通知私有的就地解码 logo，展示结束由宿主 Dispose；
+        /// false = 来自 ToastIconProvider 共享缓存（或插件 / HTTP 通道）——那些位图
+        /// 归缓存统一管，按单条通知的生命周期去删会把别的通知还在用的图删掉，只断引用。
+        /// </summary>
+        public bool OwnsCustomIcon { get; set; }
+
         private SKBitmap? _avatar;
 
         /// <summary>
@@ -628,6 +672,73 @@ namespace NotchPeninsula
         }
     }
     
+    /// <summary>
+    /// DisplayInfo 没有 logo 时的兜底：借 <see cref="AppIconProvider"/> 拿应用图标。
+    /// 先<b>同步</b>快解（缓存 / AUMID 即路径 / shell:AppsFolder / 进程 exe 直配，有进程快照
+    /// 250ms 预算）——在提取阶段就完成，图标随首帧一起出现，不会先闪一下默认图；
+    /// 快解没中再转后台轮询，晚到就把 CustomIcon 顶上。拿到的都是 Copy，归这条通知私有，
+    /// 退场随 OwnsCustomIcon 释放。
+    /// </summary>
+    internal static class ToastAppIconFallback
+    {
+        public static void ResolveInBackground(ToastData toast)
+        {
+            string aumid = toast.Aumid;
+            if (string.IsNullOrWhiteSpace(aumid)) return;
+
+            // 同步快解：调用点在轮询后台线程的提取阶段，这一两三百毫秒发生在通知上屏之前
+            try
+            {
+                var quick = AppIconProvider.ResolveQuick(aumid);
+                if (quick != null)
+                {
+                    if (toast.CustomIcon == null)
+                    {
+                        toast.CustomIcon = quick;
+                        toast.OwnsCustomIcon = true;
+                        Logger.Info($"[Toast图标] 应用 logo 快解成功（首帧无闪）: {aumid}");
+                        return;
+                    }
+                    quick.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"[Toast图标] 快解异常: {ex.GetType().Name}: {ex.Message}");
+            }
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < 10; i++)   // ≈3s：覆盖通知展示期，拿到就还来得及换图
+                    {
+                        if (toast.CustomIcon != null) return;
+
+                        var bmp = AppIconProvider.Get(aumid);
+                        if (bmp != null)
+                        {
+                            if (toast.CustomIcon == null)
+                            {
+                                toast.CustomIcon = bmp;
+                                toast.OwnsCustomIcon = true;
+                                Logger.Info($"[Toast图标] 应用 logo 经 AppIconProvider 解析成功: {aumid}");
+                            }
+                            else bmp.Dispose();   // 晚到一步：已经有人先挂上了，这份 Copy 立即释放
+                            return;
+                        }
+                        Thread.Sleep(300);
+                    }
+                    Logger.Debug($"[Toast图标] 兜底解析 3s 内没拿到，沿用预设/默认图: {aumid}");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug($"[Toast图标] 兜底解析异常: {ex.GetType().Name}: {ex.Message}");
+                }
+            });
+        }
+    }
+
     public class ToastMessage
     {
         public string Title { get; set; } = "";

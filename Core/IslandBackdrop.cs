@@ -17,12 +17,14 @@ namespace NotchPeninsula
     //   · 所以：渲染线程只写「要抓哪块」，抓取/缩放/模糊全在 NPS-Backdrop 线程做，
     //     产出的小图通过 Interlocked 交换交给渲染线程，**由渲染线程负责释放**（唯一的消费者）。
     //
-    // 内存口径：GDI 直接 StretchBlt 成 1/12 小图（约 200x37），绝不把 4MB 的整屏原图搬进托管堆；
-    //          每次只新产一张 ~30KB 的 SKImage，旧的那张在渲染线程手里、由它释放。
+    // 内存口径：抓屏统一 1:1（约 1920x219，≈1.7MB DIB，后台线程持有，不进渲染帧）；
+    //          每次只新产一张 SKImage，旧的那张在渲染线程手里、由它释放。
     internal static unsafe class IslandBackdrop
     {
         private const int RefreshMs = 250;      // 背板刷新节拍（屏幕读取很贵，别太频繁）
-        public const float Downscale = 12f;     // 缩略倍数：越大越糊（实测 k=8→std31 / k=16→std6.6）
+        // 抓屏统一 1:1（2026-10-24 起亚克力与玻璃同规格）：1/12 缩略会把背板糊成一团色，
+        // 折射 / 亮度采样都失真；亚克力的雾面感交给渲染层的降采样，不再靠抓屏缩放实现。
+        public const float Downscale = 1f;
 
         // 液态玻璃用的降采样：折射位移得看得出来，1/12 那种糊度会把玻璃拍成一团色块。
         // 随「玻璃质量」变（精细档 1:1），所以是属性不是常量。
@@ -31,9 +33,8 @@ namespace NotchPeninsula
         // 渲染线程每帧告知一次当前材质；切换会触发过期重抓
         private static volatile bool _glass;
 
-        // 抓屏方式：true = 走放大镜 API（玻璃模式 1:1 全分辨率），false = 老 GDI StretchBlt。
-        // 放大镜不可用时会自动回退到 GDI，这个开关只是用户偏好。
-        public static bool UseMagnifier { get; set; } = true;
+        // 抓屏方式不暴露成设置了：放大镜可用就走放大镜 API（玻璃模式 1:1 全分辨率），
+        // 不可用自动回退老 GDI StretchBlt —— 读点只看 IsAvailable，不再有用户偏好开关。
 
         private static volatile bool _magUsed;
 
@@ -267,8 +268,8 @@ namespace NotchPeninsula
             int w = _tw, h = _th, x = _tx, y = _ty;
             if (w < 16 || h < 16) return false;
 
-            // 玻璃 + 放大镜可用 → 走全分辨率那条线（亚克力仍走 GDI：1/12 缩略对它绰绰有余）
-            if (_glass && UseMagnifier && MagnifierBackdrop.IsAvailable)
+            // 玻璃 + 放大镜可用 → 走全分辨率那条线（亚克力走 GDI，同样 1:1 抓屏）
+            if (_glass && MagnifierBackdrop.IsAvailable)
                 return CaptureMagnified(x, y, w, h);
 
             // 还不知道岛体占哪块 → 先别抓（不然会把岛体自己拍进去，画面会往涂层色糊成一坨）
@@ -293,7 +294,7 @@ namespace NotchPeninsula
             if (sdc == IntPtr.Zero) return false;
             try
             {
-                // GDI 一步缩到 1/12，不经过全尺寸原图
+                // 1:1 直拷（ds=1 时 StretchBlt 就是原样搬运，不过缩放器）
                 Win32.SetStretchBltMode(_memDc, Win32.HALFTONE);
                 if (!Win32.StretchBlt(_memDc, 0, 0, sw, sh, sdc, x, y, w, h, Win32.SRCCOPY)) return false;
             }
