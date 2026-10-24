@@ -683,13 +683,13 @@ namespace NotchPeninsula
                     GetPluginListCardTop(out float listY);
                     GetPluginListLayout(out int rows, out int pluginMaxFirst);
                     _pluginScroll = Math.Clamp(_pluginScroll, 0, pluginMaxFirst);
-                    if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= listY + 44)
+                    if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= listY + PluginRowsTopPad)
                     {
-                        int slot = (int)((y - (listY + 44)) / PluginListRowH);
+                        int slot = (int)((y - (listY + PluginRowsTopPad)) / PluginListRowH);
                         int idx = slot + _pluginScroll;
                         if (slot >= 0 && slot < rows)
                         {
-                            float rowY = listY + 44 + slot * PluginListRowH;
+                            float rowY = listY + PluginRowsTopPad + slot * PluginListRowH;
                             if (y >= rowY + 18 && y <= rowY + 44)
                             {
                                 // 从左到右：重载 | 卸载 | 开关

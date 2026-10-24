@@ -35,7 +35,7 @@ namespace NotchPeninsula
             // 最后一行按**行内容底**（开关底 = rowY+22+20）对齐卡片底判定，不按整槽 48：
             // (478)/48 = 9.96 会把第 10 行整槽截掉，而第 10 行内容底 668 明明在卡片底 672 之内。
             const float RowContentH = 42f;   // 行内最深元素：开关 rowY+22 + 高 20
-            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + 44) - RowContentH) / PluginListRowH) + 1);
+            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + PluginRowsTopPad) - RowContentH) / PluginListRowH) + 1);
             int total = _pluginView.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);

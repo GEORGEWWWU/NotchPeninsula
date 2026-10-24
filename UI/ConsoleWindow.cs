@@ -56,7 +56,9 @@ namespace NotchPeninsula
 
         private const float DISPLAY_ITEM_H = 30f;
 
-        private const float DISPLAY_FIRST_ROW_Y = 13f;    // 列表卡片顶部到首件 item 的距离（卡片无标题行）
+        // 13 → 9：列表与上面「双击空白切换待机模式」行离得太远，整体上移 4px；
+    // 卡高分分支 min(9+10*33=339, 343) 仍够 10 行。
+    private const float DISPLAY_FIRST_ROW_Y = 9f;     // 列表卡片顶部到首件 item 的距离（卡片无标题行）
 
         // 8 → 10：卡片底部原本空着两行多的高度，列表却只排 8 行。
         // 多出来的两行靠**列表内部滚动**看，卡片本身不再变高 —— 显示设置页是整页排布的，
