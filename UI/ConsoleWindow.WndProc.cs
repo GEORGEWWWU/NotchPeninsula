@@ -79,11 +79,14 @@ namespace NotchPeninsula
             int newHoveredGlassSource = -1;       // 抓屏方式分段控件
             int newHoveredGlassParam = -1;        // 9 根滑轨里悬停的是哪一根
             int newHoveredGlassParamLevel = -1;   // 悬停到的档位
+            bool newHoveredGlassReset = false;    // 卡底「恢复默认参数」
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             if (_selectedTab == 5)
             {
                 float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
-                if (y >= themeSegY && y <= themeSegY + SEG_H
+                // 液态玻璃下不认这块：玻璃的明暗由背后的桌面决定，主题色只剩"文字反白"，摆着会误导
+                if (!Renderer.IslandLiquidGlass
+                    && y >= themeSegY && y <= themeSegY + SEG_H
                     && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
                     newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
 
@@ -96,7 +99,7 @@ namespace NotchPeninsula
                 float sliderX = CONTENT_TEXT_X;
                 float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
 
-                if (!Renderer.PassthroughModeEnabled)
+                if (ShowOpacityCard && !Renderer.PassthroughModeEnabled)
                 {
                     // 放宽 Y 轴的判定区域，提升拖拽时的手感，防止手抖断触
                     if (x >= sliderX - 20 && x <= sliderX + sliderW + 20 && y >= sliderY - 20 && y <= sliderY + 20)
@@ -142,7 +145,7 @@ namespace NotchPeninsula
                             int idx = (int)(row * 3) + col;
                             if (idx >= LiquidGlass.ParamCount) continue;
 
-                            float gx0 = GLASS_COL_X + col * GLASS_COL_W + GLASS_SLIDER_DX;
+                            float gx0 = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP) + GLASS_SLIDER_DX;
                             float gx1 = gx0 + GLASS_SLIDER_W;
                             if (x < gx0 - 16 || x > gx1 + 16) continue;
 
@@ -160,6 +163,16 @@ namespace NotchPeninsula
                             break;
                         }
                         break;
+                    }
+
+                    // 卡底「恢复默认参数」：滑轨之后判，命中就把滑轨悬停清掉
+                    float grY = gCardY + GLASS_RESET_Y;
+                    if (x >= GLASS_RESET_X && x <= GLASS_RESET_X + GLASS_RESET_W
+                        && y >= grY && y <= grY + GLASS_RESET_H)
+                    {
+                        newHoveredGlassParam = -1;
+                        newHoveredGlassParamLevel = -1;
+                        newHoveredGlassReset = true;
                     }
                 }
 
@@ -750,6 +763,7 @@ namespace NotchPeninsula
                 newHoveredGlassSource != _hoveredGlassSourceIndex ||
                 newHoveredGlassParam != _hoveredGlassParamIndex ||
                 newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
+                newHoveredGlassReset != _hoveredGlassReset ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
@@ -820,6 +834,7 @@ namespace NotchPeninsula
                 _hoveredGlassSourceIndex = newHoveredGlassSource;
                 _hoveredGlassParamIndex = newHoveredGlassParam;
                 _hoveredGlassParamLevel = newHoveredGlassParamLevel;
+                _hoveredGlassReset = newHoveredGlassReset;
                 _mediaExpToggleHovered = newMediaExpToggleHovered;
                 _appLaunchToggleHovered = newAppLaunchToggleHovered;
                 _hoveredOpacityIndex = newHoveredOpacityIndex;

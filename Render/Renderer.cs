@@ -113,6 +113,9 @@ namespace NotchPeninsula
         }
         private static bool _standbyActive;
 
+        // 诊断：背板为空只报一次（玻璃模式下背板为空 = 玻璃层整帧不画）
+        private static bool _backdropNullLogged;
+
         public static event Action? StandbyActiveChanged;
 
         public static bool StandbyToggleByDoubleClick { get; set; } = false;
@@ -273,6 +276,11 @@ namespace NotchPeninsula
                 // 亚克力 / 液态玻璃：胶囊内先铺「真实桌面像素」，再叠自绘涂层当色调。
                 // ⚠️ 顺序不能颠倒 —— 涂层必须画在背板之上，否则会被背板整块盖掉（看起来就只剩"假玻璃"）。
                 var backdrop = AcrylicBackdrop;
+                if (backdrop == null && !_backdropNullLogged)
+                {
+                    _backdropNullLogged = true;
+                    Logger.Warn("[玻璃] 背板为空，玻璃层未绘制（抓屏线程无产出或已被停用）");
+                }
                 if (backdrop != null && (IslandAcrylic || IslandLiquidGlass))
                 {
                     canvas.Save();

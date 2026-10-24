@@ -145,7 +145,7 @@ namespace NotchPeninsula
                 }
 
                 _mag = Win32.CreateWindowEx(
-                    0, MagNative.MagnifierClass, null,
+                    0, MagNative.MagnifierClass, null!,
                     MagNative.WS_CHILD | Win32.WS_VISIBLE | MagNative.MS_SHOWMAGNIFIEDCURSOR,
                     0, 0, 8, 8, _host, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
 
@@ -196,7 +196,7 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    _reason = "所在环境不允许放大镜抓屏（屏幕外/屏幕内均未回调）";
+                    _reason = "环境不支持放大镜抓屏";
                     Warn($"[放大镜] {_reason}，抓屏回退 GDI");
                     DestroyWindows();
                     MagNative.MagUninitialize();

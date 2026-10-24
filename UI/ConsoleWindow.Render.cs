@@ -206,12 +206,12 @@ namespace NotchPeninsula
         }
 
         private void DrawSegmented(SKCanvas canvas, float x, float y, float w, float h,
-            string[] labels, int selected, int hovered)
+            string[] labels, int selected, int hovered, bool disabled = false)
         {
             int n = labels.Length;
             float segW = w / n;
 
-            _dynamicFillPaint.Color = Overlay(8);
+            _dynamicFillPaint.Color = disabled ? Overlay(5) : Overlay(8);
             canvas.DrawRoundRect(new SKRect(x, y, x + w, y + h), 6, 6, _dynamicFillPaint);
 
             for (int i = 0; i < n; i++)
@@ -220,17 +220,19 @@ namespace NotchPeninsula
                     x + (i + 1) * segW - (i < n - 1 ? 2f : 0f), y + h);
                 if (i == selected)
                 {
-                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                    _dynamicFillPaint.Color = disabled ? Neutral(80) : new SKColor(0, 120, 212);
                     canvas.DrawRoundRect(r, 5, 5, _dynamicFillPaint);
                 }
-                else if (i == hovered)
+                else if (i == hovered && !disabled)
                 {
                     _dynamicFillPaint.Color = Overlay(24);
                     canvas.DrawRoundRect(r, 5, 5, _dynamicFillPaint);
                 }
 
                 // 文本用完立刻恢复基准色：本帧后面还要用同一支画笔
-                _uiTextPaint.Color = i == selected ? SKColors.White : _fgColor;
+                _uiTextPaint.Color = disabled
+                    ? (i == selected ? Neutral(190) : Neutral(110))
+                    : (i == selected ? SKColors.White : _fgColor);
                 canvas.DrawText(labels[i], r.MidX - _uiTextPaint.MeasureText(labels[i]) / 2f, r.MidY + 5.5f, _uiTextPaint);
             }
             _uiTextPaint.Color = _fgColor;
@@ -1228,7 +1230,7 @@ namespace NotchPeninsula
             canvas.DrawText("背景与文本颜色自适应反转", CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
             DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
-                ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
+                ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex, Renderer.IslandLiquidGlass);
 
             // 第二行：背景材质（独立选项，与主题配色互不影响）
             canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + MAT_TITLE_DY, _uiTextPaint);
@@ -1240,39 +1242,53 @@ namespace NotchPeninsula
                 ["实体", "亚克力", "液态玻璃"], Renderer.IslandLiquidGlass ? 2 : (Renderer.IslandAcrylic ? 1 : 0),
                 _hoveredMaterialIndex);
 
-            float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
-            canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBg);
-            canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBorder);
-
-            canvas.DrawText("背景透明度", CONTENT_TEXT_X, opaY + 26, _subTextPaint);
-            float sliderY = opaY + OPACITY_SLIDER_DY;
-            float sliderX = CONTENT_TEXT_X;
-            float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
-            // 背景透明度滑轨
-            canvas.DrawLine(sliderX, sliderY, sliderX + sliderW, sliderY, _separatorPaint);
-            float activePx = sliderX + (sliderW / 4) * Renderer.BgOpacityLevel;
-            _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
-            _dynamicStrokePaint.StrokeWidth = 2f;
-            canvas.DrawLine(sliderX, sliderY, activePx, sliderY, _dynamicStrokePaint);
-            _dynamicStrokePaint.StrokeWidth = 1.5f;
-            bool isOpacityDisabled = Renderer.PassthroughModeEnabled;
-            _dynamicStrokePaint.Color = isOpacityDisabled ? Neutral(80) : new SKColor(0, 120, 212);
-            for (int i = 0; i < 5; i++)
+            // 液态玻璃模式下整卡不画：玻璃的着色由「玻璃雾度」管，涂层恒为 0（见 ApplyThemeColors），
+            // 这条滑轨摆在那儿只会让人以为能调。尺寸卡/玻璃卡跟着上移（见 SIZE_CARD_Y）。
+            if (ShowOpacityCard)
             {
-                float px = sliderX + (sliderW / 4) * i;
-                bool isSelected = Renderer.BgOpacityLevel == i;
-                bool isHovered = _hoveredOpacityIndex == i;
-                if (isSelected || isHovered)
+                float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
+                canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBg);
+                canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, WIDTH - CONTENT_RM, opaY + OPACITY_CARD_H), 6, 6, _cardBorder);
+
+                canvas.DrawText("背景透明度", CONTENT_TEXT_X, opaY + 26, _subTextPaint);
+                float sliderY = opaY + OPACITY_SLIDER_DY;
+                float sliderX = CONTENT_TEXT_X;
+                float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
+                // 背景透明度滑轨
+                canvas.DrawLine(sliderX, sliderY, sliderX + sliderW, sliderY, _separatorPaint);
+                float activePx = sliderX + (sliderW / 4) * Renderer.BgOpacityLevel;
+
+                // ⚠️ 这几笔必须自己把画笔状态摆正：_dynamicStrokePaint 是全局复用的，
+                //    玻璃卡的滑轨也在改它的 StrokeWidth；一旦 Style/Cap 被别处动过，
+                //    DrawLine 什么都不会画，画面上只剩 _separatorPaint 那条灰轨道（"进度条不显示"）。
+                _dynamicStrokePaint.Style = SKPaintStyle.Stroke;
+                _dynamicStrokePaint.StrokeCap = SKStrokeCap.Round;
+                _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
+                _dynamicStrokePaint.StrokeWidth = 2f;
+                canvas.DrawLine(sliderX, sliderY, activePx, sliderY, _dynamicStrokePaint);
+
+                bool isOpacityDisabled = Renderer.PassthroughModeEnabled;
+                // 禁用（穿透模式）也照样画出进度，只是压暗 —— 整条消失会让人以为设置没生效
+                _dynamicStrokePaint.Color = isOpacityDisabled ? Neutral(80) : new SKColor(0, 120, 212);
+                for (int i = 0; i < 5; i++)
                 {
-                    _dynamicFillPaint.Color = isOpacityDisabled ? Neutral(100) : (isSelected ? new SKColor(0, 120, 212) : Overlay(80));
-                    canvas.DrawCircle(px, sliderY, isSelected ? 6 : 4, _dynamicFillPaint);
+                    float px = sliderX + (sliderW / 4) * i;
+                    bool isSelected = Renderer.BgOpacityLevel == i;
+                    bool isHovered = _hoveredOpacityIndex == i;
+                    if (isSelected || isHovered)
+                    {
+                        _dynamicFillPaint.Color = isSelected
+                            ? (isOpacityDisabled ? Neutral(120) : new SKColor(0, 120, 212))
+                            : Overlay(80);
+                        canvas.DrawCircle(px, sliderY, isSelected ? 6 : 4, _dynamicFillPaint);
+                    }
+                    _dynamicTextPaint.Color = isOpacityDisabled ? Neutral(100) : (isSelected ? _fgColor : Neutral(150));
+                    _dynamicTextPaint.TextSize = 11f;
+                    string pct = OpacityStopLabels[i];   // 复用静态刻度文案，避免每帧插值
+                    float tw = _dynamicTextPaint.MeasureText(pct);
+                    canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
+                    _dynamicTextPaint.TextSize = 13f;
                 }
-                _dynamicTextPaint.Color = isOpacityDisabled ? Neutral(100) : (isSelected ? _fgColor : Neutral(150));
-                _dynamicTextPaint.TextSize = 11f;
-                string pct = OpacityStopLabels[i];   // 复用静态刻度文案，避免每帧插值
-                float tw = _dynamicTextPaint.MeasureText(pct);
-                canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
-                _dynamicTextPaint.TextSize = 13f;
             }
             DrawMultiCard(SIZE_CARD_Y, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
 
@@ -1287,11 +1303,11 @@ namespace NotchPeninsula
                 // ── 第一行：玻璃质量 + 抓屏方式 ──
                 float segY = gY + GLASS_SEG_Y;
                 float segTextY = segY + 20f;
-                canvas.DrawText("玻璃质量", CONTENT_TEXT_X, segTextY, _uiTextPaint);
+                canvas.DrawText("玻璃质量", GLASS_TEXT_X, segTextY, _uiTextPaint);
                 DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
                     ["流畅", "均衡", "精细"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
 
-                canvas.DrawText("抓屏", GLASS_SOURCE_SEG_X - 44f, segTextY, _uiTextPaint);
+                canvas.DrawText("抓屏", GLASS_SOURCE_SEG_X - GLASS_SOURCE_LABEL_DX, segTextY, _uiTextPaint);
                 DrawSegmented(canvas, GLASS_SOURCE_SEG_X, segY, GLASS_SOURCE_SEG_W, SEG_H,
                     ["放大镜", "兼容"], IslandBackdrop.UseMagnifier ? 0 : 1, _hoveredGlassSourceIndex);
 
@@ -1323,16 +1339,26 @@ namespace NotchPeninsula
                 }
                 _dynamicTextPaint.Color = stateColor;
                 _dynamicTextPaint.TextSize = 11f;
-                canvas.DrawText(stateText, CONTENT_TEXT_X, seg2TextY, _dynamicTextPaint);
+                canvas.DrawText(stateText, GLASS_TEXT_X, seg2TextY, _dynamicTextPaint);
                 _dynamicTextPaint.TextSize = 13f;
 
-                // ── 11 根滑轨：3 列 × 4 行 ──
+                // ── 12 根滑轨：3 列 × 4 行 ──
                 for (int row = 0; row < GLASS_ROWS; row++)
                 {
                     float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
                     for (int col = 0; col < 3; col++)
                         DrawGlassSlider(canvas, rowY, col, (int)(row * 3) + col);
                 }
+
+                // ── 最后一行：恢复默认参数 ──
+                // 12 根滑轨一根根往回拨不现实，而且默认值会随版本调
+                float rY = gY + GLASS_RESET_Y;
+                _dynamicFillPaint.Color = _hoveredGlassReset ? Overlay(30) : Overlay(15);
+                canvas.DrawRoundRect(new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
+                    4, 4, _dynamicFillPaint);
+                const string resetLabel = "恢复默认参数";
+                float resetW = _uiTextPaint.MeasureText(resetLabel);
+                canvas.DrawText(resetLabel, GLASS_RESET_X + (GLASS_RESET_W - resetW) / 2f, rY + 18, _uiTextPaint);
             }
         }
 
@@ -1341,20 +1367,25 @@ namespace NotchPeninsula
         {
             if (paramIndex >= LiquidGlass.ParamCount) return;
 
-            float colX = GLASS_COL_X + col * GLASS_COL_W;
+            float colX = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP);
             float x0 = colX + GLASS_SLIDER_DX, x1 = x0 + GLASS_SLIDER_W;
-            float y = rowY + 17f;
+            float textY = rowY + 17f;
+            // 滑轨对齐的是文字的**视觉中线**，不是基线 —— 按基线摆会显得整条轨道往下掉
+            float railY = textY - 4.5f;
 
-            canvas.DrawText(LiquidGlass.ParamNames[paramIndex], colX, y, _subTextPaint);
+            // 玻璃卡的字号比其他页大一号：12px 下"标准"这类两字值挤在一格里很难读
+            _subTextPaint.TextSize = 13f;
+
+            canvas.DrawText(LiquidGlass.ParamLabels[paramIndex], colX, textY, _subTextPaint);
 
             int level = Math.Clamp(LiquidGlass.GetLevel(paramIndex), 0, LiquidGlass.MaxLevel);
             bool hovered = _hoveredGlassParamIndex == paramIndex;
             int hoveredLevel = hovered ? _hoveredGlassParamLevel : -1;
 
-            canvas.DrawLine(x0, y, x1, y, _separatorPaint);
+            canvas.DrawLine(x0, railY, x1, railY, _separatorPaint);
             _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
             _dynamicStrokePaint.StrokeWidth = 2f;
-            canvas.DrawLine(x0, y, x0 + (GLASS_SLIDER_W / LiquidGlass.MaxLevel) * level, y, _dynamicStrokePaint);
+            canvas.DrawLine(x0, railY, x0 + (GLASS_SLIDER_W / LiquidGlass.MaxLevel) * level, railY, _dynamicStrokePaint);
             _dynamicStrokePaint.StrokeWidth = 1.5f;
             for (int i = 0; i <= LiquidGlass.MaxLevel; i++)
             {
@@ -1362,10 +1393,14 @@ namespace NotchPeninsula
                 if (!sel && !hov) continue;
                 float px = x0 + (GLASS_SLIDER_W / LiquidGlass.MaxLevel) * i;
                 _dynamicFillPaint.Color = sel ? new SKColor(0, 120, 212) : Overlay(80);
-                canvas.DrawCircle(px, y, sel ? 5 : 4, _dynamicFillPaint);
+                canvas.DrawCircle(px, railY, sel ? 5.5f : 4.5f, _dynamicFillPaint);
             }
 
-            canvas.DrawText(LiquidGlass.ValueTexts(paramIndex)[level], colX + GLASS_LEVEL_DX, y, _subTextPaint);
+            // 档位值右对齐：左对齐时三字值（"1.08x"）会扎进下一列的标签里
+            string valueText = LiquidGlass.ValueTexts(paramIndex)[level];
+            canvas.DrawText(valueText, colX + GLASS_VALUE_RIGHT - _subTextPaint.MeasureText(valueText), textY, _subTextPaint);
+
+            _subTextPaint.TextSize = 12f;   // 恢复基准字号：同一支画笔后面还要用
         }
 
         private void RenderTabPlugins(SKCanvas canvas)
@@ -1495,7 +1530,7 @@ namespace NotchPeninsula
                 }
             }
 
-            if (maxFirstRow > 0 && visibleRows > 0)
+            if (visibleRows > 0 && maxFirstRow > 0)
             {
                 float trackTop = listY + 44 - 2f;
                 float trackH = visibleRows * PluginListRowH - 8f;
@@ -1824,7 +1859,7 @@ namespace NotchPeninsula
                 }
             }
 
-            if (mMaxFirst > 0 && mVisibleRows > 0)
+            if (mVisibleRows > 0 && mMaxFirst > 0)
             {
                 float trackTop = rowsTop - 2f;
                 float trackH = mVisibleRows * PluginListRowH - 8f;

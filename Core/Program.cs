@@ -95,7 +95,7 @@ namespace NotchPeninsula
                     // 液态玻璃：质量档 + 9 根滑轨 + 抓屏方式（越界一律夹回，老配置/手改注册表都不怕）
                     LiquidGlass.Quality = (int)key.GetValue("LiquidGlassQuality", 1);
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
-                        LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], 2));
+                        LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], LiquidGlass.DefaultLevelOf(i)));
                     IslandBackdrop.UseMagnifier = (int)key.GetValue("GlassUseMagnifier", 1) != 0;
 
                     // 本来就开着的，沿用注册表里的勾选状态。

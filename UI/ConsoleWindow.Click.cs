@@ -402,7 +402,7 @@ namespace NotchPeninsula
 
                 Render();
             }
-            else if (_selectedTab == 5 && _hoveredThemeIndex != -1)
+            else if (_selectedTab == 5 && _hoveredThemeIndex != -1 && !Renderer.IslandLiquidGlass)
             {
                 Renderer.ThemeMode = _hoveredThemeIndex;
                 Renderer.ApplyThemeColors(); // 立即反转画笔颜色
@@ -452,6 +452,13 @@ namespace NotchPeninsula
             else if (_selectedTab == 5 && _hoveredGlassParamIndex != -1 && _hoveredGlassParamLevel >= 0)
             {
                 ApplyGlassLevel(_hoveredGlassParamIndex, _hoveredGlassParamLevel);
+                Render();
+            }
+            else if (_selectedTab == 5 && _hoveredGlassReset)
+            {
+                ResetGlassDefaults();
+                _hoveredGlassReset = false;   // 一次性动作：留着会连点两下又按一遍
+                NotchWindow.RequestAcrylicRebuild();   // 折射/厚度变了，抓屏那侧要重算
                 Render();
             }
             else if (_selectedTab == 5 && _hoveredOpacityIndex != -1)

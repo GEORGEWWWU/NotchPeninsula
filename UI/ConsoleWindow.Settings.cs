@@ -61,13 +61,21 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
-        // 液态玻璃 9 根滑轨的唯一落库口（参数是下标 + 档位）。
+        // 液态玻璃 12 根滑轨的唯一落库口（参数是下标 + 档位）。
         // 悬停拖拽与单击走同一条路，免得两处各写一遍导致设置对不上。
         private void ApplyGlassLevel(int paramIndex, int level)
         {
             if (paramIndex < 0 || paramIndex >= LiquidGlass.ParamCount) return;
             LiquidGlass.SetLevel(paramIndex, level);
             Program.SaveSetting(LiquidGlass.ParamKeys[paramIndex], LiquidGlass.GetLevel(paramIndex));
+        }
+
+        // 12 根一次性回到出厂默认。落库仍走 ApplyGlassLevel，
+        // 保证「点按钮」和「拖滑轨」是同一套 SetLevel + SaveSetting。
+        private void ResetGlassDefaults()
+        {
+            for (int i = 0; i < LiquidGlass.ParamCount; i++)
+                ApplyGlassLevel(i, LiquidGlass.DefaultLevelOf(i));
         }
 
         private const float THEME_CARD_Y = CARD_TOP_Y;
@@ -78,7 +86,14 @@ namespace NotchPeninsula
 
         private const float OPACITY_CARD_H = 78f;
 
-        private const float SIZE_CARD_Y = OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP;  // 222
+        // 液态玻璃模式下「背景透明度」整卡不显示：玻璃的着色由「玻璃雾度」负责，
+        // 涂层恒为 0（见 Renderer.ApplyThemeColors），这条滑轨留着只会让人以为还能调。
+        // 卡片链式排布，所以尺寸卡与玻璃卡要跟着上移，否则中间空出一整块。
+        private static bool ShowOpacityCard => !Renderer.IslandLiquidGlass;
+
+        private static float SIZE_CARD_Y => ShowOpacityCard
+            ? OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP   // 222
+            : OPACITY_CARD_Y;                              // 134
 
         private const float THEME_SEG_W = 150f;
 
@@ -88,8 +103,8 @@ namespace NotchPeninsula
 
         // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟
         // 三档里「液态玻璃」是四个字（13.5px 下约 54px），比主题那排的档位宽，
-        // 所以这一排单独加宽；副标题同步收短，避免文字撞到控件上。
-        private const float MAT_SEG_W = 176f;
+        // 所以这一排单独加宽；176（每档 58.7）时四字几乎顶满格子，加到 210（每档 70）。
+        private const float MAT_SEG_W = 210f;
 
         private const float MAT_SEG_X = WIDTH - CONTENT_TEXT_RM - MAT_SEG_W;
 
@@ -107,40 +122,65 @@ namespace NotchPeninsula
         private const float SIZE_CARD_H = 148f;
 
         // ---- 「液态玻璃」卡：只在材质选到液态玻璃时出现，挂在尺寸卡下面 ----
-        // 第一行：玻璃质量 + 抓屏方式两个分段；第二行：渲染后端 + 放大镜状态；
-        // 下面 11 根滑轨排成 3 列 × 4 行（窗口就这么高，两排放不下）。
-        private const float GLASS_CARD_Y = SIZE_CARD_Y + SIZE_CARD_H + CARD_GAP;   // 380
+        // 第一行：玻璃质量 + 抓屏方式两个分段；第二行：放大镜状态；
+        // 下面 12 根滑轨排成 3 列 × 4 行（窗口就这么高，两排放不下）；
+        // 最后一行留「恢复默认参数」—— 参数一共 12 根，没有它只能一根根往回拨。
+        private static float GLASS_CARD_Y => SIZE_CARD_Y + SIZE_CARD_H + CARD_GAP;   // 222 或 380
 
-        private const float GLASS_CARD_H = 204f;
+        private const float GLASS_CARD_H = 236f;
 
         private const float GLASS_SEG_Y = 12f;      // 第一行分段控件
 
         private const float GLASS_SEG2_Y = 46f;     // 第二行分段控件 + 状态文字
 
+        // 玻璃卡元素多、横向最挤：左右缩进比别的卡各放 8px（16 → 8），
+        // 腾出来的 16px 全给滑轨（48 → 56），拖动时手感也更稳。
+        private const float GLASS_TEXT_X = CONTENT_TEXT_X - 8f;            // 194
+
+        private const float GLASS_TEXT_R = WIDTH - CONTENT_TEXT_RM + 8f;   // 580
+
+        // 「玻璃质量」标签四字（约 54）从 194 起，分段必须让到 254 之后
         private const float GLASS_QUALITY_SEG_W = 150f;
 
-        private const float GLASS_QUALITY_SEG_X = 262f;
+        private const float GLASS_QUALITY_SEG_X = 254f;
 
-        private const float GLASS_SOURCE_SEG_W = 90f;
+        // 抓屏那组分段与卡片文字右缘对齐（580）
+        private const float GLASS_SOURCE_SEG_W = 108f;
 
-        private const float GLASS_SOURCE_SEG_X = 482f;
+        private const float GLASS_SOURCE_SEG_X = GLASS_TEXT_R - GLASS_SOURCE_SEG_W;   // 472
 
-        private const float GLASS_ROW0_Y = 82f;     // 滑轨区第一行
+        private const float GLASS_SOURCE_LABEL_DX = 34f;      // 「抓屏」标签相对分段左端
 
-        private const float GLASS_ROW_H = 28f;
+        private const float GLASS_ROW0_Y = 74f;     // 滑轨区第一行（字号 13 下 4 行到 187 基线）
+
+        private const float GLASS_ROW_H = 32f;
 
         private const float GLASS_ROWS = 4f;        // 12 项 / 3 列
 
-        // 3 列：每列 = 标签(46) + 滑轨(48) + 档位名
-        private const float GLASS_COL_X = CONTENT_TEXT_X;      // 202
+        // 3 列：194 → 580（3 × 122 + 2 × 10 列间距）。
+        // 每列 = 标签 26 + 8 + 滑轨 50 + 4 + 档位值 26（右对齐到列宽 −6）。
+        private const float GLASS_COL_X = GLASS_TEXT_X;        // 194
 
-        private const float GLASS_COL_W = 130f;
+        private const float GLASS_COL_W = 122f;
 
-        private const float GLASS_SLIDER_DX = 46f;             // 滑轨相对列左端
+        private const float GLASS_COL_GAP = 10f;
 
-        private const float GLASS_SLIDER_W = 48f;
+        // 34 而不是 28：13px 的"倍率"两字宽 26，滑轨选中时圆点半径 5.5，
+        // 起点再靠前圆点就会压到字上（截图里"倍率●"就是这个原因）。
+        private const float GLASS_SLIDER_DX = 34f;             // 滑轨相对列左端
 
-        private const float GLASS_LEVEL_DX = 98f;              // 档位名相对列左端
+        private const float GLASS_SLIDER_W = 50f;
+
+        private const float GLASS_VALUE_RIGHT = 116f;          // 档位值右缘（相对列左端，= 列宽 −6）
+
+        // 「恢复默认参数」：卡内最后一行，右对齐到卡片文字右缘
+        private const float GLASS_RESET_W = 96f;
+
+        private const float GLASS_RESET_H = 26f;
+
+        private const float GLASS_RESET_Y = 198f;              // 相对卡顶
+
+        private const float GLASS_RESET_X = GLASS_TEXT_R - GLASS_RESET_W;   // 484
 
         private const float OPACITY_SLIDER_DY = 44f;
 
