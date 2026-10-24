@@ -79,6 +79,11 @@ public static class MspNotchBridge
             RegisterTools(node);
             DeclareSignals(node);
 
+            // 插件注册的工具/信号在 node.Start() **之前**挂上去，
+            // 这样它们进的是握手时那份清单（对端一连上就看得见）；
+            // 之后的插件装卸靠 manifest_update 增量推送。
+            MspPluginRegistry.Attach(node);
+
             node.On(NotifySubscription, OnPeerNotify);
 
             AttachHostEvents();
@@ -90,6 +95,7 @@ public static class MspNotchBridge
         }
         catch
         {
+            MspPluginRegistry.Detach();
             DetachHostEvents();
             try { node.Stop(); } catch { /* 清理失败无所谓，反正要往上抛 */ }
             throw;
@@ -101,6 +107,7 @@ public static class MspNotchBridge
         var node = _node;
         _node = null;
 
+        MspPluginRegistry.Detach();
         DetachHostEvents();
 
         try { node?.Stop(); }
