@@ -160,6 +160,36 @@ namespace NotchPeninsula
             return null;
         }
 
+        /// <summary>
+        /// 同步快解：缓存命中 → AUMID 即路径 → shell:AppsFolder → 进程 exe 直配，四条最便宜的。
+        /// 通知首帧就要图标的场景走这里（≤ 进程快照的 250ms 预算）；昂贵的词元兜底留给异步 Resolve。
+        /// 返回的是独立 Copy，归调用方所有。
+        /// </summary>
+        internal static SKBitmap? ResolveQuick(string aumid)
+        {
+            if (string.IsNullOrWhiteSpace(aumid)) return null;
+
+            try
+            {
+                lock (_gate)
+                {
+                    if (_cache.TryGetValue(aumid, out var hit) && hit.Icon != null)
+                        return hit.Icon.Copy();
+                }
+
+                if ((aumid.Contains('\\') || aumid.Contains('/')) && File.Exists(aumid) &&
+                    ShellIcon.Load(aumid, IconPixels) is { } fromPath) return fromPath;
+
+                if (aumid.Contains('!') &&
+                    ShellIcon.Load("shell:AppsFolder\\" + aumid, IconPixels) is { } fromPackage) return fromPackage;
+
+                string exe = FindExeByAumid(SnapshotProcesses(), aumid);
+                if (exe.Length > 0 && ShellIcon.Load(exe, IconPixels) is { } fromExe) return fromExe;
+            }
+            catch { }
+            return null;
+        }
+
         private static void StartResolve(string aumid)
         {
             _ = Task.Run(() =>

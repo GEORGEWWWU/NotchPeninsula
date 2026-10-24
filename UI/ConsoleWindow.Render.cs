@@ -19,6 +19,31 @@ namespace NotchPeninsula
             canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, _uiTextPaint);
         }
 
+        // 侧栏「插件市场」右上角的更新数角标：黄底白字小胶囊，>9 显示 9+。
+        // 纯展示，不单独吃点击（整行本来就是页签热区）。
+        private void DrawMarketTabBadge(SKCanvas canvas, float rowTop)
+        {
+            string text = MarketUpdateCount > 9 ? "9+" : MarketUpdateCount.ToString();
+            const float badgeH = 13f;
+            _dynamicTextPaint.TextSize = 9.5f;
+            float tw = _dynamicTextPaint.MeasureText(text);
+            float w = Math.Max(tw + 8f, badgeH);
+            float right = TAB_BOX_R - 12f;
+            var r = new SKRect(right - w, rowTop + 4f, right, rowTop + 4f + badgeH);
+
+            _dynamicFillPaint.Color = new SKColor(232, 168, 48);   // 与列表评分星星同一套黄
+            canvas.DrawRoundRect(r, badgeH / 2f, badgeH / 2f, _dynamicFillPaint);
+
+            _dynamicTextPaint.Color = SKColors.White;
+            _dynamicTextPaint.TextAlign = SKTextAlign.Center;
+            canvas.DrawText(text, r.MidX, r.MidY + _dynamicTextPaint.TextSize * 0.35f, _dynamicTextPaint);
+
+            // 共用画笔复位：侧栏后面还有别的文字要画
+            _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+            _dynamicTextPaint.TextSize = 13f;
+            _dynamicTextPaint.Color = _fgColor;
+        }
+
         // 选中态的整体：背景方块 + 左侧蓝色竖条，一起滑到选中行。
         // 急出缓入位移（先快后慢）。**只有蓝条做「拉丝」**：背景块保持 36 高，方块跟着拉长反而显得不跟手。
         private void DrawTabSelection(SKCanvas canvas)
@@ -467,6 +492,8 @@ namespace NotchPeninsula
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, _separatorPaint);
             DrawTab(canvas, 6, "我的插件", TabRowY(6));
             DrawTab(canvas, 7, "插件市场", TabRowY(7));
+            // 有可更新插件才画角标：数字超 9 显示 9+，与市场页「一键更新」共用同一份计数
+            if (MarketUpdateCount > 0) DrawMarketTabBadge(canvas, TITLE_BAR_HEIGHT + TabRowY(7));
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, _separatorPaint);
             DrawTab(canvas, 4, "关于软件", TabRowY(4));
 
@@ -1300,47 +1327,22 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
-                // ── 第一行：玻璃质量 + 抓屏方式 ──
+                // ── 第一行：玻璃质量（左） + 恢复默认参数（右）──
+                // 抓屏方式不再暴露：放大镜可用即用、不可用自动回退兼容抓屏，没有开关也没有状态行。
                 float segY = gY + GLASS_SEG_Y;
                 float segTextY = segY + 20f;
                 canvas.DrawText("玻璃质量", GLASS_TEXT_X, segTextY, _uiTextPaint);
                 DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
                     ["流畅", "均衡", "精细"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
 
-                canvas.DrawText("抓屏", GLASS_SOURCE_SEG_X - GLASS_SOURCE_LABEL_DX, segTextY, _uiTextPaint);
-                DrawSegmented(canvas, GLASS_SOURCE_SEG_X, segY, GLASS_SOURCE_SEG_W, SEG_H,
-                    ["放大镜", "兼容"], IslandBackdrop.UseMagnifier ? 0 : 1, _hoveredGlassSourceIndex);
-
-                // ── 第二行：抓屏状态 ──
-                // ⚠️ 这行字是「按钮按了没反应」的正解：状态一律明说，绝不默默忽略点击。
-                //    不可用时点「放大镜」会再试一次初始化，试到上限才彻底停用并写出原因。
-                float seg2TextY = gY + GLASS_SEG2_Y + 20f;
-                string stateText;
-                SKColor stateColor;
-                if (MagnifierBackdrop.IsDisabled)
-                {
-                    stateText = "放大镜不可用：" + MagnifierBackdrop.UnavailableReason;
-                    stateColor = new SKColor(200, 120, 120);
-                }
-                else if (!MagnifierBackdrop.IsAvailable)
-                {
-                    stateText = IslandBackdrop.UseMagnifier ? "放大镜就绪中…（正在重试）" : "放大镜尚未初始化";
-                    stateColor = Neutral(150);
-                }
-                else if (!IslandBackdrop.UseMagnifier)
-                {
-                    stateText = "已就绪，当前用兼容抓屏";
-                    stateColor = Neutral(150);
-                }
-                else
-                {
-                    stateText = "放大镜抓屏中（1:1 全分辨率）";
-                    stateColor = new SKColor(0, 140, 240);
-                }
-                _dynamicTextPaint.Color = stateColor;
-                _dynamicTextPaint.TextSize = 11f;
-                canvas.DrawText(stateText, GLASS_TEXT_X, seg2TextY, _dynamicTextPaint);
-                _dynamicTextPaint.TextSize = 13f;
+                // 「恢复默认参数」：与质量分段同一行，右对齐到卡片文字右缘（原卡底位让给滑轨）
+                float rY = segY + (SEG_H - GLASS_RESET_H) / 2f;
+                _dynamicFillPaint.Color = _hoveredGlassReset ? Overlay(30) : Overlay(15);
+                canvas.DrawRoundRect(new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
+                    4, 4, _dynamicFillPaint);
+                const string resetLabel = "恢复默认参数";
+                float resetW = _uiTextPaint.MeasureText(resetLabel);
+                canvas.DrawText(resetLabel, GLASS_RESET_X + (GLASS_RESET_W - resetW) / 2f, rY + 18, _uiTextPaint);
 
                 // ── 12 根滑轨：3 列 × 4 行 ──
                 for (int row = 0; row < GLASS_ROWS; row++)
@@ -1349,16 +1351,6 @@ namespace NotchPeninsula
                     for (int col = 0; col < 3; col++)
                         DrawGlassSlider(canvas, rowY, col, (int)(row * 3) + col);
                 }
-
-                // ── 最后一行：恢复默认参数 ──
-                // 12 根滑轨一根根往回拨不现实，而且默认值会随版本调
-                float rY = gY + GLASS_RESET_Y;
-                _dynamicFillPaint.Color = _hoveredGlassReset ? Overlay(30) : Overlay(15);
-                canvas.DrawRoundRect(new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
-                    4, 4, _dynamicFillPaint);
-                const string resetLabel = "恢复默认参数";
-                float resetW = _uiTextPaint.MeasureText(resetLabel);
-                canvas.DrawText(resetLabel, GLASS_RESET_X + (GLASS_RESET_W - resetW) / 2f, rY + 18, _uiTextPaint);
             }
         }
 
@@ -1865,6 +1857,21 @@ namespace NotchPeninsula
                 float trackH = mVisibleRows * PluginListRowH - 8f;
                 DrawScrollBar(canvas, WIDTH - 26, trackTop, trackH,
                     mVisibleRows / (float)_marketView.Count, _marketScroll / (float)mMaxFirst);
+            }
+
+            // ── 一键更新全部：有可更新插件才出现（列表高度已在 GetMarketListLayout 让位）──
+            if (MarketUpdateCount > 0)
+            {
+                var bar = MarketUpdateBarRect;
+                bool running = _updateAllRunning;
+                bool enabled = !running && _marketBusyId.Length == 0;
+                // 主操作色跟行内「更新」按钮同一套橙：一眼看出这条是干什么的
+                _dynamicFillPaint.Color = running ? Overlay(20)
+                    : enabled && _hoveredMarketUpdateAll ? new SKColor(238, 146, 34)
+                    : new SKColor(214, 126, 24);
+                canvas.DrawRoundRect(bar, 5, 5, _dynamicFillPaint);
+                _uiTextPaint.Color = running ? Neutral(200) : SKColors.White;
+                DrawCenteredButtonLabel(canvas, running ? UpdateAllProgressText : $"一键更新全部插件（{MarketUpdateCount}）", bar, _uiTextPaint);
             }
 
             if (_marketCategoryOpen)

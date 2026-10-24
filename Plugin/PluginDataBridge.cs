@@ -337,21 +337,39 @@ public static class PluginDataBridge
         try { return ToastIconProvider.Resolve("windows"); } catch { return null; }
     }
 
-    private static SKBitmap? TryGetAppLogo(ToastData toast)
+    // 读应用显示名下的 64×64 logo。宿主 toast 层（Toast.ExtractToastData）在快照新鲜时
+    // 也会调它给 CustomIcon 兜底 —— internal：只给宿主内部复用，不进插件契约。
+    // 每个失败出口都落一条 Debug：哪些应用取不到、卡在哪一步，没有日志就只能瞎猜。
+    internal static SKBitmap? TryGetAppLogo(ToastData toast)
     {
         try
         {
             var info = toast.InternalNotification?.AppInfo?.DisplayInfo;
-            if (info == null) return null;
+            if (info == null)
+            {
+                Logger.Debug($"[Toast图标] AppInfo/DisplayInfo 为空，logo 取不到（{toast.AppName} / {toast.Aumid}）");
+                return null;
+            }
 
             var logoRef = info.GetLogo(new Windows.Foundation.Size(64, 64));
-            if (logoRef == null) return null;
+            if (logoRef == null)
+            {
+                Logger.Debug($"[Toast图标] GetLogo 返回空（{info.DisplayName} / {toast.Aumid}）");
+                return null;
+            }
 
             using var winrt = logoRef.OpenReadAsync().AsTask().GetAwaiter().GetResult();
             using var net = winrt.AsStreamForRead();
-            return SKBitmap.Decode(net);
+            var bmp = SKBitmap.Decode(net);
+            if (bmp == null)
+                Logger.Debug($"[Toast图标] logo 流解码失败（{info.DisplayName}，{winrt.Size} 字节）");
+            return bmp;
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            Logger.Debug($"[Toast图标] logo 读取异常（{toast.AppName} / {toast.Aumid}）: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
     }
 
     // ---- 工具 ----

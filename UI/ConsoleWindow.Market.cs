@@ -313,6 +313,14 @@ namespace NotchPeninsula
         private const float MarketSortW = 76f;
         private const float MarketSortX = MarketRefreshX - 10f - MarketSortW;           // 428
 
+        // ── 「一键更新全部插件」条：贴卡片底缘，仅有可更新插件时出现 ──
+        // 出现时列表高度让位（GetMarketListLayout 扣掉 Reserve），渲染 / 命中 / 滚轮三处同源。
+        private const int MarketUpdateBarH = 30;
+        private const int MarketUpdateBarPad = 10;                       // 距卡片底缘
+        private static float MarketUpdateBarTop => HEIGHT - 20f - MarketUpdateBarPad - MarketUpdateBarH;
+        private static SKRect MarketUpdateBarRect
+            => new SKRect(CONTENT_TEXT_X, MarketUpdateBarTop, WIDTH - CONTENT_TEXT_RM, MarketUpdateBarTop + MarketUpdateBarH);
+
         private static readonly (string Key, string Name)[] MarketCategories =
         {
             ("all", "全部插件"),
@@ -377,7 +385,9 @@ namespace NotchPeninsula
 
         private void GetMarketListLayout(out int visibleRows, out int maxFirstRow)
         {
-            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - MarketRowsTop) / PluginListRowH));
+            // 有更新时底部给「一键更新」条让位；没有就列表吃满，一行不多占。
+            int reserve = MarketUpdateCount > 0 ? MarketUpdateBarH + MarketUpdateBarPad : 0;
+            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - MarketRowsTop - reserve) / PluginListRowH));
             int total = _marketView.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
@@ -406,6 +416,7 @@ namespace NotchPeninsula
                 {
                     _marketFetching = false;
                     _marketDataDirty = true;   // 过滤视图重建放到 UI 线程（见 RenderTabMarket）
+                    InvalidateMarketUpdateCount();   // 市场数据换了一批：可更新计数作废重算
                     PostAsyncRerender();
                 }
             });
@@ -952,6 +963,87 @@ namespace NotchPeninsula
             return CompareVersions(mp.Version, local.Version) > 0 ? "更新" : "重装";
         }
 
+        // ---- 可更新统计（侧栏「插件市场」角标 + 一键更新按钮共用同一套判据）----
+        //   判据与行内「更新」按钮严格一致：已安装、在跑、本地版本可解析、市场版本更新。
+        //   计数带脏标记：MatchLocalPlugin 全量跑一遍有字符串归一化开销，不能每帧算。
+
+        private int _marketUpdateCount;
+        private bool _marketUpdateCountDirty = true;
+
+        private void InvalidateMarketUpdateCount() => _marketUpdateCountDirty = true;
+
+        private int MarketUpdateCount
+        {
+            get
+            {
+                if (_marketUpdateCountDirty)
+                {
+                    _marketUpdateCountDirty = false;
+                    int n = 0;
+                    foreach (var mp in _marketPlugins)
+                        if (IsUpdatable(mp)) n++;
+                    _marketUpdateCount = n;
+                }
+                return _marketUpdateCount;
+            }
+        }
+
+        private bool IsUpdatable(MarketPlugin mp)
+        {
+            var local = MatchLocalPlugin(mp);
+            if (local == null || PluginManager.Instance.IsDisabled(local)) return false;
+            if (local.Version.Length == 0) return false;
+            return CompareVersions(mp.Version, local.Version) > 0;
+        }
+
+        // ---- 一键更新全部 ----
+        //   StartMarketInstall 的 _marketBusyId 闸一口只吃一个下载 ⇒ 队列逐个走：
+        //   上一份安装任务的 finally 会 PostAsyncRerender，渲染入口（Render 里）接着踢下一条 ——
+        //   不直接在后台线程里连环启动，保持「安装动作只在 UI 线程发生」的老规矩。
+
+        private readonly List<MarketPlugin> _updateAllQueue = new();
+        private bool _updateAllRunning;
+        private int _updateAllTotal;
+        private bool _hoveredMarketUpdateAll;
+
+        private string UpdateAllProgressText
+        {
+            get
+            {
+                int busy = _marketBusyId.Length > 0 ? 1 : 0;
+                int done = Math.Max(0, _updateAllTotal - _updateAllQueue.Count - busy);
+                return $"正在更新（{done}/{_updateAllTotal}）…";
+            }
+        }
+
+        private void StartUpdateAll()
+        {
+            if (_updateAllRunning || _marketBusyId.Length > 0) return;
+            _updateAllQueue.Clear();
+            foreach (var mp in _marketPlugins)
+                if (IsUpdatable(mp)) _updateAllQueue.Add(mp);
+            if (_updateAllQueue.Count == 0) return;
+            _updateAllTotal = _updateAllQueue.Count;
+            _updateAllRunning = true;
+            KickUpdateAllQueue();
+        }
+
+        /// <summary>只在 UI 线程调（渲染入口）。队列空了收尾；队头失效（中途被卸载 / 已是最新）就地跳过。</summary>
+        private void KickUpdateAllQueue()
+        {
+            if (!_updateAllRunning || _marketBusyId.Length > 0) return;
+            while (_updateAllQueue.Count > 0)
+            {
+                var mp = _updateAllQueue[0];
+                _updateAllQueue.RemoveAt(0);
+                if (!IsUpdatable(mp)) continue;
+                StartMarketInstall(mp);
+                return;
+            }
+            _updateAllRunning = false;
+            _updateAllTotal = 0;
+        }
+
         private void PostAsyncRerender()
         {
             var inst = _instance;
@@ -1274,8 +1366,9 @@ namespace NotchPeninsula
 
             // 评分弹窗只在市场页问：它靠点击市场行来交互，画在别的页签上既挡视线又没人点得中。
             // 失败弹窗相反 —— 必须不分页签当场弹，所以两者的「什么时候出现」不能共用一套判断。
+            // 一键更新批量进行中也不问：连装 N 个弹 N 次「给个好评」等于骚扰，装完再说。
             // render: false —— 这里本身就在 Render() 里面，再叫一次会把整帧重画一遍叠在当前画布上。
-            if (rateTarget != null && _selectedTab == 7)
+            if (rateTarget != null && _selectedTab == 7 && !_updateAllRunning)
                 OpenRateDialog(rateTarget, render: false);   // 装完自动问一句评分
         }
 

@@ -215,6 +215,13 @@ namespace NotchPeninsula
                 Logger.Warn("置前失败：应用名为空");
                 return (false, "应用名为空，无法置前");
             }
+
+            // AUMID 形如「QQ」或「WorkBuddy.WorkBuddy」，进程名只认「.」前的主体段 ——
+            // 拿整串 AUMID 去 IndexOf 进程名永远匹配不到（「有时候点不开」的来源之一）。
+            var candidates = new List<string> { appName };
+            int dot = appName.IndexOf('.');
+            if (dot > 1) candidates.Add(appName[..dot]);
+
             try
             {
                 var procs = System.Diagnostics.Process.GetProcesses();
@@ -227,16 +234,22 @@ namespace NotchPeninsula
                         {
                             if (p.MainWindowHandle == IntPtr.Zero)
                                 continue;
-                            if ((!string.IsNullOrWhiteSpace(p.MainWindowTitle) && p.MainWindowTitle.IndexOf(appName, StringComparison.OrdinalIgnoreCase) >= 0)
-                                || p.ProcessName.IndexOf(appName, StringComparison.OrdinalIgnoreCase) >= 0)
+
+                            string procName = SafeProcessName(p);
+                            string title = p.MainWindowTitle ?? "";
+
+                            foreach (var name in candidates)
                             {
-                                string procName = SafeProcessName(p);
-                                int procId = SafeProcessId(p);
-                                IntPtr h = p.MainWindowHandle;
-                                if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
-                                SetForegroundWindow(h);
-                                Logger.Info($"已将进程 {procName} (PID={procId}) 窗口置前");
-                                return (true, $"已将进程 {procName} 的窗口置前");
+                                if ((title.Length > 0 && title.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    || procName.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    int procId = SafeProcessId(p);
+                                    IntPtr h = p.MainWindowHandle;
+                                    if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+                                    SetForegroundWindow(h);
+                                    Logger.Info($"已将进程 {procName} (PID={procId}) 窗口置前");
+                                    return (true, $"已将进程 {procName} 的窗口置前");
+                                }
                             }
                         }
                         catch (Exception ex)

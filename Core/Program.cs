@@ -92,11 +92,11 @@ namespace NotchPeninsula
                     Renderer.IslandLiquidGlass = (int)key.GetValue("IslandLiquidGlass", 0) != 0;
                     if (Renderer.IslandLiquidGlass) Renderer.IslandAcrylic = false;   // 两者互斥，玻璃优先
 
-                    // 液态玻璃：质量档 + 9 根滑轨 + 抓屏方式（越界一律夹回，老配置/手改注册表都不怕）
+                    // 液态玻璃：质量档 + 12 根滑轨（越界一律夹回，老配置/手改注册表都不怕）
+                    // 抓屏方式不再读配置：放大镜可用即用、不可用自动回退兼容抓屏。
                     LiquidGlass.Quality = (int)key.GetValue("LiquidGlassQuality", 1);
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
                         LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], LiquidGlass.DefaultLevelOf(i)));
-                    IslandBackdrop.UseMagnifier = (int)key.GetValue("GlassUseMagnifier", 1) != 0;
 
                     // 本来就开着的，沿用注册表里的勾选状态。
                     // 不勾的话升级后媒体会整个消失。
@@ -240,20 +240,24 @@ namespace NotchPeninsula
                         Logger.Debug($"窗口点击：X={e.X}, Y={e.Y}");
                         if (window.CurrentToast == null) return;
 
-                        try
-                        {
-                            var (ok, msg) = await AppActivator.active_app(window.CurrentToast.Aumid);
-                            if (!ok)
+                            try
                             {
-                                Logger.Debug($"[AppActivator] 唤醒失败：{msg}");
-                                if (!string.IsNullOrWhiteSpace(window.CurrentToast.Aumid))
+                                var (ok, msg) = await AppActivator.active_app(window.CurrentToast.Aumid);
+                                if (!ok)
                                 {
-                                    var (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.Aumid);
-                                    if (!ok2)
-                                        Logger.Debug($"[AppActivator] 按应用名置前失败：{msg2}");
-                                }
-                            }else window.clicked_info = true;
-                        }
+                                    Logger.Debug($"[AppActivator] 唤醒失败：{msg}");
+                                    // 置前候选先 AUMID 再显示名：AUMID 可能整串匹配不到进程
+                                    //（如 WorkBuddy.WorkBuddy），显示名反而就是进程名。
+                                    if (!string.IsNullOrWhiteSpace(window.CurrentToast.Aumid))
+                                    {
+                                        var (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.Aumid);
+                                        if (!ok2 && !string.IsNullOrWhiteSpace(window.CurrentToast.AppName))
+                                            (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.AppName);
+                                        if (!ok2)
+                                            Logger.Debug($"[AppActivator] 按应用名置前失败：{msg2}");
+                                    }
+                                }else window.clicked_info = true;
+                            }
                         catch (Exception ex)
                         {
                             Logger.Debug($"[AppActivator] 异步唤醒异常：{ex.Message}");

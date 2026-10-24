@@ -663,6 +663,9 @@ namespace NotchPeninsula
 
             try { Plugins.PluginDataBridge.PublishNotification(toast); } catch { }
 
+            // 上一条还没展示完就被顶掉：它的私有图标在这里回收，否则要等 GC 兜底
+            if (_currentToast != null) ReleaseToastIcons(_currentToast);
+
             _currentToast = toast;
             _toastEndTime = DateTime.Now.Add(toast.Duration);
             PlayToastSound();
@@ -674,10 +677,26 @@ namespace NotchPeninsula
             if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => OnPluginReminder(toast)); return; }
             if (!IsToastEnabled) return;
 
+            if (_currentToast != null) ReleaseToastIcons(_currentToast);
+
             _currentToast = toast;
             _toastEndTime = DateTime.Now.Add(toast.Duration);   // 同上：插件提醒可自定义展示时长
             clicked_info = false;
             PlayToastSound();
+        }
+
+        // 通知退场（展示超时 / 被新通知顶替 / 点击回调退场）统一在这回收图标位图：
+        // 只 Dispose 这条通知「私有」的就地解码 logo（OwnsCustomIcon）；
+        // CustomIcon/Avatar 若来自 ToastIconProvider 共享缓存，位图归缓存管
+        //（24 条 FIFO + 逐出保留），这里只断引用 —— 否则会删掉别的通知还在用的图。
+        private static void ReleaseToastIcons(ToastData toast)
+        {
+            var owned = toast.OwnsCustomIcon ? toast.CustomIcon : null;
+            toast.CustomIcon = null;
+            toast.Avatar = null;
+            toast.OwnsCustomIcon = false;
+            try { owned?.Dispose(); }
+            catch (Exception ex) { Logger.Debug($"[Toast] 私有图标释放失败: {ex.Message}"); }
         }
 
         private bool HitWakeButton(int mx, int my)
@@ -881,7 +900,7 @@ namespace NotchPeninsula
                     Renderer.PassthroughAlpha = 1.0f;
                     _isPassthroughAwake = false;
                 }
-                if (!isToastActive && _currentToast != null) {_currentToast = null;clicked_info = true;}; // 超时清理
+                if (!isToastActive && _currentToast != null) { ReleaseToastIcons(_currentToast); _currentToast = null; clicked_info = true; }   // 超时清理（含私有图标）
 
                 TickPanelCollapse();
                 TickRightDoubleClickPending();
@@ -1646,6 +1665,7 @@ namespace NotchPeninsula
                             var toastClick = _currentToast.OnClick;
                             if (toastClick != null)
                             {
+                                ReleaseToastIcons(_currentToast);
                                 _currentToast = null;
                                 _toastEndTime = default;
                                 try { toastClick(); }
