@@ -306,7 +306,23 @@ namespace NotchPeninsula
                     canvas.Restore();
                 }
 
-                canvas.DrawPath(_bgPath, _bgPaint);
+                // 液态玻璃的涂层每帧按"背板在不在"重定：
+                //   · 背板还没到 → 垫一层 45 的深色底，否则岛体整帧全透明，看着像"没渲染、闪没了"；
+                //   · 背板一到 → 归零。
+                // ⚠️ 不能只在 ApplyThemeColors 里算一次：它在首帧抓屏之前跑，那时背板必然还是 null，
+                //    算出的 45 会一直留在画笔上（之后没有"背板到位"的事件去重算），
+                //    观感就是玻璃上永久蒙一层 18% 的黑纱 —— "透不过去"的一半原因就在这。
+                if (IslandLiquidGlass)
+                {
+                    _coatPaint.Color = backdrop == null
+                        ? SKColors.Black.WithAlpha(45)
+                        : SKColors.Transparent;
+                    canvas.DrawPath(_bgPath, _coatPaint);
+                }
+                else
+                {
+                    canvas.DrawPath(_bgPath, _bgPaint);
+                }
 
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);

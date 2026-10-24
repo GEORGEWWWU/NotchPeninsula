@@ -91,8 +91,28 @@ namespace NotchPeninsula
         private static bool _disabled;
         private static int _loggedX = int.MinValue, _loggedY = int.MinValue;
 
-        // 上一帧背板的整体亮度：用来抓「全黑 → 有内容」这一跳（见 Capture 尾部）
-        private static int _lastLum;
+        // ---- 内容守卫：抓到的这块到底"有没有东西" ----
+        // 判据只看【玻璃真正采样的那块区域】（= 遮罩区，也就是岛体那块），不看整张背板：
+        // 整图中央可能一直有内容（桌面），而胶囊那块恰好被岛体自己的黑色涂层占着 ——
+        // 那正是「玻璃永远灰 45、点一下质量档才正常」的样子，只看整图会把它判成"正常"。
+        private static volatile bool _contentAlive;
+
+        private static int _deadStreak;
+
+        private static long _lastDeadExpireMs;
+
+        // 本次"死黑"里已经重建过几次缓冲：封顶 3 次。
+        // 桌面本来就全黑（暗壁纸 / 全屏黑窗口）时不能每 1.5 秒就重建一次 DC+DIB —— 那是纯浪费。
+        private static int _deadExpires;
+
+        // -1 = 还没打过日志；0 = 上一次打的是"死黑"；1 = "恢复"
+        private static int _guardLogged = -1;
+
+        /// <summary>
+        /// 最近一次抓到的玻璃源区域是否有内容（亮度/极差过关）。
+        /// 启动自愈靠它判断"该不该收工"，别在背板还是黑的时候就把自愈机会用掉。
+        /// </summary>
+        public static bool IsContentAlive => _contentAlive;
 
         // 背板从全黑变亮的标记：渲染线程取走它再自己调 LiquidGlass.Invalidate()
         private static volatile bool _glassWake;
@@ -105,23 +125,28 @@ namespace NotchPeninsula
             return true;
         }
 
-        // 胶囊在背板图里的矩形（渲染线程每帧写 / 抓屏线程读）：用来把岛体自己那块抹掉。
-        // 不用锁：读到的最多是上一帧的矩形，擦除区再放几像素余量即可兜住。
-        private static volatile int _maskX0, _maskY0, _maskX1, _maskY1;
+        // 岛体在【屏幕物理像素】里的矩形（渲染线程每帧写 / 抓屏线程读）：用来把岛体自己那块抹掉。
+        //
+        // ⚠️ 必须记屏幕像素，**不能**记背板图像像素。图像像素要乘 LastScale、减 LastOrigin，
+        //    而这两个值在"本次抓屏落地之前"还是上一张图的 —— 启动首帧正好是默认的 1/12，
+        //    换算出来的遮罩只有 1/12 大小、位置也不对，于是岛体原封不动进了背板。
+        //    玻璃的源矩形又正好是岛体那块 ⇒ 玻璃采到的是自己上一帧的输出（还没画玻璃时是纯黑涂层），
+        //    而玻璃图层铺满同一块 ⇒ 45/46 的灰度成了不动点，永不自愈；只有点一次质量档强制
+        //    Expire + 重建缓冲才跳出来。换算放到 Capture 里用本次的原点与缩放比做，那里没有"上一帧"。
+        private static volatile float _maskSx0, _maskSy0, _maskSx1, _maskSy1;
 
-        // 渲染线程：告诉抓屏线程「岛体占的是背板图里的哪一块」（图像像素坐标）
+        // 渲染线程：告诉抓屏线程「岛体在屏幕上占哪一块」（屏幕物理像素）
         public static void SetMask(float x0, float y0, float x1, float y1)
         {
+            _maskSx0 = x0; _maskSy0 = y0; _maskSx1 = x1; _maskSy1 = y1;
+
             // 放大镜抓屏已经通过「排除窗口列表」把岛体剔掉了，不用再抹自己 ——
-            // 遮罩一动还会触发重抓，白白浪费一次屏幕读取。
+            // 遮罩一动还会触发重抓，白白浪费一次屏幕读取。但值本身照记：放大镜闪断回落 GDI 时靠它。
             if (_magUsed && _glass) return;
 
-            int nx0 = (int)MathF.Floor(x0), ny0 = (int)MathF.Floor(y0);
-            int nx1 = (int)MathF.Ceiling(x1), ny1 = (int)MathF.Ceiling(y1);
-            bool moved = Math.Abs(nx1 - _maskX1) > 3 || Math.Abs(nx0 - _maskX0) > 3 || Math.Abs(ny1 - _maskY1) > 3;
-            _maskX0 = nx0; _maskY0 = ny0; _maskX1 = nx1; _maskY1 = ny1;
-
             // 遮挡区在明显变化（展开/收起动画）→ 尽快用新矩形重抓一次，免得岛体边缘漏进模糊里；但要节流
+            bool moved = MathF.Abs(x1 - _maskLastX1) > 3f || MathF.Abs(x0 - _maskLastX0) > 3f;
+            _maskLastX0 = x0; _maskLastX1 = x1;
             if (moved)
             {
                 long now = Environment.TickCount64;
@@ -136,7 +161,13 @@ namespace NotchPeninsula
 
         private static long _lastMaskWakeMs;
 
-        public static void ClearMask() => _maskX0 = _maskY0 = _maskX1 = _maskY1 = 0;
+        private static float _maskLastX0, _maskLastX1;
+
+        public static void ClearMask()
+        {
+            _maskSx0 = _maskSy0 = _maskSx1 = _maskSy1 = 0f;
+            _maskLastX0 = _maskLastX1 = 0f;   // 下次 SetMask 一定会被判成"移动了"，把抓屏线程叫醒
+        }
 
 
         // ---- 交给渲染线程的成品（交换后由渲染线程释放）----
@@ -162,11 +193,14 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 抓屏线程的状态快照：排查「启动不抓屏、要手动刷新」时看这一行就够。
-        /// target 一直是 0×0 = 渲染侧没给矩形；dirty=False 且 target 正常 = 线程没被唤醒。
+        /// target 一直是 0×0 = 渲染侧没给矩形；dirty=False 且 target 正常 = 线程没被唤醒；
+        /// alive=False = 抓到的玻璃源区域没内容（全黑/死平），内容守卫正在自己重建缓冲。
         /// </summary>
         public static string DebugState
             => $"target={_tw}x{_th}@{_tx},{_ty} dirty={_dirty} expire={_expire} "
-             + $"disabled={_disabled} thread={(_thread != null)} lastMs={_lastMs}";
+             + $"disabled={_disabled} thread={(_thread != null)} lastMs={_lastMs} "
+             + $"alive={_contentAlive} deadStreak={_deadStreak} "
+             + $"mask=({_maskSx0:F0},{_maskSy0:F0})-({_maskSx1:F0},{_maskSy1:F0})";
 
         public static void Stop()
         {
@@ -238,14 +272,22 @@ namespace NotchPeninsula
                 return CaptureMagnified(x, y, w, h);
 
             // 还不知道岛体占哪块 → 先别抓（不然会把岛体自己拍进去，画面会往涂层色糊成一坨）
-            int mx0 = _maskX0, my0 = _maskY0, mx1 = _maskX1, my1 = _maskY1;
-            if (mx1 <= mx0 || my1 <= my0) return false;
+            float mSx0 = _maskSx0, mSy0 = _maskSy0, mSx1 = _maskSx1, mSy1 = _maskSy1;
+            if (mSx1 - mSx0 < 1f || mSy1 - mSy0 < 1f) return false;
 
             float ds = CurrentDownscale;
             int sw = Math.Max(1, (int)(w / ds));
             int sh = Math.Max(1, (int)(h / ds));
             EnsureBuffer(sw, sh);
             if (_memDc == IntPtr.Zero) return false;
+
+            // 遮罩是屏幕物理像素 → 换算到本次背板图像坐标。用的是本次的原点与缩放比（下面那三个值），
+            // 不是"上一张图"的 LastScale/LastOrigin，所以首帧也不会错位。
+            float inv = sw / (float)w;
+            int mx0 = (int)MathF.Floor((mSx0 - x) * inv);
+            int my0 = (int)MathF.Floor((mSy0 - y) * inv);
+            int mx1 = (int)MathF.Ceiling((mSx1 - x) * inv);
+            int my1 = (int)MathF.Ceiling((mSy1 - y) * inv);
 
             IntPtr sdc = Win32.GetDC(IntPtr.Zero);
             if (sdc == IntPtr.Zero) return false;
@@ -260,12 +302,22 @@ namespace NotchPeninsula
                 Win32.ReleaseDC(IntPtr.Zero, sdc);
             }
 
+            // 刷批：下面的擦除、亮度、SKImage 全是 CPU 直接读 DIB 的位（见 Win32.GdiFlush 的注释）
+            Win32.GdiFlush();
+
             // ⚠️ 这里**不再用 SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)**。
             // 它会让窗口在录屏/截图里「隐身」，而我们必须每 250ms 开关它一次（抓屏时开、抓完关）——
             // 实测按这个节奏，OBS 一类的捕获端有 **11.5% 的帧看不到岛体**，观感就是「亚克力模式下灵动岛一直闪」。
-            // 改成：照抓（岛体在内），然后把岛体自己占的那块用**左右邻像素横向插值**抹掉 ——
-            // 岛体在屏幕顶部居中，同一行左右两侧就是它背后的那层（标题栏/壁纸），1/12 缩略 + 平滑后看不出差别。
+            // 改成：照抓（岛体在内），然后把岛体自己占的那块用**四方向最近邻延展**抹掉 ——
+            // 岛体在屏幕顶部居中，四条边外就是它背后的那层（标题栏/壁纸），抹掉后看不出差别。
+            //
+            // 擦除前的亮度也量一次：它和"擦除后"一前一后写进诊断行，
+            // 一眼就能分清「背板本来就是黑的」还是「岛体自己被抓进来了、擦除没盖住」。
+            int lumBefore = SampleLuminance((byte*)_pBits, sw * 4, sw, sh, mx0, my0, mx1, my1, out _);
             EraseIsland(sw, sh, mx0, my0, mx1, my1);
+            int lumAfter = SampleLuminance((byte*)_pBits, sw * 4, sw, sh, mx0, my0, mx1, my1, out int rangeAfter);
+
+            if (_glass) TrackContent(lumAfter, rangeAfter);
 
             // ⚠️ 必须把 DIB 的 alpha 字节全部置 255。
             // StretchBlt/BitBlt 只写 BGR、**不写 alpha**（留下 0），而 SKImage.FromPixels 会把 a=0 当「全透明」——
@@ -317,23 +369,18 @@ namespace NotchPeninsula
             stale?.Dispose();
             Interlocked.Increment(ref _version);   // 液态玻璃据此重算折射层
 
-            // 桌面从「全黑」变成「有内容」的那一刻必须让玻璃重算一次。
+            // 桌面从「全黑」变成「有内容」的那一刻必须让玻璃重算一次（TrackContent 里判定）。
             // 实测启动后十几秒内抓到的都是 (0,0,0)（锁屏/壁纸还没加载完），玻璃就照着黑图生成，
             // 用户看到的是"启动后玻璃不显示、手动切一次质量档才正常"——切质量做的正是 Invalidate。
-            // 这里盯住这一跳，替用户做掉。
             // ⚠️ 只能置标记：_glass 位图归渲染线程所有，这里 Dispose 会直接 AV。
-            if (_glass)
-            {
-                int lum = SampleLuminance(sw, sh);
-                if (_lastLum < 6 && lum >= 6) _glassWake = true;
-                _lastLum = lum;
-            }
 
             if (x != _loggedX || y != _loggedY)
             {
                 _loggedX = x; _loggedY = y;
-                // 抓取矩形一变就报一行：把它和「背板中央平均 RGB」一起看 —— 矩形跑到屏幕外会得到全黑。
-                // 直接从 DIB 取样（BGRA），不再建 SKPixmap。
+                // 抓取矩形一变就报一行。四个数一起看就能定位问题：
+                //   · 遮罩 = 岛体在【本次图像】里的矩形（空/越界 = 没盖住自己）
+                //   · 擦除前 → 擦除后 = 岛体那块有没有被抹掉（前黑后亮 = 抹对了；两个都黑 = 桌面本来就黑）
+                //   · 背板中央平均 RGB = 整张图有没有内容（矩形跑到屏幕外会得到全黑）
                 int cw = Math.Max(1, sw / 3), chh = Math.Max(1, sh / 3);
                 long ar = 0, ag = 0, ab = 0; int cnt = 0;
                 for (int j = sh / 3; j < sh / 3 + chh && j < sh; j++)
@@ -347,6 +394,8 @@ namespace NotchPeninsula
                     }
                 Info($"[{(_glass ? "液态玻璃" : "亚克力")}/{(CurrentDownscale == 1f ? "原分辨率" : "1/" + CurrentDownscale)}]"
                     + $" 抓屏 ok：屏幕矩形=({x},{y},{w},{h})  图={sw}x{sh}"
+                    + $"  遮罩=({mx0},{my0})-({mx1},{my1})"
+                    + $"  玻璃区亮度 擦除前={lumBefore}/擦除后={lumAfter}"
                     + $"  背板中央平均 RGB=({(cnt == 0 ? -1 : ar / cnt)},{(cnt == 0 ? -1 : ag / cnt)},{(cnt == 0 ? -1 : ab / cnt)})");
             }
             return true;
@@ -389,6 +438,16 @@ namespace NotchPeninsula
                 _originY = oy;
                 _scale = bw / (float)w;
                 _magUsed = true;
+
+                // 这条线虽然由排除列表把岛体剔掉了，但"显示休眠 / DWM 没合成完"一样会抓到黑。
+                // 同一条内容守卫：死黑→重建缓冲，死黑→有内容→作废玻璃缓存。
+                float minv = bw / (float)w;
+                int gx0 = (int)MathF.Floor((_maskSx0 - ox) * minv);
+                int gy0 = (int)MathF.Floor((_maskSy0 - oy) * minv);
+                int gx1 = (int)MathF.Ceiling((_maskSx1 - ox) * minv);
+                int gy1 = (int)MathF.Ceiling((_maskSy1 - oy) * minv);
+                int mLum = SampleLuminance(p, bw * 4, bw, bh, gx0, gy0, gx1, gy1, out int mRange);
+                TrackContent(mLum, mRange);
 
                 var stale = Interlocked.Exchange(ref _pending, img);
                 stale?.Dispose();
@@ -526,25 +585,88 @@ namespace NotchPeninsula
             }
         }
 
-        // 背板整体亮度（0..255）：抽样 64×32 网格，避开四周一圈，够判断"是不是全黑"就行
-        private static int SampleLuminance(int sw, int sh)
+        // 某块区域的平均亮度（0..255）+ 极差：只看【玻璃真正采样的那块】，绕开"整图有内容但胶囊全黑"的误判。
+        // 返回 -1 = 这块没有有效面积（岛体滑出抓取矩形外），调用方应跳过判定。
+        private static int SampleLuminance(byte* bits, int stride, int iw, int ih,
+                                           int x0, int y0, int x1, int y1, out int range)
         {
-            if (_pBits == IntPtr.Zero || sw < 8 || sh < 8) return 0;
-            byte* bits = (byte*)_pBits;
-            int stepX = Math.Max(1, sw / 64), stepY = Math.Max(1, sh / 32);
+            range = 0;
+            if (bits == null || iw < 2 || ih < 2) return -1;
+            if (x0 < 0) x0 = 0;
+            if (y0 < 0) y0 = 0;
+            if (x1 > iw) x1 = iw;
+            if (y1 > ih) y1 = ih;
+            int w = x1 - x0, h = y1 - y0;
+            if (w < 2 || h < 2) return -1;
+
+            int stepX = Math.Max(1, w / 24), stepY = Math.Max(1, h / 12);
             long sum = 0;
-            int n = 0;
-            for (int j = sh / 8; j < sh - sh / 8; j += stepY)
+            int n = 0, lo = 255, hi = 0;
+            for (int j = y0; j < y1; j += stepY)
             {
-                int row = j * sw * 4;
-                for (int i = sw / 8; i < sw - sw / 8; i += stepX)
+                byte* row = bits + j * stride;
+                for (int i = x0; i < x1; i += stepX)
                 {
-                    int p = row + i * 4;
-                    sum += bits[p] + bits[p + 1] + bits[p + 2];
-                    n++;
+                    byte* q = row + i * 4;
+                    int v = (q[0] * 29 + q[1] * 150 + q[2] * 77) >> 8;   // BT.601 近似
+                    sum += v; n++;
+                    if (v < lo) lo = v;
+                    if (v > hi) hi = v;
                 }
             }
-            return n == 0 ? 0 : (int)(sum / (n * 3));
+            if (n == 0) return -1;
+            range = hi - lo;
+            return (int)(sum / n);
+        }
+
+        /// <summary>
+        /// 抓屏线程：给刚抓到的那块打「有没有内容」的标记，并顺手自愈。
+        ///
+        /// dead = 平均亮度 &lt; 6 且极差 &lt; 4（纯黑，或整块死平）。两个出口：
+        ///   · 连续死黑 → 重建 DC / DIB 再抓（等价于用户在设置里点一次「玻璃质量」做的 Expire）。
+        ///     典型场景：显示器刚唤醒 / DWM 刚重置，GDI 那张位图会一直是黑帧，不重建永远黑。
+        ///   · 死黑 → 有内容 → 置 _glassWake，让渲染线程把玻璃缓存作废，别拿黑图生成的图层继续用。
+        /// ⚠️ 只能置标记：_glass 位图归渲染线程所有，后台 Dispose 会直接 AV。
+        /// </summary>
+        private static void TrackContent(int lum, int range)
+        {
+            if (lum < 0) return;   // 这块没有有效面积（岛体滑出去了）→ 不判定
+
+            bool dead = lum < 6 && range < 4;
+            long now = Environment.TickCount64;
+
+            if (dead)
+            {
+                _deadStreak++;
+                if (_deadStreak >= 8 && _deadExpires < 3 && now - _lastDeadExpireMs >= 1500)
+                {
+                    _deadExpires++;
+                    _lastDeadExpireMs = now;
+                    _expire = true;
+                    _dirty = true;
+                    _work.Set();
+                    if (_guardLogged != 0)
+                    {
+                        _guardLogged = 0;
+                        Info($"[背板] 内容守卫：玻璃源矩形连续 {_deadStreak} 帧无内容（亮度 {lum}/极差 {range}），重建抓屏缓冲（第 {_deadExpires} 次）");
+                    }
+                }
+            }
+            else
+            {
+                if (_deadStreak > 0)
+                {
+                    _glassWake = true;   // 死→活：玻璃必须重算，否则还是黑图生成的那一层
+                    if (_guardLogged != 1)
+                    {
+                        _guardLogged = 1;
+                        Info($"[背板] 内容守卫：玻璃源矩形恢复内容（亮度 {lum}/极差 {range}）");
+                    }
+                }
+                _deadStreak = 0;
+                _deadExpires = 0;
+            }
+            _contentAlive = !dead;
         }
 
         private static void EnsureBuffer(int sw, int sh)

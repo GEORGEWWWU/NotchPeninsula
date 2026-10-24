@@ -171,11 +171,19 @@ namespace NotchPeninsula
 
         private static void SetRadius(int r)
         {
-            if (r == _radius && _weights.Length > 0) return;
+            // ⚠️ 判"算过没有"必须用 _weightsValid，**不能**用 _weights.Length > 0：
+            //    _weights 的声明初始化就是 new float[7]（全 0），而 _radius 初值 4 又正好等于默认档半径，
+            //    于是静态构造里的 SetRadius(4) 会命中"看起来已经算过"的分支直接返回 —— 权重一项都没赋值。
+            //    BuildBlur 拿全 0 的抽头一卷，整张模糊图被乘成纯黑，玻璃恒等于 tint(0)=45.9（抖动后 45/46），
+            //    且与桌面内容无关；点一次质量档把 imgPerX 换成 0.5/0.33、半径变成 2/3 才会真正重算 ⇒
+            //    「每次启动都是死灰、点一下就好」。这就是那个 bug 的根。
+            if (r == _radius && _weightsValid) return;
             _radius = r;
             _sigma = r <= 0 ? 0f : r / 2.7f;
             _weights = new float[Math.Max(1, r + 1)];
             if (r > 0) ComputeGaussianWeights(_sigma, r, _weights);
+            else _weights[0] = 1f;   // 半径 0 时虽然走 skipKernel，也留一个"原样通过"的权重兜底
+            _weightsValid = true;
         }
 
         private static void ApplyBlur()
@@ -296,6 +304,10 @@ namespace NotchPeninsula
         public static void ResetStats() { _statCache = _statHash = _statBuild = 0; }
 
         private static float[] _weights = new float[7];
+
+        // 权重表是否真的算过（详见 SetRadius 的注释）。
+        // ⚠️ 不能用 _weights.Length 判断：声明初始化就是长度 7 的全 0 数组。
+        private static bool _weightsValid;
 
         static LiquidGlass()
         {
@@ -654,7 +666,7 @@ namespace NotchPeninsula
                 _keyW = gw;
                 _keyH = gh;
 
-                // 诊断：玻璃内容到底黑没黑，一行定位 —— src 错位/背板黑/合成黑，三者一眼分清
+                // 诊断：玻璃内容到底黑没黑，一行定位 —— src 错位 / 背板黑 / 合成黑 / 核被乘成 0，一眼分清
                 if (float.IsNaN(_diagSx) || MathF.Abs(_diagSx - src.Left) > 1f
                     || MathF.Abs(_diagSy - src.Top) > 1f || _diagW != gw)
                 {
@@ -671,8 +683,29 @@ namespace NotchPeninsula
                             n++;
                         }
                     if (n == 0) n = 1;
+
+                    // 模糊缓冲的平均色。和"玻璃平均"并排看：
+                    //   模糊≈0 + 玻璃≈45 → 高斯核把整块图乘成了 0（权重表没算过，见 SetRadius）
+                    //   模糊有内容 + 玻璃≈45 → 合成/着色那一段的问题
+                    long fr = 0, fg = 0, fb = 0;
+                    int fn = 0;
+                    int fstepX = Math.Max(1, bcw / 16), fstepY = Math.Max(1, bch / 8);
+                    fixed (byte* fblur = _blurB)
+                    {
+                        if (fblur != null)
+                            for (int j = 0; j < bch; j += fstepY)
+                                for (int i = 0; i < bcw; i += fstepX)
+                                {
+                                    byte* q = fblur + j * blurStride + i * 4;
+                                    fb += q[0]; fg += q[1]; fr += q[2];
+                                    fn++;
+                                }
+                    }
+                    if (fn == 0) fn = 1;
+
                     Logger.Info($"[玻璃] src=({src.Left:F0},{src.Top:F0} {src.Width:F0}x{src.Height:F0})"
-                        + $" glass={gw}x{gh} 中心平均=({sr / n},{sg / n},{sb / n})");
+                        + $" glass={gw}x{gh} 中心平均=({sr / n},{sg / n},{sb / n})"
+                        + $" 模糊平均=({fr / fn},{fg / fn},{fb / fn}) 核半径={_radius} 权重={(_weightsValid ? "有效" : "空")}");
                 }
                 _keySx = src.Left;
                 _keySy = src.Top;
