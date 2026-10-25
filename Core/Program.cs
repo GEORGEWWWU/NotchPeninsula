@@ -277,7 +277,12 @@ namespace NotchPeninsula
 
                 window.Run();
 
-                // 消息循环自己结束（注销 / 关机，而非托盘「退出」那条 Environment.Exit 路径）时补一次下线。
+                // 走到这里说明消息循环是自己结束的（收到 WM_QUIT），而不是被 Environment.Exit 硬杀的。
+                // 这一行必须留着：否则「正常退出」和「退出时被强杀」在 app.log 里长得一模一样
+                //（都以「SystemSettingsManager 已释放资源」收尾），出事时根本无从分辨。
+                Logger.Info("消息循环已退出，进程正常收尾");
+
+                // 消息循环自己结束（注销 / 关机，或托盘「退出」投来的 WM_CLOSE）时补一次下线。
                 try { MspNotchBridge.Stop(); } catch (Exception ex) { Logger.Error("[MSP] 节点停止失败", ex); }
             }; // 离开作用域时，Mutex 的 Dispose() 被自动调用，绝无句柄泄露
         }
