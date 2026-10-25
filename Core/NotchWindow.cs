@@ -508,6 +508,13 @@ namespace NotchPeninsula
             }
             catch { }
 
+            // 后台抓屏线程（NPS-Backdrop / 放大镜）：必须在 Environment.Exit 之前显式停掉。
+            // 退出走托盘「退出」时不经过 WM_DESTROY，WM_DESTROY 那条 ShutdownIslandBackdrop 不会跑；
+            // 这两条线程不停，Environment.Exit 拆除阶段会把它们从 unsafe 抓屏途中强杀 ⇒ 未处理异常
+            // ⇒ Fail Fast，每次退出都弹。这里补一次，与 WM_DESTROY 那次幂等。
+            try { ShutdownIslandBackdrop(); }
+            catch (Exception ex) { Error("停止背板抓屏线程失败", ex); }
+
             // 1b) 置顶保活定时器
             try { _topmostTimer?.Dispose(); _topmostTimer = null; } catch { }
 

@@ -207,6 +207,12 @@ namespace NotchPeninsula
         {
             _run = false;
             _work.Set();
+            // ⚠️ 必须等线程真正退出：之前只 _run=false + Set 就走，线程多半还在 Capture() 的
+            //    unsafe 块里（StretchBlt / EraseIsland，持着屏幕 DC 与 DIB 指针）。
+            //    Environment.Exit 随后强杀它 ⇒ 未处理异常 ⇒ Fail Fast（每次退出都弹）。
+            var t = _thread;
+            if (t != null && !t.Join(2000))
+                Warn("[IslandBackdrop] 抓屏线程未在 2s 内退出（已置 _run=false，迟早退；不强行 Abort）");
             _thread = null;
             var p = Interlocked.Exchange(ref _pending, null);
             p?.Dispose();

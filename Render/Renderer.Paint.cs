@@ -58,6 +58,12 @@ namespace NotchPeninsula
 
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
 
+        // 液态玻璃下的文字黑白状态：_glassTextIsLight 是迟滞判定的当前值（Renderer.Draw 每帧更新，
+        // 判据来自 LiquidGlass.GlassLuminance），_glassTextAppliedLight 是画笔上实际生效的值 ——
+        // 只在两者不一致的那一帧才回调 ApplyThemeColors 重绑画笔，平时零开销。
+        private static volatile bool _glassTextIsLight;
+        private static volatile bool _glassTextAppliedLight;
+
         private static bool _acrylicLogged;
 
         public static void ApplyThemeColors() // 刷新颜色的方法
@@ -67,6 +73,11 @@ namespace NotchPeninsula
             {
                 isLight = SystemIsLightTheme;
             }
+            // 液态玻璃：明暗不再由 ThemeMode 决定 —— 玻璃的底是桌面，文字黑白跟着玻璃实际亮度走
+            // （Renderer.Draw 里逐帧按 LiquidGlass.GlassLuminance 判，翻转时回调本方法）。
+            // 背板还没到时沿用 ThemeMode 兜底，避免启动头一瞬文字色跳变。
+            if (IslandLiquidGlass && AcrylicBackdrop != null)
+                isLight = _glassTextIsLight;
 
             // 预计算颜色，避免在渲染树中生成新对象
             // 亚克力 = 模糊背板 + 上层的浅色/深色涂层（真实亚克力的"奶感"就来自这层）。

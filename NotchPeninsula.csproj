@@ -13,7 +13,7 @@
     <PublishSingleFile>true</PublishSingleFile>
 		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 
-	<Version>2.1.0</Version>
+	<Version>2.1.1</Version>
 	<!-- 工作站 GC + 并行回收：桌面小进程不该用服务器 GC（每核一套堆，纯浪费） -->
 	<ServerGarbageCollection>false</ServerGarbageCollection>
 	<ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>

@@ -459,7 +459,10 @@ namespace NotchPeninsula
             lock (_pluginSlotLock)
             {
                 _pluginSlots.Clear();
-                if (_pluginDrawn != null) Array.Clear(_pluginDrawn);
+                // 先拷到局部再清：_pluginDrawn 会被 InvalidatePluginSnapshot 置 null，
+                // 「判空之后再用」的窗口在这里同样会 NRE。
+                var drawn = _pluginDrawn;
+                if (drawn != null) Array.Clear(drawn);
             }
         }
 
@@ -479,7 +482,10 @@ namespace NotchPeninsula
 
         public static void InvalidatePluginSnapshot()
         {
-            lock (_pluginSlotLock)
+            // 快照字段与 RefreshPluginWidgets 同一把锁：否则渲染线程刚判完空、还没用上，
+            // 这边就把数组置 null —— 卸载插件时渲染线程 NRE 闪退就是这么来的（两把锁互不互斥）。
+            // 只在 UI 线程调用（插件卸载/停用路径），不会与渲染线程的死锁。
+            lock (_pluginSnapshotLock)
             {
                 _pluginWidgets = null;
                 _pluginWidths = null;
@@ -489,8 +495,12 @@ namespace NotchPeninsula
                 _pluginPendingWidth = null;
                 _pluginPendingSince = null;
                 _pluginWidgetsVersion = -1;   // 下一帧强制重建快照
-                _pluginSlots.Clear();
                 _pluginRowReserve = 0f;
+            }
+
+            lock (_pluginSlotLock)
+            {
+                _pluginSlots.Clear();
 
                 _detailPage = null;
                 _detailHitPage = null;

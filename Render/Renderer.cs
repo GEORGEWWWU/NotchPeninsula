@@ -314,6 +314,20 @@ namespace NotchPeninsula
                 //    观感就是玻璃上永久蒙一层 18% 的黑纱 —— "透不过去"的一半原因就在这。
                 if (IslandLiquidGlass)
                 {
+                    // 文字黑白跟着玻璃实际明暗走（迟滞防抖动）：亮玻璃配黑字、暗玻璃配白字。
+                    // 阈值按亮度对比度定：中灰（~130）上白字只有 2.9:1、黑字有 7:1 —— 所以翻黑要早，
+                    // 150 那种高门槛会让"偏亮的玻璃 + 白字"发虚（就是可读性下降的观感）。
+                    // 只在「判定值翻过阈值」那一帧回调 ApplyThemeColors 重绑画笔 —— 那套画笔绑定平时
+                    // 是 UI 线程在用（设置窗切主题），渲染线程每帧都调会跟它抢画笔。
+                    int gl = LiquidGlass.GlassLuminance;
+                    if (!_glassTextIsLight && gl > 128) _glassTextIsLight = true;
+                    else if (_glassTextIsLight && gl < 104) _glassTextIsLight = false;
+                    if (_glassTextIsLight != _glassTextAppliedLight)
+                    {
+                        _glassTextAppliedLight = _glassTextIsLight;
+                        ApplyThemeColors();
+                    }
+
                     _coatPaint.Color = backdrop == null
                         ? SKColors.Black.WithAlpha(45)
                         : SKColors.Transparent;
