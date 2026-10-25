@@ -469,8 +469,13 @@ namespace NotchPeninsula
             GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: true);
         }
 
+        private static bool _exitStarted;   // 托盘「退出」只走一遍：重复触发不能把收尾跑第二遍
+
         private static void ExitApplication()
         {
+            if (_exitStarted) return;
+            _exitStarted = true;
+
             try
             {
                 if (_instanceForExit?._notifyIcon != null)
@@ -495,7 +500,20 @@ namespace NotchPeninsula
             _instanceForExit?._audioAnalyzer.Dispose(); // 停掉看门狗并释放捕获/COM 订阅
             // 退出路径上补一次，别把释放全推给进程终止。
             try { _instanceForExit?.audio.Dispose(); } catch (Exception ex) { Error("释放系统音量管理器失败", ex); }
-            Environment.Exit(0);
+
+            // 收尾做完了，接下来要让进程「自己」结束，绝不能在这里硬杀。
+            // 这一句原本是 Environment.Exit(0)，而它跑在托盘菜单的窗口过程里（Execute ← 鼠标消息 ←
+            // DispatchMessage），等于在 user32 的栈帧上做 ExitProcess：WM_DESTROY 永远不会来，
+            // 注销热键 / 撤销拖放目标 / 停抓屏线程 / MagUninitialize 全部被跳过。进程于是带着一个还在
+            // 全屏 BitBlt 的线程、没反初始化的放大镜 API，以及还握着 SetCapture 的菜单窗口被强杀，
+            // Windows 把这判成 fail-fast，每次退出都弹「发生快速异常检测失败……进程立即终止」（0xC0000409）。
+            // 改成投一记 WM_CLOSE：窗口正常销毁 → WM_DESTROY 收尾 → PostQuitMessage → Run() 返回
+            //   → Main 正常 return，CLR 才会按部就班地关掉 COM、跑终结器、收线程。
+            var win = _instanceForExit;
+            if (win != null && win._hwnd != IntPtr.Zero)
+                Win32.PostMessage(win._hwnd, (uint)Win32.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            else
+                Win32.PostQuitMessage(0);   // 窗口已经不在了，直接结束消息循环
         }
 
         private void ShutdownResources()
@@ -1423,6 +1441,7 @@ namespace NotchPeninsula
                     IslandHotkey.Detach();
                     RevokeIslandDropTarget();
                     ShutdownIslandBackdrop();   // 停掉后台抓屏线程并释放它自己的 GDI 资源
+                    Win32.PostQuitMessage(0);   // 走正常退出：让 GetMessage 返回 0，Run() 收尾后 Main 返回
                     break;
 
                 case Win32.WM_DISPLAYCHANGE:
