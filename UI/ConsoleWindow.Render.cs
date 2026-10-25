@@ -1256,8 +1256,23 @@ namespace NotchPeninsula
             canvas.DrawText("刘海 / 灵动岛主题", CONTENT_TEXT_X, themeY + 26, _uiTextPaint);
             canvas.DrawText("背景与文本颜色自适应反转", CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
-            DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
-                ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex, Renderer.IslandLiquidGlass);
+            // 液态玻璃下明暗由桌面背景决定，黑/白/系统摆着只会误导（悬停/点击已一并屏蔽）：
+            // 换成一句明说，告诉用户文字颜色正在自适应。
+            if (Renderer.IslandLiquidGlass)
+            {
+                const string glassThemeHint = "液态玻璃材质下文字自适应颜色";
+                var prev = _subTextPaint.Color;
+                _subTextPaint.Color = Neutral(150);
+                canvas.DrawText(glassThemeHint,
+                    THEME_SEG_X + THEME_SEG_W - _subTextPaint.MeasureText(glassThemeHint),
+                    TITLE_BAR_HEIGHT + THEME_SEG_Y + SEG_H / 2f + 4.5f, _subTextPaint);
+                _subTextPaint.Color = prev;
+            }
+            else
+            {
+                DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
+                    ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
+            }
 
             // 第二行：背景材质（独立选项，与主题配色互不影响）
             canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + MAT_TITLE_DY, _uiTextPaint);
@@ -1388,9 +1403,24 @@ namespace NotchPeninsula
                 canvas.DrawCircle(px, railY, sel ? 5.5f : 4.5f, _dynamicFillPaint);
             }
 
-            // 档位值右对齐：左对齐时三字值（"1.08x"）会扎进下一列的标签里
+            // 档位值右对齐：左对齐时三字值（"1.08x"）会扎进下一列的标签里。
+            // 「刷新」档的 ms 单位挪到数字下方 —— 单行会被 max 档的滑块压住 "6"；
+            // s 档（"1s"/"0.5s"）本来就是单行，照原样画。
             string valueText = LiquidGlass.ValueTexts(paramIndex)[level];
-            canvas.DrawText(valueText, colX + GLASS_VALUE_RIGHT - _subTextPaint.MeasureText(valueText), textY, _subTextPaint);
+            float right = colX + GLASS_VALUE_RIGHT;
+            if (valueText.EndsWith("ms", StringComparison.Ordinal))
+            {
+                string num = valueText.Substring(0, valueText.Length - 2);
+                canvas.DrawText(num, right - _subTextPaint.MeasureText(num), textY, _subTextPaint);
+                float prevSize = _subTextPaint.TextSize;
+                _subTextPaint.TextSize = 10f;
+                canvas.DrawText("ms", right - _subTextPaint.MeasureText("ms"), textY + 11f, _subTextPaint);
+                _subTextPaint.TextSize = prevSize;
+            }
+            else
+            {
+                canvas.DrawText(valueText, right - _subTextPaint.MeasureText(valueText), textY, _subTextPaint);
+            }
 
             _subTextPaint.TextSize = 12f;   // 恢复基准字号：同一支画笔后面还要用
         }

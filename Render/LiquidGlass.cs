@@ -82,6 +82,14 @@ namespace NotchPeninsula
         /// <summary>后台抓屏线程的刷新节拍（ms）。</summary>
         public static int RefreshMs => CaptureMsTable[_levels[P_CaptureHz]];
 
+        private static volatile int _glassLum;
+
+        /// <summary>
+        /// 最近一次玻璃成品的中心平均亮度（0..255，BT.601）。玻璃下文字自适应黑白的判据。
+        /// 命中缓存的帧不会重算 —— 内容没变，亮度也不会变，停在旧值正合适。
+        /// </summary>
+        public static int GlassLuminance => _glassLum;
+
         /// <summary>渲染线程的帧间隔（ms）。渲染循环每帧读一次，所以改完立刻生效。</summary>
         public static int FrameIntervalMs => 1000 / FrameFpsTable[_levels[P_FrameRate]];
 
@@ -91,7 +99,7 @@ namespace NotchPeninsula
             switch (index)
             {
                 case P_Blur: return ["无", "2", "4", "6", "10"];
-                case P_CaptureHz: return ["1s", "0.5s", "250", "160", "60"];
+                case P_CaptureHz: return ["1s", "0.5s", "250ms", "160ms", "60ms"];
                 case P_FrameRate: return ["30", "60", "90", "120", "144"];
                 case P_Zoom: return ["1.0x", "1.08x", "1.18x", "1.32x", "1.5x"];
                 default: return ["最低", "偏低", "标准", "偏高", "最高"];
@@ -666,13 +674,11 @@ namespace NotchPeninsula
                 _keyW = gw;
                 _keyH = gh;
 
-                // 诊断：玻璃内容到底黑没黑，一行定位 —— src 错位 / 背板黑 / 合成黑 / 核被乘成 0，一眼分清
-                if (float.IsNaN(_diagSx) || MathF.Abs(_diagSx - src.Left) > 1f
-                    || MathF.Abs(_diagSy - src.Top) > 1f || _diagW != gw)
+                // 玻璃中心区平均亮度：每帧重算（很便宜），供「玻璃下文字自适应黑白」用，
+                // 下面那条诊断日志复用同一组值。命中缓存的帧不进这里，亮度停在旧值 —— 内容没变，亮度也不会变。
+                long sr = 0, sg = 0, sb = 0;
+                int n = 0;
                 {
-                    _diagSx = src.Left; _diagSy = src.Top; _diagW = gw;
-                    long sr = 0, sg = 0, sb = 0;
-                    int n = 0;
                     byte* bp0 = (byte*)bmp.GetPixels();
                     int smpX0 = gw / 3, smpY0 = gh / 3, smpX1 = gw * 2 / 3, smpY1 = gh * 2 / 3;
                     for (int j = smpY0; j < smpY1; j += 2)
@@ -683,6 +689,14 @@ namespace NotchPeninsula
                             n++;
                         }
                     if (n == 0) n = 1;
+                    _glassLum = (int)(((sb / n) * 29 + (sg / n) * 150 + (sr / n) * 77) >> 8);
+                }
+
+                // 诊断：玻璃内容到底黑没黑，一行定位 —— src 错位 / 背板黑 / 合成黑 / 核被乘成 0，一眼分清
+                if (float.IsNaN(_diagSx) || MathF.Abs(_diagSx - src.Left) > 1f
+                    || MathF.Abs(_diagSy - src.Top) > 1f || _diagW != gw)
+                {
+                    _diagSx = src.Left; _diagSy = src.Top; _diagW = gw;
 
                     // 模糊缓冲的平均色。和"玻璃平均"并排看：
                     //   模糊≈0 + 玻璃≈45 → 高斯核把整块图乘成了 0（权重表没算过，见 SetRadius）
