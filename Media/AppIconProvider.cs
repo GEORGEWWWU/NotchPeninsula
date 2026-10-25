@@ -117,7 +117,10 @@ namespace NotchPeninsula
 
     internal static class AppIconProvider
     {
-        private const int IconPixels = 32;
+        // Shell 图标按**物理像素**取：媒体模块图标 32 逻辑 px，150% DPI 就是 48 物理、200% 是 64，
+        // 原来只取 32 ⇒ 放大 1.5~2 倍，肉眼就是"低清"。96 给到 300% 还有余量（图标本身很小，
+        // 32 个缓存项 × 96² × 4B ≈ 1.2MB，可以忽略）。Shell 没有这么大时 BiggerSizeOk 会自动降级。
+        private const int IconPixels = 96;
 
         private const int CacheCap = 32;
 

@@ -238,20 +238,32 @@ namespace NotchPeninsula
         {
             if (_defaultAppIcon == null)
             {
+                // 优先走 Shell 取大图：Icon.ExtractAssociatedIcon 只会给 32×32，
+                // 而岛体 28 逻辑 px 在 150%/200% 下要画 42/56 物理像素 —— 用 32 的源就是"低清"。
                 try
                 {
-                    // 每次调用都会重进本分支，所以更必须 Dispose。
-                    using var icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
-                    if (icon != null)
-                    {
-                        using var bmp = icon.ToBitmap();
-                        using var ms = new MemoryStream();
-                        bmp.Save(ms, ImageFormat.Png);
-                        ms.Position = 0;
-                        _defaultAppIcon = SKBitmap.Decode(ms);
-                    }
+                    if (Environment.ProcessPath is { } exe)
+                        _defaultAppIcon = ShellIcon.Load(exe, 96);
                 }
                 catch { }
+
+                if (_defaultAppIcon == null)
+                {
+                    try
+                    {
+                        // 每次调用都会重进本分支，所以更必须 Dispose。
+                        using var icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+                        if (icon != null)
+                        {
+                            using var bmp = icon.ToBitmap();
+                            using var ms = new MemoryStream();
+                            bmp.Save(ms, ImageFormat.Png);
+                            ms.Position = 0;
+                            _defaultAppIcon = SKBitmap.Decode(ms);
+                        }
+                    }
+                    catch { }
+                }
             }
             return _defaultAppIcon;
         }
