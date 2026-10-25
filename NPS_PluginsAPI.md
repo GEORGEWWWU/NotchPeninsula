@@ -22,10 +22,11 @@
 - [6. 组件 IWidget](#6-组件-iwidget)
 - [7. 详情页 IDetailPage](#7-详情页-idetailpage)
 - [8. 常用能力](#8-常用能力)
-- [9. 字体、主题与渲染上下文](#9-字体主题与渲染上下文)
-- [10. 常见坑速查](#10-常见坑速查)
-- [11. API 速查](#11-api-速查)
-- [12. 排错](#12-排错)
+- [9. 把插件暴露成 MSP 工具](#9-把插件暴露成-msp-工具)
+- [10. 字体、主题与渲染上下文](#10-字体主题与渲染上下文)
+- [11. 常见坑速查](#11-常见坑速查)
+- [12. API 速查](#12-api-速查)
+- [13. 排错](#13-排错)
 - [附录 A：接入自己的媒体来源](#附录-a接入自己的媒体来源)
 - [附录 B：术语对照](#附录-b术语对照)
 
@@ -918,9 +919,105 @@ host.RegisterUninstallAction(() => { /* 清理 */ });
 
 ---
 
-## 9. 字体、主题与渲染上下文
+## 9. 把插件暴露成 MSP 工具
 
-### 9.1 字体
+插件可以把自己的能力挂到 MSP 网络上：本机任何 MSP 程序都能调用你注册的工具、订阅你发出的信号。
+你不用懂协议，也不用碰 `MspNode` —— 全部经 `IPluginHost`，**命名、校验、撤销都由宿主完成**。
+
+> **前提**：`设置 → 通用设置 → MSP 接入（实验性）` 必须开着（默认关闭）。
+> 关着的时候注册不会报错，只是不会出现在对端清单里；打开后自动补上。
+
+### 9.1 最短路径
+
+```csharp
+public void Initialize(IPluginHost host) => host.RegisterMspToolsFrom(new MyTools(host));
+
+internal sealed class MyTools(IPluginHost host)
+{
+    [MspTool("current", Description = "查询当前天气")]
+    public object Current(string city, int days = 1) => new { ok = true, city, days };
+}
+```
+
+一行注册完。对端看到的名字是 **`notchpeninsula_<插件id>_current`**。
+
+| 你写的 | 对端看到 |
+|---|---|
+| 插件 `Id = "Weather"` + `[MspTool("current")]` | `notchpeninsula_weather_current` |
+| 插件 `Id = "Weather"` + `[MspTool]`（不写名字） | `notchpeninsula_weather_<方法名>` |
+
+### 9.2 名字规则
+
+- 前缀 `notchpeninsula_` 由宿主加，**你不要自己写**（写了会变成 `notchpeninsula_weather_notchpeninsula_xxx`）。
+- 整串按 MSP 的 `tool_name` 文法 `^[a-z0-9_-]+$` 规范化：转小写，`[^a-z0-9_-]` 换成 `_`。
+- **工具名里不能有 `.`**（MSP 不允许），`Weather.Current` 会被规范成 `weather_current`。
+- 同插件内重名 → 后者覆盖（热重载的正常路径）；**跨插件撞名 → 后到者被拒**，日志里写明是被谁占了。
+
+### 9.3 schema 自动生成，别手写
+
+`[MspTool]` 方法、或传给 `RegisterMspTool` 的委托，会**原样**交给 MSP SDK，`inputSchema` 从签名生成：
+
+- 参数名进清单；
+- **带默认值的参数自动成为可选**（上例 `days` 不传就是 1）；
+- 要精确控制就传显式 `inputSchema` 覆盖。
+
+> ⚠️ **不要为了「拦截一下」把委托再包一层**（比如 `args => inner.DynamicInvoke(...)`）。
+> 包完之后 SDK 看到的是包装函数，**默认值和参数名都丢了** —— 可选参数会退化成必填。
+
+### 9.4 另一个入口：不写 attribute
+
+动态生成工具、或从配置里读一批工具时：
+
+```csharp
+_regs.Add(host.RegisterMspTool("current", "查询当前天气",
+    (string city, int days = 1) => new { ok = true, city, days }));
+```
+
+它和 attribute 走**同一个注册器**（同前缀、同校验、同撞名规则），只是入口不同。
+
+### 9.5 发信号
+
+```csharp
+// 声明：只给末段动作名，宿主补 plugin.<插件id>. 前缀
+_regs.Add(host.DeclareMspSignal("tick", "每次有人调用我的工具时发出"));
+
+// 发布：完整路径
+host.PublishMspSignal("plugin.weather.tick", new { city = "北京", at = DateTimeOffset.Now });
+```
+
+- 声明出来的是 `plugin.weather.tick` —— 插件**给不了**前面的域，所以冒充不了别家插件，也碰不到宿主自己的 `notify.*` / `media.*`。
+- 发布可以发到任意合法路径（这一版不做管控），但入口只有 `PublishMspSignal` 一处。
+- **MSP 关着时发布是空操作**，只记 debug —— 插件不必自己判断开关状态。
+- 路径文法 `^[a-z0-9_-]+(\.[a-z0-9_-]+)+$`，不合规会被拒并记日志。
+
+### 9.6 生命周期与撤销
+
+| 时机 | 行为 |
+|---|---|
+| 插件先于 MSP 加载 | 先记账；MSP 启动时统一登记，进**握手那份清单** |
+| MSP 运行中新装插件 | 立刻登记并推 `manifest_update`，**对端不需要重连** |
+| 插件卸载 / 禁用 | 从清单摘掉并推送，对端重取清单就看不到了 |
+| 插件重载 | 同名重新登记，工具名与信号路径不变，对端无感 |
+
+三个方法都返回 `IDisposable`；宿主在插件卸载时也会自己摘，显式 dispose 是双保险。
+
+> ⚠️ 摘掉之后**旧 handler 仍可能被调用**（MSP 协议层没有「反注册工具」的 API）。
+> 工具实现里最好自己判一下状态，或者在插件停用后返回一个明确的错误。这与 Python SDK 的行为一致。
+
+### 9.7 四条纪律
+
+协议线程是**同步**调用你的工具的，对端在等返回值。
+
+1. **不要抛异常** —— 返回 `{ ok = false, error = "…" }`，让对端拿到结构化错误，而不是一个 RPC 失败。
+2. **不要做耗时 IO** —— 你慢一秒，对端就多等一秒。
+3. **返回值别太大** —— 几 KB 以内；几十 KB 的字符串对两端都不友好。
+4. **统计要无锁** —— 工具会从协议线程并发进来，`Interlocked` / `Volatile` 足够，别用 `lock` 挡住渲染线程。
+
+---
+
+## 10. 字体、主题与渲染上下文
+
+### 10.1 字体
 
 宿主把「全岛用哪套字体」放在 `NotchPeninsula.FontConfig`（注意命名空间是 `NotchPeninsula`，不是 `NotchPeninsula.Plugins`）：
 
@@ -953,7 +1050,7 @@ internal static class PluginFont
 
 > 宿主换字体后会**自己重测插件宽度**（内部按字体名 + 自定义路径做 key），你不需要订阅 `FontConfig.Changed` 来触发重测。自己另存了「按字体算好的排版缓存」时，才需要用 `Changed` / `CustomFontPath` 作失效依据。
 
-### 9.2 主题与 WidgetFrame
+### 10.2 主题与 WidgetFrame
 
 ```csharp
 public readonly record struct WidgetFrame(
@@ -985,7 +1082,7 @@ public readonly record struct RenderTheme(
 - `GlobalDpi`：宿主把逻辑像素换成物理像素用的系数（设置里可改，默认 1.0）。你自己做坐标换算时必须用同一个，否则高 DPI 下会偏。
 - `NotchBottomRadius`：岛体底部圆角（宿主夹在 0~28），贴边画内容时用。
 
-### 9.3 频谱
+### 10.3 频谱
 
 `frame.Bars` 是宿主传进来的同一份数组（每帧数值变化，长度 5）。**可以当帧读，别存进字段当快照**，也别改它。
 
@@ -996,13 +1093,13 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 }
 ```
 
-### 9.4 RequestRedraw 是空操作
+### 10.4 RequestRedraw 是空操作
 
 `host.RequestRedraw()` 目前**什么都不做** —— 宿主是常驻 60FPS 渲染，画布每帧都会重画。数据变了只要把字段更新掉（注意线程安全），下一帧自然就看到了；宽度变了再补一个 `InvalidateWidgetLayout()`。
 
 ---
 
-## 10. 常见坑速查
+## 11. 常见坑速查
 
 | # | 症状 | 原因 | 正确做法 |
 |---|---|---|---|
@@ -1026,10 +1123,13 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 18 | 数据文件读不到 | 影子副本只复制 dll/json/pdb/config/xml/txt | 用嵌入资源，或释放到 `%LOCALAPPDATA%` |
 | 19 | 装好却不在岛上 | 显示设置里没勾 | 显示设置 → 显示内容里勾上（与「启用」是两回事） |
 | 20 | 组件偶尔整个消失 | 插件行预算不够，装不下就整块隐藏 | 用 `GetSlotBudget` / `GetPluginRowBudget` 提前挑内容 |
+| 21 | 对端清单里没有我的工具 | MSP 接入关着（默认关），或工具名不合文法被拒 | 设置里打开 MSP 接入；看日志有没有「注册被拒」 |
+| 22 | 工具调用报「参数缺失」 | 把委托又包了一层，SDK 读不到默认值 | 直接传方法组 / 带默认值的 lambda，别包 `DynamicInvoke` |
+| 23 | 插件卸载了还能被调 | MSP 协议层没有「反注册工具」 | 工具实现里判状态，停用后返回明确错误 |
 
 ---
 
-## 11. API 速查
+## 12. API 速查
 
 标注「未开放」的接口**定义了但主程序没有接线**（注册了也不会显示），别依赖。
 
@@ -1062,6 +1162,10 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 布局 | `GetPluginRowBudget()` / `GetSlotBudget(widgetId)` | 开放 |
 | 窗口 | `CreateWindow(title, w, h)` | 开放 |
 | 拖放 | `StartFileDrag(paths, allowMove)` | 开放 |
+| MSP | `IDisposable RegisterMspTool(tool, desc, handler, inputSchema?)` | 开放（需开 MSP 接入） |
+| MSP | `IDisposable RegisterMspToolsFrom(instance)`（扫 `[MspTool]`） | 开放（需开 MSP 接入） |
+| MSP | `IDisposable DeclareMspSignal(action, description)` | 开放（需开 MSP 接入） |
+| MSP | `PublishMspSignal(path, payload)` | 开放（需开 MSP 接入） |
 | 卸载 | `RegisterUninstallDirectory(path)` / `RegisterUninstallAction(action)` | 开放 |
 
 ### `IWidget`
@@ -1141,7 +1245,7 @@ class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClic
 
 ---
 
-## 12. 排错
+## 13. 排错
 
 1. **看日志**：`%LocalAppData%\NotchPeninsula\app.log`（1MB 轮转，连当前共 3 个文件）。加载、失败原因、你的 `Logger.Warn` 都在里面。
 2. **看「我的插件」的状态**：`运行中 · vX · 作者` = 正常；失败会带归类与错误原文。
