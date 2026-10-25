@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System.IO;
+using System.Text.Json;
 
 namespace NotchPeninsula.Plugins;
 
@@ -292,6 +293,23 @@ public sealed class PluginHost
 
     public RenderTheme CurrentTheme => Renderer.GetCurrentTheme();
 
+    // ---- MSP 插件接口（实验性）----
+    //
+    // 这几个方法的 pluginId 都由 ScopedPluginHost 绑定，插件自己传不进来 ——
+    // 所以「谁注册的」在类型上就不会记错。
+    public IDisposable RegisterMspTool(
+        string pluginId, string tool, string description, Delegate handler, JsonElement? inputSchema = null)
+        => MspPluginRegistry.RegisterTool(pluginId, tool, description, handler, inputSchema);
+
+    public IDisposable RegisterMspToolsFrom(string pluginId, object instance)
+        => MspPluginRegistry.RegisterToolsFrom(pluginId, instance);
+
+    public IDisposable DeclareMspSignal(string pluginId, string action, string description)
+        => MspPluginRegistry.DeclareSignal(pluginId, action, description);
+
+    public void PublishMspSignal(string path, object? payload)
+        => MspPluginRegistry.PublishSignal(path, payload);
+
     // ---- 刷新调度 ----
     public IDisposable ScheduleRefresh(string pluginId, TimeSpan interval, Action callback)
     {
@@ -467,6 +485,11 @@ public sealed class PluginHost
         if (refreshes != null)
             foreach (var r in refreshes)
                 try { r.Dispose(); } catch { }
+
+        // MSP：把该插件注册的工具/信号从清单里摘掉。
+        // 放在锁外：它会推清单（可能触发对端 I/O），不该占着 _lock。
+        try { MspPluginRegistry.RemovePlugin(pluginId); }
+        catch (Exception ex) { Logger.Warn($"[PluginHost] 摘除 {pluginId} 的 MSP 接口失败: {ex.Message}"); }
 
         if (windows != null)
         {
@@ -751,4 +774,12 @@ public sealed class ScopedPluginHost : IPluginHost
     public bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false) => _host.StartFileDrag(paths, allowMove);
     public void RegisterUninstallDirectory(string path) => _host.RegisterUninstallDirectory(_pluginId, path);
     public void RegisterUninstallAction(Action action) => _host.RegisterUninstallAction(_pluginId, action);
+
+    // MSP 插件接口：pluginId 由这里绑定，插件侧看不到也传不进来。
+    public IDisposable RegisterMspTool(string tool, string description, Delegate handler, JsonElement? inputSchema = null)
+        => _host.RegisterMspTool(_pluginId, tool, description, handler, inputSchema);
+    public IDisposable RegisterMspToolsFrom(object instance) => _host.RegisterMspToolsFrom(_pluginId, instance);
+    public IDisposable DeclareMspSignal(string action, string description)
+        => _host.DeclareMspSignal(_pluginId, action, description);
+    public void PublishMspSignal(string path, object? payload) => _host.PublishMspSignal(path, payload);
 }

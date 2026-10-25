@@ -1,4 +1,5 @@
 using SkiaSharp;
+using System.Text.Json;
 
 namespace NotchPeninsula.Plugins;
 
@@ -263,4 +264,54 @@ public interface IPluginHost
     /// 抛异常只会记一条日志，不会挡住卸载。重复注册以最后一次为准。
     /// </summary>
     void RegisterUninstallAction(Action action);
+
+    // ---- MSP 接入（实验性）----
+    //
+    // 插件**拿不到** MspNode。工具注册与信号发布都经过宿主，原因有三个：
+    //   · 工具名要统一加前缀 notchpeninsula_<id>_<tool>，且要按 MSP 的文法
+    //     ^[a-z0-9_-]+$ 规范化 —— 这一步只该有一处；
+    //   · 插件能在运行中装卸，而撤销要同时「从清单摘掉 + 宿主不再承认」；
+    //   · 将来要加白名单 / 限流 / 审计，改宿主的入口即可，插件代码不用动。
+    // 三个方法都返回 IDisposable，插件停用或卸载时宿主也会自己摘（双保险）。
+
+    /// <summary>
+    /// 注册一个 MSP 工具。对端看到的完整名字是 <c>notchpeninsula_&lt;插件id&gt;_&lt;tool&gt;</c>。
+    ///
+    /// <paramref name="handler"/> **原样**交给 SDK，所以 inputSchema 由 SDK 从委托签名生成 ——
+    /// 参数名、带默认值的参数（自动成为可选）都会出现在对端的清单里。
+    /// 想要精确控制 schema 就传 <paramref name="inputSchema"/> 覆盖。
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// _regs.Add(host.RegisterMspTool("current", "查询当前天气",
+    ///     (string location, int days = 1) => new { location, days }));
+    /// </code>
+    /// </example>
+    IDisposable RegisterMspTool(string tool, string description, Delegate handler, JsonElement? inputSchema = null);
+
+    /// <summary>
+    /// 扫 <paramref name="instance"/> 上所有 <c>[MspTool]</c> 标了的方法并一次注册（语法糖入口）。
+    /// 名字取 attribute 的 <c>Name</c>，没写就用方法名。
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// public void Initialize(IPluginHost host) => _regs.Add(host.RegisterMspToolsFrom(this));
+    ///
+    /// [MspTool("history", Description = "查询最近 N 天的天气")]
+    /// private object History(string location, int days = 7) => new { location, days };
+    /// </code>
+    /// </example>
+    IDisposable RegisterMspToolsFrom(object instance);
+
+    /// <summary>
+    /// 声明一条本插件会发布的信息。插件只给末段动作名，宿主补成
+    /// <c>plugin.&lt;插件id&gt;.&lt;action&gt;</c>，所以插件无法冒充别家域或宿主自己的 notify.*。
+    /// </summary>
+    IDisposable DeclareMspSignal(string action, string description);
+
+    /// <summary>
+    /// 以插件身份发布一条信号。<paramref name="path"/> 是**完整路径**（要合 MSP 的路径文法）。
+    /// MSP 未启动时静默丢弃并记 debug 日志 —— 插件不必自己判断开关状态。
+    /// </summary>
+    void PublishMspSignal(string path, object? payload);
 }
