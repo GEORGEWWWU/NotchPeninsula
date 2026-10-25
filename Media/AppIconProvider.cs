@@ -37,6 +37,17 @@ namespace NotchPeninsula
         {
             if (string.IsNullOrWhiteSpace(parsingName)) return null;
 
+            // 真实文件（exe/ico）优先**直接抠资源里最大的那一档**：
+            // Shell 的 GetImage 会把小图撑到请求尺寸（96×96 的内容可能只是放大的 48），
+            // 只比边长判断"够不够大"是看不出来的。PrivateExtractIcons 拿到的是原图，
+            // 缩到 20 多逻辑像素最干净。shell: 这类虚拟路径只能走 Shell。
+            var native = ExtractLargestFromFile(parsingName, Math.Max(size * 2, 256));
+            if (native != null)
+            {
+                if (Math.Max(native.Width, native.Height) >= size) return native;
+                native.Dispose();
+            }
+
             IShellItemImageFactory? comRef = null;
             try
             {
@@ -63,6 +74,64 @@ namespace NotchPeninsula
                     try { Marshal.FinalReleaseComObject(comRef); } catch { }
                 }
             }
+        }
+
+        /// <summary>
+        /// 直接从文件资源里抠最大图标（exe / ico）。shell: 这类虚拟路径无效，返回 null。
+        /// 命中后由调用方拥有返回的位图。
+        /// </summary>
+        private static SKBitmap? ExtractLargestFromFile(string path, int want)
+        {
+            if (want <= 0) want = 256;
+            if (path.StartsWith("shell:", StringComparison.OrdinalIgnoreCase)) return null;
+            if (!File.Exists(path)) return null;
+
+            var h = new IntPtr[1];
+            var id = new int[1];
+            int n;
+            try { n = Win32.PrivateExtractIcons(path, 0, want, want, h, id, 1, 0); }
+            catch { return null; }
+
+            if (n <= 0 || h[0] == IntPtr.Zero) return null;
+
+            try
+            {
+                // Icon.ToBitmap 会正确处理 256 的 PNG 压缩图标与透明通道（GDI+ 内部解码）。
+                using var icon = System.Drawing.Icon.FromHandle(h[0]);
+                using var bmp = icon.ToBitmap();
+                using var ms = new MemoryStream();
+                bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                ms.Position = 0;
+                return DecodeScaled(ms);
+            }
+            catch { return null; }
+            finally { Win32.DestroyIcon(h[0]); }
+        }
+
+        /// <summary>超过目标边长就等比缩下来（图标最终只画 20 多个逻辑像素，没必要常驻 256）。</summary>
+        private static SKBitmap? DecodeScaled(Stream stream)
+        {
+            SKBitmap? raw;
+            try { raw = SKBitmap.Decode(stream); }
+            catch { return null; }
+            if (raw == null) return null;
+
+            const int Cap = 160;
+            int edge = Math.Max(raw.Width, raw.Height);
+            if (edge <= Cap) return raw;
+
+            float k = Cap / (float)edge;
+            int w = Math.Max(1, (int)MathF.Round(raw.Width * k));
+            int h = Math.Max(1, (int)MathF.Round(raw.Height * k));
+            var dst = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+            using (var canvas = new SKCanvas(dst))
+            {
+                canvas.Clear(SKColors.Transparent);
+                using var paint = new SKPaint { FilterQuality = SKFilterQuality.High, IsAntialias = true };
+                canvas.DrawBitmap(raw, new SKRect(0, 0, w, h), paint);
+            }
+            raw.Dispose();
+            return dst;
         }
 
         private static SKBitmap? FromHBitmap(IntPtr hbm)
@@ -209,6 +278,7 @@ namespace NotchPeninsula
                     {
                         if (known && cur.Icon is { } stale && !ReferenceEquals(stale, icon)) stale.Dispose();
                         _cache[aumid] = new IconEntry(icon, 0, DateTime.MaxValue, false);
+                        Logger.Debug($"[应用图标] {aumid} 取到 {icon.Width}x{icon.Height}");
                         return;
                     }
 
