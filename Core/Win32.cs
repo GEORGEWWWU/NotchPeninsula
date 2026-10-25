@@ -421,6 +421,17 @@ namespace NotchPeninsula
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
 
+        // 直接从文件里抠图标（exe/ico 可用，shell: 路径不可用）：
+        // Shell 的 IShellItemImageFactory 有时会返回比请求小得多的图（拿 32 的放大），
+        // 这条路能拿到资源里真正最大的那一档（现代 exe 通常带 256 的 PNG 图标）。
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        public static extern int PrivateExtractIcons(
+            string lpszFile, int nIconIndex, int cxIcon, int cyIcon,
+            IntPtr[] phicon, int[] piconid, int nIcons, int flags);
+
+        [DllImport("user32.dll")]
+        public static extern bool DestroyIcon(IntPtr hIcon);
+
         [DllImport("gdi32.dll")]
         public static extern int GetObject(IntPtr hObject, int nCount, ref BITMAP lpObject);
 

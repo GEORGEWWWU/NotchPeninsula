@@ -335,7 +335,23 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 2 && _matchModeDropdownOpen && _hoveredMatchModeIndex != -1)
             {
-                MediaController.IsManualSessionMatch = _hoveredMatchModeIndex == 1;
+                bool manual = _hoveredMatchModeIndex == 1;
+
+                // 切到「手动」时先接管**当前正在展示的那个会话**：手动匹配是靠 App 白名单过滤的，
+                // 一个都没选就切过去 = 岛体立刻空掉（"怎么什么都没了"）。这里把当前会话的 App
+                // 写进白名单，切换瞬间画面不动，之后用户再自己改。
+                if (manual && MediaController.Instance is { } mc)
+                {
+                    string current = mc.CurrentAppId;
+                    if (!string.IsNullOrEmpty(current)
+                        && !string.Equals(current, MediaController.ManualSessionAppId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        MediaController.ManualSessionAppId = current;
+                        Program.SaveSetting("ManualSessionAppId", current);
+                    }
+                }
+
+                MediaController.IsManualSessionMatch = manual;
                 Program.SaveSetting("ManualSessionMatch", MediaController.IsManualSessionMatch ? 1 : 0);
                 _matchModeDropdownOpen = false;
                 _ = MediaController.Instance?.ForceRefresh();
