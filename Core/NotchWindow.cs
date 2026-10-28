@@ -156,6 +156,16 @@ namespace NotchPeninsula
         //     —— 用户看到的是「抽一下又回去了」。
         private bool _suppressOutsideCollapse = false;
 
+        // ---- 岛外左键按下：输入事件侧登记，渲染线程下一帧消费 ----
+        // 逐帧"瞄一眼 GetAsyncKeyState"只在采样点正好落在按下与抬起之间时才成立。
+        // 全屏无边框游戏把 DWM 提交拖到 200ms 一帧时（见 [渲染卡顿]），一次 50~120ms 的点击
+        // 会被整段跨过去，面板就再也收不回来，只能等 3 秒的空闲计时器 —— 这就是
+        // 「游戏里右键展开后左键点游戏收不回去」的成因。
+        // 所以按下沿改由 WM_INPUT（事件，不丢）登记，渲染线程下一帧只管消费。
+        private static volatile bool _outsideLeftPressPending;
+        private bool _rawMouseSinkOn;   // 只在有展开态时挂着：否则每一条鼠标移动都会来敲一次窗口过程
+        private bool _rawMouseSinkUnavailable; // 注册过一次失败就不再反复试
+
         // ---- 展开面板统一管理 ----
 
         private static readonly PanelCollapseTimer _mediaPanelCollapse = new(MediaCollapseDelayMs);
@@ -896,13 +906,8 @@ namespace NotchPeninsula
                 // 实时穿透与 0% 透明度智能判定
                 if (Renderer.PassthroughModeEnabled)
                 {
-                    float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                    float topY = 12f * _currentStyleProgress;
-
                     Win32.GetCursorPos(out var pt);
-                    float logX = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
-                    float logY = (pt.y - _cachedMonitorY - Renderer.IslandBaseY * _dpiScale - _currentY) / _dpiScale;
-                    bool isOverNotch = logX >= left && logX <= left + _currentWidth && logY >= topY && logY <= topY + _currentHeight;
+                    bool isOverNotch = IsOverIslandScreenPoint(pt);
 
                     if (_isPassthroughAwake && !isOverNotch && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
                         _isPassthroughAwake = false;
@@ -933,25 +938,37 @@ namespace NotchPeninsula
                 // 没有待办时只是一次 Count 判断，稳态零开销。
                 PluginManager.Instance.Host.DrainPendingWindowClose();
 
+                // 展开态期间才挂原始输入：挂上之后每条鼠标移动都会进一次窗口过程，不展开就别挂。
+                SetRawMouseSink(HasAnyExpanded);
+
                 if (!_media.IsDragging
                     && (HasAnyExpanded || _suppressOutsideCollapse))
                 {
+                    // ① 事件侧已经确认「岛外按下了左键」（WM_INPUT 登记，见 OnRawMouseInput）。
+                    //    渲染线程这一帧是不是刚好跑起来都无所谓，事件不会丢。
+                    bool eventOutsidePress = _outsideLeftPressPending;
+                    _outsideLeftPressPending = false;
+
+                    // ② 逐帧采样：仍然留着兜底（原始输入注册失败、或被别的程序顶掉时靠它）。
                     bool leftDown = (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0;
 
                     if (_suppressOutsideCollapse && !leftDown) _suppressOutsideCollapse = false;
 
-                    float expLeft = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                    float expTopY = 12f * _currentStyleProgress;
                     Win32.GetCursorPos(out var expPt);
-                    float expX = (expPt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
-                    float expY = (expPt.y - _cachedMonitorY - Renderer.IslandBaseY * _dpiScale - _currentY) / _dpiScale;
-                    bool isOverIsland = expX >= expLeft && expX <= expLeft + _currentWidth
-                                        && expY >= expTopY && expY <= expTopY + _currentHeight;
+                    bool isOverIsland = IsOverIslandScreenPoint(expPt);
 
-                    if (!isOverIsland && !_suppressOutsideCollapse && leftDown && !Renderer.HasActiveDetailPage)
+                    if (!isOverIsland && !_suppressOutsideCollapse
+                        && (eventOutsidePress || leftDown) && !Renderer.HasActiveDetailPage)
                     {
+                        Logger.Debug($"[展开态] 岛外左键 → 收起"
+                            + $"（来源={(eventOutsidePress ? "原始输入" : "逐帧采样")}）");
                         CollapseAllExpanded();
                     }
+                }
+                else
+                {
+                    // 没有展开态就别留残值：否则下一次展开会被上一次的按下沿当场收掉。
+                    _outsideLeftPressPending = false;
                 }
 
                 TickFullscreenProbe();
@@ -1296,14 +1313,69 @@ namespace NotchPeninsula
 
         private bool IsCursorOverIslandNow()
         {
+            return Win32.GetCursorPos(out var pt) && IsOverIslandScreenPoint(pt);
+        }
+
+        /// <summary>
+        /// 屏幕坐标是否落在岛体（当前可见的胶囊）矩形内。
+        /// 穿透判定、展开态「岛外点击」判定、拖放收尾三处用的是同一套换算，别再各抄一份。
+        /// </summary>
+        private bool IsOverIslandScreenPoint(Win32.POINT pt)
+        {
             float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
             float topY = 12f * _currentStyleProgress;
 
-            Win32.GetCursorPos(out var pt);
             float x = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
             float y = (pt.y - _cachedMonitorY - Renderer.IslandBaseY * _dpiScale - _currentY) / _dpiScale;
 
             return x >= left && x <= left + _currentWidth && y >= topY && y <= topY + _currentHeight;
+        }
+
+        /// <summary>
+        /// 挂 / 摘「原始鼠标输入」。只在有展开态时挂：RIDEV_INPUTSINK 会把每一条鼠标移动
+        /// 都投成一次 WM_INPUT，没展开时白敲窗口过程。注册是进程级的一次 win32k 调用，
+        /// 不要求调用线程有消息泵，所以渲染线程直接调没问题。
+        /// </summary>
+        private void SetRawMouseSink(bool on)
+        {
+            if (_rawMouseSinkOn == on || _hwnd == IntPtr.Zero || _rawMouseSinkUnavailable) return;
+            _rawMouseSinkOn = on;
+
+            var dev = new Win32.RAWINPUTDEVICE
+            {
+                usUsagePage = 1,   // Generic Desktop Controls
+                usUsage = 2,       // Mouse
+                dwFlags = on ? Win32.RIDEV_INPUTSINK : Win32.RIDEV_REMOVE,
+                hwndTarget = on ? _hwnd : IntPtr.Zero
+            };
+
+            if (Win32.RegisterRawInputDevices(new[] { dev }, 1, (uint)Marshal.SizeOf<Win32.RAWINPUTDEVICE>()))
+                return;
+
+            // 注册不上（极罕见）就认了：保持当前状态别再每帧重试，逐帧采样那条路还在。
+            _rawMouseSinkUnavailable = true;
+            Logger.Warn($"[岛外点击] 原始鼠标输入{(on ? "注册" : "注销")}失败"
+                + $"（错误码 {Marshal.GetLastWin32Error()}），退回逐帧采样");
+        }
+
+        /// <summary>
+        /// 原始输入里筛出「岛体之外按下了左键」，登记一个待消费的标记。
+        /// 判据与逐帧采样完全一致，区别只在于触发时机：这里是按下那一刻，不是下一帧。
+        /// 真正收面板的动作仍然交给渲染线程那一帧做，免得两边同时改宽度动画的状态。
+        /// </summary>
+        private void OnRawMouseInput(IntPtr lParam)
+        {
+            uint size = (uint)Marshal.SizeOf<Win32.RAWINPUTMOUSE>();
+            if (Win32.GetRawInputData(lParam, Win32.RID_INPUT, out var raw, ref size,
+                    (uint)Marshal.SizeOf<Win32.RAWINPUTHEADER>()) != size) return;
+
+            if (raw.header.dwType != Win32.RIM_TYPEMOUSE) return;
+            if ((raw.mouse.usButtonFlags & Win32.RI_MOUSE_LEFT_BUTTON_DOWN) == 0) return;
+
+            if (!HasAnyExpanded || _suppressOutsideCollapse || _media.IsDragging) return;
+            if (!Win32.GetCursorPos(out var pt) || IsOverIslandScreenPoint(pt)) return;
+
+            _outsideLeftPressPending = true;
         }
 
         private void SetupIslandDropTarget()
@@ -1439,9 +1511,28 @@ namespace NotchPeninsula
                 case Win32.WM_DESTROY:
                     MediaHotkeys.Detach();
                     IslandHotkey.Detach();
+                    SetRawMouseSink(false);     // 窗口要没了，原始输入先摘掉
                     RevokeIslandDropTarget();
                     ShutdownIslandBackdrop();   // 停掉后台抓屏线程并释放它自己的 GDI 资源
                     Win32.PostQuitMessage(0);   // 走正常退出：让 GetMessage 返回 0，Run() 收尾后 Main 返回
+                    break;
+
+                case Win32.WM_INPUT:
+                    // 原始鼠标输入：只用来登记「岛外按下了左键」这一个事实（见 OnRawMouseInput）。
+                    // 必须继续走到 DefWindowProc —— 系统要靠它做每次原始输入的收尾清理。
+                    OnRawMouseInput(lParam);
+                    break;
+
+                case Win32.WM_ACTIVATE:
+                    // 岛体丢了前台 = 用户点到别的窗口上去了（全屏游戏里「点回游戏」就是这一条）。
+                    // 这是事件驱动的，跟渲染帧率无关，所以它才是「点一下别处就收起来」的主路径；
+                    // 逐帧采样和 WM_INPUT 都只是兜底（岛体本来就没在前台时它们才用得上）。
+                    if ((Win32.Low32(wParam) & 0xFFFF) == Win32.WA_INACTIVE
+                        && HasAnyExpanded && !_media.IsDragging)
+                    {
+                        Logger.Debug("[展开态] 岛体失焦 → 收起（点到了别的窗口）");
+                        CollapseAllExpanded();
+                    }
                     break;
 
                 case Win32.WM_DISPLAYCHANGE:
