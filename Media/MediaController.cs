@@ -717,7 +717,7 @@ namespace NotchPeninsula
                         {
                             newSession = sessions[i];
                             break;
-                        }
+                        } 
                     }
 
                     // 手动锁定的目标不在过滤后的列表里（被判残留被剔除，或进程/会话已经消失）：

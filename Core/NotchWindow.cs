@@ -32,8 +32,9 @@ namespace NotchPeninsula
         private const string TimelinePluginMarketId = "mediacdp";   // 市场里「网易酷狗时间轴获取」的插件 id
         private const string TimelinePluginTipDismissedKey = "TimelinePluginTipDismissed";
 
-        // 本次运行已经提示过（或确认无需提示）的播放器：同一进程里每个播放器最多打扰一次。
-        private readonly HashSet<string> _timelineTipShownApps = new(StringComparer.OrdinalIgnoreCase);
+        // 当前这次「正在播放」已经提示过的播放器：暂停 / 停止后再播放会重新提示；
+        // 用户点过「拒收」才是永久静默。
+        private string _timelineTipPlayingAppId = "";
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         private readonly IntPtr _hwnd;
         private readonly IntPtr _ownerHwnd;   // 只做「不进任务栏/Alt-Tab」的隐藏 owner，见构造函数注释
@@ -731,24 +732,32 @@ namespace NotchPeninsula
         }
 
         // ---- 网易云 / 酷狗时间轴插件推荐 ----
-        // 这两家的 SMTC 进度经常是 0，时间轴只能靠插件从页面里读。检测到它们正在播放、
-        // 且本机没装对应插件时，推荐一次；用户点「拒收」后落注册表，之后不再打扰。
+        // 这两家的 SMTC 进度经常是 0，时间轴只能靠插件从页面里读。
+        // 每次进入「正在播放」提示一次；暂停 / 停止后再播放会再次提示。只有点「拒收」才永久静默。
 
         private void TickTimelinePluginTip()
         {
             if (!IsToastEnabled || IsTimelinePluginTipDismissed) return;
-            if (_currentToast != null) return;                         // 已有消息在展示：等它退场
-            if (!_media.IsActive || !_media.IsPlaying) return;
 
             string appId = _media.CurrentAppId;
-            if (!MediaController.IsNeteaseOrKugou(appId)) return;
+            bool neteaseKugouPlaying = _media.IsActive && _media.IsPlaying
+                && MediaController.IsNeteaseOrKugou(appId);
+
+            // 暂停 / 停止 / 切走：清掉本次播放的记账，下一次再播还能提示。
+            if (!neteaseKugouPlaying)
+            {
+                _timelineTipPlayingAppId = "";
+                return;
+            }
+
+            if (_currentToast != null) return;   // 已有消息在展示：等它退场，先不记账
+            if (string.Equals(_timelineTipPlayingAppId, appId, StringComparison.OrdinalIgnoreCase)) return;
+
+            _timelineTipPlayingAppId = appId;    // 本次播放已处理，避免每帧重复弹
+            if (IsTimelinePluginInstalled()) return;
 
             string appName = MediaController.NeteaseKugouDisplayName(appId);
-            if (appName.Length == 0 || _timelineTipShownApps.Contains(appName)) return;
-
-            // 先记账再决定弹不弹：插件已装 / 已禁用都不该每帧重查插件表。
-            _timelineTipShownApps.Add(appName);
-            if (IsTimelinePluginInstalled()) return;
+            if (appName.Length == 0) return;
 
             var toast = new ToastData
             {
