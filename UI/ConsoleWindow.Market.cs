@@ -344,6 +344,8 @@ namespace NotchPeninsula
             return "全部插件";
         }
 
+        private static readonly string[] MarketCategoryNames = MarketCategories.Select(c => c.Name).ToArray();
+
         private void RefreshMarketFilter()
         {
             _marketView.Clear();

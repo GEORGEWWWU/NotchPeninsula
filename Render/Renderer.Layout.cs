@@ -12,7 +12,7 @@ namespace NotchPeninsula
         //    组合与非组合因此不再各写一套媒体绘制。
 
         private static void DrawCompositeLayout(SKCanvas canvas, MediaController media, bool isHovered, float[]? bars,
-            float left, float currentHeight, float topY, float textOffsetY, byte alpha)
+            float left, float currentWidth, float currentHeight, float topY, float textOffsetY, byte alpha)
         {
             float currentX = left + 16f;
             float centerY = currentHeight / 2f + textOffsetY;
@@ -114,8 +114,45 @@ namespace NotchPeninsula
 
             if (StandbyActive)
             {
-                if (StandbyScene == 1) DrawClockModule();
-                else if (StandbyScene == 3 && media.IsActive) DrawMediaModule();
+                // 待机只显示「待机显示内容」下拉里选中的那一项；
+                // 空串 = 空白，内置项走各自的原生模块，其余当作插件 Key 交给插件行。
+                string scene = StandbySceneKey;
+
+                // 岛宽有 60px 下限：窄内容（比如 22px 的插件图标）若只靠左右各 16px 边距，
+                // 多出来的宽度会全堆在右侧、看起来整体偏左。这里按「岛中心 - 内容宽/2」摆，
+                // 宽度没被下限撑开时（currentWidth == own + 32）结果与 left + 16 完全一致。
+                float CenteredContentX(float ownW)
+                    => left + Math.Max(16f, (currentWidth - ownW) / 2f);
+
+                if (string.Equals(scene, Plugins.BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase))
+                {
+                    currentX = CenteredContentX(_cachedTimeWidth + 12f + _cachedDateWidth);
+                    DrawClockModule();
+                }
+                else if (string.Equals(scene, Plugins.BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase))
+                {
+                    currentX = CenteredContentX(MeasureHardwareBlockWidth());
+                    DrawHardwareModule();
+                }
+                else if (string.Equals(scene, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (media.IsActive)
+                    {
+                        currentX = CenteredContentX(MeasureMediaBlockWidth(media));
+                        DrawMediaModule();
+                    }
+                }
+                else if (!string.IsNullOrEmpty(scene))
+                {
+                    // 设置页存的是插件 Key（DLL 文件名），组件反查表用的是插件 Id，这里先换一次。
+                    string? pluginId = ResolveStandbyPluginId();
+                    if (pluginId != null)
+                    {
+                        currentX = CenteredContentX(SumPluginRowWidth(pluginId));
+                        DrawPluginWidgets(canvas, pluginId, currentX, currentHeight, alpha, textOffsetY, bars,
+                            _pluginMouseX, _pluginMouseY - topY);
+                    }
+                }
                 return;
             }
 

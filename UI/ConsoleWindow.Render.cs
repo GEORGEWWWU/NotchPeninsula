@@ -559,8 +559,9 @@ namespace NotchPeninsula
             };
             canvas.DrawText(toastModeDesc, CONTENT_TEXT_X, TITLE_BAR_HEIGHT + TOAST_ROW2_DESC_Y, _subTextPaint);
 
-            DrawDropdownBox(canvas, TOAST_MODE_CTRL_X, TOAST_MODE_ROW_Y, TOAST_MODE_CTRL_W, TOAST_MODE_ROW_H,
-                _toastModeOptions[_selectedToastModeIndex], _toastModeDropdownHovered, enabled: true);
+            DrawDropdownBox(canvas, TOAST_MODE_CTRL_X, TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y, TOAST_MODE_CTRL_W, TOAST_MODE_ROW_H,
+                _toastModeOptions[_selectedToastModeIndex], _toastModeDropdownHovered, enabled: true,
+                open: _toastModeDropdownOpen);
 
             canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + SOUND_SEP_Y, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + SOUND_SEP_Y, _separatorPaint);
 
@@ -577,11 +578,13 @@ namespace NotchPeninsula
             canvas.DrawText("提示音", SOUND_LABEL_X, TITLE_BAR_HEIGHT + SOUND_ROW_TITLE_Y, _uiTextPaint);
             if (!soundRowEnabled) _uiTextPaint.Color = _fgColor;
 
-            DrawDropdownBox(canvas, SOUND_CTRL_X, SOUND_BOX_Y, SOUND_CTRL_W, SOUND_ROW_H,
-                ToastSoundConfig.CurrentDisplayText(), _toastSoundDropdownHovered, enabled: soundRowEnabled);
+            DrawDropdownBox(canvas, SOUND_CTRL_X, TITLE_BAR_HEIGHT + SOUND_BOX_Y, SOUND_CTRL_W, SOUND_ROW_H,
+                ToastSoundConfig.CurrentDisplayText(), _toastSoundDropdownHovered, enabled: soundRowEnabled,
+                open: _toastSoundDropdownOpen);
 
-            DrawDropdownBox(canvas, SOUND_VOL_X, SOUND_BOX_Y, SOUND_VOL_W, SOUND_ROW_H,
-                $"{ToastSoundConfig.VolumePercent}%", _soundVolumeDropdownHovered, enabled: soundReady);
+            DrawDropdownBox(canvas, SOUND_VOL_X, TITLE_BAR_HEIGHT + SOUND_BOX_Y, SOUND_VOL_W, SOUND_ROW_H,
+                $"{ToastSoundConfig.VolumePercent}%", _soundVolumeDropdownHovered, enabled: soundReady,
+                open: _soundVolumeDropdownOpen);
 
             void DrawSoundButton(bool hovered, string label, float bx, float bw, bool enabled)
             {
@@ -633,24 +636,54 @@ namespace NotchPeninsula
             DrawFontButton(_fontResetHovered, "重置", FONT_RESET_X, FONT_RESET_W);
         }
 
-        private void DrawDropdownBox(SKCanvas canvas, float x, float yOffset, float w, float h,
-                                     string text, bool hovered, bool enabled)
+        private void DrawDropdownBox(SKCanvas canvas, float x, float y, float w, float h,
+                                     string text, bool hovered, bool enabled,
+                                     bool open = false, bool builtinTag = false)
         {
-            var rect = new SKRect(x, TITLE_BAR_HEIGHT + yOffset, x + w, TITLE_BAR_HEIGHT + yOffset + h);
-            float bgAlpha = enabled ? (hovered ? 15 : 8) : 4;
-            _dynamicFillPaint.Color = Overlay((byte)bgAlpha);
-            canvas.DrawRoundRect(rect, 4, 4, _dynamicFillPaint);
+            var rect = new SKRect(x, y, x + w, y + h);
+            bool hot = enabled && (hovered || open);
+            _dynamicFillPaint.Color = !enabled ? Overlay(5) : hot ? Overlay(20) : Overlay(10);
+            canvas.DrawRoundRect(rect, 7, 7, _dynamicFillPaint);
 
-            if (!enabled) _uiTextPaint.Color = Neutral(110);
-            canvas.DrawText(TruncateText(text, _uiTextPaint, w - 26), rect.Left + 10, rect.Top + h / 2f + 5, _uiTextPaint);
-            if (!enabled) _uiTextPaint.Color = _fgColor;
+            // 展开时描一圈淡蓝：让「正在选」这件事有明确的视觉落点
+            if (enabled && open)
+            {
+                _dynamicStrokePaint.Color = new SKColor(0, 120, 212, 150);
+                canvas.DrawRoundRect(rect, 7, 7, _dynamicStrokePaint);
+            }
 
-            float cx = rect.Right - 18;
+            const float chevronArea = 26f;
+            float tagW = builtinTag ? _subTextPaint.MeasureText("内置") + 14f : 0f;
+            float textLimit = w - 12f - chevronArea - (tagW > 0f ? tagW + 8f : 0f);
+            _uiTextPaint.Color = enabled ? _fgColor : Neutral(110);
+            canvas.DrawText(TruncateText(text, _uiTextPaint, textLimit),
+                rect.Left + 12f, rect.Top + h / 2f + 5f, _uiTextPaint);
+            _uiTextPaint.Color = _fgColor;
+
+            if (builtinTag)
+                DrawBuiltinTag(canvas, rect.Right - chevronArea - tagW - 2f, rect.Top + (h - 16f) / 2f);
+
+            float cx = rect.Right - 19f;
             float cy = rect.MidY;
-            if (!enabled) _chevronPaint.Color = Neutral(90);
-            canvas.DrawLine(cx, cy - 2.5f, cx + 5, cy + 2.5f, _chevronPaint);
-            canvas.DrawLine(cx + 5, cy + 2.5f, cx + 10, cy - 2.5f, _chevronPaint);
-            if (!enabled) _chevronPaint.Color = Neutral(160);
+            float dir = open ? -1f : 1f;   // 展开时箭头朝上
+            float tipY = cy + dir * 2.5f;
+            _chevronPaint.Color = !enabled ? Neutral(90) : hot ? Neutral(200) : Neutral(150);
+            canvas.DrawLine(cx, tipY - dir * 5f, cx + 5f, tipY, _chevronPaint);
+            canvas.DrawLine(cx + 5f, tipY, cx + 10f, tipY - dir * 5f, _chevronPaint);
+            _chevronPaint.Color = Neutral(150);
+        }
+
+        // 蓝色「内置」小胶囊：列表项和折叠框共用，宽度返回给调用方排版。
+        private float DrawBuiltinTag(SKCanvas canvas, float x, float top)
+        {
+            const string tag = "内置";
+            float tagW = _subTextPaint.MeasureText(tag) + 14f;
+            _dynamicFillPaint.Color = new SKColor(0, 120, 212, 40);
+            canvas.DrawRoundRect(new SKRect(x, top, x + tagW, top + 16f), 8, 8, _dynamicFillPaint);
+            _subTextPaint.Color = new SKColor(0, 140, 240);
+            canvas.DrawText(tag, x + 7f, top + 12.5f, _subTextPaint);
+            _subTextPaint.Color = Neutral(170);
+            return tagW;
         }
 
         // 页签：显示设置
@@ -723,12 +756,9 @@ namespace NotchPeninsula
             canvas.DrawText("目标显示器", CONTENT_TEXT_X, monitorRowY + ROW_LABEL_DY, _uiTextPaint);
             float mdX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
             float mdY = monitorRowY + (ROW_H - MONITOR_DD_H) / 2f;
-            _dynamicFillPaint.Color = _monitorDropdownHovered ? Overlay(15) : Overlay(8);
-            canvas.DrawRoundRect(new SKRect(mdX, mdY, mdX + MONITOR_DD_W, mdY + MONITOR_DD_H), 4, 4, _dynamicFillPaint);
             string mName = Renderer.TargetMonitorIndex < _monitorOptions.Length ? _monitorOptions[Renderer.TargetMonitorIndex] : "未知";
-            canvas.DrawText(mName, mdX + 10, mdY + 21, _uiTextPaint);
-            canvas.DrawLine(mdX + MONITOR_DD_W - 20, mdY + 14, mdX + MONITOR_DD_W - 15, mdY + 19, _chevronPaint);
-            canvas.DrawLine(mdX + MONITOR_DD_W - 15, mdY + 19, mdX + MONITOR_DD_W - 10, mdY + 14, _chevronPaint);
+            DrawDropdownBox(canvas, mdX, mdY, MONITOR_DD_W, MONITOR_DD_H, mName,
+                _monitorDropdownHovered, enabled: true, open: _monitorDropdownOpen);
 
             // ── 显示模式（单行分段器）：待机 / 普通 ──
             float modeRowY = TITLE_BAR_HEIGHT + MODE_ROW_Y + page;
@@ -738,8 +768,9 @@ namespace NotchPeninsula
 
             float sceneRowY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + page;
             canvas.DrawText("待机显示内容", CONTENT_TEXT_X, sceneRowY + ROW_LABEL_DY, _uiTextPaint);
-            DrawSegmented(canvas, SCENE_SEG_X, sceneRowY + (ROW_H - SEG_H) / 2f, SCENE_SEG_W, SEG_H,
-                ["时间", "空白", "媒体控制"], Renderer.StandbyScene - 1, _hoveredStandbySceneIndex - 1);
+            DrawDropdownBox(canvas, SCENE_SEG_X, sceneRowY + (ROW_H - SCENE_DD_H) / 2f, SCENE_SEG_W, SCENE_DD_H,
+                CurrentStandbySceneName(), _sceneDropdownHovered, enabled: true,
+                open: _sceneDropdownOpen, builtinTag: BuiltinWidgets.IsBuiltin(Renderer.StandbySceneKey));
 
             //（见 Core/NotchWindow 的双击分支）。
             DrawToggleRow(canvas, TOGGLE_ROW_Y + page,
@@ -802,13 +833,8 @@ namespace NotchPeninsula
                 CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 130, _subTextPaint);
 
             float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 96; float dH = 32;
-            var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
-            _dynamicFillPaint.Color = _dropdownHovered ? Overlay(15) : Overlay(8);
-            canvas.DrawRoundRect(dRect, 4, 4, _dynamicFillPaint);
-            canvas.DrawText(_platforms[_selectedPlatformIndex].Name, dX + 10, dY + 21, _uiTextPaint);
-
-            canvas.DrawLine(dX + dW - 20, dY + 14, dX + dW - 15, dY + 19, _chevronPaint);
-            canvas.DrawLine(dX + dW - 15, dY + 19, dX + dW - 10, dY + 14, _chevronPaint);
+            DrawDropdownBox(canvas, dX, dY, dW, dH, _platforms[_selectedPlatformIndex].Name,
+                _dropdownHovered, enabled: true, open: _dropdownOpen);
 
             // 两行之间的分隔线
             canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 142, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + 142, _separatorPaint);
@@ -825,31 +851,15 @@ namespace NotchPeninsula
             float moX = MATCH_MODE_X, appX = MATCH_APP_X, mBoxY = MATCH_ROW_Y, mBoxW = MATCH_BOX_W, mBoxH = MATCH_BOX_H;
 
             // 左框：自动匹配 / 手动选择软件
-            var moRect = new SKRect(moX, mBoxY, moX + mBoxW, mBoxY + mBoxH);
-            _dynamicFillPaint.Color = !matchEnabled ? Overlay(4)
-                : (_matchModeDropdownHovered ? Overlay(15) : Overlay(8));
-            canvas.DrawRoundRect(moRect, 4, 4, _dynamicFillPaint);
-            _dynamicTextPaint.Color = matchEnabled ? _fgColor : Neutral(100);
-            canvas.DrawText(_matchModeOptions[MediaController.IsManualSessionMatch ? 1 : 0], moX + 10, mBoxY + 21, _dynamicTextPaint);
-            _dynamicTextPaint.Color = _fgColor;
-            _chevronPaint.Color = matchEnabled ? Neutral(150) : Neutral(90);
-            canvas.DrawLine(moX + mBoxW - 20, mBoxY + 14, moX + mBoxW - 15, mBoxY + 19, _chevronPaint);
-            canvas.DrawLine(moX + mBoxW - 15, mBoxY + 19, moX + mBoxW - 10, mBoxY + 14, _chevronPaint);
+            DrawDropdownBox(canvas, moX, mBoxY, mBoxW, mBoxH,
+                _matchModeOptions[MediaController.IsManualSessionMatch ? 1 : 0],
+                _matchModeDropdownHovered, enabled: matchEnabled, open: _matchModeDropdownOpen);
 
-            var appRect = new SKRect(appX, mBoxY, appX + mBoxW, mBoxY + mBoxH);
-            _dynamicFillPaint.Color = appBoxEnabled ? (_appDropdownHovered ? Overlay(15) : Overlay(8))
-                : Overlay(4);
-            canvas.DrawRoundRect(appRect, 4, 4, _dynamicFillPaint);
             string appLabel = !appBoxEnabled ? "自动匹配"
                 : (!MediaController.HasActiveSessions ? ""
                     : (MediaController.ManualSessionAppId.Length > 0 ? MediaController.ManualSessionAppId : "未选择"));
-            _dynamicTextPaint.Color = appBoxEnabled ? _fgColor : Neutral(100);
-            canvas.DrawText(TruncateText(appLabel, _dynamicTextPaint, mBoxW - 32), appX + 10, mBoxY + 21, _dynamicTextPaint);
-            _dynamicTextPaint.Color = _fgColor;
-            _chevronPaint.Color = appBoxEnabled ? Neutral(150) : Neutral(90);
-            canvas.DrawLine(appX + mBoxW - 20, mBoxY + 14, appX + mBoxW - 15, mBoxY + 19, _chevronPaint);
-            canvas.DrawLine(appX + mBoxW - 15, mBoxY + 19, appX + mBoxW - 10, mBoxY + 14, _chevronPaint);
-            _chevronPaint.Color = Neutral(150);
+            DrawDropdownBox(canvas, appX, mBoxY, mBoxW, mBoxH, appLabel,
+                _appDropdownHovered, enabled: appBoxEnabled, open: _appDropdownOpen);
 
             float lyricY = LYRIC_CARD_Y;
             var lyricRect = new SKRect(CONTENT_L, lyricY, WIDTH - CONTENT_RM, lyricY + LYRIC_CARD_H);
@@ -1594,29 +1604,11 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
 
-            // 工具栏下拉箭头（分类 / 排序共用）：几何与线宽只在这里定义一份。
-            // 26px 高的小控件里用 1.6f 比页面通用的 1.5f 更立得住；纵向按控件顶 +11 居中，
-            // 别按「控件顶 +13」另算一套 —— 两枚箭头会明显错半个像素位。
-            void DrawMarketChevron(SKRect box)
-            {
-                float cx = box.Right - 16, cy = box.Top + 11;
-                _dynamicStrokePaint.Color = Neutral(170);
-                _dynamicStrokePaint.StrokeWidth = 1.6f;
-                canvas.DrawLine(cx - 4, cy, cx, cy + 4, _dynamicStrokePaint);
-                canvas.DrawLine(cx, cy + 4, cx + 4, cy, _dynamicStrokePaint);
-                _dynamicStrokePaint.StrokeWidth = 1.5f;   // 复位：共用画笔
-                _dynamicStrokePaint.Color = Neutral(150);
-            }
-
+            // 工具栏下拉框（分类 / 排序）与设置页共用同一套 DrawDropdownBox。
             var catRect = new SKRect(CONTENT_TEXT_X, MarketControlsY, CONTENT_TEXT_X + MarketCatBtnW, MarketControlsY + MarketControlH);
-            _dynamicFillPaint.Color = _marketCategoryOpen || _hoveredMarketCategoryIndex != -1 ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(catRect, 5, 5, _dynamicFillPaint);
-            _dynamicStrokePaint.Color = Neutral(_marketCategoryOpen ? (byte)130 : (byte)90);
-            canvas.DrawRoundRect(catRect, 5, 5, _dynamicStrokePaint);
-            _marketTextPaint.Color = _fgColor;
-            canvas.DrawText(MarketCategoryName(_marketCategoryKey), CONTENT_TEXT_X + 12, MarketControlsY + 17, _marketTextPaint);
-            // 下拉箭头
-            DrawMarketChevron(catRect);
+            DrawDropdownBox(canvas, catRect.Left, catRect.Top, MarketCatBtnW, MarketControlH,
+                MarketCategoryName(_marketCategoryKey), _hoveredMarketCategoryIndex == -2,
+                enabled: true, open: _marketCategoryOpen);
 
             var searchRect = new SKRect(MarketSearchX, MarketControlsY, MarketSearchX + MarketSearchW, MarketControlsY + MarketControlH);
             _dynamicFillPaint.Color = Overlay(15);
@@ -1723,14 +1715,9 @@ namespace NotchPeninsula
 
             // ── 排序下拉（最热 / 评分 / 最新 / 名称，官方插件始终置顶）──
             var sortRect = new SKRect(MarketSortX, MarketStatusRowY, MarketSortX + MarketSortW, MarketStatusRowY + MarketControlH);
-            _dynamicFillPaint.Color = _marketSortOpen || _hoveredMarketSortBox ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(sortRect, 5, 5, _dynamicFillPaint);
-            _dynamicStrokePaint.Color = Neutral(_marketSortOpen ? (byte)130 : (byte)90);
-            canvas.DrawRoundRect(sortRect, 5, 5, _dynamicStrokePaint);
-            _marketTextPaint.Color = _fgColor;
-            canvas.DrawText(MarketSortOptions[_marketSortIndex], MarketSortX + 12, MarketStatusBaseline, _marketTextPaint);
-            _marketTextPaint.Color = Neutral(170);
-            DrawMarketChevron(sortRect);
+            DrawDropdownBox(canvas, sortRect.Left, sortRect.Top, MarketSortW, MarketControlH,
+                MarketSortOptions[_marketSortIndex], _hoveredMarketSortIndex == -2,
+                enabled: true, open: _marketSortOpen);
             _subTextPaint.Color = Neutral(170);   // 下面列表区继续用这支，保持默认灰
 
             float rowsTop = MarketRowsTop;
@@ -1906,46 +1893,17 @@ namespace NotchPeninsula
 
             if (_marketCategoryOpen)
             {
-                const float rowH = 26f;
-                float mY = MarketControlsY + MarketControlH + 4;
-                var menu = new SKRect(CONTENT_TEXT_X, mY, CONTENT_TEXT_X + MarketCatBtnW, mY + MarketCategories.Length * rowH);
-                canvas.DrawRoundRect(menu, 6, 6, _menuBg);
-                canvas.DrawRoundRect(menu, 6, 6, _menuBorder);
-                for (int k = 0; k < MarketCategories.Length; k++)
-                {
-                    var item = new SKRect(menu.Left + 2, mY + k * rowH, menu.Right - 2, mY + (k + 1) * rowH);
-                    bool selected = string.Equals(MarketCategories[k].Key, _marketCategoryKey, StringComparison.OrdinalIgnoreCase);
-                    if (_hoveredMarketCategoryIndex == k) { _dynamicFillPaint.Color = Overlay(40); canvas.DrawRoundRect(item, 4, 4, _dynamicFillPaint); }
-                    _subTextPaint.Color = selected ? new SKColor(0, 140, 240) : Neutral(200);
-                    canvas.DrawText(MarketCategories[k].Name, menu.Left + 12, mY + k * rowH + 18, _subTextPaint);
-                    if (selected)
-                    {
-                        DrawTextWithEmoji(canvas, "✓", _subTextPaint, 20, menu.Right - 12, mY + k * rowH + 18, rightAlign: true);
-                    }
-                }
-                _subTextPaint.Color = Neutral(170);
+                int catSelected = Array.FindIndex(MarketCategories, c =>
+                    string.Equals(c.Key, _marketCategoryKey, StringComparison.OrdinalIgnoreCase));
+                if (catSelected < 0) catSelected = 0;
+                RenderDropdownList(canvas, CONTENT_TEXT_X, MarketControlsY + MarketControlH + 4, MarketCatBtnW,
+                    MarketCategoryNames, catSelected, _hoveredMarketCategoryIndex, dimmedIndex: -1);
             }
 
             if (_marketSortOpen)
             {
-                const float sortRowH = 26f;
-                float sMenuY = MarketStatusRowY + MarketControlH + 4;
-                var sortMenu = new SKRect(MarketSortX, sMenuY, MarketSortX + MarketSortW, sMenuY + MarketSortOptions.Length * sortRowH);
-                canvas.DrawRoundRect(sortMenu, 6, 6, _menuBg);
-                canvas.DrawRoundRect(sortMenu, 6, 6, _menuBorder);
-                for (int k = 0; k < MarketSortOptions.Length; k++)
-                {
-                    var item = new SKRect(sortMenu.Left + 2, sMenuY + k * sortRowH, sortMenu.Right - 2, sMenuY + (k + 1) * sortRowH);
-                    bool selected = k == _marketSortIndex;
-                    if (_hoveredMarketSortIndex == k) { _dynamicFillPaint.Color = Overlay(40); canvas.DrawRoundRect(item, 4, 4, _dynamicFillPaint); }
-                    _subTextPaint.Color = selected ? new SKColor(0, 140, 240) : Neutral(200);
-                    canvas.DrawText(MarketSortOptions[k], sortMenu.Left + 12, sMenuY + k * sortRowH + 18, _subTextPaint);
-                    if (selected)
-                    {
-                        DrawTextWithEmoji(canvas, "✓", _subTextPaint, 20, sortMenu.Right - 12, sMenuY + k * sortRowH + 18, rightAlign: true);
-                    }
-                }
-                _subTextPaint.Color = Neutral(170);
+                RenderDropdownList(canvas, MarketSortX, MarketStatusRowY + MarketControlH + 4, MarketSortW,
+                    MarketSortOptions, _marketSortIndex, _hoveredMarketSortIndex, dimmedIndex: -1);
             }
 
             // 从通知点进来时市场数据可能刚落地：在本帧末尾打开详情，
@@ -2281,25 +2239,45 @@ namespace NotchPeninsula
             DrawDialogButton(canvas, GetDialogButtonRect(rect, 2, 3), "删除", 2, DialogAccentRed);
         }
 
-        private void RenderDropdownList(SKCanvas canvas, float x, float yOffset, float w,
+        // 统一下拉面板：圆角 8、悬停整行提亮、选中蓝字 + 左侧蓝条、内置项带蓝色胶囊，超高时内部滚动。
+        // y 为面板顶端（upward 时是控件上沿，面板朝上展开）。
+        private void RenderDropdownList(SKCanvas canvas, float x, float y, float w,
                                         string[] options, int selectedIndex, int hoveredIndex, int dimmedIndex,
-                                        bool upward = false, int scrollFirst = 0, int visibleRowsOverride = 0)
+                                        bool upward = false, int scrollFirst = 0, int visibleRowsOverride = 0,
+                                        bool[]? builtinFlags = null, string? emptyText = null)
         {
-            // 浮层高度必须钳制在窗口内：
-            float anchorY = TITLE_BAR_HEIGHT + yOffset;   // 向下：控件下沿；向上：控件上沿
             int total = options.Length;
-            float availFrom = upward ? anchorY - 2 : anchorY;
+            float availFrom = upward ? y - 2 : y;
             int maxRows = upward
                 ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12) / DROPDOWN_ROW_H))
                 : Math.Max(1, (int)((HEIGHT - 12 - availFrom) / DROPDOWN_ROW_H));
-            int visible = visibleRowsOverride > 0
-                ? Math.Min(total, visibleRowsOverride)
-                : Math.Min(total, maxRows);
+
+            int visible;
+            if (total == 0)
+            {
+                if (emptyText == null) return;
+                visible = 1;
+            }
+            else
+            {
+                visible = visibleRowsOverride > 0
+                    ? Math.Min(total, visibleRowsOverride)
+                    : Math.Min(total, maxRows);
+            }
+
             float listH = visible * DROPDOWN_ROW_H;
-            float dY = upward ? anchorY - 2 - listH : anchorY;
+            float dY = upward ? availFrom - listH : availFrom;
             var dRect = new SKRect(x, dY, x + w, dY + listH);
-            canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
-            canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
+            canvas.DrawRoundRect(dRect, 8, 8, _menuBg);
+            canvas.DrawRoundRect(dRect, 8, 8, _menuBorder);
+
+            if (total == 0)
+            {
+                _dynamicTextPaint.Color = Neutral(150);
+                canvas.DrawText(emptyText!, x + 12, dY + 18, _dynamicTextPaint);
+                _dynamicTextPaint.Color = _fgColor;
+                return;
+            }
 
             int maxFirst = Math.Max(0, total - visible);
             int first = Math.Clamp(scrollFirst, 0, maxFirst);
@@ -2307,106 +2285,100 @@ namespace NotchPeninsula
             for (int row = 0; row < visible; row++)
             {
                 int i = first + row;
-                float itemY = dY + row * DROPDOWN_ROW_H;
-                if (hoveredIndex == i)
-                    canvas.DrawRoundRect(new SKRect(x + 2, itemY + 2, x + w - 2, itemY + 24), 3, 3, _tabBgSelected);
+                float rowTop = dY + row * DROPDOWN_ROW_H;
+                bool selected = i == selectedIndex;
 
-                _dynamicTextPaint.Color = i == selectedIndex
-                    ? new SKColor(0, 120, 212)
+                var rowRect = new SKRect(x + 4, rowTop + 1, x + w - 4, rowTop + DROPDOWN_ROW_H - 1);
+                if (hoveredIndex == i) canvas.DrawRoundRect(rowRect, 5, 5, _tabBgSelected);
+                else if (selected)
+                {
+                    _dynamicFillPaint.Color = Overlay(10);
+                    canvas.DrawRoundRect(rowRect, 5, 5, _dynamicFillPaint);
+                }
+
+                // 文字统一留出左侧蓝条的位置，选中与否都不左右跳
+                float textX = x + 18f;
+                if (selected)
+                {
+                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(new SKRect(x + 6f, rowTop + 7f, x + 8.5f, rowTop + DROPDOWN_ROW_H - 7f),
+                        1.5f, 1.5f, _dynamicFillPaint);
+                }
+
+                bool builtin = builtinFlags != null && i < builtinFlags.Length && builtinFlags[i];
+                float tagW = builtin ? _subTextPaint.MeasureText("内置") + 14f : 0f;
+                float nameMaxW = x + w - 12f - textX - (tagW > 0f ? tagW + 8f : 0f);
+                string shown = TruncateText(options[i], _dynamicTextPaint, nameMaxW);
+                float nameW = _dynamicTextPaint.MeasureText(shown);
+                _dynamicTextPaint.Color = selected ? new SKColor(0, 120, 212)
                     : (i == dimmedIndex ? Neutral(130) : _fgColor);
-                canvas.DrawText(TruncateText(options[i], _dynamicTextPaint, w - 24), x + 12, itemY + 18, _dynamicTextPaint);
+                canvas.DrawText(shown, textX, rowTop + 18f, _dynamicTextPaint);
+                _dynamicTextPaint.Color = _fgColor;
+
+                if (builtin)
+                    DrawBuiltinTag(canvas, Math.Min(textX + nameW + 8f, x + w - 12f - tagW), rowTop + 5f);
             }
-            _dynamicTextPaint.Color = _fgColor;
 
             if (total > visible)
             {
-                float trackH = listH - 8;
-                //    这就是「下拉滑轨溢出菜单主体」那个现象。
-                DrawScrollBar(canvas, x + w - 6, dY + 4, trackH, visible / (float)total, first / (float)Math.Max(1, maxFirst));
+                // 滚动条贴着面板内沿，避免溢出到菜单主体之外
+                DrawScrollBar(canvas, x + w - 7f, dY + 4f, listH - 8f,
+                    visible / (float)total, first / (float)Math.Max(1, maxFirst));
             }
+        }
+
+        // 待机显示内容下拉面板：空白置顶，内置项带蓝色「内置」胶囊，插件按名称排序；
+        // 选中项用蓝字 + 左侧蓝条，悬停整行上底色，条目超长时列表内部滚动。
+        private void RenderSceneDropdownList(SKCanvas canvas)
+        {
+            if (_sceneOptionLabels.Length == 0) return;
+
+            GetSceneMenuLayout(out float menuTop, out int visible, out _);
+            int selected = Array.FindIndex(_sceneChoices, c =>
+                string.Equals(c.Key, Renderer.StandbySceneKey, StringComparison.OrdinalIgnoreCase));
+            RenderDropdownList(canvas, SCENE_SEG_X, menuTop, SCENE_SEG_W,
+                _sceneOptionLabels, selected, _hoveredSceneIndex, dimmedIndex: -1,
+                scrollFirst: _sceneScroll, visibleRowsOverride: visible, builtinFlags: _sceneBuiltinFlags);
         }
 
         private void RenderDropdowns(SKCanvas canvas)
         {
             if (_selectedTab == 2 && _dropdownOpen)
             {
-                float mX = WIDTH - 140; float mY = TITLE_BAR_HEIGHT + 130; float mW = 110; float mH = _platforms.Length * 26;
-                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
-
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBorder);
-
-                for (int i = 0; i < _platforms.Length; i++)
-                {
-                    float itemY = mY + i * 26;
-                    if (_hoveredDropdownIndex == i)
-                    {
-                        canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, _tabBgSelected);
-                    }
-                    _dynamicTextPaint.Color = i == _selectedPlatformIndex ? new SKColor(0, 120, 212) : _fgColor;
-                    canvas.DrawText(_platforms[i].Name, mX + 12, itemY + 18, _dynamicTextPaint);
-                }
+                RenderDropdownList(canvas, WIDTH - 140, TITLE_BAR_HEIGHT + 130, 110,
+                    _platformNames, _selectedPlatformIndex, _hoveredDropdownIndex, dimmedIndex: -1);
             }
 
             // 匹配方式下拉菜单（左框）
             if (_selectedTab == 2 && _matchModeDropdownOpen)
             {
-                float mX = MATCH_MODE_X; float mY = MATCH_MENU_Y; float mW = MATCH_BOX_W; float mH = _matchModeOptions.Length * 26;
-                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBorder);
-
                 int selectedMode = MediaController.IsManualSessionMatch ? 1 : 0;
-                for (int i = 0; i < _matchModeOptions.Length; i++)
-                {
-                    float itemY = mY + i * 26;
-                    if (_hoveredMatchModeIndex == i)
-                        canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, _tabBgSelected);
-                    _dynamicTextPaint.Color = i == selectedMode ? new SKColor(0, 120, 212) : _fgColor;
-                    canvas.DrawText(_matchModeOptions[i], mX + 12, itemY + 18, _dynamicTextPaint);
-                }
+                RenderDropdownList(canvas, MATCH_MODE_X, MATCH_MENU_Y, MATCH_BOX_W,
+                    _matchModeOptions, selectedMode, _hoveredMatchModeIndex, dimmedIndex: -1);
             }
 
             if (_selectedTab == 2 && _appDropdownOpen)
             {
-                int rows = Math.Clamp(_appOptions.Length, 1, 8);
-                float mW = APP_MENU_W; float mX = MATCH_MENU_RIGHT - mW; float mY = MATCH_MENU_Y; float mH = rows * 26;
-                var mRect = new SKRect(mX, mY, mX + mW, mY + mH);
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBg);
-                canvas.DrawRoundRect(mRect, 4, 4, _menuBorder);
-
-                if (_appOptions.Length == 0)
-                {
-                    _dynamicTextPaint.Color = Neutral(150);
-                    canvas.DrawText("暂无活动会话", mX + 12, mY + 18, _dynamicTextPaint);
-                    _dynamicTextPaint.Color = _fgColor;
-                }
-                else
-                {
-                    for (int i = 0; i < rows; i++)
-                    {
-                        float itemY = mY + i * 26;
-                        if (_hoveredAppIndex == i)
-                            canvas.DrawRoundRect(new SKRect(mX + 2, itemY + 2, mX + mW - 2, itemY + 24), 3, 3, _tabBgSelected);
-                        _dynamicTextPaint.Color = string.Equals(_appOptions[i], MediaController.ManualSessionAppId, StringComparison.OrdinalIgnoreCase)
-                            ? new SKColor(0, 120, 212) : _fgColor;
-                        canvas.DrawText(TruncateText(_appOptions[i], _dynamicTextPaint, mW - 24), mX + 12, itemY + 18, _dynamicTextPaint);
-                    }
-                    _dynamicTextPaint.Color = _fgColor;
-                }
+                int appRows = Math.Clamp(_appOptions.Length, 1, 8);
+                float appMenuX = MATCH_MENU_RIGHT - APP_MENU_W;
+                int appSelected = Array.FindIndex(_appOptions, a =>
+                    string.Equals(a, MediaController.ManualSessionAppId, StringComparison.OrdinalIgnoreCase));
+                RenderDropdownList(canvas, appMenuX, MATCH_MENU_Y, APP_MENU_W,
+                    _appOptions, appSelected, _hoveredAppIndex, dimmedIndex: -1,
+                    visibleRowsOverride: appRows, emptyText: "暂无活动会话");
             }
 
             // 消息通知内容下拉菜单（通用设置）
             if (_selectedTab == 0 && _toastModeDropdownOpen)
             {
-                RenderDropdownList(canvas, TOAST_MODE_CTRL_X, TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 2, TOAST_MODE_CTRL_W,
+                RenderDropdownList(canvas, TOAST_MODE_CTRL_X, TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 2, TOAST_MODE_CTRL_W,
                     _toastModeOptions, _selectedToastModeIndex, _hoveredToastModeIndex, dimmedIndex: -1);
             }
 
             if (_selectedTab == 0 && _toastSoundDropdownOpen)
             {
                 GetToastSoundMenuLayout(out float soundMenuTop, out int soundVisible, out _);
-                RenderDropdownList(canvas, SOUND_CTRL_X, soundMenuTop - TITLE_BAR_HEIGHT, SOUND_CTRL_W,
+                RenderDropdownList(canvas, SOUND_CTRL_X, soundMenuTop, SOUND_CTRL_W,
                     ToastSoundConfig.BuildOptionLabels(), ToastSoundConfig.SelectedIndex, _hoveredToastSoundIndex,
                     dimmedIndex: ToastSoundConfig.IsUsableFile(ToastSoundConfig.CustomPath, out _)
                         ? -1 : ToastSoundConfig.CustomIndex,
@@ -2417,7 +2389,7 @@ namespace NotchPeninsula
             if (_selectedTab == 0 && _soundVolumeDropdownOpen)
             {
                 GetVolumeMenuLayout(out _, out _, out int volVisible);
-                RenderDropdownList(canvas, SOUND_VOL_X, SOUND_BOX_Y, SOUND_VOL_W,
+                RenderDropdownList(canvas, SOUND_VOL_X, TITLE_BAR_HEIGHT + SOUND_BOX_Y, SOUND_VOL_W,
                     VolumeOptionLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex, dimmedIndex: -1,
                     upward: true, scrollFirst: 0, visibleRowsOverride: volVisible);
             }
@@ -2426,18 +2398,12 @@ namespace NotchPeninsula
             {
                 float dX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
                 float dY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + MONITOR_DD_H + 2f - _displayPageScroll;
-                float dW = MONITOR_DD_W; float dH = _monitorOptions.Length * 26;
-                var dRect = new SKRect(dX, dY, dX + dW, dY + dH);
-                canvas.DrawRoundRect(dRect, 4, 4, _menuBg);
-                canvas.DrawRoundRect(dRect, 4, 4, _menuBorder);
-                for (int i = 0; i < _monitorOptions.Length; i++)
-                {
-                    float itemY = dY + i * 26;
-                    if (_hoveredMonitorDropdownIndex == i) canvas.DrawRoundRect(new SKRect(dX + 2, itemY + 2, dX + dW - 2, itemY + 24), 3, 3, _tabBgSelected);
-                    _dynamicTextPaint.Color = i == Renderer.TargetMonitorIndex ? new SKColor(0, 120, 212) : _fgColor;
-                    canvas.DrawText(_monitorOptions[i], dX + 12, itemY + 18, _dynamicTextPaint);
-                }
+                RenderDropdownList(canvas, dX, dY, MONITOR_DD_W, _monitorOptions,
+                    Renderer.TargetMonitorIndex, _hoveredMonitorDropdownIndex, dimmedIndex: -1);
             }
+
+            // 待机显示内容下拉（显示设置）：放最后画，要盖住下面的切换行和显示内容列表
+            if (_selectedTab == 1 && _sceneDropdownOpen) RenderSceneDropdownList(canvas);
         }
     }
 }

@@ -131,7 +131,9 @@ namespace NotchPeninsula
 
         private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 228
 
-        private const float SCENE_SEG_W = 240f;                                 // 3 段 = 70 / 70 / 100
+        private const float SCENE_SEG_W = 240f;                                 // 待机显示内容下拉：占满原来三个按钮的整行宽度
+
+        private const float SCENE_DD_H = 32f;                                   // 和其它下拉框统一高度
 
         private const float SCENE_SEG_X = DISPLAY_CTRL_RIGHT - SCENE_SEG_W;     // 332
 
@@ -730,7 +732,187 @@ namespace NotchPeninsula
 
         private int _hoveredDisplayModeIndex = -1;
 
-        private int _hoveredStandbySceneIndex = -1;
+        // ---- 待机显示内容下拉（空白 + 内置项 + 插件按名称排序）----
+        private bool _sceneDropdownOpen;
+
+        private bool _sceneDropdownHovered;
+
+        private int _hoveredSceneIndex = -1;
+
+        private int _sceneScroll;
+
+        private SceneChoice[] _sceneChoices = [];
+
+        private string[] _sceneOptionLabels = [];
+
+        private bool[] _sceneBuiltinFlags = [];
+
+        private sealed class SceneChoice
+        {
+            public string Key = "";
+            public string Name = "";
+            public bool IsBuiltin;
+        }
+
+        // 每次展开时现算：显示设置列表里的全部项目 → 空白置顶，内置项跟在后面，
+        // 插件按名称排（内置保持显示列表里的顺序，跟下面的列表对得上）。
+        private void BuildSceneChoices()
+        {
+            var builtins = new List<SceneChoice>();
+            var plugins = new List<SceneChoice>();
+            foreach (var item in PluginManager.Instance.DisplayItems)
+            {
+                var choice = new SceneChoice { Key = item.Key, Name = item.Name, IsBuiltin = item.IsBuiltin };
+                if (item.IsBuiltin) builtins.Add(choice);
+                else plugins.Add(choice);
+            }
+
+            plugins.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.Name, b.Name));
+
+            var list = new List<SceneChoice>(builtins.Count + plugins.Count + 1)
+            {
+                new SceneChoice { Key = "", Name = "空白" }
+            };
+            list.AddRange(builtins);
+            list.AddRange(plugins);
+            _sceneChoices = list.ToArray();
+            // 统一下拉面板只吃「文字 + 内置标记」这两份数组，避免渲染时再做映射。
+            _sceneOptionLabels = list.Select(c => c.Name).ToArray();
+            _sceneBuiltinFlags = list.Select(c => c.IsBuiltin).ToArray();
+        }
+
+        // 折叠态显示的名字：内置键 / 插件 Key 都要能翻回可读名字。
+        private static string CurrentStandbySceneName()
+        {
+            string key = Renderer.StandbySceneKey;
+            if (string.IsNullOrEmpty(key)) return "空白";
+            foreach (var item in PluginManager.Instance.DisplayItems)
+                if (string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase))
+                    return item.Name;
+            return key;
+        }
+
+        private void GetSceneMenuLayout(out float menuTop, out int visibleRows, out int maxFirstRow)
+        {
+            int total = _sceneChoices.Length;
+            menuTop = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f + SCENE_DD_H + 2f - _displayPageScroll;
+            int maxRows = Math.Max(1, (int)((HEIGHT - 12f - menuTop) / DROPDOWN_ROW_H));
+            visibleRows = Math.Min(total, maxRows);
+            maxFirstRow = Math.Max(0, total - visibleRows);
+        }
+
+        private void ScrollSceneMenuToSelected()
+        {
+            GetSceneMenuLayout(out _, out int visible, out int maxFirst);
+            int idx = Array.FindIndex(_sceneChoices, c =>
+                string.Equals(c.Key, Renderer.StandbySceneKey, StringComparison.OrdinalIgnoreCase));
+            _sceneScroll = idx < 0 || maxFirst <= 0 ? 0 : Math.Clamp(idx - visible / 2, 0, maxFirst);
+        }
+
+        private void OpenSceneDropdown()
+        {
+            CloseAllDropdowns();
+            BuildSceneChoices();
+            ScrollSceneMenuToSelected();
+            _sceneDropdownOpen = true;
+            Render();
+        }
+
+        // 显示页两个下拉框的落点判定（与绘制坐标同源）。点击落在别的下拉框上时用来「切换」而不是只收起。
+        private bool HitSceneDropdownBox(int x, int y)
+        {
+            float sy = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f - _displayPageScroll;
+            return x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W
+                && y >= sy && y <= sy + SCENE_DD_H;
+        }
+
+        private bool HitMonitorDropdownBox(int x, int y)
+        {
+            float mdY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f - _displayPageScroll;
+            float mdX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
+            return x >= mdX && x <= DISPLAY_CTRL_RIGHT && y >= mdY && y <= mdY + MONITOR_DD_H;
+        }
+
+        // ---- 下拉切换：展开着 A 时点到 B 的框，收起 A 并展开 B ----
+        // 只靠「点外部收起」那条分支会把这一下直接吃掉，表现为第二下点了没反应。
+        private enum DropdownKind { None, ToastMode, ToastSound, Volume, Platform, MatchMode, App, Monitor, Scene }
+
+        private DropdownKind HitDropdownTrigger(int x, int y)
+        {
+            if (_selectedTab == 0)
+            {
+                if (x >= TOAST_MODE_CTRL_X && x <= TOAST_MODE_CTRL_X + TOAST_MODE_CTRL_W
+                    && y >= TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y
+                    && y <= TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H)
+                    return DropdownKind.ToastMode;
+                if (ToastSoundConfig.IsRowEnabled
+                    && x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
+                    && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y
+                    && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
+                    return DropdownKind.ToastSound;
+                if (ToastSoundConfig.IsSourceReady
+                    && x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
+                    && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y
+                    && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
+                    return DropdownKind.Volume;
+            }
+            else if (_selectedTab == 1)
+            {
+                if (HitMonitorDropdownBox(x, y)) return DropdownKind.Monitor;
+                if (HitSceneDropdownBox(x, y)) return DropdownKind.Scene;
+            }
+            else if (_selectedTab == 2)
+            {
+                if (x >= WIDTH - 140 && x <= WIDTH - 30
+                    && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
+                    return DropdownKind.Platform;
+                bool matchEnabled = MediaController.TargetPlatform == "other";
+                if (matchEnabled
+                    && x >= MATCH_MODE_X && x <= MATCH_MODE_X + MATCH_BOX_W
+                    && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H)
+                    return DropdownKind.MatchMode;
+                if (matchEnabled && MediaController.IsManualSessionMatch
+                    && x >= MATCH_APP_X && x <= MATCH_APP_X + MATCH_BOX_W
+                    && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H)
+                    return DropdownKind.App;
+            }
+            return DropdownKind.None;
+        }
+
+        private void OpenDropdown(DropdownKind kind)
+        {
+            switch (kind)
+            {
+                case DropdownKind.ToastMode: _toastModeDropdownOpen = true; break;
+                case DropdownKind.ToastSound:
+                    ToastSoundConfig.RefreshBuiltins();
+                    ScrollToastSoundMenuToSelected();
+                    _toastSoundDropdownOpen = true;
+                    break;
+                case DropdownKind.Volume: _soundVolumeDropdownOpen = true; break;
+                case DropdownKind.Platform: _dropdownOpen = true; break;
+                case DropdownKind.MatchMode: _matchModeDropdownOpen = true; break;
+                case DropdownKind.App:
+                    _appOptions = MediaController.Instance?.GetAvailableAppIds() ?? Array.Empty<string>();
+                    _appDropdownOpen = true;
+                    break;
+                case DropdownKind.Monitor: _monitorDropdownOpen = true; break;
+                case DropdownKind.Scene:
+                    BuildSceneChoices();
+                    ScrollSceneMenuToSelected();
+                    _sceneDropdownOpen = true;
+                    break;
+            }
+        }
+
+        /// <summary>收起当前下拉；若落点正好在另一个下拉的框上，顺手把它展开。</summary>
+        private void CloseDropdownAndOpenHit(int x, int y, DropdownKind closing)
+        {
+            CloseAllDropdowns();
+            DropdownKind hit = HitDropdownTrigger(x, y);
+            if (hit != DropdownKind.None && hit != closing) OpenDropdown(hit);
+            Render();
+        }
 
         private bool _standbyToggleHovered;
 
@@ -804,6 +986,9 @@ namespace NotchPeninsula
             ("echomusic", "Echo Music"),
             ("lxmusic", "LX Music")
         ];
+
+        // 统一下拉面板只吃名字数组；与 _platforms 同序，选中下标直接复用。
+        private static readonly string[] _platformNames = _platforms.Select(p => p.Name).ToArray();
 
         public static void Toggle()
         {
@@ -1208,6 +1393,25 @@ namespace NotchPeninsula
                             {
                                 _dropdownScroll = target;
                                 NotifyScrolled();   // 浮层侧那条滚动条也显形（停手后自动淡出）
+                                SyncHoverFromCursor();
+                                Render();
+                            }
+                        }
+                        return IntPtr.Zero; // 吞掉，别让滚轮穿透到下层
+                    }
+
+                    // 待机显示内容下拉展开时同理：滚轮只滚它自己
+                    if (_selectedTab == 1 && _sceneDropdownOpen)
+                    {
+                        int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                        GetSceneMenuLayout(out _, out _, out int maxFirst);
+                        if (maxFirst > 0)
+                        {
+                            int target = Math.Clamp(_sceneScroll - delta / 120 * 3, 0, maxFirst);
+                            if (target != _sceneScroll)
+                            {
+                                _sceneScroll = target;
+                                NotifyScrolled();
                                 SyncHoverFromCursor();
                                 Render();
                             }

@@ -200,7 +200,8 @@ namespace NotchPeninsula
 
             int newHoveredStyleIndex = -1;
             int newHoveredDisplayModeIndex = -1;  // 显示模式：0 = 待机模式 / 1 = 普通模式
-            int newHoveredStandbySceneIndex = -1; // 待机模式：三个场景选项（1 / 2 / 3）
+            int newHoveredStandbySceneIndex = -1; // 待机显示内容下拉：列表项的悬停下标
+            bool newSceneDropdownHovered = false; // 待机显示内容下拉：框本体的悬停
             bool newStandbyToggleHovered = false; // 待机模式：「双击空白切换」开关
             bool newPageScrollbarHovered = false; // 显示设置：整页滚动条
             bool newListScrollbarHovered = false; // 显示设置：「显示内容」列表滚动条
@@ -375,15 +376,30 @@ namespace NotchPeninsula
                 bool monitorListOpen = _monitorDropdownOpen;
 
                 float modeSegY = TITLE_BAR_HEIGHT + MODE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
-                if (!monitorListOpen && y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
+                if (!monitorListOpen && !_sceneDropdownOpen
+                    && y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
                     newHoveredDisplayModeIndex = Math.Min(1, (int)((x - MODE_SEG_X) / (MODE_SEG_W / 2f)));
 
-                float sceneSegY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
-                if (!monitorListOpen && y >= sceneSegY && y <= sceneSegY + SEG_H && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W)
-                    newHoveredStandbySceneIndex = Math.Min(2, (int)((x - SCENE_SEG_X) / (SCENE_SEG_W / 3f))) + 1;
+                // 待机显示内容下拉框：展开期间框本体不再吃悬停，交给下面的列表项
+                float sceneBoxY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f + page;
+                if (!monitorListOpen && !_sceneDropdownOpen
+                    && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W
+                    && y >= sceneBoxY && y <= sceneBoxY + SCENE_DD_H)
+                    newSceneDropdownHovered = true;
+
+                if (_sceneDropdownOpen)
+                {
+                    GetSceneMenuLayout(out float sceneMenuTop, out int sceneVisible, out int sceneMaxFirst);
+                    int sceneFirst = Math.Clamp(_sceneScroll, 0, sceneMaxFirst);
+                    if (x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W
+                        && y >= sceneMenuTop && y < sceneMenuTop + sceneVisible * DROPDOWN_ROW_H)
+                        newHoveredStandbySceneIndex = sceneFirst + (int)((y - sceneMenuTop) / DROPDOWN_ROW_H);
+                }
+
+                bool sceneListOpen = _sceneDropdownOpen;
 
                 float modeToggleCy = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
-                if (!monitorListOpen && x >= WIDTH - 80 && x <= WIDTH - 30
+                if (!monitorListOpen && !sceneListOpen && x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
                     newStandbyToggleHovered = true;
 
@@ -391,7 +407,7 @@ namespace NotchPeninsula
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
                 float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
-                if (!Renderer.StandbyActive && !monitorListOpen
+                if (!Renderer.StandbyActive && !monitorListOpen && !sceneListOpen
                     && x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
@@ -403,7 +419,7 @@ namespace NotchPeninsula
                     }
                 }
 
-                if (GetDisplayPageMaxScroll() > 0f)
+                if (!sceneListOpen && GetDisplayPageMaxScroll() > 0f)
                 {
                     GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
                     if (x >= WIDTH - 14 && x <= WIDTH && y >= pageBarTop && y <= pageBarTop + pageBarH)
@@ -411,7 +427,7 @@ namespace NotchPeninsula
                 }
 
                 GetListScrollbarLayout(out float listBarTop, out float listBarH);
-                if (listBarH > 0f && ScrollBarAlpha() > 0.01f
+                if (!sceneListOpen && listBarH > 0f && ScrollBarAlpha() > 0.01f
                     && x >= WIDTH - 20 && x <= WIDTH - 8
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
@@ -754,7 +770,8 @@ namespace NotchPeninsula
                 newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
                 newHoveredStyleIndex != _hoveredStyleIndex ||
                 newHoveredDisplayModeIndex != _hoveredDisplayModeIndex ||
-                newHoveredStandbySceneIndex != _hoveredStandbySceneIndex ||
+                newHoveredStandbySceneIndex != _hoveredSceneIndex ||
+                newSceneDropdownHovered != _sceneDropdownHovered ||
                 newStandbyToggleHovered != _standbyToggleHovered ||
                 newPageScrollbarHovered != _pageScrollbarHovered ||
                 newListScrollbarHovered != _listScrollbarHovered ||
@@ -828,7 +845,8 @@ namespace NotchPeninsula
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
                 _hoveredStyleIndex = newHoveredStyleIndex;
                 _hoveredDisplayModeIndex = newHoveredDisplayModeIndex;
-                _hoveredStandbySceneIndex = newHoveredStandbySceneIndex;
+                _hoveredSceneIndex = newHoveredStandbySceneIndex;
+                _sceneDropdownHovered = newSceneDropdownHovered;
                 _standbyToggleHovered = newStandbyToggleHovered;
                 _pageScrollbarHovered = newPageScrollbarHovered;
                 _listScrollbarHovered = newListScrollbarHovered;
