@@ -26,6 +26,14 @@ namespace NotchPeninsula
 
         public static bool IsToastEnabled = true;
         public static bool IsTopmostEnabled = true; // 默认开启置顶
+
+        // 网易云 / 酷狗时间轴插件的推荐提示：用户点过「拒收」后落注册表，之后不再弹。
+        public static bool IsTimelinePluginTipDismissed = false;
+        private const string TimelinePluginMarketId = "mediacdp";   // 市场里「网易酷狗时间轴获取」的插件 id
+        private const string TimelinePluginTipDismissedKey = "TimelinePluginTipDismissed";
+
+        // 本次运行已经提示过（或确认无需提示）的播放器：同一进程里每个播放器最多打扰一次。
+        private readonly HashSet<string> _timelineTipShownApps = new(StringComparer.OrdinalIgnoreCase);
         public static IntPtr InstanceHandle { get; private set; } // 暴露给设置面板调用的句柄
         private readonly IntPtr _hwnd;
         private readonly IntPtr _ownerHwnd;   // 只做「不进任务栏/Alt-Tab」的隐藏 owner，见构造函数注释
@@ -703,6 +711,7 @@ namespace NotchPeninsula
 
             _currentToast = toast;
             _toastEndTime = DateTime.Now.Add(toast.Duration);
+            Renderer.ToastActionHovered = false;
             PlayToastSound();
         }
 
@@ -717,6 +726,82 @@ namespace NotchPeninsula
             _currentToast = toast;
             _toastEndTime = DateTime.Now.Add(toast.Duration);   // 同上：插件提醒可自定义展示时长
             clicked_info = false;
+            Renderer.ToastActionHovered = false;
+            PlayToastSound();
+        }
+
+        // ---- 网易云 / 酷狗时间轴插件推荐 ----
+        // 这两家的 SMTC 进度经常是 0，时间轴只能靠插件从页面里读。检测到它们正在播放、
+        // 且本机没装对应插件时，推荐一次；用户点「拒收」后落注册表，之后不再打扰。
+
+        private void TickTimelinePluginTip()
+        {
+            if (!IsToastEnabled || IsTimelinePluginTipDismissed) return;
+            if (_currentToast != null) return;                         // 已有消息在展示：等它退场
+            if (!_media.IsActive || !_media.IsPlaying) return;
+
+            string appId = _media.CurrentAppId;
+            if (!MediaController.IsNeteaseOrKugou(appId)) return;
+
+            string appName = MediaController.NeteaseKugouDisplayName(appId);
+            if (appName.Length == 0 || _timelineTipShownApps.Contains(appName)) return;
+
+            // 先记账再决定弹不弹：插件已装 / 已禁用都不该每帧重查插件表。
+            _timelineTipShownApps.Add(appName);
+            if (IsTimelinePluginInstalled()) return;
+
+            var toast = new ToastData
+            {
+                AppName = "插件推荐",
+                Title = $"检测到使用了{appName}",
+                Body = "为了更好的播放进度匹配，推荐安装「网易酷狗时间轴获取插件」，点击查看详情",
+                ProcessName = "TimelinePluginTip",
+                NotificationId = (uint)Environment.TickCount,
+                Duration = TimeSpan.FromSeconds(10),
+                // 点正文 → 打开插件市场并定位到 mediacdp 的详情弹窗
+                OnClick = () => ConsoleWindow.ShowMarketPluginDetail(TimelinePluginMarketId),
+                // 点右侧「拒收」→ 只记偏好，不触发上面的跳转
+                ActionLabel = "拒收",
+                OnAction = () =>
+                {
+                    IsTimelinePluginTipDismissed = true;
+                    Program.SaveSetting(TimelinePluginTipDismissedKey, 1);
+                    Logger.Info("[时间轴插件推荐] 已拒收，之后不再提示");
+                },
+            };
+            ShowLocalToast(toast);
+        }
+
+        /// <summary>本机是否已有「网易酷狗时间轴获取」插件（按插件 id / 名称 / 文件名任一匹配）。</summary>
+        private static bool IsTimelinePluginInstalled()
+        {
+            foreach (var e in PluginManager.Instance.Entries)
+            {
+                if (e.Id.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)) return true;
+                if (e.Key.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)) return true;
+                if (e.FriendlyName.Contains("时间轴获取", StringComparison.Ordinal)) return true;
+
+                string dll = System.IO.Path.GetFileNameWithoutExtension(e.DllPath);
+                if (dll.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)
+                    || dll.Contains("media-cdp", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>宿主自己的提示（不是系统通知 / 插件提醒）：上屏但不转发给插件数据桥。</summary>
+        private void ShowLocalToast(ToastData toast)
+        {
+            if (toast == null) return;
+            // Tick 跑在渲染线程：投递到 UI 线程再改 Toast 状态，和系统通知 / 插件提醒走同一把线程约束。
+            if (!_dispatcher.CheckAccess()) { _dispatcher.BeginInvoke(() => ShowLocalToast(toast)); return; }
+            if (!IsToastEnabled) return;
+
+            if (_currentToast != null) ReleaseToastIcons(_currentToast);
+
+            _currentToast = toast;
+            _toastEndTime = DateTime.Now.Add(toast.Duration);
+            clicked_info = false;
+            Renderer.ToastActionHovered = false;
             PlayToastSound();
         }
 
@@ -930,7 +1015,16 @@ namespace NotchPeninsula
                     Renderer.PassthroughAlpha = 1.0f;
                     _isPassthroughAwake = false;
                 }
-                if (!isToastActive && _currentToast != null) { ReleaseToastIcons(_currentToast); _currentToast = null; clicked_info = true; }   // 超时清理（含私有图标）
+                if (!isToastActive && _currentToast != null)
+                {
+                    ReleaseToastIcons(_currentToast);
+                    _currentToast = null;
+                    clicked_info = true;
+                    Renderer.ToastActionHovered = false;
+                }
+
+                // 网易云 / 酷狗播放且未装时间轴插件时，推荐一次（已有通知时不抢屏）。
+                TickTimelinePluginTip();
 
                 TickPanelCollapse();
                 TickRightDoubleClickPending();
@@ -1078,7 +1172,7 @@ namespace NotchPeninsula
                 }
                 else if (isToastActive)
                 {
-                    expectedTargetWidth = Renderer.GetToastAutoWidth();
+                    expectedTargetWidth = Renderer.GetToastAutoWidth(_currentToast);
                     expectedTargetHeight = Renderer.TOAST_HEIGHT;
                 }
                 else
@@ -1598,6 +1692,10 @@ namespace NotchPeninsula
 
                         if (_isHovered && _currentToast != null)
                         {
+                            // 右侧操作按钮（「拒收」）单独判定：画与点用的是同一份几何。
+                            float toastRight = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                            Renderer.ToastActionHovered = !string.IsNullOrEmpty(_currentToast.ActionLabel)
+                                && Renderer.GetToastActionRect(toastRight, Renderer.TOAST_HEIGHT).Contains(mx, my - hitTopY);
                             _isCursorOverIcon = true;
                         }
                         else if (_isHovered && _media.IsActive && _currentToast == null)
@@ -1631,6 +1729,7 @@ namespace NotchPeninsula
                         else
                         {
                             _isCursorOverIcon = false;
+                            Renderer.ToastActionHovered = false;
                         }
                         break;
                     }
@@ -1658,6 +1757,7 @@ namespace NotchPeninsula
                         _isTrackingMouse = false;
                         _isHovered = false;
                         _isCursorOverIcon = false;
+                        Renderer.ToastActionHovered = false;
                         Renderer.HoveredExpandedButton = -1;
                         // 鼠标离开灵动岛，清空插件组件悬停状态
                         Renderer.UpdatePluginMouse(-1f, -1f);
@@ -1779,14 +1879,20 @@ namespace NotchPeninsula
                         if (_isHovered && _currentToast != null
                             && cy >= hitTopY && cy <= hitTopY + Renderer.TOAST_HEIGHT)
                         {
-                            var toastClick = _currentToast.OnClick;
+                            var toast = _currentToast;
+                            float toastRight = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
+                            bool onAction = !string.IsNullOrEmpty(toast.ActionLabel)
+                                && Renderer.GetToastActionRect(toastRight, Renderer.TOAST_HEIGHT).Contains(cx, cy - hitTopY);
+                            // 点「拒收」不触发正文的跳转：两个回调互斥。
+                            var toastClick = onAction ? toast.OnAction : toast.OnClick;
                             if (toastClick != null)
                             {
-                                ReleaseToastIcons(_currentToast);
+                                ReleaseToastIcons(toast);
                                 _currentToast = null;
                                 _toastEndTime = default;
+                                Renderer.ToastActionHovered = false;
                                 try { toastClick(); }
-                                catch (Exception ex) { Logger.Error("[NotchWindow] 插件提醒点击回调异常", ex); }
+                                catch (Exception ex) { Logger.Error("[NotchWindow] 通知点击回调异常", ex); }
                                 return (IntPtr)0;
                             }
                         }

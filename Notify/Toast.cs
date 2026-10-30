@@ -626,6 +626,15 @@ namespace NotchPeninsula
 
         public Action? OnClick { get; set; }
 
+        /// <summary>
+        /// 右侧操作按钮的文字（如「拒收」）。空串 = 不画按钮。
+        /// 命中区与绘制几何见 <see cref="Renderer.GetToastActionRect"/>。
+        /// </summary>
+        public string ActionLabel { get; set; } = "";
+
+        /// <summary>右侧操作按钮的点击回调。点它不会触发 <see cref="OnClick"/>。</summary>
+        public Action? OnAction { get; set; }
+
         public static string NormalizeText(string? text)
         {
             if (string.IsNullOrEmpty(text)) return "";

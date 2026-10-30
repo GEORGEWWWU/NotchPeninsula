@@ -1947,6 +1947,10 @@ namespace NotchPeninsula
                 }
                 _subTextPaint.Color = Neutral(170);
             }
+
+            // 从通知点进来时市场数据可能刚落地：在本帧末尾打开详情，
+            // 弹窗由 RenderPluginDialogs 紧接着绘制，不会闪一帧空列表。
+            TryOpenPendingMarketDetail();
         }
 
         /// <summary>
@@ -2072,6 +2076,24 @@ namespace NotchPeninsula
             if (truncated) { canvas.DrawText("……", rect.Left + DialogPad, y + 12, _subTextPaint); y += DialogLineH; }
             if (mp.Tags.Length > 0)
                 canvas.DrawText(TruncateText("标签：" + mp.Tags, _subTextPaint, innerW), rect.Left + DialogPad, y + 12, _subTextPaint);
+
+            // 右下角常驻安装按钮：没装 = 安装，已装 = 已安装（灰掉点击），禁用态 = 启用。
+            // 三种状态都用绿色，和列表里的「下载」按钮同一套视觉。
+            var local = MatchLocalPlugin(mp);
+            bool disabled = local != null && PluginManager.Instance.IsDisabled(local);
+            bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
+            bool actionable = local == null || disabled;
+            string label = local == null ? (busy ? "安装中…" : "安装")
+                : disabled ? "启用" : "已安装";
+
+            var button = GetDialogButtonRect(rect, 0, 1);
+            bool hovered = actionable && !busy && _hoveredDialogButton == 0;
+            _dynamicFillPaint.Color = actionable
+                ? (hovered ? DialogAccentGreen.Hover : DialogAccentGreen.Normal)
+                : DialogAccentGreen.Normal;   // 已安装：还是绿色，只是不再响应悬停
+            canvas.DrawRoundRect(button, 4, 4, _dynamicFillPaint);
+            _uiTextPaint.Color = SKColors.White;
+            DrawCenteredButtonLabel(canvas, label, button, _uiTextPaint);
         }
 
         // 评分正文：平均分行 → 五颗星（可点半星）→ 状态行
@@ -2175,6 +2197,7 @@ namespace NotchPeninsula
 
         private static readonly (SKColor Normal, SKColor Hover) DialogAccentBlue = (new SKColor(0, 120, 212), new SKColor(0, 140, 240));
         private static readonly (SKColor Normal, SKColor Hover) DialogAccentRed = (new SKColor(180, 50, 50), new SKColor(200, 60, 60));
+        private static readonly (SKColor Normal, SKColor Hover) DialogAccentGreen = (new SKColor(44, 160, 92), new SKColor(58, 184, 108));
 
         private void DrawLoadFailedDialog(SKCanvas canvas)
         {

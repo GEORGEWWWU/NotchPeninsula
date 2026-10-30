@@ -41,6 +41,10 @@ namespace NotchPeninsula
         private List<MarketPlugin> _marketPlugins = new();   // 原始列表（API 返回）
         private List<MarketPlugin> _marketView = new();      // 过滤视图（分类 + 搜索），列表渲染/命中/点击都用它
 
+        // 从岛上的通知点进来时要定位的插件 id：市场数据可能还在后台拉，先记下来，
+        // 等 RenderTabMarket 重建过滤视图后再打开详情（见 TryOpenPendingMarketDetail）。
+        private string _pendingMarketDetailId = "";
+
         private string _marketCategoryKey = "all";
         private bool _marketCategoryOpen;                    // 分类下拉展开态
         private int _hoveredMarketCategoryIndex = -1;        // 菜单内悬停项
@@ -573,6 +577,119 @@ namespace NotchPeninsula
         private MarketPlugin? GetMarketAt(int index)
             => index >= 0 && index < _marketView.Count ? _marketView[index] : null;
 
+        // ---- 从通知跳转到某个插件的详情 ----
+
+        /// <summary>
+        /// 外部（岛上的推荐通知）入口：打开设置中心 → 插件市场，并弹出指定插件的详情弹窗。
+        /// 市场数据是异步拉的，所以先记下 id，等数据就绪后再定位。
+        /// </summary>
+        public static void ShowMarketPluginDetail(string pluginId)
+        {
+            if (string.IsNullOrWhiteSpace(pluginId)) return;
+            if (_instance == null) _instance = new ConsoleWindow();
+            _instance.OpenMarketPluginDetail(pluginId);
+            Toggle();
+        }
+
+        private void OpenMarketPluginDetail(string pluginId)
+        {
+            _pendingMarketDetailId = pluginId;
+
+            // 定位不能受上一次的筛选影响：搜索 / 分类 / 只看已安装全部回到默认值。
+            _marketCategoryKey = "all";
+            _marketSearch = "";
+            _marketSearchCaret = _marketSearchSelAnchor = 0;
+            _marketSearchFocused = false;
+            _marketSearchDragging = false;
+            _marketSearchViewFrozen = -1;
+            _marketImeComposing = "";
+            _marketOnlyInstalled = false;
+            _marketCategoryOpen = false;
+            _marketSortOpen = false;
+            CloseMarketDialog(render: false);
+
+            // 上次拉取失败时放开幂等闸，和点侧栏进市场页的重试口径一致。
+            if (_marketError.Length > 0 && !_marketFetching)
+            {
+                _marketError = "";
+                _marketTriedFetch = false;
+            }
+
+            SwitchTab(7);
+            EnsureMarketData();
+            TryOpenPendingMarketDetail();
+            Render();
+        }
+
+        /// <summary>
+        /// 数据就绪后把待定位的插件打开成详情弹窗。绘制页时也会调用一次（见 RenderTabMarket），
+        /// 所以首次进来时市场还没拉到也不会丢目标。
+        /// </summary>
+        private void TryOpenPendingMarketDetail()
+        {
+            if (_pendingMarketDetailId.Length == 0) return;
+            if (_marketFetching || _marketDataDirty) return;   // 等数据落地
+
+            if (_marketError.Length > 0)
+            {
+                _pendingMarketDetailId = "";
+                SetMarketHint("插件市场加载失败，无法打开插件详情", true);
+                PostAsyncRerender();   // 失败文案要再走一帧才画得出来
+                return;
+            }
+
+            var mp = FindMarketPluginForDetail(_pendingMarketDetailId);
+            _pendingMarketDetailId = "";
+            if (mp == null)
+            {
+                SetMarketHint("插件市场里没有找到「网易酷狗时间轴获取插件」", true);
+                PostAsyncRerender();
+                return;
+            }
+
+            // 无条件重建一次过滤视图：搜索 / 分类 / 只看已安装在这之前可能已经被重置，
+            // 但 _marketView 仍是旧的筛选结果 —— 不重建就会 IndexOfMarketView 找不到目标。
+            _marketCategoryKey = "all";
+            _marketSearch = "";
+            _marketOnlyInstalled = false;
+            RefreshMarketFilter();
+
+            int idx = IndexOfMarketView(mp);
+            if (idx < 0)
+            {
+                SetMarketHint("插件市场里没有找到「网易酷狗时间轴获取插件」", true);
+                PostAsyncRerender();
+                return;
+            }
+
+            // 详情是浮在列表上的：把对应行滚到可见范围中间，关掉弹窗后一眼能看到它。
+            GetMarketListLayout(out int rows, out int maxFirst);
+            _marketScroll = Math.Clamp(idx - Math.Max(0, rows / 2), 0, maxFirst);
+
+            _marketDialog = MarketDialog.Detail;
+            _marketDialogIndex = idx;
+            _hoveredDialogClose = false;
+            _hoveredDialogButton = -1;
+            Logger.Info($"[Market] 已定位到插件详情：{mp.Id}（{mp.Name}）");
+        }
+
+        /// <summary>按 id 找市场条目：先精确匹配 id，再归一化后做包含匹配（兼容 zzjjack.mediacdp 这类带前缀的 id）。</summary>
+        private MarketPlugin? FindMarketPluginForDetail(string key)
+        {
+            string norm = NormalizeKey(key);
+            foreach (var mp in _marketPlugins)
+                if (string.Equals(mp.Id, key, StringComparison.OrdinalIgnoreCase)) return mp;
+
+            if (norm.Length == 0) return null;
+
+            foreach (var mp in _marketPlugins)
+                if (NormalizeKey(mp.Id).Contains(norm, StringComparison.Ordinal)) return mp;
+            foreach (var mp in _marketPlugins)
+                if (NormalizeKey(mp.FileName).Contains(norm, StringComparison.Ordinal)
+                    || NormalizeKey(mp.Name).Contains(norm, StringComparison.Ordinal)) return mp;
+            return null;
+        }
+
         // 高度一律按「内容行数」现算，避免渲染与命中各算一份。
 
         private const float DialogW = 380f;
@@ -615,7 +732,8 @@ namespace NotchPeninsula
             const int MaxDescLines = 7;
             int lineCount = Math.Min(descLines.Count, MaxDescLines);
             float lines = 2f + lineCount + (mp.Tags.Length > 0 ? 1f : 0f);
-            return GetMarketDialogRect(lines, false);
+            // 详情弹窗右下角常驻「安装 / 已安装」按钮：所有市场插件一视同仁。
+            return GetMarketDialogRect(lines, true);
         }
 
         private static SKRect GetRateDialogRect() => GetMarketDialogRect(4f, false);

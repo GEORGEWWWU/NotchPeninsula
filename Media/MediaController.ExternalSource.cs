@@ -102,13 +102,20 @@ namespace NotchPeninsula
         }
 
         /// <summary>网易云（cloudmusic.exe / netease cloud music）与酷狗（KuGou.exe）。</summary>
-        private static bool IsNeteaseOrKugou(string? appId)
+        internal static bool IsNeteaseOrKugou(string? appId)
         {
             if (string.IsNullOrEmpty(appId)) return false;
 
             return appId.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase)
                 || appId.Contains("netease", StringComparison.OrdinalIgnoreCase)
                 || appId.Contains("kugou", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>给用户看的播放器名；不是这两家时返回空串。推荐提示的文案用它。</summary>
+        internal static string NeteaseKugouDisplayName(string? appId)
+        {
+            if (string.IsNullOrEmpty(appId) || !IsNeteaseOrKugou(appId)) return "";
+            return appId.Contains("kugou", StringComparison.OrdinalIgnoreCase) ? "酷狗音乐" : "网易云音乐";
         }
 
         // ---- 位置：快照 + 墙钟推算 ----

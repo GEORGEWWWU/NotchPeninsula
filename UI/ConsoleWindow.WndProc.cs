@@ -609,6 +609,10 @@ namespace NotchPeninsula
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
 
+                        // 详情弹窗右下角有「安装 / 已安装」按钮：悬停反馈和其它弹窗按钮同一条路。
+                        if (!newHoveredDialogClose && _marketDialog == MarketDialog.Detail)
+                            newHoveredDialogButton = HitDialogButton(rect, x, y);
+
                         if (_marketDialog == MarketDialog.Rate && _rateMine <= 0 && !_rateLoading)
                         {
                             // 星星悬停 → 实时预览分值（半星粒度）。
