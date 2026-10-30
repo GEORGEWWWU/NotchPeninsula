@@ -98,7 +98,8 @@ namespace NotchPeninsula
 
         public static int StandbyDisplayMode { get; set; } = 0; // 旧「待机显示内容」（0=时间日期, 1=空白, 2=硬件占用）：已被显示设置的复选框取代，只用于老配置迁移
 
-        public static int StandbyScene { get; set; } = 1;
+        // 待机显示内容：空串 = 空白；内置项用 BuiltinWidgets.* 键；其余是插件 Key（设置页下拉里选的就是它）。
+        public static string StandbySceneKey { get; set; } = Plugins.BuiltinWidgets.Clock;
 
         public static bool StandbyActive
         {
@@ -394,7 +395,7 @@ namespace NotchPeninsula
                     DrawMediaControl(canvas, media, isHovered, bars,
                         new MediaBlockGeometry(left, left, right), currentHeight, textOffsetY, alpha);
                 else if (CompositeModeEnabled)
-                    DrawCompositeLayout(canvas, media, isHovered, bars, left, currentHeight, topY, textOffsetY, alpha);
+                    DrawCompositeLayout(canvas, media, isHovered, bars, left, currentWidth, currentHeight, topY, textOffsetY, alpha);
                 else
                     DrawNativeLayout(canvas, media, isHovered, bars, left, right,
                         currentHeight, textOffsetY, alpha);

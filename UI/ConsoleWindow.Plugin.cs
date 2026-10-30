@@ -310,6 +310,7 @@ namespace NotchPeninsula
             _matchModeDropdownOpen = false;
             _appDropdownOpen = false;
             _marketSortOpen = false;
+            _sceneDropdownOpen = false;
         }
     }
 }

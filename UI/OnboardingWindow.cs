@@ -571,9 +571,9 @@ namespace NotchPeninsula
                             Renderer.StandbyActive = true;
                             Program.SaveSetting("StandbyActive", 1);
                         }
-                        // 待机模式下不给子选项：默认就是媒体控制器（场景 3）
-                        Renderer.StandbyScene = 3;
-                        Program.SaveSetting("StandbyScene", 3);
+                        // 待机模式下不给子选项：默认就是媒体控制器
+                        Renderer.StandbySceneKey = Plugins.BuiltinWidgets.Media;
+                        Program.SaveSetting("StandbySceneKey", Renderer.StandbySceneKey);
                     }
                     else
                     {

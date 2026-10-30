@@ -1833,7 +1833,8 @@ namespace NotchPeninsula
                             // 进入 / 退出的命中区：
                             //   · 非待机态：双击空白进入；
                             bool onBlank = Renderer.IsBlankAt(dx, dy, _currentHeight);
-                            bool hitsToggleZone = Renderer.StandbyActive && Renderer.StandbyScene == 3
+                            bool hitsToggleZone = Renderer.StandbyActive
+                                && string.Equals(Renderer.StandbySceneKey, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase)
                                 ? Renderer.HitMediaZone(dx) || onBlank
                                 : onBlank;
 
@@ -1842,7 +1843,7 @@ namespace NotchPeninsula
                                 Renderer.StandbyActive = !Renderer.StandbyActive;
                                 Program.SaveSetting("StandbyActive", Renderer.StandbyActive ? 1 : 0);
                                 Logger.Info($"[待机模式] {(Renderer.StandbyActive ? "进入" : "退出")}"
-                                    + $"（双击 {dx},{dy}，场景={Renderer.StandbyScene}）");
+                                    + $"（双击 {dx},{dy}，场景={(Renderer.StandbySceneKey.Length == 0 ? "空白" : Renderer.StandbySceneKey)}）");
                                 return (IntPtr)0;
                             }
                         }

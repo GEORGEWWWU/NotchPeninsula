@@ -379,14 +379,25 @@ namespace NotchPeninsula
         {
             if (StandbyActive)
             {
-                if (StandbyScene == 2) return STANDBY_BLANK_WIDTH;
+                string scene = StandbySceneKey;
+                if (string.IsNullOrEmpty(scene)) return STANDBY_BLANK_WIDTH;
 
-                float own = StandbyScene switch
+                float own = 0f;
+                if (string.Equals(scene, Plugins.BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase))
+                    own = _cachedTimeWidth + 12f + _cachedDateWidth;
+                else if (string.Equals(scene, Plugins.BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase))
+                    own = MeasureHardwareBlockWidth();
+                else if (string.Equals(scene, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase))
+                    own = media != null && media.IsActive ? MeasureMediaBlockWidth(media) : 0f;
+                else if (includePlugins)
                 {
-                    1 => _cachedTimeWidth + 12f + _cachedDateWidth,                              // 只显示时间
-                    3 => media != null && media.IsActive ? MeasureMediaBlockWidth(media) : 0f,   // 折叠媒体控制
-                    _ => 0f,
-                };
+                    // 同上：Key → 插件 Id 才能命中组件。
+                    string? pluginId = ResolveStandbyPluginId();
+                    own = pluginId != null ? SumPluginRowWidth(pluginId) : 0f;
+                }
+                else
+                    return 0f;                        // 插件项第一趟不占原生宽度，预算全留给插件行
+
                 return own > 0f ? 16f + own + 16f : STANDBY_BLANK_WIDTH;
             }
 

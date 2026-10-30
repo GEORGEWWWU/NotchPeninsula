@@ -197,14 +197,37 @@ namespace NotchPeninsula
             }
             else if (_dropdownOpen && _hoveredDropdownIndex == -1)
             {
-                CloseAllDropdowns(); Render(); // 点击菜单外部收起浮窗
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.Platform); // 点外部收起；点到别的下拉框则切换过去
             }
-            else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex == -1) { CloseAllDropdowns(); Render(); }
-            else if (_toastModeDropdownOpen && _hoveredToastModeIndex == -1) { CloseAllDropdowns(); Render(); }
-            else if (_toastSoundDropdownOpen && _hoveredToastSoundIndex == -1) { CloseAllDropdowns(); Render(); }
-            else if (_soundVolumeDropdownOpen && _hoveredSoundVolumeIndex == -1) { CloseAllDropdowns(); Render(); }
-            else if (_matchModeDropdownOpen && _hoveredMatchModeIndex == -1) { CloseAllDropdowns(); Render(); }
-            else if (_appDropdownOpen && _hoveredAppIndex == -1) { CloseAllDropdowns(); Render(); }
+            else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex == -1)
+            {
+                // 展开着某个下拉时点到另一个下拉的框：收起当前的，直接展开落点上的那个。
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.Monitor);
+            }
+            else if (_toastModeDropdownOpen && _hoveredToastModeIndex == -1)
+            {
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.ToastMode);
+            }
+            else if (_toastSoundDropdownOpen && _hoveredToastSoundIndex == -1)
+            {
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.ToastSound);
+            }
+            else if (_soundVolumeDropdownOpen && _hoveredSoundVolumeIndex == -1)
+            {
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.Volume);
+            }
+            else if (_matchModeDropdownOpen && _hoveredMatchModeIndex == -1)
+            {
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.MatchMode);
+            }
+            else if (_appDropdownOpen && _hoveredAppIndex == -1)
+            {
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.App);
+            }
+            else if (_sceneDropdownOpen && _hoveredSceneIndex == -1)
+            {
+                CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.Scene);
+            }
             // 目标显示器下拉必须在显示页其它控件之前判定：展开的列表（y 209~261）与「显示模式」
             // 分段器（y 220~250）重叠且 x 区间被包含，先判下面的控件会把列表里的点击整个吃掉，
             // 表现成「点了主显示器却什么都没发生」。
@@ -215,6 +238,23 @@ namespace NotchPeninsula
                 Program.SaveSetting("TargetMonitorIndex", Renderer.TargetMonitorIndex);
                 _monitorDropdownOpen = false;
                 Render();
+            }
+            // 待机显示内容下拉：点中某一项就把它存成待机场景（空串 = 空白，其余是内置键 / 插件 Key）
+            else if (_selectedTab == 1 && _sceneDropdownOpen
+                && _hoveredSceneIndex >= 0 && _hoveredSceneIndex < _sceneChoices.Length)
+            {
+                var choice = _sceneChoices[_hoveredSceneIndex];
+                // 隐藏着的插件组件不在宿主快照里，待机会画不出东西：选中时先把它放回显示列表。
+                if (!choice.IsBuiltin && choice.Key.Length > 0)
+                    PluginManager.Instance.SetDisplayed(choice.Key, true);
+                Renderer.StandbySceneKey = choice.Key;
+                Program.SaveSetting("StandbySceneKey", Renderer.StandbySceneKey);
+                _sceneDropdownOpen = false;
+                Render();
+            }
+            else if (_selectedTab == 1 && _sceneDropdownHovered)
+            {
+                OpenSceneDropdown();
             }
             else if (_selectedTab == 1 && _hoveredStyleIndex != -1)
             {
@@ -231,12 +271,6 @@ namespace NotchPeninsula
                     Program.SaveSetting("StandbyActive", wantStandby ? 1 : 0);
                     Render();
                 }
-            }
-            else if (_selectedTab == 1 && _hoveredStandbySceneIndex != -1)
-            {
-                Renderer.StandbyScene = _hoveredStandbySceneIndex;
-                Program.SaveSetting("StandbyScene", Renderer.StandbyScene);
-                Render();
             }
             else if (_selectedTab == 1 && _standbyToggleHovered)
             {

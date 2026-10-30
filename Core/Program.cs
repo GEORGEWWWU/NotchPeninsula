@@ -75,8 +75,18 @@ namespace NotchPeninsula
                     Renderer.MediaInteractionMode = (int)key.GetValue("MediaInteractionMode", 1);
                     Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 2);
 
-                    // 用新键，与上面那个已被复选框取代的历史键互不干扰。
-                    Renderer.StandbyScene = (int)key.GetValue("StandbyScene", 1);
+                    // 待机显示内容：新键存插件 Key（空串 = 空白）。
+                    // 老键 StandbyScene 存的是 1/2/3 的场景号，只在没写过新键时用于迁移。
+                    string? savedSceneKey = key.GetValue("StandbySceneKey") as string;
+                    Renderer.StandbySceneKey = savedSceneKey ?? ((int)key.GetValue("StandbyScene", 1) switch
+                    {
+                        2 => "",
+                        3 => Plugins.BuiltinWidgets.Media,
+                        _ => Plugins.BuiltinWidgets.Clock
+                    });
+                    // 迁移结果立刻写回新键：之后启动不再依赖老键，「自动选中」就固定下来了。
+                    if (savedSceneKey == null)
+                        Program.SaveSetting("StandbySceneKey", Renderer.StandbySceneKey);
                     Renderer.StandbyToggleByDoubleClick =
                         (int)key.GetValue("StandbyToggleByDoubleClick", 0) != 0;
                     Renderer.StandbyActive = (int)key.GetValue("StandbyActive", 0) != 0;

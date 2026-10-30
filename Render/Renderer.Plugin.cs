@@ -824,6 +824,20 @@ namespace NotchPeninsula
             catch (Exception ex) { MarkPluginBroken(index, ex); return 0f; }
         }
 
+        /// <summary>
+        /// 待机选中插件时，把设置页里的插件 Key（DLL 文件名）换成宿主识别的插件 Id（组件按 Id 归属）。
+        /// 内置项 / 空白返回 null。
+        /// </summary>
+        private static string? ResolveStandbyPluginId()
+        {
+            string scene = StandbySceneKey;
+            if (string.IsNullOrEmpty(scene) || Plugins.BuiltinWidgets.IsBuiltin(scene)) return null;
+
+            var entry = Plugins.PluginManager.Instance.Find(scene);
+            if (entry != null && !string.IsNullOrEmpty(entry.Id)) return entry.Id;
+            return scene;   // 兜底：按原值当 Id 试一次
+        }
+
         private static float SumPluginRowWidth(string? pluginIdFilter)
         {
             var widgets = _pluginWidgets;
