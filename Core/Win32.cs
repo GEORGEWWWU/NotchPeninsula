@@ -671,6 +671,67 @@ namespace NotchPeninsula
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
 
+        // ---- 原始输入：鼠标按键的「事件级」观测 ----
+        // GetAsyncKeyState 只能采样：一次点击只有 50~120ms，采样点落在按下与抬起之间才看得见。
+        // 岛体的轮询挂在渲染线程上，而全屏无边框游戏把 DWM 提交拖到 200ms+ 时
+        // （日志里的 [渲染卡顿] 单帧 187ms / 提交 172ms 就是），整段按下沿会被跨过去，一次也采不到。
+        // WM_INPUT 是事件：按下沿进窗口队列，渲染线程再慢也只是晚一点处理，不会丢。
+        public const int WM_INPUT = 0x00FF;
+
+        public const uint RID_INPUT = 0x10000003;
+        public const uint RIM_TYPEMOUSE = 0;
+
+        public const uint RIDEV_REMOVE = 0x00000001;
+        public const uint RIDEV_INPUTSINK = 0x00000100; // 不在前台也收：全屏游戏占着前台时正是要靠它
+
+        public const ushort RI_MOUSE_LEFT_BUTTON_DOWN = 0x0001;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RAWINPUTDEVICE
+        {
+            public ushort usUsagePage;   // 1 = Generic Desktop Controls
+            public ushort usUsage;       // 2 = Mouse
+            public uint dwFlags;
+            public IntPtr hwndTarget;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RAWINPUTHEADER
+        {
+            public uint dwType;
+            public uint dwSize;
+            public IntPtr hDevice;
+            public IntPtr wParam;
+        }
+
+        // ulButtons 是 union：{ ULONG ulButtons; struct { USHORT usButtonFlags; USHORT usButtonData; }; }
+        // 所以 usFlags 后面必须垫 2 字节，usButtonFlags 才落到偏移 4 上。
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RAWMOUSE
+        {
+            public ushort usFlags;
+            private ushort _padToUnion;
+            public ushort usButtonFlags;
+            public ushort usButtonData;
+            public uint ulRawButtons;
+            public int lLastX;
+            public int lLastY;
+            public uint ulExtraInformation;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RAWINPUTMOUSE
+        {
+            public RAWINPUTHEADER header;
+            public RAWMOUSE mouse;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterRawInputDevices(RAWINPUTDEVICE[] pRawInputDevices, uint uiNumDevices, uint cbSize);
+
+        [DllImport("user32.dll")]
+        public static extern uint GetRawInputData(IntPtr hRawInput, uint uiCommand, out RAWINPUTMOUSE pData, ref uint pcbSize, uint cbSizeHeader);
+
         [StructLayout(LayoutKind.Sequential)]
         public struct MONITORINFO
         {
