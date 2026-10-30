@@ -770,6 +770,20 @@ namespace NotchPeninsula
                     {
                         CloseMarketDialog(true);
                     }
+                    else if (_marketDialog == MarketDialog.Detail
+                             && (_hoveredDialogButton == 0
+                                 || HitDialogButton(GetCurrentDialogRect(), clickX, clickY) == 0))
+                    {
+                        // 详情弹窗的安装按钮：没装（或已装但被禁用）才真的执行；
+                        // 「已安装」保持绿色，但点击不产生任何动作。
+                        var local = MatchLocalPlugin(mp);
+                        bool disabled = local != null && PluginManager.Instance.IsDisabled(local);
+                        if ((local == null || disabled) && _marketBusyId.Length == 0)
+                        {
+                            if (_marketSearchFocused) _marketSearchFocused = false;
+                            StartMarketInstall(mp);
+                        }
+                    }
                     else if (_marketDialog == MarketDialog.Rate
                              && _rateMine <= 0 && !_rateLoading && _rateStars > 0)
                     {
@@ -883,6 +897,7 @@ namespace NotchPeninsula
                     if (_marketSearchFocused) { _marketSearchFocused = false; Render(); }
                     _marketDialog = MarketDialog.Detail;
                     _marketDialogIndex = _hoveredMarketDetail;
+                    _hoveredDialogButton = -1;   // 新弹窗不继承上一个弹窗的悬停态
                     Render();
                 }
                 else

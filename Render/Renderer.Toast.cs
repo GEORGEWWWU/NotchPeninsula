@@ -18,7 +18,28 @@ namespace NotchPeninsula
 
         private const float TOAST_ICON_RADIUS = 4f;
 
-        public static float GetToastAutoWidth()
+        // ── 右侧操作按钮（如「拒收」）──
+        // 几何只在这里定义一份：绘制与 NotchWindow 的命中判定都走 GetToastActionRect。
+        private const float TOAST_ACTION_W = 40f;
+        private const float TOAST_ACTION_H = 22f;
+        private const float TOAST_ACTION_RIGHT_PAD = 12f;
+        private const float TOAST_ACTION_GAP = 8f;
+
+        private const float ToastActionReserve = TOAST_ACTION_RIGHT_PAD + TOAST_ACTION_W + TOAST_ACTION_GAP;
+
+        /// <summary>右侧操作按钮当前是否悬停（WndProc 写、渲染线程读）。</summary>
+        public static volatile bool ToastActionHovered;
+
+        /// <summary>右侧操作按钮的命中区（逻辑坐标，right = 岛体右缘）。</summary>
+        public static SKRect GetToastActionRect(float right, float height)
+        {
+            float x2 = right - TOAST_ACTION_RIGHT_PAD;
+            float x1 = x2 - TOAST_ACTION_W;
+            float y2 = height / 2f + TOAST_ACTION_H / 2f;
+            return new SKRect(x1, y2 - TOAST_ACTION_H, x2, y2);
+        }
+
+        public static float GetToastAutoWidth(ToastData? toast = null)
         {
             float maxTextW = IsToastFullMode
                 ? Math.Max(_cachedToastTitleWidth, Math.Max(_cachedToastBodyWidth, _cachedToastAppNameWidth))
@@ -26,6 +47,8 @@ namespace NotchPeninsula
             float w = maxTextW + 68f;
             if (IsToastFullMode) w += TOAST_FULL_MODE_RIGHT_RESERVE;
             if (IsToastCompactMode) w += Math.Max(COMPACT_RIGHT_WIDTH, _cachedToastCompactRightWidth);
+            // 有操作按钮时给右侧让出整个按钮区，否则正文会压到按钮底下。
+            if (!string.IsNullOrEmpty(toast?.ActionLabel)) w += ToastActionReserve;
             w += TOAST_TEXT_MARGIN;
             return Math.Min(Math.Max(TOAST_WIDTH, w), IslandWidthCap);
         }
@@ -136,8 +159,14 @@ namespace NotchPeninsula
                 }
             }
 
+            bool hasAction = !string.IsNullOrEmpty(toast.ActionLabel);
+            // 右侧「现在 / 应用名 / 操作按钮」的统一起点：有按钮时整块右栏都让到按钮左侧。
+            float rightTextEdge = hasAction
+                ? Math.Min(right - 16f, right - TOAST_ACTION_RIGHT_PAD - TOAST_ACTION_W - TOAST_ACTION_GAP)
+                : right - 16f;
+
             float toastTextX = toastIconX + iconSize + 10f;
-            float toastMaxTextRight = right - 16f;
+            float toastMaxTextRight = rightTextEdge;
             if (IsToastFullMode) toastMaxTextRight -= 36f; // 完整模式右上角需预留“现在”的空间
 
             float compactNowWidth = 0f, compactAppW = 0f, compactRightLeft = 0f;
@@ -146,7 +175,7 @@ namespace NotchPeninsula
                 compactNowWidth = _compactTimePaint.MeasureText("现在");
                 string compactAppName0 = string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName;
                 compactAppW = _compactAppPaint.MeasureText(compactAppName0);
-                compactRightLeft = (right - 16f) - Math.Max(compactNowWidth, compactAppW);
+                compactRightLeft = rightTextEdge - Math.Max(compactNowWidth, compactAppW);
             }
 
             float textSpacing = 5f;
@@ -185,7 +214,7 @@ namespace NotchPeninsula
                 _bodyPaint.Typeface = _normalTypeface; // 重置
 
                 float nowWidth = _bodyPaint.MeasureText("现在");
-                canvas.DrawText("现在", right - 16f - nowWidth, line1Y, _bodyPaint);
+                canvas.DrawText("现在", rightTextEdge - nowWidth, line1Y, _bodyPaint);
             }
 
             // 发送者 / 正文同样用真裁切收口 —— 不再叠渐变或纯色层（那层在亚克力 / 低透明度下会露出来）
@@ -216,8 +245,24 @@ namespace NotchPeninsula
             if (IsToastCompactMode)
             {
                 string compactAppName = string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName;
-                canvas.DrawText("现在", right - 16f - compactNowWidth, line1Y, _compactTimePaint);
-                canvas.DrawText(compactAppName, right - 16f - compactAppW, line2Y, _compactAppPaint);
+                canvas.DrawText("现在", rightTextEdge - compactNowWidth, line1Y, _compactTimePaint);
+                canvas.DrawText(compactAppName, rightTextEdge - compactAppW, line2Y, _compactAppPaint);
+            }
+
+            // 右侧操作按钮：「拒收」这类一次性动作。画在岛体右缘内侧，和文字裁切区完全分开。
+            if (hasAction)
+            {
+                var actionRect = GetToastActionRect(right, currentHeight);
+                var originalBg = _tagBgPaint.Color;
+                _tagBgPaint.Color = _currentTextColor.WithAlpha(ToastActionHovered ? (byte)70 : (byte)28);
+                canvas.DrawRoundRect(actionRect, actionRect.Height / 2f, actionRect.Height / 2f, _tagBgPaint);
+                _tagBgPaint.Color = originalBg;
+
+                _tagTextPaint.Color = _currentTextColor;
+                float aw = _tagTextPaint.MeasureText(toast.ActionLabel);
+                canvas.DrawText(toast.ActionLabel, actionRect.MidX - aw / 2f,
+                    actionRect.MidY + _tagTextPaint.TextSize * 0.35f, _tagTextPaint);
+                _tagTextPaint.Color = _currentTextColor;   // 与 ApplyThemeColors 的默认值一致
             }
         }
 

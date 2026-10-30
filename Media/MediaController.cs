@@ -620,6 +620,38 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 自动挑选目标会话。传入的 <paramref name="sessions"/> 已经是「全局忽略残留会话」后的列表，
+        /// 所以这里不再重复判残留 —— B 站的假会话还挂在 SMTC 里，但后续所有选择都当它不存在。
+        /// </summary>
+        private static GlobalSystemMediaTransportControlsSession? PickAutoSession(
+            IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions)
+        {
+            bool skipPaused = TargetPlatform == "other";
+            GlobalSystemMediaTransportControlsSession? chosen = null;
+            GlobalSystemMediaTransportControlsSession? pausedFallback = null;
+            int pausedFallbackRank = 0;
+
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                var s = sessions[i];
+                string id = s.SourceAppUserModelId ?? "";
+                if (id.Length == 0) continue;
+
+                int rank = SessionRank(id);
+                if (rank == 0) continue;                  // 不看好的会话，零成本跳过
+                if (skipPaused && !IsSessionPlaying(s))
+                {
+                    if (rank > pausedFallbackRank) { pausedFallbackRank = rank; pausedFallback = s; }
+                    continue;
+                }
+
+                if (rank == 3) return s;                   // 正在播放的 Just Solo 压过一切，立即锁定
+                if (chosen == null) chosen = s;            // 备选，继续往后扫，遇到 Just Solo 会被顶掉
+            }
+            return chosen ?? pausedFallback;
+        }
+
         private static bool IsManualLockActive =>
             IsMediaControlEnabled && TargetPlatform == "other" && IsManualSessionMatch && ManualSessionAppId.Length > 0;
 
@@ -655,20 +687,23 @@ namespace NotchPeninsula
         {
             GlobalSystemMediaTransportControlsSession? newSession = null;
 
-            var sessions = manager.GetSessions();
-            // 判为残留的会话整体不参与：既不进候选，也不算「有媒体」——否则岛体仍会挂在假会话上
+            var allSessions = manager.GetSessions();
             string staleId = _staleAppId;
-            bool hasActiveSessions = false;
-            for (int i = 0; i < sessions.Count; i++)
+
+            // 全局忽略残留会话：这里先把它从 SMTC 列表里剔掉，后续「有没有媒体」、
+            // 手动锁定、自动选择全部只看这份过滤后的列表 —— 假会话还挂在系统里，但逻辑上不存在。
+            var sessions = new List<GlobalSystemMediaTransportControlsSession>(allSessions.Count);
+            for (int i = 0; i < allSessions.Count; i++)
             {
-                string id = sessions[i].SourceAppUserModelId ?? "";
+                string id = allSessions[i].SourceAppUserModelId ?? "";
                 if (id.Length == 0 || IsGloballyBlockedApp(id)) continue;
                 if (staleId.Length > 0 && string.Equals(id, staleId, StringComparison.OrdinalIgnoreCase)) continue;
-                hasActiveSessions = true;
+                sessions.Add(allSessions[i]);
             }
-            HasActiveSessions = hasActiveSessions;
+            HasActiveSessions = sessions.Count > 0;
 
-            SyncPlaybackWatchers(sessions);
+            // watcher 仍挂全部会话：残留恢复要靠它们的事件，不能把 B 站一起摘掉。
+            SyncPlaybackWatchers(allSessions);
 
             // 如果总开关打开，执行精确的平台过滤
             if (IsMediaControlEnabled)
@@ -678,42 +713,28 @@ namespace NotchPeninsula
                 {
                     for (int i = 0; i < sessions.Count; i++)
                     {
-                        string id = sessions[i].SourceAppUserModelId ?? "";
-                        if (IsGloballyBlockedApp(id)) continue;
-                        // 手动锁定也要过这道闸，否则用户手选了 B站就再也没法摆脱那个假会话
-                        if (staleId.Length > 0 && string.Equals(id, staleId, StringComparison.OrdinalIgnoreCase)) continue;
-                        if (string.Equals(id, ManualSessionAppId, StringComparison.OrdinalIgnoreCase))
+                        if (string.Equals(sessions[i].SourceAppUserModelId, ManualSessionAppId, StringComparison.OrdinalIgnoreCase))
                         {
                             newSession = sessions[i];
                             break;
-                        }
+                        } 
+                    }
+
+                    // 手动锁定的目标不在过滤后的列表里（被判残留被剔除，或进程/会话已经消失）：
+                    // 不能因此把整条媒体链路钉死，必须回落到自动选择其它真正可用的会话。
+                    if (newSession == null)
+                    {
+                        bool wasStale = staleId.Length > 0
+                            && string.Equals(ManualSessionAppId, staleId, StringComparison.OrdinalIgnoreCase);
+                        Logger.Debug(wasStale
+                            ? $"[媒体] 手动锁定的会话已被判残留并从 SMTC 列表全局忽略（{ManualSessionAppId}）→ 自动选择其它会话"
+                            : $"[媒体] 手动锁定的会话不在当前 SMTC 列表中（{ManualSessionAppId}）→ 自动选择其它会话");
+                        newSession = PickAutoSession(sessions);
                     }
                 }
                 else
                 {
-                    // 单遍扫描直接选出目标会话：索引遍历避免枚举器分配，
-                    bool skipPaused = TargetPlatform == "other";
-                    GlobalSystemMediaTransportControlsSession? pausedFallback = null;
-                    int pausedFallbackRank = 0;
-                    for (int i = 0; i < sessions.Count; i++)
-                    {
-                        var s = sessions[i];
-                        string id = s.SourceAppUserModelId ?? "";
-                        if (id.Length == 0) continue;
-                        if (staleId.Length > 0 && string.Equals(id, staleId, StringComparison.OrdinalIgnoreCase)) continue;
-
-                        int rank = SessionRank(id);
-                        if (rank == 0) continue;                  // 不看好的会话，零成本跳过
-                        if (skipPaused && !IsSessionPlaying(s))
-                        {
-                            if (rank > pausedFallbackRank) { pausedFallbackRank = rank; pausedFallback = s; }
-                            continue;
-                        }
-
-                        if (rank == 3) { newSession = s; break; }  // 正在播放的 Just Solo 压过一切，立即锁定
-                        if (newSession == null) newSession = s;    // 备选，继续往后扫，遇到 Just Solo 会被顶掉
-                    }
-                    if (newSession == null) newSession = pausedFallback;
+                    newSession = PickAutoSession(sessions);
                 }
             }
 
@@ -1162,13 +1183,35 @@ namespace NotchPeninsula
 
         public async void TogglePlayPause()
         {
-            if (_currentSession == null) return;
-            if (IsPlaying) await _currentSession.TryPauseAsync();
-            else await _currentSession.TryPlayAsync();
+            var session = _currentSession;
+            if (session == null) return;
+            try
+            {
+                if (IsPlaying) await session.TryPauseAsync();
+                else await session.TryPlayAsync();
+            }
+            catch (Exception ex) { Logger.Warn($"[媒体] 播放/暂停失败：{ex.Message}"); }
         }
 
-        public async void Next() => await _currentSession?.TrySkipNextAsync();
-        public async void Previous() => await _currentSession?.TrySkipPreviousAsync();
+        // ⚠️ 不能用 `_currentSession?.TrySkipNextAsync()` 直接 await：
+        // 会话为空时左侧会先返回 null，而 await null 的 WinRT IAsyncOperation 会抛
+        // ArgumentNullException（async void 里没人接，直接走 TaskScheduler 崩溃退出）。
+        // 会话在 await 期间消失时 TrySkip* 也可能抛 COMException，同样在这里兜住。
+        public async void Next()
+        {
+            var session = _currentSession;
+            if (session == null) return;
+            try { await session.TrySkipNextAsync(); }
+            catch (Exception ex) { Logger.Warn($"[媒体] 下一首失败：{ex.Message}"); }
+        }
+
+        public async void Previous()
+        {
+            var session = _currentSession;
+            if (session == null) return;
+            try { await session.TrySkipPreviousAsync(); }
+            catch (Exception ex) { Logger.Warn($"[媒体] 上一首失败：{ex.Message}"); }
+        }
 
         public void OpenCurrentApp()
         {
@@ -1197,8 +1240,17 @@ namespace NotchPeninsula
             // 残留状态下播放器只要有播放动作就得立刻响应，不必等 1 秒的轮询档
             if (_staleAppId.Length > 0) _ = CheckStaleSessionAsync();
 
+            // 手动锁定的目标被判残留、或当前选中的根本不是它（目标已消失 / 回落到了别的会话）时，
+            // 其它播放器的播放状态变化都必须能立刻触发重选，否则网易云开始播放后仍然没人理会。
+            bool manualTargetStale = IsManualLockActive
+                && _staleAppId.Length > 0
+                && string.Equals(ManualSessionAppId, _staleAppId, StringComparison.OrdinalIgnoreCase);
+            bool manualTargetMissing = IsManualLockActive
+                && !string.Equals(_currentAppId, ManualSessionAppId, StringComparison.OrdinalIgnoreCase);
+
             // 只刷属性会让界面停在那个已经暂停的会话上。
-            if (_manager != null && IsMediaControlEnabled && TargetPlatform == "other" && !IsManualSessionMatch)
+            if (_manager != null && IsMediaControlEnabled && TargetPlatform == "other"
+                && (!IsManualSessionMatch || manualTargetStale || manualTargetMissing))
             {
                 await UpdateSession(_manager);
                 return;
