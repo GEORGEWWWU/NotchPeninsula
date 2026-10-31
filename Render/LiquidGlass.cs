@@ -84,11 +84,16 @@ namespace NotchPeninsula
 
         private static volatile int _glassLum;
 
+        private static volatile bool _glassLumOk;
+
         /// <summary>
         /// 最近一次玻璃成品的中心平均亮度（0..255，BT.601）。玻璃下文字自适应黑白的判据。
         /// 命中缓存的帧不会重算 —— 内容没变，亮度也不会变，停在旧值正合适。
         /// </summary>
         public static int GlassLuminance => _glassLum;
+
+        /// <summary>亮度是否来自一张真正合成出来的玻璃图（未合成时 _glassLum 是 0，不能当纯黑用）。</summary>
+        public static bool HasLuminance => _glassLumOk;
 
         /// <summary>渲染线程的帧间隔（ms）。渲染循环每帧读一次，所以改完立刻生效。</summary>
         public static int FrameIntervalMs => 1000 / FrameFpsTable[EffectiveLevel(P_FrameRate)];
@@ -790,6 +795,7 @@ namespace NotchPeninsula
                         }
                     if (n == 0) n = 1;
                     _glassLum = (int)(((sb / n) * 29 + (sg / n) * 150 + (sr / n) * 77) >> 8);
+                    _glassLumOk = true;
                 }
 
                 // 诊断：玻璃内容到底黑没黑，一行定位 —— src 错位 / 背板黑 / 合成黑 / 核被乘成 0，一眼分清

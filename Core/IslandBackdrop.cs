@@ -54,7 +54,11 @@ namespace NotchPeninsula
 
         public static float LastScale => _scale > 0f ? _scale : 1f / Downscale;
 
-        public static float CurrentDownscale => _magUsed ? 1f : (_glass ? GlassDownscale : Downscale);
+        // 液态玻璃 2 一律 1:1：它的观感就是「桌面被这块玻璃弯折」，
+        // 抓屏先降采样再双线性放大，本身就是一层去不掉的模糊 ——
+        // 那正是「桌面还是有高斯模糊」最直接的来源（与模糊算法、细节判定都无关）。
+        public static float CurrentDownscale => _magUsed ? 1f
+            : (Renderer.IslandLiquidGlass2 ? 1f : (_glass ? GlassDownscale : Downscale));
 
         // 每次产出新背板 +1：液态玻璃靠它判断「要不要重算」（几何没动就不用再糊一遍）
         private static volatile int _version;

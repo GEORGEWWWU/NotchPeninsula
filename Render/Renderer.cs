@@ -128,6 +128,17 @@ namespace NotchPeninsula
         // 与亚克力互斥，两者共用同一份抓屏背板（IslandBackdrop），只是降采样倍数不同。
         public static bool IslandLiquidGlass { get; set; } = false;
 
+        // 灵动岛背景材质：true = 液态玻璃 2（内核 SDF 位移 + 2px 干净带 + 135° 描边光照）
+        // 与上面两种互斥。合成与缓存完全独立（LiquidGlass2），互不影响。
+        public static bool IslandLiquidGlass2 { get; set; } = false;
+
+        /// <summary>两种液态玻璃的并集：抓屏、放大镜、涂层置零等处只关心「是不是玻璃材质」。</summary>
+        public static bool IslandAnyGlass => IslandLiquidGlass || IslandLiquidGlass2;
+
+        /// <summary>材质编号（设置页 / 引导页共用）：0 实体，1 亚克力，2 液态玻璃，3 液态玻璃 2。</summary>
+        public static int IslandMaterialIndex =>
+            IslandLiquidGlass2 ? 3 : IslandLiquidGlass ? 2 : IslandAcrylic ? 1 : 0;
+
         // 亚克力背板：已模糊好的桌面截图，由 NotchWindow 每帧喂进来（只允许渲染线程读写）
         public static SKImage? AcrylicBackdrop { get; set; }
 
@@ -282,11 +293,12 @@ namespace NotchPeninsula
                     _backdropNullLogged = true;
                     Logger.Warn("[玻璃] 背板为空，玻璃层未绘制（抓屏线程无产出或已被停用）");
                 }
-                if (backdrop != null && (IslandAcrylic || IslandLiquidGlass))
+                bool glassDrawn = false;
+                if (backdrop != null && (IslandAcrylic || IslandAnyGlass))
                 {
                     canvas.Save();
                     canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-                    if (IslandLiquidGlass)
+                    if (IslandAnyGlass)
                     {
                         // 液态玻璃：折射 + 色散后的桌面。读不到像素时（极端后端）退回普通模糊背板
                         //
@@ -308,11 +320,32 @@ namespace NotchPeninsula
                         }
                         // 刘海顶边贴着屏幕：顶边不该淡出、也不该有一条横向高光（详见 Compose 的 flushTop）
                         bool flushTop = flareX > 0.25f && styleProgress < 0.02f;
-                        var glass = LiquidGlass.Compose(backdrop, IslandBackdrop.Version, gsrc,
-                            gW, currentHeight,
-                            flareX > 0f ? 0f : (MathF.Abs(rTopY) < 1f ? 1f : MathF.Abs(rTopY)),
-                            rBottom < 1f ? 1f : rBottom,
-                            flareX, rTopY, flushTop);
+                        // 两种玻璃各有一套独立的合成与缓存：v2 用的是另一套位移场与描边光照。
+                        // ⚠️ 必须 try/catch：合成里跑的是 SkiaSharp 原生位图与裸指针，
+                        //    任何一处越界都只能在这里兜住 —— 否则岛体会静默变成一块死板（"打不开"）。
+                        SKBitmap? glass;
+                        try
+                        {
+                            glass = IslandLiquidGlass2
+                                ? LiquidGlass2.Compose(backdrop, IslandBackdrop.Version, gsrc,
+                                    gW, currentHeight,
+                                    flareX > 0f ? 0f : (MathF.Abs(rTopY) < 1f ? 1f : MathF.Abs(rTopY)),
+                                    rBottom < 1f ? 1f : rBottom,
+                                    flareX, rTopY, flushTop)
+                                : LiquidGlass.Compose(backdrop, IslandBackdrop.Version, gsrc,
+                                    gW, currentHeight,
+                                    flareX > 0f ? 0f : (MathF.Abs(rTopY) < 1f ? 1f : MathF.Abs(rTopY)),
+                                    rBottom < 1f ? 1f : rBottom,
+                                    flareX, rTopY, flushTop);
+                        }
+                        catch (Exception ex)
+                        {
+                            glass = null;
+                            if (IslandLiquidGlass2) LiquidGlass2.NoteError("合成抛出异常：" + ex.Message);
+                            Logger.Warn($"[玻璃] 合成失败：{ex.GetType().Name} {ex.Message}");
+                        }
+
+                        glassDrawn = glass != null;
                         if (glass != null)
                             canvas.DrawBitmap(glass, gdst, _acrylicPaint);
                         else
@@ -333,21 +366,19 @@ namespace NotchPeninsula
                 // ⚠️ 不能只在 ApplyThemeColors 里算一次：它在首帧抓屏之前跑，那时背板必然还是 null，
                 //    算出的 45 会一直留在画笔上（之后没有"背板到位"的事件去重算），
                 //    观感就是玻璃上永久蒙一层 18% 的黑纱 —— "透不过去"的一半原因就在这。
-                if (IslandLiquidGlass)
+                // 液态玻璃 2 的可用性守卫：连续拿不到画面 → 判定不支持 → 弹窗 + 退回可用材质。
+                // 只在岛体真的可见时计数：隐藏 / 淡出期间没有渲染，不能算失败。
+                if (IslandLiquidGlass2 && FullHideAlpha > 0.5f && currentWidth >= 8f && currentHeight >= 4f)
+                    GlassSupport.Tick(glassDrawn);
+
+                if (IslandAnyGlass)
                 {
                     // 文字黑白跟着玻璃实际明暗走（迟滞防抖动）：亮玻璃配黑字、暗玻璃配白字。
-                    // 阈值按亮度对比度定：中灰（~130）上白字只有 2.9:1、黑字有 7:1 —— 所以翻黑要早，
-                    // 150 那种高门槛会让"偏亮的玻璃 + 白字"发虚（就是可读性下降的观感）。
-                    // 只在「判定值翻过阈值」那一帧回调 ApplyThemeColors 重绑画笔 —— 那套画笔绑定平时
-                    // 是 UI 线程在用（设置窗切主题），渲染线程每帧都调会跟它抢画笔。
-                    int gl = LiquidGlass.GlassLuminance;
-                    if (!_glassTextIsLight && gl > 128) _glassTextIsLight = true;
-                    else if (_glassTextIsLight && gl < 104) _glassTextIsLight = false;
-                    if (_glassTextIsLight != _glassTextAppliedLight)
-                    {
-                        _glassTextAppliedLight = _glassTextIsLight;
-                        ApplyThemeColors();
-                    }
+                    // v2 自带「这张亮度是否真的量到了」的标志；合成失败时不能拿 0 当纯黑桌面，
+                    // 否则文字会被刷成白色压在亮背板上，看起来就是"自适应失效"。
+                    int gl = IslandLiquidGlass2 ? LiquidGlass2.GlassLuminance : LiquidGlass.GlassLuminance;
+                    bool glValid = IslandLiquidGlass2 ? LiquidGlass2.HasLuminance : LiquidGlass.HasLuminance;
+                    UpdateGlassTextTone(gl, glValid);
 
                     _coatPaint.Color = backdrop == null
                         ? SKColors.Black.WithAlpha(45)

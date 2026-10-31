@@ -13,14 +13,16 @@ namespace NotchPeninsula
         private long _acrBootRetryMs; // 背板还没内容时，下一次催重抓的时间戳
         private int _acrBootRetries;  // 催抓次数（封顶，别无限刷）
         private bool _lastGlassMode;
+        private int _lastGlassKind;   // 0 实体/亚克力，1 液态玻璃，2 液态玻璃2
 
         // 亚克力背板：抓的是【整个画布框 ∩ 屏幕】，不是当前胶囊框。
         // 这样胶囊变大变小（悬停展开 / 待机↔媒体切换）时只挪源矩形，完全不用重抓 —— 尺寸变换期间的闪烁就没了。
         // 渲染线程这里只写「要抓哪块」+「岛体占哪块」+ 取成品，真正的抓屏在 NPS-Backdrop 线程上（屏幕读取要 20ms 量级）。
         private void SyncIslandBackdrop()
         {
-            // 亚克力与液态玻璃共用同一条抓屏管线，只是降采样倍数不同
-            bool glass = Renderer.IslandLiquidGlass;
+            // 亚克力与两种液态玻璃共用同一条抓屏管线，只是降采样倍数不同
+            int kind = Renderer.IslandLiquidGlass2 ? 2 : (Renderer.IslandLiquidGlass ? 1 : 0);
+            bool glass = kind != 0;
             if ((!Renderer.IslandAcrylic && !glass) || Renderer.FullHideAlpha < 0.5f)
             {
                 IslandBackdrop.SetTarget(0, 0, 0, 0);
@@ -31,7 +33,10 @@ namespace NotchPeninsula
                     _acrylicOwned.Dispose();
                     _acrylicOwned = null;
                 }
-                LiquidGlass.Invalidate();   // 材质切走就把玻璃缓存也放掉，别白占内存
+                // 材质切走就把两份玻璃缓存都放掉，别白占内存
+                LiquidGlass.Invalidate();
+                LiquidGlass2.Invalidate();
+                _lastGlassKind = 0;
                 return;
             }
             IslandBackdrop.SetMode(glass);
@@ -42,13 +47,17 @@ namespace NotchPeninsula
             {
                 Logger.Info("[亚克力] 背板从全黑变亮，作废玻璃缓存重算");
                 LiquidGlass.Invalidate();
+                LiquidGlass2.Invalidate();
             }
 
             // 换材质 = 换降采样倍数：旧背板（另一倍率下抓的）先丢掉，
             // 否则新算出来的源矩形会指到旧图外面，切换瞬间会闪一块错位的色块。
-            if (_lastGlassMode != glass)
+            // ⚠️ 液态玻璃 ↔ 液态玻璃2 之间 glass 恒为 true，只比它切不动 ——
+            //    两种玻璃的编号也要进比较，否则玻璃 1 那张缓存图会原样贴到玻璃 2 上。
+            if (_lastGlassMode != glass || _lastGlassKind != kind)
             {
                 _lastGlassMode = glass;
+                _lastGlassKind = kind;
                 if (_acrylicOwned != null)
                 {
                     Renderer.AcrylicBackdrop = null;
@@ -56,6 +65,7 @@ namespace NotchPeninsula
                     _acrylicOwned = null;
                 }
                 LiquidGlass.Invalidate();
+                LiquidGlass2.Invalidate();
                 IslandBackdrop.Expire();
             }
 
@@ -161,7 +171,7 @@ namespace NotchPeninsula
                            && Math.Abs(_currentY) < 0.5f;
 
             // 非玻璃材质没有内容守卫（TrackContent 只在液态玻璃下跑），按老规矩一把梭
-            bool contentReady = !Renderer.IslandLiquidGlass || IslandBackdrop.IsContentAlive;
+            bool contentReady = !Renderer.IslandAnyGlass || IslandBackdrop.IsContentAlive;
 
             if (settled && !_acrBootRefresh)
             {
@@ -169,7 +179,8 @@ namespace NotchPeninsula
                 {
                     _acrBootRefresh = true;
                     Logger.Info("[亚克力] 启动刷新玻璃（等价于设置里点一次玻璃质量）");
-                    LiquidGlass.ReapplyQuality();
+                    if (Renderer.IslandLiquidGlass2) LiquidGlass2.ReapplyQuality();
+                    else LiquidGlass.ReapplyQuality();
                     RequestAcrylicRebuild();
                 }
                 else if (nowMs - _acrBootRetryMs >= 600)
@@ -183,6 +194,7 @@ namespace NotchPeninsula
                         Logger.Info($"[亚克力] 启动时背板还没有内容，第 {_acrBootRetries} 次强制重抓");
                         IslandBackdrop.Expire();
                         LiquidGlass.Invalidate();
+                        LiquidGlass2.Invalidate();
                     }
                     else
                     {
