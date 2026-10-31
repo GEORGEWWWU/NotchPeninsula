@@ -256,6 +256,18 @@ namespace NotchPeninsula
                 string name = ResolvePackageName(root, zipPath);
                 string target = Path.Combine(PluginManager.Instance.PluginsRoot, name);
 
+                // 同一个插件可能还装在另一个目录里（插件改过 Id / 目录名，或用户手工复制过）。
+                // 只按「目标目录同名」找旧版本的话，旧目录永远匹配不上 —— 装完就是新旧两份并存，
+                // 用户看到的是「新版装上了，旧版还留着」。所以按「插件 Id / 主 dll 名」把其它副本一并卸掉。
+                string packageId = ReadPackagePluginId(root);
+                string mainDll = FindSingleDllName(root);
+                foreach (var dup in PluginManager.Instance.FindOtherCopies(target, packageId, mainDll))
+                {
+                    Logger.Info($"[PluginCenter] 安装 {Path.GetFileName(zipPath)}：先移除同一插件的旧副本 "
+                        + $"{dup.Key}（{dup.RootDir}）");
+                    PluginManager.Instance.Remove(dup);
+                }
+
                 // 同名旧版本先卸掉：不卸会一直占着文件，覆盖会失败
                 var old = PluginManager.Instance.Entries.FirstOrDefault(e =>
                     string.Equals(e.RootDir, target, StringComparison.OrdinalIgnoreCase));
@@ -275,7 +287,7 @@ namespace NotchPeninsula
                     string.Equals(e.RootDir, target, StringComparison.OrdinalIgnoreCase));
                 if (fresh == null) return (false, "包内未找到可加载的插件", PluginFailureKind.NotAPlugin);
 
-                return PluginManager.Instance.Load(fresh)
+                return PluginManager.Instance.LoadAfterInstall(fresh)
                     ? (true, "", PluginFailureKind.None)
                     : (false, "已安装但加载失败：" + fresh.Error, fresh.Failure);
             }
@@ -315,23 +327,37 @@ namespace NotchPeninsula
         /// <summary>装进哪个目录名：优先 plugin.json 的 id，其次 dll 文件名，最后退回 zip 名。</summary>
         private static string ResolvePackageName(string root, string zipPath)
         {
-            string manifest = Path.Combine(root, "plugin.json");
-            if (File.Exists(manifest))
-            {
-                try
-                {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(manifest));
-                    if (doc.RootElement.TryGetProperty("id", out var idEl)
-                        && idEl.GetString() is { Length: > 0 } id)
-                        return SanitizeDirName(id);
-                }
-                catch { /* 清单坏了不致命，后面还有两条退路 */ }
-            }
+            string id = ReadPackagePluginId(root);
+            if (id.Length > 0) return SanitizeDirName(id);
 
             var dlls = Directory.GetFiles(root, "*.dll");
             if (dlls.Length > 0) return Path.GetFileNameWithoutExtension(dlls[0]);
 
             return SanitizeDirName(Path.GetFileNameWithoutExtension(zipPath));
+        }
+
+        /// <summary>读包内 plugin.json 声明的插件 Id；没有这个文件 / 读坏了就返回空串。</summary>
+        private static string ReadPackagePluginId(string root)
+        {
+            string manifest = Path.Combine(root, "plugin.json");
+            if (!File.Exists(manifest)) return "";
+
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(manifest));
+                return doc.RootElement.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
+            }
+            catch { return ""; /* 清单坏了不致命：目录名还有 dll / zip 名两条退路 */ }
+        }
+
+        /// <summary>
+        /// 包内只有一个 dll 时返回它的文件名，多个（带依赖）返回空串 —— 多 dll 的包不拿文件名判重，
+        /// 否则可能把恰好同名的依赖当成「同一个插件」。
+        /// </summary>
+        private static string FindSingleDllName(string root)
+        {
+            var dlls = Directory.GetFiles(root, "*.dll");
+            return dlls.Length == 1 ? Path.GetFileName(dlls[0]) : "";
         }
 
         private static string SanitizeDirName(string name)

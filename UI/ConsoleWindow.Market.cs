@@ -1543,7 +1543,7 @@ namespace NotchPeninsula
                 _marketPendingFailure = PluginFailureKind.NotAPlugin;
                 return false;
             }
-            if (PluginManager.Instance.Load(fresh))
+            if (PluginManager.Instance.LoadAfterInstall(fresh))
             {
                 _marketPendingHint = "";   // 成功不提示（同上）
                 _marketPendingHintIsError = false;
