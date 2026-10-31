@@ -73,12 +73,15 @@ namespace NotchPeninsula
         // 亮度平滑：0..1，只在渲染线程读写
         private static float _glassLumSmooth = 0.5f;
 
-        // 明暗翻转阈值（归一化亮度）。中灰（≈130）上白字只有 2.9:1、黑字有 7:1，
-        // 所以翻黑要早；0.44~0.58 的滞回带既能挡住壁纸纹理导致的来回跳，
-        // 又不会让"偏亮的玻璃 + 白字"发虚。
-        private const float GlassLightAt = 0.58f;
+        // 明暗翻转阈值（归一化亮度，gamma 空间 Rec.709）。
+        // ⚠️ 分界整体偏上：中亮彩色底（亮蓝 / 彩色壁纸，采样值约 0.55~0.70）配**白字** ——
+        // 旧分界 0.44/0.58 时，从亮处切到这类底，黑字态的平滑值收敛到带内就永远翻不回白
+        // （0.65 够不到 0.44 的翻白线），观感就是「浅色背景却一直黑字」。
+        // 现在只有非常亮的底（白 / 近白壁纸，>0.78）才用黑字，其余一律白字；
+        // 0.70~0.78 保留一段滞回挡抖动。
+        private const float GlassLightAt = 0.78f;
 
-        private const float GlassDarkAt = 0.44f;
+        private const float GlassDarkAt = 0.70f;
 
         // 每帧朝目标收敛的比例：换壁纸 / 展开成卡片时约 10 帧（≈160ms）走完，不做硬切。
         private const float GlassToneLerp = 0.22f;
