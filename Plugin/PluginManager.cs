@@ -681,31 +681,47 @@ public sealed class PluginManager
     }
 
     /// <summary>
-    /// 找出「同一个插件的其它安装副本」：不同目录，且已知 Id 相同、或主 dll 文件名相同。
+    /// 找出「同一个插件的其它安装副本」：不同目录，且已知 Id 相同、或（Id 不可用时）主 dll 文件名相同。
     ///
     /// <para>
     /// 装新包前用它把历史遗留的旧目录一并摘掉。拖入 zip 的安装原来只按「目标目录同名」找旧版本：
     /// 插件的 <b>Id / 目录名改过</b>之后（比如 mediacdp → zzjjack.mediacdp），旧目录永远匹配不上，
     /// 于是新旧两份并存 —— 用户看到的就是「安装不会替换旧版，旧版还留着」。
     /// </para>
+    ///
+    /// <para>
+    /// 文件名只是 Id 的兜底，不能反过来当判据：两个毫无关系的插件都可能叫 <c>plugin.dll</c>，
+    /// 按文件名认副本会把别人的插件移进回收站。所以只有「Id 对不上」时才用文件名 ——
+    /// 包内没有 plugin.json（Id 未知），或这一份自己没加载成功（e.Id 为空，宿主根本拿不到它的 Id）。
+    /// 两边 Id 都已知且不同 ⇒ 这是另一个插件，跳过。命中文件名兜底时打 WARN，误删可从 _recycle 找回。
+    /// </para>
     /// </summary>
     public IReadOnlyList<PluginEntry> FindOtherCopies(string exceptRootDir, string? pluginId, string? mainDllName)
     {
+        bool idKnown = !string.IsNullOrEmpty(pluginId);
         var list = new List<PluginEntry>();
         foreach (var e in Entries)
         {
             if (!string.IsNullOrEmpty(exceptRootDir)
                 && string.Equals(e.RootDir, exceptRootDir, StringComparison.OrdinalIgnoreCase)) continue;
 
-            if (!string.IsNullOrEmpty(pluginId) && string.Equals(e.Id, pluginId, StringComparison.OrdinalIgnoreCase))
+            if (idKnown && string.Equals(e.Id, pluginId, StringComparison.OrdinalIgnoreCase))
             {
                 list.Add(e);
                 continue;
             }
 
+            // Id 已知且候选也已知 ⇒ 两者不同 = 另一个插件，只是 dll 恰好同名，绝不能当副本卸掉。
+            if (idKnown && !string.IsNullOrEmpty(e.Id)) continue;
+
             if (!string.IsNullOrEmpty(mainDllName)
                 && string.Equals(Path.GetFileName(e.DllPath), mainDllName, StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Warn($"[PluginManager] 按主 dll 文件名认定旧副本：{e.Key}（{e.RootDir}）"
+                    + (idKnown ? "，它的 Id 未知（没加载成功）" : "，包内没有 plugin.json 声明 Id")
+                    + $"；若确认不是同一插件，可从 {Path.Combine(PluginsRoot, "_recycle")} 恢复");
                 list.Add(e);
+            }
         }
         return list;
     }
@@ -920,7 +936,10 @@ public sealed class PluginManager
         e.Author = "";
         Refresh();
         var fresh = Find(e.Key) ?? e;
-        return Load(fresh);
+        // 重载是「重装式」操作：按 Id 收敛一次，和启动 / 安装两条路同一个不变量（同 Id 只留一份）。
+        // 不去重的话，若在启动之后又冒出第二份同 Id 副本，重载只会把它自己重新登记一遍，
+        // 副本仍挂着 —— 组件的重复项就是这么来的。
+        return Load(fresh, dedupSameId: true);
     }
 
     /// <summary>

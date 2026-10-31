@@ -1064,9 +1064,11 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 诊断：玻璃内容到底黑没黑，一行定位 —— src 错位 / 背板黑 / 合成黑 / 核被乘成 0，一眼分清
-                if (float.IsNaN(_diagSx) || MathF.Abs(_diagSx - src.Left) > 1f
-                    || MathF.Abs(_diagSy - src.Top) > 1f || _diagW != gw)
+                // 诊断：玻璃内容到底黑没黑 —— 只在「看上去不对」时打（权重没算过 / 成品几乎全黑）。
+                // 正常画面每帧都打会把 app.log 灌满（几分钟就轮转），真正要查的日志反而被冲掉。
+                bool glassSuspicious = !_weightsValid || (_glassLumOk && _glassLum < 24);
+                if (glassSuspicious && (float.IsNaN(_diagSx) || MathF.Abs(_diagSx - src.Left) > 1f
+                    || MathF.Abs(_diagSy - src.Top) > 1f || _diagW != gw))
                 {
                     _diagSx = src.Left; _diagSy = src.Top; _diagW = gw;
 
@@ -1089,9 +1091,9 @@ namespace NotchPeninsula
                     }
                     if (fn == 0) fn = 1;
 
-                    Logger.Info($"[玻璃] src=({src.Left:F0},{src.Top:F0} {src.Width:F0}x{src.Height:F0})"
-                        + $" glass={gw}x{gh} 中心平均=({sr},{sg},{sb}) 亮度={_glassLum}"
-                        + $" 模糊平均=({fr / fn},{fg / fn},{fb / fn}) 核半径={_radius} 权重={(_weightsValid ? "有效" : "空")}");
+                    Logger.Debug($"[玻璃] 疑似偏黑 src=({src.Left:F0},{src.Top:F0} {src.Width:F0}x{src.Height:F0})"
+                        + $" 中心=({sr},{sg},{sb}) 亮度={_glassLum} 模糊=({fr / fn},{fg / fn},{fb / fn})"
+                        + $" 核={_radius} 权重={(_weightsValid ? "有效" : "空")}");
                 }
                 _keySx = src.Left;
                 _keySy = src.Top;
