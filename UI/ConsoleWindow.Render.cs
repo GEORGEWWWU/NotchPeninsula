@@ -500,37 +500,48 @@ namespace NotchPeninsula
             DrawExportBundleButton(canvas);
         }
 
-        // 侧边栏左下角：导出诊断包（常驻，不绑页签）。
-        // 用户报 bug 时唯一要按的地方 —— 一个 zip 到手，版本 / 系统 / 显示器 / 配置快照 /
-        // 插件清单 / 最近日志全在里头，省掉一轮轮追问。
+        // 侧边栏左下角：清理解包缓存 / 导出诊断包（都常驻，不绑页签）。
+        // 导出诊断包是用户报 bug 时唯一要按的地方 —— 一个 zip 到手，版本 / 系统 / 显示器 /
+        // 配置快照 / 插件清单 / 最近日志全在里头，省掉一轮轮追问。
         private void DrawExportBundleButton(SKCanvas canvas)
         {
-            var rect = new SKRect(EXPORT_BTN_X, EXPORT_BTN_Y,
-                                  EXPORT_BTN_X + EXPORT_BTN_W, EXPORT_BTN_Y + EXPORT_BTN_H);
+            DrawSideToolButton(canvas, CACHE_BTN_X, CACHE_BTN_Y, CACHE_BTN_W, CACHE_BTN_H,
+                _cacheCleaning ? "清理中…" : "清理解包缓存", _cacheCleanHovered, 12f);
+            DrawSideToolButton(canvas, EXPORT_BTN_X, EXPORT_BTN_Y, EXPORT_BTN_W, EXPORT_BTN_H,
+                _aboutExporting ? "正在打包…" : "导出诊断包", _aboutExportHovered, 12.5f);
 
-            _dynamicFillPaint.Color = _aboutExportHovered ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(rect, 5f, 5f, _dynamicFillPaint);
-
-            _dynamicTextPaint.TextAlign = SKTextAlign.Center;
-            _dynamicTextPaint.TextSize = 12.5f;
-            _dynamicTextPaint.Color = _aboutExportHovered ? new SKColor(0, 140, 240) : Neutral(200);
-            canvas.DrawText(_aboutExporting ? "正在打包…" : "导出诊断包",
-                EXPORT_BTN_X + EXPORT_BTN_W / 2f, EXPORT_BTN_Y + 18.5f, _dynamicTextPaint);
-
-            // 成功不说、失败说：导出成功靠资源管理器选中文件来表达。失败就在按钮上方挂一行。
+            // 结果行画在按钮组上方：两个按钮共用一行提示（一次只会有一个人说话）。
             // 提示行比按钮宽（可占满侧栏），左对齐 —— 居中放不下时两边会顶到侧栏外。
-            if (_aboutExportHint.Length > 0)
+            string hint = _cacheCleanHint.Length > 0 ? _cacheCleanHint : _aboutExportHint;
+            if (hint.Length > 0)
             {
                 _dynamicTextPaint.TextSize = 11f;
                 _dynamicTextPaint.TextAlign = SKTextAlign.Left;
-                _dynamicTextPaint.Color = new SKColor(200, 80, 80);
-                canvas.DrawText(TruncateText(_aboutExportHint, _dynamicTextPaint, TAB_BOX_R - EXPORT_BTN_X),
-                    EXPORT_BTN_X, EXPORT_BTN_Y - 8f, _dynamicTextPaint);
+                _dynamicTextPaint.Color = _cacheCleanHint.Length > 0
+                    ? (_cacheCleanFailed ? new SKColor(200, 80, 80) : new SKColor(110, 180, 130))
+                    : new SKColor(200, 80, 80);
+                canvas.DrawText(TruncateText(hint, _dynamicTextPaint, TAB_BOX_R - EXPORT_BTN_X),
+                    EXPORT_BTN_X, CACHE_BTN_Y - 8f, _dynamicTextPaint);
             }
 
             // 共享画笔复位：后面的页签内容默认按左对齐排版
             _dynamicTextPaint.TextAlign = SKTextAlign.Left;
             _dynamicTextPaint.TextSize = 13f;
+        }
+
+        private void DrawSideToolButton(SKCanvas canvas, float x, float y, float w, float h,
+                                        string label, bool hovered, float textSize)
+        {
+            var rect = new SKRect(x, y, x + w, y + h);
+
+            _dynamicFillPaint.Color = hovered ? Overlay(30) : Overlay(15);
+            canvas.DrawRoundRect(rect, 5f, 5f, _dynamicFillPaint);
+
+            _dynamicTextPaint.TextAlign = SKTextAlign.Center;
+            _dynamicTextPaint.TextSize = textSize;
+            _dynamicTextPaint.Color = hovered ? new SKColor(0, 140, 240) : Neutral(200);
+            canvas.DrawText(label, x + w / 2f, y + 18.5f, _dynamicTextPaint);
+            _dynamicTextPaint.TextAlign = SKTextAlign.Left;
         }
 
         // 页签：通用设置
@@ -1393,7 +1404,12 @@ namespace NotchPeninsula
             // 玻璃卡的字号比其他页大一号：12px 下"标准"这类两字值挤在一格里很难读
             _subTextPaint.TextSize = 13f;
 
+            // 极致档把「刷新」「帧率」锁在最高：标签画灰、数值画成强调色，
+            // 免得用户以为拖了没反应是坏了
+            bool locked = LiquidGlass.IsLevelLocked(paramIndex);
+            _subTextPaint.Color = locked ? Neutral(110) : _fgColor;
             canvas.DrawText(LiquidGlass.ParamLabels[paramIndex], colX, textY, _subTextPaint);
+            _subTextPaint.Color = locked ? new SKColor(0, 120, 212) : _fgColor;
 
             int level = Math.Clamp(LiquidGlass.GetLevel(paramIndex), 0, LiquidGlass.MaxLevel);
             bool hovered = _hoveredGlassParamIndex == paramIndex;
@@ -1433,6 +1449,7 @@ namespace NotchPeninsula
             }
 
             _subTextPaint.TextSize = 12f;   // 恢复基准字号：同一支画笔后面还要用
+            _subTextPaint.Color = _fgColor;
         }
 
         private void RenderTabPlugins(SKCanvas canvas)

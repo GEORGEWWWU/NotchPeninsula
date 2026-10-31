@@ -736,9 +736,11 @@ namespace NotchPeninsula
                 }
             }
 
-            // 侧边栏左下角的「导出诊断包」常驻，不跟页签走 —— 用户在任何一页都能按。
+            // 侧边栏左下角的「导出诊断包」「清理解包缓存」常驻，不跟页签走 —— 用户在任何一页都能按。
             bool newAboutExportHovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
                                       && y >= EXPORT_BTN_Y && y <= EXPORT_BTN_Y + EXPORT_BTN_H;
+            bool newCacheCleanHovered = x >= CACHE_BTN_X && x <= CACHE_BTN_X + CACHE_BTN_W
+                                     && y >= CACHE_BTN_Y && y <= CACHE_BTN_Y + CACHE_BTN_H;
 
             bool newIsHoveringDisabledArea = false;
             // 否则就会出现「明明能点、却显示禁止指针」。
@@ -823,6 +825,7 @@ namespace NotchPeninsula
                 newHoveredMarketSortBox != _hoveredMarketSortBox ||
                 newFontPickHovered != _fontPickHovered || newFontResetHovered != _fontResetHovered ||
                 newAboutExportHovered != _aboutExportHovered
+                || newCacheCleanHovered != _cacheCleanHovered
                 )
             {
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
@@ -840,6 +843,7 @@ namespace NotchPeninsula
                 _hoveredAppIndex = newHoveredAppIndex;
                 _hoveredLinkIndex = newHoveredLinkIndex;
                 _aboutExportHovered = newAboutExportHovered;
+                _cacheCleanHovered = newCacheCleanHovered;
                 _hoveredDisplayRow = newHoveredDisplayRow;
                 _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;

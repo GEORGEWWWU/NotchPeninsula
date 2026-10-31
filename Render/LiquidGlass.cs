@@ -80,7 +80,7 @@ namespace NotchPeninsula
         private static readonly int[] FrameFpsTable = { 30, 60, 90, 120, 144 };
 
         /// <summary>后台抓屏线程的刷新节拍（ms）。</summary>
-        public static int RefreshMs => CaptureMsTable[_levels[P_CaptureHz]];
+        public static int RefreshMs => CaptureMsTable[EffectiveLevel(P_CaptureHz)];
 
         private static volatile int _glassLum;
 
@@ -91,7 +91,19 @@ namespace NotchPeninsula
         public static int GlassLuminance => _glassLum;
 
         /// <summary>渲染线程的帧间隔（ms）。渲染循环每帧读一次，所以改完立刻生效。</summary>
-        public static int FrameIntervalMs => 1000 / FrameFpsTable[_levels[P_FrameRate]];
+        public static int FrameIntervalMs => 1000 / FrameFpsTable[EffectiveLevel(P_FrameRate)];
+
+        // 「极致」档把「刷新」「帧率」两根滑轨锁到最高档：这个档的定位就是"能喂多快就喂多快"，
+        // 玻璃再被低刷新拖成半拍前的画面，超采样和 1:1 抓屏就白做了。
+        // ⚠️ 只锁「读取」，不改 _levels —— 切回别的档位时用户原来的设定原样回来。
+        private static bool IsLockedByQuality(int index)
+            => _quality == 3 && (index == P_CaptureHz || index == P_FrameRate);
+
+        /// <summary>该滑轨是否被当前质量档锁在固定值（设置页据此把标签画灰、数值画成强调色）。</summary>
+        public static bool IsLevelLocked(int index)
+            => index >= 0 && index < ParamCount && IsLockedByQuality(index);
+
+        private static int EffectiveLevel(int index) => IsLockedByQuality(index) ? MaxLevel : _levels[index];
 
         /// <summary>某根滑轨 5 个档位各自的显示文本（数值型参数显示具体值，其余显示强弱）。</summary>
         public static string[] ValueTexts(int index)
@@ -119,7 +131,9 @@ namespace NotchPeninsula
         public static int DefaultLevelOf(int index)
             => index >= 0 && index < ParamCount ? DefaultLevels[index] : 0;
 
-        public static int GetLevel(int index) => index >= 0 && index < ParamCount ? _levels[index] : 0;
+        // 设置页读的是「实际生效值」：被质量档锁住的两根滑轨直接显示最高档，
+        // 用户拖它也会立刻弹回最高 —— 比"能拖但没反应"清楚。
+        public static int GetLevel(int index) => index >= 0 && index < ParamCount ? EffectiveLevel(index) : 0;
 
         public static void SetLevel(int index, int value)
         {
