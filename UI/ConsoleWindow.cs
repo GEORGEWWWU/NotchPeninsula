@@ -644,6 +644,20 @@ namespace NotchPeninsula
         private bool _aboutExporting = false;
         private string _aboutExportHint = "";
 
+        // 「清理解包缓存」：与导出诊断包同宽，叠在它上面 —— 侧栏页签之下就这么点空地。
+        // 单文件发布每次换 exe 都会在 %TEMP%\.net\<名>\ 下多解包一份，旧的从不回收，
+        // 没有这个入口用户根本不知道那 1.4GB 是谁占的。
+        private const float CACHE_BTN_X = EXPORT_BTN_X;
+        private const float CACHE_BTN_W = EXPORT_BTN_W;
+        private const float CACHE_BTN_H = EXPORT_BTN_H;
+        private const float CACHE_BTN_Y = EXPORT_BTN_Y - EXPORT_BTN_H - 6f;
+
+        // 后台清理线程只写这三个，UI 线程读来画（同 WM_ASYNC_RERENDER 那套铁律）
+        private volatile bool _cacheCleanHovered = false;
+        private volatile bool _cacheCleaning = false;
+        private volatile bool _cacheCleanFailed = false;
+        private volatile string _cacheCleanHint = "";
+
         // 显示设置
         // 「显示内容」列表的悬停行：-1 = 没悬停任何行。
         private int _hoveredDisplayRow = -1;

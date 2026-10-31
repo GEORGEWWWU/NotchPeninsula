@@ -289,12 +289,32 @@ namespace NotchPeninsula
                     if (IslandLiquidGlass)
                     {
                         // 液态玻璃：折射 + 色散后的桌面。读不到像素时（极端后端）退回普通模糊背板
-                        var glass = LiquidGlass.Compose(backdrop, IslandBackdrop.Version, AcrylicBackdropSrc,
-                            currentWidth, currentHeight,
-                            MathF.Abs(rTopY) < 1f ? 1f : MathF.Abs(rTopY),
-                            rBottom < 1f ? 1f : rBottom);
+                        //
+                        // 刘海模式顶角是「向外张开」的凹角（rTopX < 0），跟灵动岛的凸圆角是两种形状：
+                        //   · 玻璃位图必须跟着外扩 flare，否则那两块角料里压根没有玻璃，
+                        //     只剩被 _bgPath 裁掉的一块透明 —— 看起来就还是灵动岛那个圆角；
+                        //   · 源矩形也要同步外扩，外扩带里采到的才是「角料背后那块桌面」。
+                        float flareX = rTopX < 0f ? -rTopX : 0f;
+                        SKRect gsrc = AcrylicBackdropSrc;
+                        SKRect gdst = new SKRect(islandLeft, 0f, islandRight, currentHeight);
+                        float gW = currentWidth;
+                        if (flareX > 0.25f)
+                        {
+                            float perLogical = gsrc.Width / MathF.Max(1f, currentWidth);   // 背板 px / 逻辑 px
+                            gsrc.Left -= flareX * perLogical;
+                            gsrc.Right += flareX * perLogical;
+                            gW += flareX * 2f;
+                            gdst = new SKRect(islandLeft - flareX, 0f, islandRight + flareX, currentHeight);
+                        }
+                        // 刘海顶边贴着屏幕：顶边不该淡出、也不该有一条横向高光（详见 Compose 的 flushTop）
+                        bool flushTop = flareX > 0.25f && styleProgress < 0.02f;
+                        var glass = LiquidGlass.Compose(backdrop, IslandBackdrop.Version, gsrc,
+                            gW, currentHeight,
+                            flareX > 0f ? 0f : (MathF.Abs(rTopY) < 1f ? 1f : MathF.Abs(rTopY)),
+                            rBottom < 1f ? 1f : rBottom,
+                            flareX, rTopY, flushTop);
                         if (glass != null)
-                            canvas.DrawBitmap(glass, new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
+                            canvas.DrawBitmap(glass, gdst, _acrylicPaint);
                         else
                             canvas.DrawImage(backdrop, AcrylicBackdropSrc,
                                 new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);

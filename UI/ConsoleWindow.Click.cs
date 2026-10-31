@@ -66,12 +66,64 @@ namespace NotchPeninsula
         // 同一个坑的另一处：「导出诊断包」也读 hover，所以点击前同样要用落点重算一次。
         private void SyncExportHoverFromPoint(int x, int y)
         {
-            bool hovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
-                        && y >= EXPORT_BTN_Y && y <= EXPORT_BTN_Y + EXPORT_BTN_H;
-            if (hovered == _aboutExportHovered) return;
+            bool exportHovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
+                              && y >= EXPORT_BTN_Y && y <= EXPORT_BTN_Y + EXPORT_BTN_H;
+            bool cacheHovered = x >= CACHE_BTN_X && x <= CACHE_BTN_X + CACHE_BTN_W
+                             && y >= CACHE_BTN_Y && y <= CACHE_BTN_Y + CACHE_BTN_H;
+            if (exportHovered == _aboutExportHovered && cacheHovered == _cacheCleanHovered) return;
 
-            _aboutExportHovered = hovered;
+            _aboutExportHovered = exportHovered;
+            _cacheCleanHovered = cacheHovered;
             Render();
+        }
+
+        // 清理解包缓存：单文件发布每换一次 exe 就在 %TEMP%\.net\<名>\ 下多解包一份，
+        // 旧的从不回收（实测 80 个目录 / 1.5GB）。删这个量级要一两秒，放后台线程；
+        // 线程里只改字段 + PostMessage 回 UI 线程重绘（同 RefreshMonitorOptions 那套铁律）。
+        private void CleanRuntimeCache()
+        {
+            if (_cacheCleaning) return;
+
+            if (RuntimeCache.Root() == null)
+            {
+                _cacheCleanFailed = true;
+                _cacheCleanHint = "当前不是单文件运行，没有解包缓存";
+                Render();
+                return;
+            }
+
+            _cacheCleaning = true;
+            _cacheCleanFailed = false;
+            _cacheCleanHint = "";
+            _aboutExportHint = "";      // 同一行提示，先撤掉另一条
+            Render();
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                bool ok = true;
+                string hint;
+                try
+                {
+                    var (dirs, bytes) = RuntimeCache.Clean();
+                    hint = dirs == 0
+                        ? "没有旧解包可清理"
+                        : $"已清理 {dirs} 个 · {RuntimeCache.FormatSize(bytes)}";
+                }
+                catch (Exception ex)
+                {
+                    ok = false;
+                    hint = "清理失败：" + ex.Message;
+                    Logger.Error("[缓存] 清理解包缓存失败", ex);
+                }
+
+                _cacheCleanFailed = !ok;
+                _cacheCleanHint = hint;
+                _cacheCleaning = false;
+
+                var inst = _instance;
+                if (inst != null && inst._hwnd != IntPtr.Zero)
+                    Win32.PostMessage(inst._hwnd, WM_ASYNC_RERENDER, IntPtr.Zero, IntPtr.Zero);
+            });
         }
 
         // 导出诊断包：同步执行（读注册表 + 打 zip，几十毫秒），完成后用资源管理器选中文件 ——
@@ -149,6 +201,7 @@ namespace NotchPeninsula
             // 切页签顺手清掉就等于「装失败了你刚好换了一页，所以没提醒你」。
 
             _aboutExportHint = "";
+            _cacheCleanHint = "";
             _hotkeyHint = "";
             _islandHotkeyHint = "";
             _fontHint = "";
@@ -500,6 +553,10 @@ namespace NotchPeninsula
                 Renderer.ApplyThemeColors(); // 立刻应用透明度
                 Program.SaveSetting("BgOpacityLevel", _hoveredOpacityIndex); // 持久化保存
                 Render(); // 刷新UI
+            }
+            else if (_cacheCleanHovered)
+            {
+                CleanRuntimeCache();
             }
             else if (_aboutExportHovered)
             {
