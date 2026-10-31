@@ -616,6 +616,10 @@ namespace NotchPeninsula
 
         private int _hotkeyRecordingIndex = -1;
 
+        // 录制中「当前已按住的修饰键」（由 KeyboardCapture 投递，只影响框里的实时文案）。
+        // 两个录制入口（媒体键位 / 唤出灵动岛）共用一份 —— 同时只可能有一个在录。
+        private uint _captureLiveMods;
+
         private string _hotkeyHint = "";
 
         // ---- 交互设置页「唤出灵动岛」卡片（单键位） ----
@@ -1543,6 +1547,28 @@ namespace NotchPeninsula
                 case KeyboardCapture.WM_CAPTURED_KEY:
                     if (HandleCapturedKey((int)Win32.Low32(wParam), (uint)Win32.Low32(lParam)))
                         return IntPtr.Zero;
+                    break;
+
+                // 只按了修饰键：把「Ctrl + …」实时画到录制框里（不改键位，也不结束录制）。
+                case KeyboardCapture.WM_CAPTURE_STATE:
+                    if (_hotkeyRecordingIndex >= 0 || _islandHotkeyRecording)
+                    {
+                        _captureLiveMods = (uint)Win32.Low32(lParam);
+                        Render();
+                        return IntPtr.Zero;
+                    }
+                    break;
+
+                // 钩子自身到期被释放：录制态必须一起收掉，不然界面停在那儿按什么都没反应。
+                case KeyboardCapture.WM_CAPTURE_ABORT:
+                    if (_hotkeyRecordingIndex >= 0 || _islandHotkeyRecording)
+                    {
+                        if (_hotkeyRecordingIndex >= 0) CancelHotkeyRecording();
+                        if (_islandHotkeyRecording) CancelIslandHotkeyRecording();
+                        _hotkeyHint = "录制超时，请重新点按键框";
+                        Render();
+                        return IntPtr.Zero;
+                    }
                     break;
 
                 case Win32.WM_SYSKEYDOWN:

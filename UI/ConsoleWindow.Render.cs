@@ -1096,7 +1096,7 @@ namespace NotchPeninsula
                     _dynamicStrokePaint.StrokeWidth = oldStroke;
                 }
 
-                string text = rowRecording ? "按下按键…" : MediaHotkeys.FormatKey(i);
+                string text = rowRecording ? RecordingBoxText() : MediaHotkeys.FormatKey(i);
                 _dynamicTextPaint.Color = rowRecording ? new SKColor(0, 150, 255)
                     : (MediaHotkeys.IsBound(i) ? _fgColor : Neutral(120));
                 DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
@@ -1233,12 +1233,21 @@ namespace NotchPeninsula
                 _dynamicStrokePaint.StrokeWidth = oldStroke;
             }
 
-            string text = _islandHotkeyRecording ? "按下按键…" : IslandHotkey.FormatKey();
+            string text = _islandHotkeyRecording ? RecordingBoxText() : IslandHotkey.FormatKey();
             _dynamicTextPaint.Color = _islandHotkeyRecording ? new SKColor(0, 150, 255)
                 : (IslandHotkey.IsBound ? _fgColor : Neutral(120));
             DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
                 HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);
             _dynamicTextPaint.Color = _fgColor;
+        }
+
+        // 录制框里的实时文案：已按住的修饰键先显示出来（"Ctrl + Shift + …"）。
+        // 只按修饰键时界面必须立刻有反应 —— 否则用户会判断成「它根本不识别 Ctrl / Shift / Alt / Win」。
+        // 两个录制入口（媒体键位 / 唤出灵动岛）共用同一份状态，同时只可能有一个在录。
+        private string RecordingBoxText()
+        {
+            string mods = HotkeyText.FormatMods(_captureLiveMods);
+            return mods.Length > 0 ? mods + "…" : "按下按键…";
         }
 
         // 页签：关于软件
@@ -1318,9 +1327,14 @@ namespace NotchPeninsula
                         float hintA = GetHintAlpha(index);
                         if (hintA > 0.01f)
                         {
+                            // ⚠️ 必须存/还原调用前的颜色，不能写死 Neutral(170)：
+                            //    这一行画完还有第 3、4 行（消息通知弹出高度 / 视觉比例）要画，
+                            //    写死灰色会让它们整行跟着变暗 —— 而且只在悬停时触发（hintA>0 才会进来），
+                            //    观感就是「鼠标一放上去，下面两行突然变灰」。
+                            var hintPrev = _subTextPaint.Color;
                             _subTextPaint.Color = new SKColor(0, 140, 240, (byte)(255 * hintA));
                             canvas.DrawText("刘海模式下生效", afterLabelX, cardBtnY + 17, _subTextPaint);
-                            _subTextPaint.Color = Neutral(170);
+                            _subTextPaint.Color = hintPrev;
                         }
                     }
 
