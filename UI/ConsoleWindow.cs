@@ -282,6 +282,24 @@ namespace NotchPeninsula
 
         private const float DROPDOWN_TEXT_BASELINE = 21f;
 
+        // ---- 下拉框内文排版：绘制与「框要多宽才不截断」共用同一组量 ----
+        // 左内边距（文字起点离框左沿）
+        private const float DROPDOWN_TEXT_PAD_L = 12f;
+
+        // 右侧箭头预留宽度（箭头本身 + 箭头与文字之间的空隙）
+        private const float DROPDOWN_CHEVRON_AREA = 26f;
+
+        // 文本右缘到「会被截断」之间至少留出的余量（量出来的只是步进宽，留点余量给抗锯齿）
+        private const float DROPDOWN_TEXT_ROOM = 4f;
+
+        // 量标签宽度专用画笔：字体字号与正文同源，但不借 _uiTextPaint ——
+        // 那支画笔的 TextSize 会被分段控件临时改小，拿它量出来的就不是正文的宽度了。
+        private static readonly SKPaint _dropdownMeasurePaint = new SKPaint
+        {
+            TextSize = UI_TEXT_SIZE,
+            Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT)
+        };
+
         private const float TOAST_ROW2_TITLE_Y = TOAST_ROW2_Y + ROW_TEXT_BASELINE + SEP_ROW_CONTENT_DY;
 
         private const float TOAST_ROW2_DESC_Y = TOAST_ROW2_TITLE_Y + ROW_SUB_OFFSET;
@@ -314,8 +332,6 @@ namespace NotchPeninsula
 
         private const float TOAST_CARD_BOTTOM = SOUND_BOX_Y + SOUND_ROW_H + 10f;
 
-        private const float SOUND_ROW_GAP = 12f;
-
         private const float SOUND_BTN_H = 26f;
 
         private const float SOUND_BTN_Y = SOUND_BOX_Y + (SOUND_ROW_H - SOUND_BTN_H) / 2f;
@@ -328,19 +344,35 @@ namespace NotchPeninsula
 
         private const float SOUND_PREVIEW_X = SOUND_RESET_X - SOUND_BTN_GAP - SOUND_BTN_W;
 
-        // 音量框 58 装不下「100%」（截成 10...）：加宽到 72，中心不动 ——
-        // 右缘链固定，左缘按加宽量的一半回退，两侧到相邻控件各剩 5px。
-        private const float SOUND_VOL_W = 72f;
-
-        private const float SOUND_VOL_X = SOUND_PREVIEW_X - SOUND_ROW_GAP - 58f - (SOUND_VOL_W - 58f) / 2f;
-
         private const float SOUND_LABEL_X = CONTENT_TEXT_X;
 
         private const float SOUND_LABEL_GAP = 8f;
 
         private const float SOUND_CTRL_X = SOUND_LABEL_X + 40f + SOUND_LABEL_GAP;
 
-        private const float SOUND_CTRL_W = SOUND_VOL_X - SOUND_ROW_GAP - SOUND_CTRL_X;
+        // 来源框宽度固定为上一版的结果（250 → 385）：音量框再宽也不去抢它的宽度，
+        // 多出来的宽度由音量框向自己左右两侧的间隙里「撑开」。
+        private const float SOUND_CTRL_W = 135f;
+
+        // 音量框宽度：按「最宽档位标签」实测算出来，不再手调数字。
+        // 58 时「100%」被截成「10…」；上一版「中心不动」补到 72 仍然差一点 ——
+        // 13.5px 微软雅黑下「100%」本身就有 35.8px，加 12 左边距 + 26 箭头预留已经要 73.8。
+        // 现在 字号 / 字体（UI_TEXT_FONT、UI_TEXT_SIZE）或档位表（VolumeOptions）一变，
+        // 这个框就跟着重新量，不用再回来补数字。
+        private static readonly float SOUND_VOL_W = MeasureVolumeBoxWidth();
+
+        // 音量框夹在「来源框右缘」与「试听左缘」之间：左右剩余空间均分 ——
+        // 框向两侧长出来的量一样多，两侧间隙始终相等（当前 5.5px）。
+        private static readonly float SOUND_VOL_X =
+            (SOUND_CTRL_X + SOUND_CTRL_W + SOUND_PREVIEW_X) / 2f - SOUND_VOL_W / 2f;
+
+        private static float MeasureVolumeBoxWidth()
+        {
+            float widest = 0f;
+            foreach (int percent in ToastSoundConfig.VolumeOptions)
+                widest = MathF.Max(widest, _dropdownMeasurePaint.MeasureText($"{percent}%"));
+            return MathF.Ceiling(DROPDOWN_TEXT_PAD_L + widest + DROPDOWN_CHEVRON_AREA + DROPDOWN_TEXT_ROOM);
+        }
 
         // MSP 接入（实验性）：通知卡之后，与本页同一节奏（卡高 62 + 间隙 10）。
         // 本页内容底边 = FONT_CARD_Y + 62，必须 ≤ HEIGHT - TITLE_BAR_HEIGHT（现 548 ≤ 628）。

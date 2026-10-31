@@ -739,16 +739,15 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(rect, 7, 7, _dynamicStrokePaint);
             }
 
-            const float chevronArea = 26f;
             float tagW = builtinTag ? _subTextPaint.MeasureText("内置") + 14f : 0f;
-            float textLimit = w - 12f - chevronArea - (tagW > 0f ? tagW + 8f : 0f);
+            float textLimit = w - DROPDOWN_TEXT_PAD_L - DROPDOWN_CHEVRON_AREA - (tagW > 0f ? tagW + 8f : 0f);
             _uiTextPaint.Color = enabled ? _fgColor : Neutral(110);
             canvas.DrawText(TruncateText(text, _uiTextPaint, textLimit),
-                rect.Left + 12f, rect.Top + h / 2f + 5f, _uiTextPaint);
+                rect.Left + DROPDOWN_TEXT_PAD_L, rect.Top + h / 2f + 5f, _uiTextPaint);
             _uiTextPaint.Color = _fgColor;
 
             if (builtinTag)
-                DrawBuiltinTag(canvas, rect.Right - chevronArea - tagW - 2f, rect.Top + (h - 16f) / 2f);
+                DrawBuiltinTag(canvas, rect.Right - DROPDOWN_CHEVRON_AREA - tagW - 2f, rect.Top + (h - 16f) / 2f);
 
             float cx = rect.Right - 19f;
             float cy = rect.MidY;
