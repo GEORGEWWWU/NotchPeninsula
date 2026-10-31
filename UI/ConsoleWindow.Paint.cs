@@ -49,18 +49,18 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _uiTextPaint = new SKPaint { Color = SKColors.White, TextSize = UI_TEXT_SIZE, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
-        private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         // 「实验性」小标签用（见 DrawInlineBadge）：颜色每次画时现设，深色 / 浅色外观下都读得清
-        private static readonly SKPaint _badgeTextPaint = new SKPaint { TextSize = 10.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        private static readonly SKPaint _badgeTextPaint = new SKPaint { TextSize = 10.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         private static readonly SKPaint _badgeBgPaint = new SKPaint { IsAntialias = true };
 
         private static readonly SKPaint _badgeShadowPaint = new SKPaint { IsAntialias = true };
 
-        private static readonly SKPaint _marketTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        private static readonly SKPaint _marketTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
-        private static readonly SKPaint _titleTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 12.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        private static readonly SKPaint _titleTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 12.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         private static readonly SKPaint _hqSamplingOpts = new SKPaint { FilterQuality = SKFilterQuality.High, IsAntialias = true };
 
@@ -103,7 +103,7 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _dynamicStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
 
-        private static readonly SKPaint _dynamicTextPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        private static readonly SKPaint _dynamicTextPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         private static readonly SKPath WindowClipPath = CreateWindowClipPath();
 
