@@ -1394,6 +1394,8 @@ namespace NotchPeninsula
                 bool yrcTimingFirst = false;
                 // 仅音乐模式会用；都没拿到就保持兜底封面（程序图标）。
                 string coverUrl = "";
+                // 最后到底是哪一档给的词：命中时打一条日志，用户报「匹配错版本」时能直接看出源头。
+                string lyricSource = "";
 
                 bool luoYueOnly = IsLyricScanEnabled;
 
@@ -1412,6 +1414,7 @@ namespace NotchPeninsula
                         lrcText = neteaseFirst.Lrc;
                         yrcText = neteaseFirst.Yrc ?? "";
                         yrcTimingFirst = true; // 落月网易云的 yrc 是「时间在前」
+                        lyricSource = "落月网易云（网易优先）";
                     }
                     if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseFirst.Trans))
                         transText = neteaseFirst.Trans;
@@ -1422,7 +1425,10 @@ namespace NotchPeninsula
                         var neteaseOfficialFirst = await FetchFromNeteaseOfficialAsync(title, artist, durationSec, allowCover: true);
                         // 已经有可用歌词时不覆盖 —— 这一趟可能只是为了补封面
                         if (!HasTimedLyric(lrcText) && !string.IsNullOrEmpty(neteaseOfficialFirst.Lrc))
+                        {
                             lrcText = neteaseOfficialFirst.Lrc;
+                            lyricSource = "网易云官方（网易优先）";
+                        }
                         if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseOfficialFirst.Trans))
                             transText = neteaseOfficialFirst.Trans;
                         if (coverUrl.Length == 0 && !string.IsNullOrEmpty(neteaseOfficialFirst.Cover))
@@ -1443,6 +1449,7 @@ namespace NotchPeninsula
                         lrcText = neWord.Lrc;
                         yrcText = neWord.Yrc ?? "";
                         yrcTimingFirst = true;              // 落月网易云的 yrc 是「时间在前」
+                        lyricSource = "落月网易云";
                     }
                     if (!string.IsNullOrEmpty(neWord.Trans)) transText = neWord.Trans;
                     if (!string.IsNullOrEmpty(neWord.Cover)) coverUrl = neWord.Cover;
@@ -1463,6 +1470,7 @@ namespace NotchPeninsula
                             lrcText = luoYue.Lrc;
                             yrcText = luoYue.Yrc ?? "";
                             yrcTimingFirst = false;             // 落月 QQ 的 yrc 是「文字在前」
+                            lyricSource = "落月QQ";
                             if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(luoYue.Trans))
                                 transText = luoYue.Trans;
                         }
@@ -1483,6 +1491,7 @@ namespace NotchPeninsula
                             lrcText = luoYue.Lrc;
                             yrcText = luoYue.Yrc ?? "";
                             yrcTimingFirst = false; // 落月 QQ 的 yrc 是「文字在前」
+                            lyricSource = "落月QQ";
                         }
                         if (!string.IsNullOrEmpty(luoYue.Trans)) transText = luoYue.Trans;
                     }
@@ -1505,7 +1514,10 @@ namespace NotchPeninsula
                         using var qqDoc = await JsonDocument.ParseAsync(qqStream);
 
                         if (qqDoc.RootElement.TryGetProperty("lyric", out var qqLrcEl))
+                        {
                             lrcText = UnescapeQqText(qqLrcEl.GetString());
+                            if (!string.IsNullOrEmpty(lrcText)) lyricSource = "QQ官方";
+                        }
 
                         if (string.IsNullOrEmpty(transText)
                             && qqDoc.RootElement.TryGetProperty("trans", out var qqTransEl))
@@ -1524,13 +1536,17 @@ namespace NotchPeninsula
                 {
                     var netease = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent);
                     // 那时扫光回退整行，歌词本身照常显示。
+                    // 但整份替换必须先确认「同一首歌」：网易云曲库对国内版权的歌常常只能搜到翻唱，
+                    // 同 Id 校验（LyricsAreSameSong）挡得住「另一首歌」，版本问题由版本过滤负责。
                     if (!string.IsNullOrEmpty(netease.Lrc)
-                        && ((luoYueOnly && !string.IsNullOrEmpty(netease.Yrc) && yrcText.Length == 0)
+                        && ((luoYueOnly && !string.IsNullOrEmpty(netease.Yrc) && yrcText.Length == 0
+                             && (!HasTimedLyric(lrcText) || LyricsAreSameSong(netease.Lrc, lrcText)))
                             || !HasTimedLyric(lrcText)))
                     {
                         lrcText = netease.Lrc;
                         yrcText = netease.Yrc ?? "";
                         yrcTimingFirst = true; // 落月网易云的 yrc 是「时间在前」
+                        lyricSource = "落月网易云（补逐字）";
                     }
                     if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(netease.Trans))
                         transText = netease.Trans;
@@ -1542,7 +1558,11 @@ namespace NotchPeninsula
                 if (!preferNetease && !HasTimedLyric(lrcText))
                 {
                     var neteaseOfficial = await FetchFromNeteaseOfficialAsync(title, artist, durationSec, allowCover: true);
-                    if (!string.IsNullOrEmpty(neteaseOfficial.Lrc)) lrcText = neteaseOfficial.Lrc;
+                    if (!string.IsNullOrEmpty(neteaseOfficial.Lrc))
+                    {
+                        lrcText = neteaseOfficial.Lrc;
+                        lyricSource = "网易云官方";
+                    }
                     if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(neteaseOfficial.Trans))
                         transText = neteaseOfficial.Trans;
                     if (coverUrl.Length == 0 && !string.IsNullOrEmpty(neteaseOfficial.Cover))
@@ -1566,9 +1586,45 @@ namespace NotchPeninsula
                         if (lrclibDoc.RootElement.TryGetProperty("syncedLyrics", out var syn))
                         {
                             lrcText = syn.GetString() ?? "";
+                            if (!string.IsNullOrEmpty(lrcText)) lyricSource = "LRCLIB";
                         }
                     }
                     catch (Exception ex) { Logger.Warn($"LRCLIB引擎失败: {ex.Message}"); }
+                }
+
+                // ---- 兜底：原版一个字都没取到，才允许退到「同名但带 Live / 翻唱…」的候选 ----
+                // 版本过滤是默认行为（用户放的是原曲就不该显示 Live 版），但整条链都空着时，
+                // 有词总比屏幕空着强。这条只在前五档全军覆没时才会跑，正常情况下不会命中。
+                if (!HasTimedLyric(lrcText))
+                {
+                    var variant = await FetchFromLuoYueAsync(title, artist, durationSec, HttpUserAgent,
+                        allowVersionVariants: true);
+                    if (!string.IsNullOrEmpty(variant.Lrc) && HasTimedLyric(variant.Lrc))
+                    {
+                        lrcText = variant.Lrc;
+                        yrcText = variant.Yrc ?? "";
+                        yrcTimingFirst = false;
+                        lyricSource = "落月QQ（原版无词，回退同名版本）";
+                        if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(variant.Trans))
+                            transText = variant.Trans;
+                        if (coverUrl.Length == 0 && !string.IsNullOrEmpty(variant.Cover)) coverUrl = variant.Cover;
+                    }
+                    else
+                    {
+                        var variantNetease = await FetchFromLuoYueNeteaseAsync(title, artist, HttpUserAgent,
+                            allowVersionVariants: true);
+                        if (!string.IsNullOrEmpty(variantNetease.Lrc) && HasTimedLyric(variantNetease.Lrc))
+                        {
+                            lrcText = variantNetease.Lrc;
+                            yrcText = variantNetease.Yrc ?? "";
+                            yrcTimingFirst = true;
+                            lyricSource = "落月网易云（原版无词，回退同名版本）";
+                            if (string.IsNullOrEmpty(transText) && !string.IsNullOrEmpty(variantNetease.Trans))
+                                transText = variantNetease.Trans;
+                            if (coverUrl.Length == 0 && !string.IsNullOrEmpty(variantNetease.Cover))
+                                coverUrl = variantNetease.Cover;
+                        }
+                    }
                 }
 
                 // ---- 极速解析时间轴 ----
@@ -1607,6 +1663,12 @@ namespace NotchPeninsula
                         _lyrics = lines.ToArray();
                         _lyricWordTimings = wordTimings?.ToArray();
                         _lyricsHasTranslation = lines.Exists(l => !string.IsNullOrEmpty(l.Item3));
+
+                        // 命中日志：来源 / 时长参数 / 首行 —— 首行就带着「歌名 - 歌手 (版本)」，
+                        // 用户再说「匹配到 Live 版」时，不用复现就能看出是哪一档取错了版本。
+                        string firstLine = lines.Count > 0 ? lines[0].Item2 : "";
+                        Logger.Info($"[歌词] {lyricSource} 命中《{title}》/ {artist}，时长参数={durationSec}s，"
+                            + $"首行「{firstLine}」，{lines.Count} 行{(wordTable.Length > 0 ? "（逐字）" : "")}");
                     }
                 }
 
@@ -1888,7 +1950,8 @@ namespace NotchPeninsula
 
         private readonly record struct LuoYueNeteaseResult(string? Lrc, string? Trans, string? Yrc, string? Cover);
 
-        private async Task<LuoYueResult> FetchFromLuoYueAsync(string title, string artist, long durationSec, string ua)
+        private async Task<LuoYueResult> FetchFromLuoYueAsync(string title, string artist, long durationSec, string ua,
+            bool allowVersionVariants = false)
         {
             try
             {
@@ -1901,7 +1964,8 @@ namespace NotchPeninsula
                 if (!searchDoc.RootElement.TryGetProperty("data", out var list) || list.ValueKind != JsonValueKind.Array)
                     return default;
 
-                long songId = MatchSong(list, title, artist, durationSec, !IsChineseTitle(title), out string? cover, out string? mid);
+                long songId = MatchSong(list, title, artist, durationSec, !IsChineseTitle(title), allowVersionVariants,
+                    out string? cover, out string? mid);
                 if (songId <= 0)
                 {
                     Logger.Debug($"落月QQ 搜索没有匹配到候选（{title} / {artist}）");
@@ -1934,7 +1998,8 @@ namespace NotchPeninsula
             }
         }
 
-        private async Task<LuoYueNeteaseResult> FetchFromLuoYueNeteaseAsync(string title, string artist, string ua)
+        private async Task<LuoYueNeteaseResult> FetchFromLuoYueNeteaseAsync(string title, string artist, string ua,
+            bool allowVersionVariants = false)
         {
             try
             {
@@ -1947,7 +2012,9 @@ namespace NotchPeninsula
                 if (!searchDoc.RootElement.TryGetProperty("data", out var list) || list.ValueKind != JsonValueKind.Array)
                     return default;
 
-                long songId = MatchSong(list, title, artist, 0, false, out string? cover, out _);
+                // 网易云这档的搜索结果没有 interval / duration 字段，时长门槛形同虚设 ——
+                // 版本过滤是它唯一能防住 Live / 翻唱候选的防线（见 MatchSong 调用点）。
+                long songId = MatchSong(list, title, artist, 0, false, allowVersionVariants, out string? cover, out _);
                 if (songId <= 0)
                 {
                     Logger.Debug($"落月网易云 搜索没有匹配到候选（{title} / {artist}）");
@@ -1988,7 +2055,8 @@ namespace NotchPeninsula
 
         private static readonly NeteaseOfficialResult EmptyNeteaseOfficial = new("", "", "");
 
-        private async Task<NeteaseOfficialResult> FetchFromNeteaseOfficialAsync(string title, string artist, long durationSec, bool allowCover)
+        private async Task<NeteaseOfficialResult> FetchFromNeteaseOfficialAsync(string title, string artist, long durationSec,
+            bool allowCover, bool allowVersionVariants = false)
         {
             try
             {
@@ -2016,9 +2084,11 @@ namespace NotchPeninsula
                     && result.TryGetProperty("songs", out var songs)
                     && songs.ValueKind == JsonValueKind.Array)
                 {
-                    songId = PickNeteaseSongId(songs, title, artist, durationSec, exactNameOnly: false);
+                    songId = PickNeteaseSongId(songs, title, artist, durationSec, exactNameOnly: false,
+                        allowVersionVariants: allowVersionVariants);
                     if (songId <= 0 && durationSec > 0)
-                        songId = PickNeteaseSongId(songs, title, artist, 0, exactNameOnly: true);
+                        songId = PickNeteaseSongId(songs, title, artist, 0, exactNameOnly: true,
+                            allowVersionVariants: allowVersionVariants);
                 }
 
                 if (songId <= 0)
@@ -2053,7 +2123,8 @@ namespace NotchPeninsula
             }
         }
 
-        private static long PickNeteaseSongId(JsonElement songs, string title, string artist, long durationSec, bool exactNameOnly)
+        private static long PickNeteaseSongId(JsonElement songs, string title, string artist, long durationSec,
+            bool exactNameOnly, bool allowVersionVariants)
         {
             string wantTitle = exactNameOnly ? NormalizeToken(title) : "";
             if (exactNameOnly && wantTitle.Length == 0) return 0;
@@ -2069,6 +2140,10 @@ namespace NotchPeninsula
                     && artists[0].ValueKind == JsonValueKind.Object
                     && artists[0].TryGetProperty("name", out var singerEl))
                     singer = singerEl.GetString() ?? "";
+
+                // 版本后缀口径与落月 QQ 档一致：原曲不吃 Live / 伴奏 / 翻唱… 的同名候选。
+                // 注意这一档的产物没有 duration 字段（网易云搜索不返回时长），排除版本全靠这一条。
+                if (!allowVersionVariants && HasExtraVersionMarker(title, name)) continue;
 
                 // 歌名：严格一遍按「互相包含」，放宽一遍按「归一化全等」
                 bool titleOk = exactNameOnly
@@ -2094,7 +2169,8 @@ namespace NotchPeninsula
             return 0;
         }
 
-        private static long MatchSong(JsonElement list, string title, string artist, long durationSec, bool allowLooseTitle, out string? cover, out string? mid)
+        private static long MatchSong(JsonElement list, string title, string artist, long durationSec, bool allowLooseTitle,
+            bool allowVersionVariants, out string? cover, out string? mid)
         {
             cover = null;
             mid = null;
@@ -2122,6 +2198,10 @@ namespace NotchPeninsula
 
                     string name = song.TryGetProperty("song", out var nameEl) ? nameEl.GetString() ?? "" : "";
                     string singer = song.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
+
+                    // 版本过滤放在两遍里都生效：严格时长遍挑不到录音室版时，由第二遍（忽略时长）兜底，
+                    // 不能让第一遍的 Live 候选提前以 12 分胜出、把第二遍挡在门外。
+                    if (!allowVersionVariants && HasExtraVersionMarker(title, name)) continue;
 
                     int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer), allowLooseTitle);
                     if (!strictDuration && score < 20) continue;
@@ -2242,6 +2322,91 @@ namespace NotchPeninsula
             return HasPartialArtistOverlap(wantArtists, candArtists) ? titleScore * 10 + 1 : 0;
         }
 
+        // 版本后缀：查询标题里没有这些标记时，候选标题多出来的标记就说明它不是同一版。
+        // 取词链的 durationSec 是换歌瞬间的 SMTC 快照（见 UpdateMedia），常常还是上一首的时长；
+        // 而 MatchSong 的严格时长遍对 titleScore=1 也放行 —— 时长一旦撞上某个 Live 版的长度，
+        // 「晴天 (Live)」就会以 12 分击败被时长门槛挡掉的录音室版（22 分），进而在岛上显示 Live 歌词。
+        // 标题上先把这些版本排掉，时长只当粗筛，不能再替用户选版本。
+        //
+        // 只收「另一场录音 / 另一版编曲」这类真会影响歌词的标记：remaster / 加速版这类时间轴一致，
+        // 误杀了只是白丢词。DJ 不进表 —— 它常是歌名或艺人名的一部分，"DJ 版"由「版」规则兜住。
+        private static readonly string[] VersionMarkers =
+        [
+            "live", "现场", "演唱会", "音乐会", "remix", "混音", "伴奏", "纯音乐", "instrumental",
+            "karaoke", "钢琴曲", "吉他曲", "弹唱", "翻唱", "cover", "原唱", "独唱", "合唱",
+            "片段", "慢摇", "0.8x", "1.2x",
+        ];
+
+        /// <summary>
+        /// 候选标题是否带「查询里没有的版本后缀」。入参是<b>原始标题</b>（不是 NormalizeToken 之后）：
+        /// 括号 / 空格被归一化吃掉后，"feat." 段和 ASCII 单词边界都判不出来了。
+        /// </summary>
+        private static bool HasExtraVersionMarker(string wantTitle, string candTitle)
+        {
+            string cand = StripCollaborationTags(candTitle).ToLowerInvariant();
+            string want = StripCollaborationTags(wantTitle).ToLowerInvariant();
+
+            // 「版」是最常见的版本后缀（深情版 / 钢琴版 / DJ 版）：候选带「版」而查询不带就不是同一版。
+            // 不放进标记表是因为它单独成词、且全角括号里也常见，Contains 就够，不需要 ASCII 边界。
+            if (cand.Contains('版') && !want.Contains('版')) return true;
+
+            foreach (string marker in VersionMarkers)
+            {
+                if (!ContainsMarker(cand, marker)) continue;
+                if (!ContainsMarker(want, marker)) return true;
+            }
+            return false;
+        }
+
+        // 去掉「(feat. XXX)」「(ft. XXX)」「(with XXX)」这类合作段：里面的 DJ / Live 是合作者名字或曲风说明，
+        // 不是版本。不清掉的话「Shape of You (feat. DJ Snake)」会被当成 DJ 版。
+        private static string StripCollaborationTags(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            int i = 0;
+            while (i < s.Length)
+            {
+                char c = s[i];
+                if (c is '(' or '（' or '[' or '【')
+                {
+                    char close = c switch { '(' => ')', '（' => '）', '[' => ']', _ => '】' };
+                    int end = s.IndexOf(close, i + 1);
+                    if (end > i)
+                    {
+                        string inner = s.Substring(i + 1, end - i - 1).ToLowerInvariant();
+                        if (inner.Contains("feat") || inner.Contains("ft.") || inner.Contains("with "))
+                        {
+                            i = end + 1;
+                            continue;
+                        }
+                    }
+                }
+                sb.Append(c);
+                i++;
+            }
+            return sb.ToString();
+        }
+
+        // 在（已小写的）标题里找标记：ASCII 标记要求左右都不是英文字母，
+        // 免得 "Alive" 里的 "live"、"Deliver" 里的 "live" 被当成 Live 版；中文标记直接 Contains。
+        private static bool ContainsMarker(string text, string marker)
+        {
+            int from = 0;
+            while (from <= text.Length - marker.Length)
+            {
+                int idx = text.IndexOf(marker, from, StringComparison.Ordinal);
+                if (idx < 0) return false;
+
+                bool leftOk = idx == 0 || !char.IsAsciiLetter(text[idx - 1]);
+                int end = idx + marker.Length;
+                bool rightOk = end >= text.Length || !char.IsAsciiLetter(text[end]);
+                if (leftOk && rightOk) return true;
+
+                from = idx + 1;
+            }
+            return false;
+        }
+
         private static bool IsChineseTitle(string title)
         {
             bool hasHan = false;
@@ -2355,6 +2520,9 @@ namespace NotchPeninsula
 
                 string name = item.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
                 string singer = item.TryGetProperty("singer", out var singerEl) ? singerEl.GetString() ?? "" : "";
+
+                // 封面也按同口径排掉版本候选：封面图是版本指纹的一部分，拿到 Live 的封面一样会露馅
+                if (HasExtraVersionMarker(title, name)) continue;
 
                 int score = ScoreCandidate(wantTitle, wantArtists, NormalizeToken(name), SplitArtists(singer), allowLooseTitle);
                 if (score <= bestScore) continue;

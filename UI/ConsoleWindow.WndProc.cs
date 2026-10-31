@@ -92,7 +92,7 @@ namespace NotchPeninsula
                 float matSegY = TITLE_BAR_HEIGHT + MAT_SEG_Y;
                 if (y >= matSegY && y <= matSegY + SEG_H
                     && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
-                    newHoveredMaterial = Math.Min(3, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 4f)));
+                    newHoveredMaterial = SegmentIndexAt(MaterialLabels, MAT_SEG_W, fitLabels: true, dx: x - MAT_SEG_X);
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;

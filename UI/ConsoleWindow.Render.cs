@@ -230,31 +230,94 @@ namespace NotchPeninsula
             }
         }
 
-        private void DrawSegmented(SKCanvas canvas, float x, float y, float w, float h,
-            string[] labels, int selected, int hovered, bool disabled = false)
+        // 分段控件的几何唯一来源：绘制与命中都从这里取，别再各算一遍。
+        // fitLabels = true 时每格宽 = 该标签实测宽 + 左右呼吸，余量再均分 ——
+        // 四档材质（实体 / 亚克力 / 液态玻璃 / 液态玻璃2.0）标签长短差一倍，
+        // 等分只能靠缩字号硬塞，长标签会被压成小字；按内容分宽后字号与正文一致。
+        private void LayoutSegments(string[] labels, float w, bool fitLabels,
+            float[] lefts, float[] widths, out float textScale)
         {
             int n = labels.Length;
-            float segW = w / n;
+            textScale = 1f;
+            if (n == 0) return;
 
-            // 档位多 / 标签长时按最宽的一格整体缩字号：字压到邻格比缩字号更糟。
-            // 材质那排从 3 档加到 4 档、「液态玻璃2.0」又比「液态玻璃2」宽一截，靠这一步兜底。
-            float baseSize = _uiTextPaint.TextSize;
-            float maxLabelW = 0f;
+            if (!fitLabels)
+            {
+                float segW = w / n;
+                for (int i = 0; i < n; i++)
+                {
+                    lefts[i] = i * segW;
+                    widths[i] = segW;
+                }
+                return;
+            }
+
+            float totalLabel = 0f;
+            for (int i = 0; i < n; i++) totalLabel += _uiTextPaint.MeasureText(labels[i]);
+            float available = w - 2f * SEG_TEXT_PAD_X * n;
+
+            // 控件实在窄、连呼吸都放不下才缩字号兜底（下限与旧逻辑一致），绝不把字压到邻格
+            if (totalLabel > 0f && available > 0f && totalLabel > available)
+            {
+                float baseSize = MathF.Max(_uiTextPaint.TextSize, 1f);
+                textScale = MathF.Max(9f / baseSize, available / totalLabel);
+            }
+
+            float content = 0f;
             for (int i = 0; i < n; i++)
             {
-                float lw = _uiTextPaint.MeasureText(labels[i]);
-                if (lw > maxLabelW) maxLabelW = lw;
+                widths[i] = _uiTextPaint.MeasureText(labels[i]) * textScale + 2f * SEG_TEXT_PAD_X;
+                content += widths[i];
             }
-            if (maxLabelW > segW - 8f && maxLabelW > 0f)
-                _uiTextPaint.TextSize = MathF.Max(9f, baseSize * (segW - 8f) / maxLabelW);
+
+            float extra = content < w ? (w - content) / n : 0f;
+            float cursor = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                widths[i] += extra;
+                lefts[i] = cursor;
+                cursor += widths[i];
+            }
+        }
+
+        // fitLabels 时每格文字左右的最小呼吸（不含选中块 2px 内缩）
+        private const float SEG_TEXT_PAD_X = 6f;
+
+        // 与 DrawSegmented 同一份几何反查命中格：看着在这一格、点着是那一格，就是这里算岔了
+        private int SegmentIndexAt(string[] labels, float w, bool fitLabels, float dx)
+        {
+            int n = labels.Length;
+            if (n == 0 || dx < 0f || dx > w) return -1;
+
+            var lefts = new float[n];
+            var widths = new float[n];
+            LayoutSegments(labels, w, fitLabels, lefts, widths, out _);
+
+            for (int i = 0; i < n; i++)
+                if (dx < lefts[i] + widths[i]) return i;
+            return n - 1;
+        }
+
+        private void DrawSegmented(SKCanvas canvas, float x, float y, float w, float h,
+            string[] labels, int selected, int hovered, bool disabled = false, bool fitLabels = false)
+        {
+            int n = labels.Length;
+            if (n == 0) return;
+
+            var lefts = new float[n];
+            var widths = new float[n];
+            LayoutSegments(labels, w, fitLabels, lefts, widths, out float textScale);
+
+            float baseSize = _uiTextPaint.TextSize;
+            if (textScale < 1f) _uiTextPaint.TextSize = MathF.Max(9f, baseSize * textScale);
 
             _dynamicFillPaint.Color = disabled ? Overlay(5) : Overlay(8);
             canvas.DrawRoundRect(new SKRect(x, y, x + w, y + h), 6, 6, _dynamicFillPaint);
 
             for (int i = 0; i < n; i++)
             {
-                var r = new SKRect(x + i * segW + (i > 0 ? 2f : 0f), y,
-                    x + (i + 1) * segW - (i < n - 1 ? 2f : 0f), y + h);
+                // 每格左右各收 2px：选中块不贴外框圆角，首尾两格也不会一边贴边一边留缝
+                var r = new SKRect(x + lefts[i] + 2f, y, x + lefts[i] + widths[i] - 2f, y + h);
                 if (i == selected)
                 {
                     _dynamicFillPaint.Color = disabled ? Neutral(80) : new SKColor(0, 120, 212);
@@ -1295,12 +1358,15 @@ namespace NotchPeninsula
             if (Renderer.IslandAnyGlass)
             {
                 const string glassThemeHint = "液态玻璃材质下文字自适应颜色";
-                var prev = _subTextPaint.Color;
-                _subTextPaint.Color = Neutral(150);
+                var prevColor = _subTextPaint.Color;
+                float prevSize = _subTextPaint.TextSize;
+                _subTextPaint.Color = new SKColor(0, 140, 240);   // 主题蓝：这是状态说明，压在灰色副标题旁容易看漏
+                _subTextPaint.TextSize = _uiTextPaint.TextSize;    // 与正文同字号，不再是一行小灰字
                 canvas.DrawText(glassThemeHint,
                     THEME_SEG_X + THEME_SEG_W - _subTextPaint.MeasureText(glassThemeHint),
                     TITLE_BAR_HEIGHT + THEME_SEG_Y + SEG_H / 2f + 4.5f, _subTextPaint);
-                _subTextPaint.Color = prev;
+                _subTextPaint.Color = prevColor;
+                _subTextPaint.TextSize = prevSize;
             }
             else
             {
@@ -1315,7 +1381,7 @@ namespace NotchPeninsula
                 themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
             canvas.DrawText("胶囊内背景材质", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
             DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
-                MaterialLabels, Renderer.IslandMaterialIndex, _hoveredMaterialIndex);
+                MaterialLabels, Renderer.IslandMaterialIndex, _hoveredMaterialIndex, fitLabels: true);
 
             // 液态玻璃模式下整卡不画：玻璃的着色由「玻璃雾度」管，涂层恒为 0（见 ApplyThemeColors），
             // 这条滑轨摆在那儿只会让人以为能调。尺寸卡/玻璃卡跟着上移（见 SIZE_CARD_Y）。
