@@ -348,7 +348,7 @@ namespace NotchPeninsula
 
             // 放大镜抓屏：宿主窗口与放大镜窗口必须建在消息泵这条线上，所以放在这里（构造函数跑在主线程）。
             // 不可用会自己回退 GDI，不影响启动；之后随时可以重试（见 EnsureMagnifier）。
-            if (Renderer.IslandLiquidGlass || Renderer.IslandAcrylic)
+            if (Renderer.IslandAnyGlass || Renderer.IslandAcrylic)
                 MagnifierBackdrop.Initialize(_hwnd, _ownerHwnd);
             _renderThread = new Thread(RenderThreadLoop)
             {
@@ -1599,7 +1599,7 @@ namespace NotchPeninsula
             // 由这条消息把初始化"补"到 UI 线程来做（岛体窗口自己的 WndProc 就在这条线上）。
             if (msg == MagNative.WM_APP_ENSURE_MAG)
             {
-                if (Renderer.IslandLiquidGlass || Renderer.IslandAcrylic)
+                if (Renderer.IslandAnyGlass || Renderer.IslandAcrylic)
                     MagnifierBackdrop.EnsureInitialized(_hwnd, _ownerHwnd, wParam != IntPtr.Zero);
                 return IntPtr.Zero;
             }

@@ -61,22 +61,42 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
-        // 液态玻璃 12 根滑轨的唯一落库口（参数是下标 + 档位）。
+        // 玻璃卡滑轨的唯一落库口（参数是下标 + 档位）。
         // 悬停拖拽与单击走同一条路，免得两处各写一遍导致设置对不上。
+        // 两张卡共用同一批格子，按当前材质分派到各自的参数表。
         private void ApplyGlassLevel(int paramIndex, int level)
         {
+            if (Renderer.IslandLiquidGlass2)
+            {
+                if (paramIndex < 0 || paramIndex >= LiquidGlass2.ParamCount) return;
+                LiquidGlass2.SetLevel(paramIndex, level);
+                Program.SaveSetting(LiquidGlass2.ParamKeys[paramIndex], LiquidGlass2.GetLevel(paramIndex));
+                return;
+            }
             if (paramIndex < 0 || paramIndex >= LiquidGlass.ParamCount) return;
             LiquidGlass.SetLevel(paramIndex, level);
             Program.SaveSetting(LiquidGlass.ParamKeys[paramIndex], LiquidGlass.GetLevel(paramIndex));
         }
 
-        // 12 根一次性回到出厂默认。落库仍走 ApplyGlassLevel，
+        // 一次性回到出厂默认。落库仍走 ApplyGlassLevel，
         // 保证「点按钮」和「拖滑轨」是同一套 SetLevel + SaveSetting。
         private void ResetGlassDefaults()
         {
-            for (int i = 0; i < LiquidGlass.ParamCount; i++)
-                ApplyGlassLevel(i, LiquidGlass.DefaultLevelOf(i));
+            for (int i = 0; i < GlassParamCount; i++)
+                ApplyGlassLevel(i, Renderer.IslandLiquidGlass2
+                    ? LiquidGlass2.DefaultLevelOf(i)
+                    : LiquidGlass.DefaultLevelOf(i));
         }
+
+        /// <summary>当前玻璃卡上的滑轨根数（液态玻璃 12 根，液态玻璃 2 是 9 根）。</summary>
+        private static int GlassParamCount => Renderer.IslandLiquidGlass2 ? LiquidGlass2.ParamCount : LiquidGlass.ParamCount;
+
+        /// <summary>当前玻璃卡的滑轨行数（每行 3 根）。</summary>
+        private static int GlassRowCount => (GlassParamCount + 2) / 3;
+
+        /// <summary>当前玻璃卡上第 index 根滑轨的档位。</summary>
+        private static int GlassLevelOf(int index)
+            => Renderer.IslandLiquidGlass2 ? LiquidGlass2.GetLevel(index) : LiquidGlass.GetLevel(index);
 
         private const float THEME_CARD_Y = CARD_TOP_Y;
 
@@ -89,7 +109,7 @@ namespace NotchPeninsula
         // 液态玻璃模式下「背景透明度」整卡不显示：玻璃的着色由「玻璃雾度」负责，
         // 涂层恒为 0（见 Renderer.ApplyThemeColors），这条滑轨留着只会让人以为还能调。
         // 卡片链式排布，所以尺寸卡与玻璃卡要跟着上移，否则中间空出一整块。
-        private static bool ShowOpacityCard => !Renderer.IslandLiquidGlass;
+        private static bool ShowOpacityCard => !Renderer.IslandAnyGlass;
 
         private static float SIZE_CARD_Y => ShowOpacityCard
             ? OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP   // 222
@@ -101,12 +121,17 @@ namespace NotchPeninsula
 
         private const float THEME_SEG_Y = 28f;
 
-        // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟
-        // 三档里「液态玻璃」是四个字（13.5px 下约 54px），比主题那排的档位宽，
-        // 所以这一排单独加宽；176（每档 58.7）时四字几乎顶满格子，加到 210（每档 70）。
-        private const float MAT_SEG_W = 210f;
+        // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟。
+        // 四档（实体 / 亚克力 / 液态玻璃 / 液态玻璃2.0）比原来三档宽，但卡片高度与行位一律不动 ——
+        // 宽度取「卡片文字右缘 − 左侧标签与「实验性」徽标实测宽度 − 8px 呼吸」，
+        // 即这一行能给出的最大宽度；仍放不下时由 DrawSegmented 自动缩字号兜底。
+        // 呼吸从 14 收到 8：第四档是「液态玻璃2.0」，比原来多出「.0」两字宽，这 6px 是给它让的。
+        private static float MAT_SEG_W =>
+            (WIDTH - CONTENT_TEXT_RM) - (CONTENT_TEXT_X
+                + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X
+                + _badgeTextPaint.MeasureText("实验性") + BADGE_PAD_X * 2f + 8f);
 
-        private const float MAT_SEG_X = WIDTH - CONTENT_TEXT_RM - MAT_SEG_W;
+        private static float MAT_SEG_X => WIDTH - CONTENT_TEXT_RM - MAT_SEG_W;
 
         // 两行之间的行距：原 42 两行贴太近，2026-10-10 加大到 50（卡高同步 +8）
         private const float THEME_ROW_GAP = 50f;

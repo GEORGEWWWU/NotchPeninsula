@@ -103,13 +103,20 @@ namespace NotchPeninsula
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
                     Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
                     Renderer.IslandLiquidGlass = (int)key.GetValue("IslandLiquidGlass", 0) != 0;
-                    if (Renderer.IslandLiquidGlass) Renderer.IslandAcrylic = false;   // 两者互斥，玻璃优先
+                    Renderer.IslandLiquidGlass2 = (int)key.GetValue("IslandLiquidGlass2", 0) != 0;
+                    // 三种材质互斥：玻璃2 优先于玻璃，玻璃优先于亚克力
+                    if (Renderer.IslandLiquidGlass2) Renderer.IslandLiquidGlass = false;
+                    if (Renderer.IslandLiquidGlass) Renderer.IslandAcrylic = false;
 
                     // 液态玻璃：质量档 + 12 根滑轨（越界一律夹回，老配置/手改注册表都不怕）
                     // 抓屏方式不再读配置：放大镜可用即用、不可用自动回退兼容抓屏。
                     LiquidGlass.Quality = (int)key.GetValue("LiquidGlassQuality", 1);
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
                         LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], LiquidGlass.DefaultLevelOf(i)));
+
+                    // 液态玻璃 2：9 根滑轨（质量档与抓屏管线跟液态玻璃共用同一个设置项）
+                    for (int i = 0; i < LiquidGlass2.ParamCount; i++)
+                        LiquidGlass2.SetLevel(i, (int)key.GetValue(LiquidGlass2.ParamKeys[i], LiquidGlass2.DefaultLevelOf(i)));
 
                     // 本来就开着的，沿用注册表里的勾选状态。
                     // 不勾的话升级后媒体会整个消失。
