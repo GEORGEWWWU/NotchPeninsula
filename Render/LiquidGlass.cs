@@ -202,21 +202,21 @@ namespace NotchPeninsula
 
         // ---- 质量档：抓屏倍率 / 色散采样数 / 玻璃层上限 / 刷新间隔 ----
 
-        private static int _quality = 1;      // 0=流畅 1=均衡 2=精细
+        private static int _quality = 1;      // 0=流畅 1=均衡 2=精细 3=极致
 
         public static int Quality
         {
             get => _quality;
             set
             {
-                int q = value < 0 ? 0 : (value > 2 ? 2 : value);
+                int q = value < 0 ? 0 : (value > 3 ? 3 : value);
                 if (q == _quality) return;
                 _quality = q;
                 ApplyQuality();
             }
         }
 
-        public static string QualityName => _quality switch { 0 => "流畅", 1 => "均衡", _ => "精细" };
+        public static string QualityName => _quality switch { 0 => "流畅", 1 => "均衡", 2 => "精细", _ => "极致" };
 
         // GDI 抓屏降采样（放大镜抓屏固定 1:1，不受它影响）：
         // 折射位移要看得出来，不能像亚克力那样糊到 1/12
@@ -231,6 +231,11 @@ namespace NotchPeninsula
         // （折叠态 570×40 ≈ 2.8 万，怎么都够 —— 这也是折叠态一直正常的原因。）
         private static int _maxGlassPixels = 600000;
 
+        // 玻璃图层超采样倍数（只在「极致」档开 2）：SDF 边缘、色散与边缘高光都按双倍分辨率算，
+        // 贴图时再由 Skia 降采样回逻辑尺寸 —— 边缘那圈 1px 的硬折线和色散采样的台阶会一起消失。
+        // 代价是玻璃层像素 ×4（模糊那一步不变），所以只给最高档。
+        private static int _supersample = 1;
+
         // 色散采样数：7 次（R/G/B 各一整套）或 3 次（每通道只采一次）
         private static int _samples = 7;
 
@@ -240,7 +245,7 @@ namespace NotchPeninsula
         /// </summary>
         public static void ReapplyQuality() => ApplyQuality();
 
-        // 质量档只管「抓屏倍率 / 玻璃层上限 / 色散采样数」——
+        // 质量档只管「抓屏倍率 / 玻璃层上限 / 色散采样数 / 超采样」——
         // 刷新间隔交给 P_CaptureHz 单独控制，免得两个控件抢同一个数。
         private static void ApplyQuality()
         {
@@ -250,16 +255,25 @@ namespace NotchPeninsula
                     _downscale = 3f;
                     _maxGlassPixels = 200000;
                     _samples = 3;
+                    _supersample = 1;
                     break;
                 case 2:                       // 精细：1:1 抓屏 + 全分辨率玻璃层
                     _downscale = 1f;
                     _maxGlassPixels = 900000;
                     _samples = 7;
+                    _supersample = 1;
+                    break;
+                case 3:                       // 极致：1:1 抓屏 + 2× 超采样玻璃层（不设实用上限）
+                    _downscale = 1f;
+                    _maxGlassPixels = 3200000;
+                    _samples = 7;
+                    _supersample = 2;
                     break;
                 default:                      // 均衡
                     _downscale = 2f;
                     _maxGlassPixels = 600000;
                     _samples = 7;
+                    _supersample = 1;
                     break;
             }
 
@@ -388,19 +402,25 @@ namespace NotchPeninsula
         /// <param name="backdrop">抓屏背板（IslandBackdrop 产出，只允许渲染线程访问）</param>
         /// <param name="version">抓屏版本号：背板换了新的才需要重算</param>
         /// <param name="src">背板上「当前胶囊」对应的源矩形（图像像素坐标）</param>
-        /// <param name="logicalW">胶囊逻辑宽度</param>
+        /// <param name="logicalW">玻璃图层总宽（逻辑像素）：刘海模式下 = 胶囊宽 + 2×flareX</param>
         /// <param name="logicalH">胶囊逻辑高度</param>
-        /// <param name="rTop">顶部圆角（逻辑像素）</param>
+        /// <param name="rTop">顶部圆角（逻辑像素）；刘海凹角时应传 0 —— 凹角由 flareX/flareY 描述</param>
         /// <param name="rBottom">底部圆角（逻辑像素）</param>
+        /// <param name="flareX">刘海外扩量（逻辑像素，水平）：&gt;0 表示顶角是「向外张开」的凹角</param>
+        /// <param name="flareY">外扩带厚度（逻辑像素，竖直）= 路径里那条贝塞尔的竖直跨度</param>
+        /// <param name="flushTop">顶边是否贴合屏幕边缘（刘海模式）：贴合时顶边不算边界</param>
         /// <returns>玻璃图层；null 表示这台机器读不到像素，调用方应退回普通模糊背板</returns>
         public static SKBitmap? Compose(SKImage backdrop, int version, SKRect src,
-                                       float logicalW, float logicalH, float rTop, float rBottom)
+                                       float logicalW, float logicalH, float rTop, float rBottom,
+                                       float flareX = 0f, float flareY = 0f, bool flushTop = false)
         {
             if (logicalW < 8f || logicalH < 4f) return null;
             if (src.Width < 4f || src.Height < 2f) return null;
 
-            int gw = (int)MathF.Round(src.Width);
-            int gh = (int)MathF.Round(src.Height);
+            // 超采样：极致档按 2× 分辨率算玻璃层（SDF 边缘 / 色散 / 高光都翻倍），
+            // 贴图时 Skia 再降回逻辑尺寸 —— 几何全部走「玻璃层 px / 逻辑 px」换算，所以只改这里就够。
+            int gw = (int)MathF.Round(src.Width * _supersample);
+            int gh = (int)MathF.Round(src.Height * _supersample);
             if (gw < 1) gw = 1;
             if (gh < 1) gh = 1;
 
@@ -491,7 +511,21 @@ namespace NotchPeninsula
 
                     float hsx = logicalW * 0.5f, hsy = logicalH * 0.5f;
                     float pxX = gw / logicalW, pxY = gh / logicalH;   // 玻璃图层 px / 逻辑 px
-                    float minHs = MathF.Min(hsx, hsy);
+
+                    // ── 刘海凹角 ──
+                    // hsx 是整张玻璃图层的半宽（含左右外扩），本体只到 ±halfW。
+                    // SDF 的「矩形」必须用本体半宽，否则外扩带会被算成玻璃内部 —— 那正是
+                    // 「切到刘海、再开液态玻璃，顶角还是灵动岛的凸圆角」的成因。
+                    float halfW = hsx - flareX;
+                    if (halfW < 1f) halfW = 1f;
+                    bool notch = flareX > 0.5f && flareY > 0.5f;
+
+                    // 刘海贴合屏幕顶边：顶边不是玻璃的边界（不该淡出、也不该有一条横向高光）。
+                    // 做法是把 SDF 的中心整体下移 K，等价于把顶边推到无穷远 —— 底边位置不变。
+                    float sdfDy = flushTop ? 4096f : 0f;
+                    float sdfHy = hsy + sdfDy;
+
+                    float minHs = MathF.Min(halfW, hsy);
 
                     // ── 折射自适应：按元素短边限制折射带与位移 ──
                     // 这是"边缘白字变成整条渐变亮带"的根治。
@@ -536,8 +570,47 @@ namespace NotchPeninsula
                                 float lx = (gx + 0.5f) / pxX;
                                 float ccx = lx - hsx;
 
-                                float r = RadiusAt(ccx, ccy, rTop, rTop, rBottom, rBottom);
-                                float sd = SdRoundedRect(ccx, ccy, hsx, hsy, r);
+                                float cyS = ccy + sdfDy;
+                                float r = RadiusAt(ccx, cyS, rTop, rTop, rBottom, rBottom);
+                                float sd = SdRoundedRect(ccx, cyS, halfW, sdfHy, r);
+
+                                // ── 刘海凹角（外扩带）──
+                                // 外扩带的边界就是 Renderer 里那条二次贝塞尔：
+                                //     x(t) = L - F(1-t)²,  y(t) = f·t²      （t∈[0,1]）
+                                // 它跟「半径 F 的圆弧」差得很远（中点差 6~7px），所以按圆弧算会明显偏胖。
+                                // 这里直接按贝塞尔逐像素求边界，只有顶角那一小条会走这段（几十行×几十列）。
+                                bool bandWin = false;
+                                float bnx = 0f, bny = 0f;
+                                if (notch && ccy < -hsy + flareY)
+                                {
+                                    float acx = ccx < 0f ? -ccx : ccx;
+                                    float bandY = ccy + hsy;                    // 0 .. flareY，从顶边往下量
+                                    if (bandY < 0f) bandY = 0f;
+                                    float tp = MathF.Sqrt(bandY / flareY);      // 曲线参数 t = sqrt(y/f)
+                                    if (tp > 1f) tp = 1f;
+                                    float w1 = 1f - tp;
+                                    float xb = halfW + flareX * w1 * w1;        // 该行的边界 |x|
+                                    float tgx = flareX * w1, tgy = flareY * tp; // 切向
+                                    float tgl = MathF.Sqrt(tgx * tgx + tgy * tgy);
+                                    float nxv = tgl > 1e-4f ? tgy / tgl : 1f;   // 法线（|x| 方向分量）
+                                    float nyv = tgl > 1e-4f ? tgx / tgl : 0f;   // 法线（y 分量，正 = 朝下）
+                                    // 水平距离 × 法线 x 分量 ≈ 垂直距离；顶边附近曲线接近水平，
+                                    // nxv→0 会把整行算成"刚好在边界上"（整条顶边半透明），所以夹个下限。
+                                    float kx = nxv < 0.35f ? 0.35f : nxv;
+                                    float fb = (acx - xb) * kx;
+                                    if (!flushTop)
+                                    {
+                                        float topEdge = -hsy - ccy;             // 顶边约束（非贴合时才存在）
+                                        if (topEdge > fb) fb = topEdge;
+                                    }
+                                    if (fb < sd)
+                                    {
+                                        sd = fb;
+                                        bandWin = true;
+                                        bnx = ccx < 0f ? -nxv : nxv;
+                                        bny = nyv;
+                                    }
+                                }
 
                                 // 边缘羽化：对齐 demo 的 edgeAA = 1 - smoothstep(-1, 1, sd)。
                                 // 原来是 1 像素线性过渡，比 demo 窄一半且是硬折线 —— 边缘显硬，
@@ -587,9 +660,22 @@ namespace NotchPeninsula
                                 float centerFade = 1f - SmoothStep(rhEff * 0.3f, rhEff * 1.0f, depth);
                                 d *= centerFade;
 
-                                float disp = (ccx * ccy) / (hsx * hsy);
+                                float disp = (ccx * ccy) / (halfW * hsy);
 
-                                GradSdRoundedRect(ccx, ccy, hsx, hsy, MathF.Min(r * 1.5f, minHs), out float ggx, out float ggy);
+                                // 法线：外扩带用凹角自己的（沿曲线法向），其余走圆角矩形的梯度。
+                                // 凹角的法线在顶边附近指向"屏幕外"，所以边缘高光会自然衰减到 0，
+                                // 不会在贴着屏幕的那条边上刷出一道横贯全宽的亮线。
+                                float ggx, ggy;
+                                if (bandWin)
+                                {
+                                    ggx = bnx;
+                                    ggy = bny;
+                                }
+                                else
+                                {
+                                    GradSdRoundedRect(ccx, cyS, halfW, sdfHy,
+                                        MathF.Min(r * 1.5f, minHs), out ggx, out ggy);
+                                }
                                 float ln = MathF.Sqrt(ccx * ccx + ccy * ccy) + 0.000001f;
                                 ggx += DepthEffect * (ccx / ln);
                                 ggy += DepthEffect * (ccy / ln);

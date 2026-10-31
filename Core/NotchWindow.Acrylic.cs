@@ -103,8 +103,19 @@ namespace NotchPeninsula
             float islandW = _currentWidth * _dpiScale;
             float islandH = _currentHeight * _dpiScale;
 
+            // 刘海模式顶角向外张开的那两块角料也属于岛体：玻璃会在那里采样，
+            // 遮罩必须一起盖住，否则 GDI 那条线会把岛体自己的像素留在背板里（玻璃采到自己上一帧的输出）。
+            float flare = 0f;
+            if (_currentStyleProgress < 1f)
+            {
+                float islandRadius = MathF.Min(_currentHeight / 2f, 20f);
+                float rTopX = -Renderer.OUTER_R * (1f - _currentStyleProgress)
+                              + islandRadius * _currentStyleProgress;
+                if (rTopX < 0f) flare = -rTopX * _dpiScale;
+            }
+
             // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
-            IslandBackdrop.SetMask(islandX, islandY, islandX + islandW, islandY + islandH);
+            IslandBackdrop.SetMask(islandX - flare, islandY, islandX + islandW + flare, islandY + islandH);
 
             // 贴图用的源矩形仍按【实际产出图】的比例与原点换算：放大镜是 1:1，GDI 是 1/k，切换材质时也不会错位
             float inv = IslandBackdrop.LastScale;

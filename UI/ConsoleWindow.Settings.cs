@@ -136,8 +136,9 @@ namespace NotchPeninsula
 
         private const float GLASS_TEXT_R = WIDTH - CONTENT_TEXT_RM + 8f;   // 580
 
-        // 「玻璃质量」标签四字（约 54）从 194 起，分段必须让到 254 之后
-        private const float GLASS_QUALITY_SEG_W = 150f;
+        // 「玻璃质量」标签四字（约 54）从 194 起，分段必须让到 254 之后。
+        // 四段（流畅/均衡/精细/极致）：每段 43，两字标签 26 + 左右各 8 的呼吸，够用也不挤。
+        private const float GLASS_QUALITY_SEG_W = 172f;
 
         private const float GLASS_QUALITY_SEG_X = 254f;
 

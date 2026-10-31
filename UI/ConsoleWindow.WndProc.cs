@@ -128,7 +128,7 @@ namespace NotchPeninsula
                     if (y >= segY && y <= segY + SEG_H)
                     {
                         if (x >= GLASS_QUALITY_SEG_X && x <= GLASS_QUALITY_SEG_X + GLASS_QUALITY_SEG_W)
-                            newHoveredGlassQuality = Math.Min(2, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 3f)));
+                            newHoveredGlassQuality = Math.Min(3, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 4f)));
                     }
 
                     // 11 根滑轨：先定位行，再看落在哪一列

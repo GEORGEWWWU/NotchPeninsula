@@ -1358,7 +1358,7 @@ namespace NotchPeninsula
                 float segTextY = segY + 20f;
                 canvas.DrawText("玻璃质量", GLASS_TEXT_X, segTextY, _uiTextPaint);
                 DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
-                    ["流畅", "均衡", "精细"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
+                    ["流畅", "均衡", "精细", "极致"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
 
                 // 「恢复默认参数」：与质量分段同一行，右对齐到卡片文字右缘（原卡底位让给滑轨）
                 float rY = segY + (SEG_H - GLASS_RESET_H) / 2f;
