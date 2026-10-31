@@ -685,9 +685,9 @@ namespace NotchPeninsula
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
                 _hotkeyRecordingIndex = _hoveredHotkeyRow;
+                _captureLiveMods = 0;
                 // 客户区键盘消息录不到系统级组合，先挂低层钩子（装不上就靠下面的 WM_KEYDOWN 兜底）。
-                KeyboardCapture.Start(_hwnd);
-                if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
+                BeginKeyCapture();
                 Render();
             }
             else if (_selectedTab == 3 && _islandHotkeyToggleHovered)
@@ -704,8 +704,8 @@ namespace NotchPeninsula
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
                 _islandHotkeyRecording = true;
-                KeyboardCapture.Start(_hwnd);
-                if (_hwnd != IntPtr.Zero) Win32.SetFocus(_hwnd);
+                _captureLiveMods = 0;
+                BeginKeyCapture();
                 Render();
             }
             else if (_autoHideToggleHovered)

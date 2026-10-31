@@ -370,6 +370,27 @@ namespace NotchPeninsula
 
         // ---- 媒体设置页「全局快捷键」的录制 ----
 
+        // 进入录制态的统一入口：挂低层钩子 + 把键盘焦点抢到设置窗。
+        // 钩子装不上时只剩「窗口键盘消息」这条路，而那条路要求本窗口是前台并持有焦点——
+        // 否则按键全落到别的窗口上，观感就是「点了录制框，按什么都没反应」。
+        private void BeginKeyCapture()
+        {
+            bool hooked = KeyboardCapture.Start(_hwnd);
+
+            if (_hwnd != IntPtr.Zero)
+            {
+                Win32.SetForegroundWindow(_hwnd);   // 前台被锁定时会失败，失败也无害
+                Win32.SetFocus(_hwnd);
+            }
+
+            if (!hooked)
+            {
+                const string fallback = "键盘钩子不可用：只能在设置窗内录制，系统组合（Win / Alt+Tab）录不到";
+                if (_hotkeyRecordingIndex >= 0) _hotkeyHint = fallback;
+                else _islandHotkeyHint = fallback;
+            }
+        }
+
         // 钩子路径（KeyboardCapture）的入口：修饰键由钩子当场读好带过来，
         // 窗口自己再读 GetKeyState 已经没有意义 —— 那会儿手早松了。
         private bool HandleCapturedKey(int vk, uint mods)
@@ -402,7 +423,13 @@ namespace NotchPeninsula
                 or Win32.VK_LSHIFT or Win32.VK_RSHIFT
                 or Win32.VK_LCONTROL or Win32.VK_RCONTROL
                 or Win32.VK_LMENU or Win32.VK_RMENU)
+            {
+                // 只按修饰键不算「录了一个键」，留在录制态等主键；
+                // 但界面必须立刻有反应（框里显示「Ctrl + …」），否则用户会以为修饰键没被识别。
+                _captureLiveMods = mods;
+                Render();
                 return true;
+            }
 
             if (vk == Win32.VK_ESCAPE) { CancelHotkeyRecording(); return true; }
 
@@ -432,6 +459,7 @@ namespace NotchPeninsula
         {
             int edited = _hotkeyRecordingIndex;
             _hotkeyRecordingIndex = -1;
+            _captureLiveMods = 0;
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
@@ -447,6 +475,7 @@ namespace NotchPeninsula
         {
             if (_hotkeyRecordingIndex < 0) return;
             _hotkeyRecordingIndex = -1;
+            _captureLiveMods = 0;
             _hotkeyHint = "";
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
@@ -468,7 +497,11 @@ namespace NotchPeninsula
                 or Win32.VK_LSHIFT or Win32.VK_RSHIFT
                 or Win32.VK_LCONTROL or Win32.VK_RCONTROL
                 or Win32.VK_LMENU or Win32.VK_RMENU)
+            {
+                _captureLiveMods = mods;
+                Render();
                 return true;
+            }
 
             if (vk == Win32.VK_ESCAPE) { CancelIslandHotkeyRecording(); return true; }
 
@@ -497,6 +530,7 @@ namespace NotchPeninsula
         private void EndIslandHotkeyRecording()
         {
             _islandHotkeyRecording = false;
+            _captureLiveMods = 0;
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
@@ -511,6 +545,7 @@ namespace NotchPeninsula
         {
             if (!_islandHotkeyRecording) return;
             _islandHotkeyRecording = false;
+            _captureLiveMods = 0;
             _islandHotkeyHint = "";
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();

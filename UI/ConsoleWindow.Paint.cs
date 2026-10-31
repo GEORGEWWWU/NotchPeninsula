@@ -41,7 +41,13 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _titleBarPaint = new SKPaint { Color = new SKColor(40, 40, 40) };
 
-        private static readonly SKPaint _uiTextPaint = new SKPaint { Color = SKColors.White, TextSize = 13.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
+        // 设置窗正文的字体 / 字号：正文画笔与「下拉框要留多宽」的实测量共用这一份 ——
+        // 只改这里，画出来的字和算出来的框宽会一起变，不会再各写一个 13.5。
+        private const string UI_TEXT_FONT = "Microsoft YaHei UI";
+
+        private const float UI_TEXT_SIZE = 13.5f;
+
+        private static readonly SKPaint _uiTextPaint = new SKPaint { Color = SKColors.White, TextSize = UI_TEXT_SIZE, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName("Microsoft YaHei UI") };
 

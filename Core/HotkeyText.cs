@@ -20,13 +20,18 @@ namespace NotchPeninsula
         }
 
         public static string Format(uint mods, int vk)
+            => FormatMods(mods) + KeyName(vk);
+
+        // 只输出修饰键部分（"Ctrl + Shift + "），空组合返回空串。
+        // 录制过程中用它把「已经按住的修饰键」实时画到框里 —— 只按 Ctrl 时界面上有反应，
+        // 用户才不会以为「它根本不识别 Ctrl / Shift / Alt / Win」。
+        public static string FormatMods(uint mods)
         {
-            var sb = new StringBuilder(24);
+            var sb = new StringBuilder(16);
             if ((mods & Win32.MOD_CONTROL) != 0) sb.Append("Ctrl + ");
             if ((mods & Win32.MOD_ALT) != 0) sb.Append("Alt + ");
             if ((mods & Win32.MOD_SHIFT) != 0) sb.Append("Shift + ");
             if ((mods & Win32.MOD_WIN) != 0) sb.Append("Win + ");
-            sb.Append(KeyName(vk));
             return sb.ToString();
         }
 
