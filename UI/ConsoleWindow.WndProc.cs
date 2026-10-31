@@ -84,7 +84,7 @@ namespace NotchPeninsula
             {
                 float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
                 // 液态玻璃下不认这块：玻璃的明暗由背后的桌面决定，主题色只剩"文字反白"，摆着会误导
-                if (!Renderer.IslandLiquidGlass
+                if (!Renderer.IslandAnyGlass
                     && y >= themeSegY && y <= themeSegY + SEG_H
                     && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
                     newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
@@ -92,7 +92,7 @@ namespace NotchPeninsula
                 float matSegY = TITLE_BAR_HEIGHT + MAT_SEG_Y;
                 if (y >= matSegY && y <= matSegY + SEG_H
                     && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
-                    newHoveredMaterial = Math.Min(2, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 3f)));
+                    newHoveredMaterial = Math.Min(3, (int)((x - MAT_SEG_X) / (MAT_SEG_W / 4f)));
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
@@ -120,8 +120,8 @@ namespace NotchPeninsula
                     }
                 } 
 
-                // 液态玻璃卡：材质不是玻璃时整张卡都不画，命中也跟着关掉
-                if (Renderer.IslandLiquidGlass)
+                // 玻璃卡：材质不是玻璃时整张卡都不画，命中也跟着关掉
+                if (Renderer.IslandAnyGlass)
                 {
                     float gCardY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
                     float segY = gCardY + GLASS_SEG_Y;
@@ -131,8 +131,9 @@ namespace NotchPeninsula
                             newHoveredGlassQuality = Math.Min(3, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 4f)));
                     }
 
-                    // 11 根滑轨：先定位行，再看落在哪一列
-                    for (int row = 0; row < GLASS_ROWS; row++)
+                    // 滑轨：先定位行，再看落在哪一列（液态玻璃 12 根 / 液态玻璃 2 是 9 根）
+                    int glassRows = GlassRowCount, glassParams = GlassParamCount;
+                    for (int row = 0; row < glassRows; row++)
                     {
                         float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
                         if (y < ry - 12 || y > ry + 12) continue;
@@ -140,7 +141,7 @@ namespace NotchPeninsula
                         for (int col = 0; col < 3; col++)
                         {
                             int idx = (int)(row * 3) + col;
-                            if (idx >= LiquidGlass.ParamCount) continue;
+                            if (idx >= glassParams) continue;
 
                             float gx0 = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP) + GLASS_SLIDER_DX;
                             float gx1 = gx0 + GLASS_SLIDER_W;
@@ -152,7 +153,7 @@ namespace NotchPeninsula
 
                             newHoveredGlassParam = idx;
                             newHoveredGlassParamLevel = lvl;
-                            if (dragging && LiquidGlass.GetLevel(idx) != lvl)
+                            if (dragging && GlassLevelOf(idx) != lvl)
                             {
                                 ApplyGlassLevel(idx, lvl);
                                 Render();   // 与透明度滑轨同款：跨档立刻跟手

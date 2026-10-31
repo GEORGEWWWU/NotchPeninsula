@@ -251,7 +251,7 @@ namespace NotchPeninsula
             sb.AppendLine($"命令行  : {Environment.CommandLine}");
 
             try { sb.AppendLine($"应用内缩放: {Renderer.GLOBAL_DPI:F2}"); } catch { }
-            try { sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {(Renderer.IslandLiquidGlass ? "液态玻璃" : Renderer.IslandAcrylic ? "亚克力" : "实体")}"); } catch { }
+            try { sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {(Renderer.IslandLiquidGlass2 ? "液态玻璃 2.0" : Renderer.IslandLiquidGlass ? "液态玻璃" : Renderer.IslandAcrylic ? "亚克力" : "实体")}"); } catch { }
             try
             {
                 if (Renderer.IslandLiquidGlass)
@@ -262,6 +262,28 @@ namespace NotchPeninsula
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
                         sb.Append($"  {LiquidGlass.ParamNames[i]}={LiquidGlass.GetLevel(i)}/{LiquidGlass.MaxLevel}");
                     sb.AppendLine();
+                }
+                else if (Renderer.IslandLiquidGlass2)
+                {
+                    sb.Append($"液态玻璃 2.0: 质量={LiquidGlass.QualityName}  抓屏=");
+                    sb.AppendLine(IslandBackdrop.UsingMagnifier ? "放大镜(1:1)" : "兼容(1:1)");
+                    sb.AppendLine($"  玻璃层: {LiquidGlass2.Stats}");
+                    sb.AppendLine($"  背景细节 {LiquidGlass2.BackgroundDetail:F2}"
+                        + $"（均值 {LiquidGlass2.DetailMeanGradient:F1} / 密度 {LiquidGlass2.DetailEdgeDensity:F2}）"
+                        + $" → 模糊半径 {LiquidGlass2.EffectiveBlurRadius}px（0 = 清晰透过）");
+                    for (int i = 0; i < LiquidGlass2.ParamCount; i++)
+                        sb.Append($"  {LiquidGlass2.ParamNames[i]}={LiquidGlass2.GetLevel(i)}/{LiquidGlass2.MaxLevel}");
+                    sb.AppendLine();
+                    sb.AppendLine($"  能力自检：{LiquidGlass2.Health}"
+                        + (string.IsNullOrEmpty(LiquidGlass2.HealthDetail) ? "" : $"（{LiquidGlass2.HealthDetail}）")
+                        + $"  系统 {UiAlert.WindowsVersion()}");
+                }
+                if (Renderer.IslandAnyGlass)
+                {
+                    int gl = Renderer.IslandLiquidGlass2 ? LiquidGlass2.GlassLuminance : LiquidGlass.GlassLuminance;
+                    bool ok = Renderer.IslandLiquidGlass2 ? LiquidGlass2.HasLuminance : LiquidGlass.HasLuminance;
+                    sb.AppendLine($"  玻璃明暗 {gl}/255（{(ok ? "已测" : "无有效采样")}）"
+                        + $" → 岛上文字 {(Renderer.GlassTextIsLight ? "压黑" : "反白")}（平滑值 {Renderer.GlassToneLevel:F2}）");
                 }
             }
             catch { }

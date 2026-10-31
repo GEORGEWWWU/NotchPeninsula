@@ -505,7 +505,7 @@ namespace NotchPeninsula
 
                 Render();
             }
-            else if (_selectedTab == 5 && _hoveredThemeIndex != -1 && !Renderer.IslandLiquidGlass)
+            else if (_selectedTab == 5 && _hoveredThemeIndex != -1 && !Renderer.IslandAnyGlass)
             {
                 Renderer.ThemeMode = _hoveredThemeIndex;
                 Renderer.ApplyThemeColors(); // 立即反转画笔颜色
@@ -515,16 +515,38 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
             {
-                Renderer.IslandAcrylic = _hoveredMaterialIndex == 1;
-                Renderer.IslandLiquidGlass = _hoveredMaterialIndex == 2;
-                Renderer.ApplyThemeColors(); // 岛体涂层厚度要跟着换
-                Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
-                Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                // 切到「液态玻璃 2」之前先跑一遍合成链路自检（纯内存小图，不碰抓屏）：
+                // 算不出来就别切过去 —— 切过去的表现是岛体退回一块死板，用户只会觉得「打不开」。
+                bool canSwitch = true;
+                if (_hoveredMaterialIndex == 3 && !Renderer.IslandLiquidGlass2
+                    && !LiquidGlass2.SelfTest(out string selfTestWhy))
+                {
+                    canSwitch = false;
+                    _hoveredMaterialIndex = -1;
+                    UiAlert.ShowOnce("lg2-selftest",
+                        "这台电脑无法渲染「液态玻璃 2.0」，已保持当前材质。\n\n"
+                        + "原因：" + selfTestWhy + "\n"
+                        + "系统：" + UiAlert.WindowsVersion() + "\n\n"
+                        + "这块材质只依赖 SkiaSharp 的位图运算，没有系统版本限制；"
+                        + "如果上面写的是「合成抛出异常」，把这段发出来就能定位。");
+                }
+
+                if (canSwitch)
+                {
+                    Renderer.IslandAcrylic = _hoveredMaterialIndex == 1;
+                    Renderer.IslandLiquidGlass = _hoveredMaterialIndex == 2;
+                    Renderer.IslandLiquidGlass2 = _hoveredMaterialIndex == 3;
+                    GlassSupport.Reset();   // 重新选材质 = 重新观察，别带着上一轮的失败计时
+                    Renderer.ApplyThemeColors(); // 岛体涂层厚度要跟着换
+                    Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                    Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                    Program.SaveSetting("IslandLiquidGlass2", Renderer.IslandLiquidGlass2 ? 1 : 0);
+                    NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
+                }
                 // 切走玻璃时那张参数卡当场消失，悬停索引一并清掉，别留着下一帧误命中
                 _hoveredGlassQualityIndex = _hoveredGlassParamIndex
                     = _hoveredGlassParamLevel = -1;
                 _hoveredGlassReset = false;
-                NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
                 Render();
             }
             else if (_selectedTab == 5 && _hoveredGlassQualityIndex != -1)

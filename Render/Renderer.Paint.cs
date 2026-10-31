@@ -9,6 +9,8 @@ namespace NotchPeninsula
     {
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
 
+        private static bool _acrylicLogged;
+
         private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 2.8f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round, IsAntialias = true }; // 折角箭头（线条）
 
         private static readonly SKPaint _wakeChipPaint = new SKPaint { Color = SKColors.Black.WithAlpha(WakeChipAlpha), Style = SKPaintStyle.Fill, IsAntialias = true }; // 芯片底色
@@ -58,13 +60,58 @@ namespace NotchPeninsula
 
         private static SKColor _currentSubTextColor = new SKColor(200, 200, 200);
 
-        // 液态玻璃下的文字黑白状态：_glassTextIsLight 是迟滞判定的当前值（Renderer.Draw 每帧更新，
-        // 判据来自 LiquidGlass.GlassLuminance），_glassTextAppliedLight 是画笔上实际生效的值 ——
-        // 只在两者不一致的那一帧才回调 ApplyThemeColors 重绑画笔，平时零开销。
+        // 液态玻璃下的文字黑白状态：
+        //   _glassTextIsLight   —— 迟滞判定的目标值（Renderer.Draw 每帧按玻璃亮度推进）
+        //   _glassTextKnown     —— 是否已经拿到过有效亮度；没有就沿用主题色，别拿"还没测"当"纯黑"
+        //   _paletteIsLight     —— 画笔上**实际**生效的明暗，唯一写入点是 ApplyThemeColors。
+        //                          任何来源写画笔（UI 线程改主题、渲染线程判亮度）都会同步它，
+        //                          这样"画笔状态"和"目标状态"不会各记一套而对不上。
         private static volatile bool _glassTextIsLight;
-        private static volatile bool _glassTextAppliedLight;
+        private static volatile bool _glassTextKnown;
+        private static volatile bool _paletteIsLight;
 
-        private static bool _acrylicLogged;
+        // 亮度平滑：0..1，只在渲染线程读写
+        private static float _glassLumSmooth = 0.5f;
+
+        // 明暗翻转阈值（归一化亮度）。中灰（≈130）上白字只有 2.9:1、黑字有 7:1，
+        // 所以翻黑要早；0.44~0.58 的滞回带既能挡住壁纸纹理导致的来回跳，
+        // 又不会让"偏亮的玻璃 + 白字"发虚。
+        private const float GlassLightAt = 0.58f;
+
+        private const float GlassDarkAt = 0.44f;
+
+        // 每帧朝目标收敛的比例：换壁纸 / 展开成卡片时约 10 帧（≈160ms）走完，不做硬切。
+        private const float GlassToneLerp = 0.22f;
+
+        /// <summary>玻璃下文字当前是否按「浅底」处理（= 黑字）。诊断面板用。</summary>
+        public static bool GlassTextIsLight => _glassTextIsLight;
+
+        /// <summary>平滑后的玻璃亮度（0..1）。诊断面板用。</summary>
+        public static float GlassToneLevel => _glassLumSmooth;
+
+        /// <summary>
+        /// 按玻璃成品的平均亮度重定岛上文字黑白。必须每帧调（哪怕是缓存命中的帧）。
+        /// </summary>
+        /// <param name="lum">玻璃成品中心平均亮度 0..255。</param>
+        /// <param name="valid">这个亮度是否来自一张真正合成出来的玻璃图。</param>
+        internal static void UpdateGlassTextTone(int lum, bool valid)
+        {
+            if (valid)
+            {
+                float t = lum <= 0 ? 0f : (lum >= 255 ? 1f : lum / 255f);
+                _glassLumSmooth += (t - _glassLumSmooth) * GlassToneLerp;
+                if (!_glassTextIsLight && _glassLumSmooth > GlassLightAt) _glassTextIsLight = true;
+                else if (_glassTextIsLight && _glassLumSmooth < GlassDarkAt) _glassTextIsLight = false;
+                _glassTextKnown = true;
+            }
+
+            // 不能只在"判定值翻过阈值"那一帧重绑画笔 —— 那要求 _paletteIsLight 始终等于判定值，
+            // 而它会被 UI 线程的主题切换、材质切换改成主题色。一旦两者悄悄错开
+            // （浅色主题 + 暗玻璃、实体切回玻璃…），文字就会一直用错颜色，直到亮度跨过一次阈值。
+            // 改成每帧比对"画笔实际明暗"和"目标明暗"，任何来源的偏差下一帧就自愈。
+            if (_glassTextKnown && _glassTextIsLight != _paletteIsLight)
+                ApplyThemeColors();
+        }
 
         public static void ApplyThemeColors() // 刷新颜色的方法
         {
@@ -74,9 +121,11 @@ namespace NotchPeninsula
                 isLight = SystemIsLightTheme;
             }
             // 液态玻璃：明暗不再由 ThemeMode 决定 —— 玻璃的底是桌面，文字黑白跟着玻璃实际亮度走
-            // （Renderer.Draw 里逐帧按 LiquidGlass.GlassLuminance 判，翻转时回调本方法）。
-            // 背板还没到时沿用 ThemeMode 兜底，避免启动头一瞬文字色跳变。
-            if (IslandLiquidGlass && AcrylicBackdrop != null)
+            // （Renderer.Draw 里逐帧按玻璃亮度判，翻转时回调本方法）。
+            // 判定还没出来（首帧抓屏之前）时沿用 ThemeMode 兜底，避免启动头一瞬文字色跳变。
+            // ⚠️ 这里不能再看 AcrylicBackdrop 是否为 null：背板在隐藏 / 停顿抓屏时也会是 null，
+            //    那样文字会在玻璃文字色与主题色之间来回闪。
+            if (IslandAnyGlass && _glassTextKnown)
                 isLight = _glassTextIsLight;
 
             // 预计算颜色，避免在渲染树中生成新对象
@@ -89,19 +138,19 @@ namespace NotchPeninsula
             // ⚠️ 这里算出来的只是初值：玻璃模式下 Renderer.Draw 每帧按"背板在不在"重定 ——
             //    本方法在启动时跑在首帧抓屏之前，那时背板必然为 null，一把梭定成 45 就再也下不来了。
             bool backdropReady = AcrylicBackdrop != null;
-            byte bgAlpha = IslandLiquidGlass
+            byte bgAlpha = IslandAnyGlass
                 ? (backdropReady ? (byte)0 : (byte)45)
                 : IslandAcrylic
                     ? (byte)Math.Clamp(BgOpacityLevel * 140 / 4, 0, 255)
                     : (byte)Math.Clamp(BgOpacityLevel * 255 / 4, 0, 255);
 
             // 一次性诊断：材质开关一变就记一行 —— 排查「亚克力/玻璃看不见」时第一时间看它
-            bool wantBackdrop = IslandAcrylic || IslandLiquidGlass;
+            bool wantBackdrop = IslandAcrylic || IslandAnyGlass;
             if (wantBackdrop != _acrylicLogged)
             {
                 _acrylicLogged = wantBackdrop;
-                Logger.Info($"[背景材质] 材质={(IslandLiquidGlass ? "液态玻璃" : IslandAcrylic ? "亚克力" : "实体")}"
-                    + $"  涂层alpha={(IslandLiquidGlass ? "按背板每帧重定" : bgAlpha.ToString())}"
+                Logger.Info($"[背景材质] 材质={(IslandLiquidGlass2 ? "液态玻璃2.0" : IslandLiquidGlass ? "液态玻璃" : IslandAcrylic ? "亚克力" : "实体")}"
+                    + $"  涂层alpha={(IslandAnyGlass ? "按背板每帧重定" : bgAlpha.ToString())}"
                     + $"  档位={BgOpacityLevel}  主题={(isLight ? "浅" : "深")}  底色={(isLight ? "白" : "黑")}");
             }
             var baseBg = isLight ? SKColors.White : SKColors.Black;
@@ -127,6 +176,9 @@ namespace NotchPeninsula
             _tagTextPaint.Color = _currentTextColor;
             _tagBgPaint.Color = _currentTextColor.WithAlpha(25);  // 浅色半透明背景标签
             _barBgPaint.Color = _currentTextColor.WithAlpha(30);   // 未填充进度条的半透明纯色底槽
+
+            // 画笔此刻真正是哪一档明暗 —— 渲染线程靠它判断要不要重绑（见 UpdateGlassTextTone）
+            _paletteIsLight = isLight;
         }
 
         public static Plugins.RenderTheme GetCurrentTheme()

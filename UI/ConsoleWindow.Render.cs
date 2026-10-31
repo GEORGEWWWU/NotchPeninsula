@@ -236,6 +236,18 @@ namespace NotchPeninsula
             int n = labels.Length;
             float segW = w / n;
 
+            // 档位多 / 标签长时按最宽的一格整体缩字号：字压到邻格比缩字号更糟。
+            // 材质那排从 3 档加到 4 档、「液态玻璃2.0」又比「液态玻璃2」宽一截，靠这一步兜底。
+            float baseSize = _uiTextPaint.TextSize;
+            float maxLabelW = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                float lw = _uiTextPaint.MeasureText(labels[i]);
+                if (lw > maxLabelW) maxLabelW = lw;
+            }
+            if (maxLabelW > segW - 8f && maxLabelW > 0f)
+                _uiTextPaint.TextSize = MathF.Max(9f, baseSize * (segW - 8f) / maxLabelW);
+
             _dynamicFillPaint.Color = disabled ? Overlay(5) : Overlay(8);
             canvas.DrawRoundRect(new SKRect(x, y, x + w, y + h), 6, 6, _dynamicFillPaint);
 
@@ -261,6 +273,7 @@ namespace NotchPeninsula
                 canvas.DrawText(labels[i], r.MidX - _uiTextPaint.MeasureText(labels[i]) / 2f, r.MidY + 5.5f, _uiTextPaint);
             }
             _uiTextPaint.Color = _fgColor;
+            _uiTextPaint.TextSize = baseSize;   // 恢复基准字号：同一支画笔本帧后面还要用
         }
 
         private void DrawScrollBar(SKCanvas canvas, float x, float trackTop, float trackH,
@@ -1279,7 +1292,7 @@ namespace NotchPeninsula
 
             // 液态玻璃下明暗由桌面背景决定，黑/白/系统摆着只会误导（悬停/点击已一并屏蔽）：
             // 换成一句明说，告诉用户文字颜色正在自适应。
-            if (Renderer.IslandLiquidGlass)
+            if (Renderer.IslandAnyGlass)
             {
                 const string glassThemeHint = "液态玻璃材质下文字自适应颜色";
                 var prev = _subTextPaint.Color;
@@ -1302,8 +1315,7 @@ namespace NotchPeninsula
                 themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
             canvas.DrawText("胶囊内背景材质", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
             DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
-                ["实体", "亚克力", "液态玻璃"], Renderer.IslandLiquidGlass ? 2 : (Renderer.IslandAcrylic ? 1 : 0),
-                _hoveredMaterialIndex);
+                MaterialLabels, Renderer.IslandMaterialIndex, _hoveredMaterialIndex);
 
             // 液态玻璃模式下整卡不画：玻璃的着色由「玻璃雾度」管，涂层恒为 0（见 ApplyThemeColors），
             // 这条滑轨摆在那儿只会让人以为能调。尺寸卡/玻璃卡跟着上移（见 SIZE_CARD_Y）。
@@ -1355,11 +1367,11 @@ namespace NotchPeninsula
             }
             DrawMultiCard(SIZE_CARD_Y, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
 
-            // 液态玻璃参数卡：只在材质选到「液态玻璃」时出现 —— 实体 / 亚克力下这些滑块没有任何意义
-            if (Renderer.IslandLiquidGlass)
+            // 玻璃参数卡：只在材质选到两种玻璃之一时出现 —— 实体 / 亚克力下这些滑块没有任何意义
+            if (Renderer.IslandAnyGlass)
             {
                 float gY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
-                var gRect = new SKRect(CONTENT_L, gY, WIDTH - CONTENT_RM, gY + GLASS_CARD_H);
+                var gRect = new SKRect(CONTENT_L, gY, WIDTH - CONTENT_RM, gY + GlassCardH);
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
@@ -1380,8 +1392,9 @@ namespace NotchPeninsula
                 float resetW = _uiTextPaint.MeasureText(resetLabel);
                 canvas.DrawText(resetLabel, GLASS_RESET_X + (GLASS_RESET_W - resetW) / 2f, rY + 18, _uiTextPaint);
 
-                // ── 12 根滑轨：3 列 × 4 行 ──
-                for (int row = 0; row < GLASS_ROWS; row++)
+                // ── 滑轨：3 列 × N 行（液态玻璃 12 根，液态玻璃 2 是 9 根）──
+                int rows = GlassRowCount;
+                for (int row = 0; row < rows; row++)
                 {
                     float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
                     for (int col = 0; col < 3; col++)
@@ -1390,10 +1403,26 @@ namespace NotchPeninsula
             }
         }
 
-        // 液态玻璃的一根 5 档滑轨：标签 + 滑轨 + 档位值（数值型参数直接显示具体值）。
+        // 背景材质的四个档位：两种玻璃的合成模型完全不同，所以并列成两个选项，互不覆盖
+        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "液态玻璃2.0"];
+
+        // 液态玻璃 2 只有 9 根滑轨（3 行），卡片比 12 根的矮一行 —— 卡下面没有别的控件，直接按行数收
+        private static float GlassCardH => Renderer.IslandLiquidGlass2
+            ? GLASS_ROW0_Y + 3 * GLASS_ROW_H + 10f
+            : GLASS_CARD_H;
+
+        // 玻璃卡的一根 5 档滑轨：标签 + 滑轨 + 档位值（数值型参数直接显示具体值）。
+        // 两张玻璃卡共用这套画法，只是标签 / 档位 / 数值文案各自取表。
         private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
         {
-            if (paramIndex >= LiquidGlass.ParamCount) return;
+            bool v2 = Renderer.IslandLiquidGlass2;
+            if (paramIndex >= (v2 ? LiquidGlass2.ParamCount : LiquidGlass.ParamCount)) return;
+
+            string label = v2 ? LiquidGlass2.ParamLabels[paramIndex] : LiquidGlass.ParamLabels[paramIndex];
+            string[] valueTexts = v2 ? LiquidGlass2.ValueTexts(paramIndex) : LiquidGlass.ValueTexts(paramIndex);
+            int level = GlassLevelOf(paramIndex);
+            // 只有 v1 有「被质量档锁住」的滑轨（刷新 / 帧率）
+            bool locked = !v2 && LiquidGlass.IsLevelLocked(paramIndex);
 
             float colX = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP);
             float x0 = colX + GLASS_SLIDER_DX, x1 = x0 + GLASS_SLIDER_W;
@@ -1406,12 +1435,11 @@ namespace NotchPeninsula
 
             // 极致档把「刷新」「帧率」锁在最高：标签画灰、数值画成强调色，
             // 免得用户以为拖了没反应是坏了
-            bool locked = LiquidGlass.IsLevelLocked(paramIndex);
             _subTextPaint.Color = locked ? Neutral(110) : _fgColor;
-            canvas.DrawText(LiquidGlass.ParamLabels[paramIndex], colX, textY, _subTextPaint);
+            canvas.DrawText(label, colX, textY, _subTextPaint);
             _subTextPaint.Color = locked ? new SKColor(0, 120, 212) : _fgColor;
 
-            int level = Math.Clamp(LiquidGlass.GetLevel(paramIndex), 0, LiquidGlass.MaxLevel);
+            level = Math.Clamp(level, 0, LiquidGlass.MaxLevel);
             bool hovered = _hoveredGlassParamIndex == paramIndex;
             int hoveredLevel = hovered ? _hoveredGlassParamLevel : -1;
 
@@ -1432,7 +1460,7 @@ namespace NotchPeninsula
             // 档位值右对齐：左对齐时三字值（"1.08x"）会扎进下一列的标签里。
             // 「刷新」档的 ms 单位挪到数字下方 —— 单行会被 max 档的滑块压住 "6"；
             // s 档（"1s"/"0.5s"）本来就是单行，照原样画。
-            string valueText = LiquidGlass.ValueTexts(paramIndex)[level];
+            string valueText = valueTexts[level];
             float right = colX + GLASS_VALUE_RIGHT;
             if (valueText.EndsWith("ms", StringComparison.Ordinal))
             {
