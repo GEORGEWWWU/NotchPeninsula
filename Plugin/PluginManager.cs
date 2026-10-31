@@ -135,6 +135,10 @@ public sealed class PluginManager
                 if (!_disabled.Contains(e.Key) && e.State != PluginState.Loaded)
                     Load(e);
 
+            // 历史遗留：同一个插件装在两个目录（插件改过 Id / 目录名，或手工复制过）。
+            // 不收敛的话两份都会加载，插件中心和组件都会出现重复项；这里只留版本新的那份。
+            DedupeInstalledCopies();
+
             EnsureOrder();
             PushOrderToHost();
 
@@ -517,6 +521,12 @@ public sealed class PluginManager
 
     public bool Load(PluginEntry e) => Load(e, dedupSameId: false);
 
+    /// <summary>
+    /// 安装插件包之后加载：和 <see cref="Import"/> 一样，同一个 Id 的旧副本自动移除。
+    /// 拖入 zip 的安装路径原来调 <see cref="Load(PluginEntry)"/>（不去重），同一插件装在两个目录时会留下旧版。
+    /// </summary>
+    public bool LoadAfterInstall(PluginEntry e) => Load(e, dedupSameId: true);
+
     private bool Load(PluginEntry e, bool dedupSameId)
     {
         if (e.State == PluginState.Loaded) return true;
@@ -668,6 +678,109 @@ public sealed class PluginManager
         }
 
         return PluginFailureKind.Other;
+    }
+
+    /// <summary>
+    /// 找出「同一个插件的其它安装副本」：不同目录，且已知 Id 相同、或主 dll 文件名相同。
+    ///
+    /// <para>
+    /// 装新包前用它把历史遗留的旧目录一并摘掉。拖入 zip 的安装原来只按「目标目录同名」找旧版本：
+    /// 插件的 <b>Id / 目录名改过</b>之后（比如 mediacdp → zzjjack.mediacdp），旧目录永远匹配不上，
+    /// 于是新旧两份并存 —— 用户看到的就是「安装不会替换旧版，旧版还留着」。
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<PluginEntry> FindOtherCopies(string exceptRootDir, string? pluginId, string? mainDllName)
+    {
+        var list = new List<PluginEntry>();
+        foreach (var e in Entries)
+        {
+            if (!string.IsNullOrEmpty(exceptRootDir)
+                && string.Equals(e.RootDir, exceptRootDir, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (!string.IsNullOrEmpty(pluginId) && string.Equals(e.Id, pluginId, StringComparison.OrdinalIgnoreCase))
+            {
+                list.Add(e);
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(mainDllName)
+                && string.Equals(Path.GetFileName(e.DllPath), mainDllName, StringComparison.OrdinalIgnoreCase))
+                list.Add(e);
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 同一个插件 Id 装在多个目录里时只保留一份：版本号高的优先；版本相同则保留目录名与 Id 相同的那份，
+    /// 再不然保留文件更新的那份。其余移入 <c>_recycle</c>（和「卸载」同一条路，可逆）。
+    ///
+    /// <para>
+    /// 这类重复几乎都是历史遗留（插件改过目录名 + 旧安装路径只替换同名目录）。安装路径已改为先摘掉
+    /// 同插件的其它副本，这里给「已经装重复的机器」兜底，启动时自己收敛回一份。
+    /// </para>
+    /// </summary>
+    private void DedupeInstalledCopies()
+    {
+        var groups = new Dictionary<string, List<PluginEntry>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in Entries)
+        {
+            if (string.IsNullOrEmpty(e.Id)) continue;
+            if (!groups.TryGetValue(e.Id, out var list)) groups[e.Id] = list = new List<PluginEntry>();
+            list.Add(e);
+        }
+
+        foreach (var kv in groups)
+        {
+            var list = kv.Value;
+            if (list.Count < 2) continue;
+
+            PluginEntry keep = list[0];
+            foreach (var cand in list.Skip(1))
+                if (PreferOver(cand, keep, kv.Key)) keep = cand;
+
+            bool removedAny = false;
+            foreach (var dup in list)
+            {
+                if (ReferenceEquals(dup, keep)) continue;
+                Logger.Info($"[PluginManager] 同一插件 {kv.Key} 装了多份，保留 {keep.Key}，移除旧副本 {dup.Key}（{dup.RootDir}）");
+                Remove(dup);
+                removedAny = true;
+            }
+
+            // 同 Id 的两份在宿主里共用同一份登记：移除旧副本时 `UnregisterPlugin(id)` 会把登记在
+            // 这个 Id 下的组件 / 设置页一并摘掉 —— 包括刚留下的这份。所以收敛完必须把留下的重新加载一次，
+            // 否则它是「已加载但一个组件都没有」的状态，比重复还难懂。
+            if (removedAny && keep.State == PluginState.Loaded)
+            {
+                Logger.Info($"[PluginManager] 重新加载 {keep.Key}（收敛重复安装后补登记）");
+                Reload(keep);
+            }
+        }
+    }
+
+    /// <summary>两份同 Id 安装里谁留下：版本高的优先，其次目录名与 Id 相同，最后文件新的。</summary>
+    private static bool PreferOver(PluginEntry cand, PluginEntry keep, string id)
+    {
+        int cmp = CompareVersionStrings(cand.Version, keep.Version);
+        if (cmp != 0) return cmp > 0;
+
+        bool candCanonical = Path.GetFileName(cand.RootDir).Length > 0
+            && string.Equals(Path.GetFileName(cand.RootDir), id, StringComparison.OrdinalIgnoreCase);
+        bool keepCanonical = Path.GetFileName(keep.RootDir).Length > 0
+            && string.Equals(Path.GetFileName(keep.RootDir), id, StringComparison.OrdinalIgnoreCase);
+        if (candCanonical != keepCanonical) return candCanonical;
+
+        return SafeWriteTime(cand.DllPath) > SafeWriteTime(keep.DllPath);
+    }
+
+    private static int CompareVersionStrings(string a, string b)
+        => Version.TryParse(a, out var va) && Version.TryParse(b, out var vb)
+            ? va.CompareTo(vb)
+            : string.CompareOrdinal(a, b);
+
+    private static DateTime SafeWriteTime(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); } catch { return DateTime.MinValue; }
     }
 
     private void RemoveSameIdDuplicates(PluginEntry loaded)
