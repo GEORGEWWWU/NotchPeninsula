@@ -90,16 +90,30 @@ namespace NotchPeninsula
                     Renderer.StandbyToggleByDoubleClick =
                         (int)key.GetValue("StandbyToggleByDoubleClick", 0) != 0;
                     Renderer.StandbyActive = (int)key.GetValue("StandbyActive", 0) != 0;
-                    // 显示器拔插过之后注册表里可能留着越界下标（原来选的是第 2 块，现在只剩 1 块）：
-                    // 越界会让设置页显示「未知」、岛体只能靠兜底落回主屏。这里就地夹紧并写回。
+                    // 显示器拔插过之后注册表里可能留着越界下标（原来选的是第 2 块，现在只剩 1 块）。
+                    // 旧版会就地夹紧并把 0 写回 TargetMonitorIndex —— 但显示器经常只是暂时不在
+                    //（KVM/显示器 OSD 切走了输入源、重启后副屏还没唤醒），写回 0 会把用户选的屏
+                    // 永久冲掉，显示器回来后岛就永远落在主屏了。
+                    // 现在：偏好原样保留在 TargetMonitorIndex 里；本次启动先用记忆值
+                    //（TargetMonitorIndex_Remembered，仍越界则 0）兜底，显示器回来后
+                    // NotchWindow.UpdateMonitorBounds 会自动恢复。
                     int loadedMonitor = (int)key.GetValue("TargetMonitorIndex", 0);
                     int monitorCount = System.Windows.Forms.Screen.AllScreens.Length;
-                    if (loadedMonitor < 0 || (monitorCount > 0 && loadedMonitor >= monitorCount))
+                    int rememberedMonitor = (int)key.GetValue("TargetMonitorIndex_Remembered", -1);
+                    if (monitorCount > 0 && loadedMonitor >= 0 && loadedMonitor < monitorCount)
                     {
-                        loadedMonitor = 0;
-                        Program.SaveSetting("TargetMonitorIndex", 0);
+                        Renderer.TargetMonitorIndex = loadedMonitor;
+                        Renderer.RememberedMonitorIndex = loadedMonitor;
+                        if (rememberedMonitor != loadedMonitor)
+                            Program.SaveSetting("TargetMonitorIndex_Remembered", loadedMonitor);
                     }
-                    Renderer.TargetMonitorIndex = loadedMonitor;
+                    else
+                    {
+                        int fallback = (monitorCount > 0 && rememberedMonitor >= 0 && rememberedMonitor < monitorCount)
+                            ? rememberedMonitor : 0;
+                        Renderer.TargetMonitorIndex = fallback;
+                        Renderer.RememberedMonitorIndex = fallback;
+                    }
                     Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
                     Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
                     Renderer.IslandLiquidGlass = (int)key.GetValue("IslandLiquidGlass", 0) != 0;

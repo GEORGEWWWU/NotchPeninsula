@@ -288,7 +288,9 @@ namespace NotchPeninsula
             else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
             {
                 Renderer.TargetMonitorIndex = _hoveredMonitorDropdownIndex;
+                Renderer.RememberedMonitorIndex = _hoveredMonitorDropdownIndex;
                 Program.SaveSetting("TargetMonitorIndex", Renderer.TargetMonitorIndex);
+                Program.SaveSetting("TargetMonitorIndex_Remembered", Renderer.TargetMonitorIndex);
                 _monitorDropdownOpen = false;
                 Render();
             }

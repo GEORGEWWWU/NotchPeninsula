@@ -226,18 +226,45 @@ namespace NotchPeninsula
         private static int _cachedMonitorWidth = 1920;
         private static int _cachedMonitorHeight = 1080;
 
+        private static int _lastKnownMonitorCount = -1;
+
         private void UpdateMonitorBounds()
         {
             var screens = System.Windows.Forms.Screen.AllScreens;
             if (screens.Length == 0) return;   // 枚举不到就沿用上一次的矩形，别把岛体甩出屏幕
+            // 显示器拓扑变化后（拔插 / KVM 切回输入源 / 重启唤醒副屏）重读用户偏好：
+            // 旧版会在越界时把 0 就地写回注册表，显示器一回来偏好已经丢了。
+            // 现在偏好原样保留，拓扑恢复后在这里自动恢复到用户选的那块屏。
+            if (screens.Length != _lastKnownMonitorCount)
+            {
+                _lastKnownMonitorCount = screens.Length;
+                try
+                {
+                    using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                    if (key != null)
+                    {
+                        int pref = Convert.ToInt32(key.GetValue("TargetMonitorIndex", Renderer.TargetMonitorIndex));
+                        if (pref >= 0 && pref < screens.Length && pref != Renderer.TargetMonitorIndex)
+                            Renderer.TargetMonitorIndex = pref;   // 偏好的显示器回来了，自动恢复
+                    }
+                }
+                catch { /* 读不到偏好就用当前值，一次注册表失败不该影响布局 */ }
+            }
             int want = Renderer.TargetMonitorIndex;
-            int idx = want >= 0 && want < screens.Length ? want : 0;
-            // 拔掉显示器后原下标会越界（比如原来是第 2 块）：就地夹紧并写回注册表，
-            // 否则设置页会一直显示「未知」，重启也还是这个越界值。
+            // 目标下标越界（显示器暂时不在）：只在内存里夹紧兜底 —— 优先用记忆值，
+            // 不再像旧版那样把 0 写回注册表，避免把用户偏好永久冲掉。
+            int idx = want >= 0 && want < screens.Length ? want
+                : (Renderer.RememberedMonitorIndex >= 0 && Renderer.RememberedMonitorIndex < screens.Length
+                    ? Renderer.RememberedMonitorIndex : 0);
             if (idx != want)
             {
                 Renderer.TargetMonitorIndex = idx;
-                Program.SaveSetting("TargetMonitorIndex", idx);
+            }
+            else if (idx != Renderer.RememberedMonitorIndex)
+            {
+                // 下标有效且与记忆值不同：更新记忆值，供下次显示器暂时缺席时兜底
+                Renderer.RememberedMonitorIndex = idx;
+                Program.SaveSetting("TargetMonitorIndex_Remembered", idx);
             }
             _cachedMonitorX = screens[idx].Bounds.X;
             _cachedMonitorY = screens[idx].Bounds.Y;
