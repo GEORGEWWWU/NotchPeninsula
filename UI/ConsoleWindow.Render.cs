@@ -873,11 +873,12 @@ namespace NotchPeninsula
             // 右边红字写明「加载失败」；同一时刻待机岛是空白（见 Renderer.ResolveStandbyPluginId）。
             // 不这么说的话，用户只会看到「选了个插件，岛体却什么都不显示」。
             bool sceneFailed = TryGetStandbySceneFailure(out string sceneName);
+            // 「加载失败」只属于右侧红字；主文案永远给名字，连友好名都拿不到时才退回原 Key。
+            string sceneText = sceneFailed && sceneName.Length > 0 ? sceneName : CurrentStandbySceneName();
             DrawDropdownBox(canvas, SCENE_SEG_X, sceneRowY + (ROW_H - SCENE_DD_H) / 2f, SCENE_SEG_W, SCENE_DD_H,
-                sceneFailed ? (sceneName.Length > 0 ? sceneName : StandbySceneFailText) : CurrentStandbySceneName(),
-                _sceneDropdownHovered, enabled: true,
+                sceneText, _sceneDropdownHovered, enabled: true,
                 open: _sceneDropdownOpen, builtinTag: BuiltinWidgets.IsBuiltin(Renderer.StandbySceneKey),
-                warn: sceneFailed && sceneName.Length > 0 ? StandbySceneFailText : null);
+                warn: sceneFailed ? StandbySceneFailText : null);
 
             //（见 Core/NotchWindow 的双击分支）。
             DrawToggleRow(canvas, TOGGLE_ROW_Y + page,
