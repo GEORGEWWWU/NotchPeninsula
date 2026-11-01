@@ -205,7 +205,79 @@ namespace NotchPeninsula
             => $"target={_tw}x{_th}@{_tx},{_ty} dirty={_dirty} expire={_expire} "
              + $"disabled={_disabled} thread={(_thread != null)} lastMs={_lastMs} "
              + $"alive={_contentAlive} deadStreak={_deadStreak} "
-             + $"mask=({_maskSx0:F0},{_maskSy0:F0})-({_maskSx1:F0},{_maskSy1:F0})";
+             + $"mask=({_maskSx0:F0},{_maskSy0:F0})-({_maskSx1:F0},{_maskSy1:F0})"
+             + $" cap=阶段{CaptureFailStage}/连续失败{CaptureFailStreak}次";
+
+        // ---- 抓屏失败诊断（2026-11-01）----
+        // 起因：启动后出现过「目标与遮罩都就位、线程也在跑，却连续 3 秒一帧都产不出来，直到用户手动
+        // 切一次材质才好」，而 Capture() 里每条失败路径都是静默 return false —— 日志里只剩一片空白，
+        // 只能靠猜。这里把「卡在哪一步」记下来：连续失败 ≥5 次才打一行（限 1s 一次），恢复时收尾一行。
+        // 下次再遇到「启动不抓屏」，看这两行的阶段号就能直接定位。
+        private const int CapOk = 0;
+        private const int CapFailTargetTooSmall = 1;   // 抓取矩形 < 16px
+        private const int CapFailMaskMissing = 2;      // 岛体矩形还没就位（没遮罩会把岛体自己拍进背板，宁可先不抓）
+        private const int CapFailBuffer = 3;           // DC / DIB 创建失败
+        private const int CapFailScreenDc = 4;         // GetDC(NULL) 失败
+        private const int CapFailStretchBlt = 5;       // StretchBlt 失败（驱动 / DWM 回读被拒）
+        private const int CapFailSkia = 6;             // SKImage / SKSurface 建图失败
+        private const int CapFailMagnifier = 7;        // 放大镜那条线没取到帧
+        private const int CapFailDisabled = 8;         // 已被异常停用
+
+        private static int _capFailStage = CapOk;
+        private static int _capFailStreak;
+        private static long _capFailSinceMs;
+        private static long _capFailLoggedMs;
+        private static string _capFailExtra = "";
+
+        public static int CaptureFailStage => _capFailStreak == 0 ? CapOk : _capFailStage;
+
+        public static int CaptureFailStreak => _capFailStreak;
+
+        /// <summary>失败阶段的人话名（诊断包 / 日志用）。</summary>
+        public static string CaptureFailStageName(int stage) => stage switch
+        {
+            CapOk => "无",
+            CapFailTargetTooSmall => "抓取矩形过小",
+            CapFailMaskMissing => "岛体遮罩未就位",
+            CapFailBuffer => "抓屏缓冲创建失败",
+            CapFailScreenDc => "取屏幕 DC 失败",
+            CapFailStretchBlt => "StretchBlt 回读失败",
+            CapFailSkia => "Skia 建图失败",
+            CapFailMagnifier => "放大镜未取到帧",
+            CapFailDisabled => "已停用",
+            _ => "未知"
+        };
+
+        private static bool Fail(int stage, string extra = "")
+        {
+            _capFailStage = stage;
+            _capFailExtra = extra;
+            return false;
+        }
+
+        private static void NoteCaptureFail()
+        {
+            long now = Environment.TickCount64;
+            if (_capFailStreak == 0) _capFailSinceMs = now;
+            _capFailStreak++;
+            if (_capFailStreak >= 5 && now - _capFailLoggedMs >= 1000)
+            {
+                _capFailLoggedMs = now;
+                Debug($"[背板] 抓屏连续失败 {_capFailStreak} 次（{now - _capFailSinceMs}ms）"
+                    + $"卡在：{CaptureFailStageName(_capFailStage)}"
+                    + (_capFailExtra.Length > 0 ? "｜" + _capFailExtra : "")
+                    + $"｜{DebugState}");
+            }
+        }
+
+        private static void NoteCaptureOk()
+        {
+            if (_capFailStreak >= 5)
+                Info($"[背板] 抓屏恢复：之前连续失败 {_capFailStreak} 次（{CaptureFailStageName(_capFailStage)}）");
+            _capFailStreak = 0;
+            _capFailStage = CapOk;
+            _capFailExtra = "";
+        }
 
         public static void Stop()
         {
@@ -261,12 +333,17 @@ namespace NotchPeninsula
 
                 try
                 {
-                    if (Capture()) _lastMs = now;
-                    else _lastMs = now;    // 失败也别每 250ms 重试同一帧
+                    if (Capture()) { _lastMs = now; NoteCaptureOk(); }
+                    else
+                    {
+                        _lastMs = now;     // 失败也别每 250ms 重试同一帧
+                        NoteCaptureFail(); // 静默失败会变成黑盒：记下卡在哪一步，连续失败才打日志
+                    }
                 }
                 catch (Exception ex)
                 {
                     Error("[IslandBackdrop] 抓取背板失败，亚克力已停用", ex);
+                    _capFailStage = CapFailDisabled;
                     _disabled = true;
                     FreeBuffer();
                 }
@@ -276,21 +353,29 @@ namespace NotchPeninsula
         private static bool Capture()
         {
             int w = _tw, h = _th, x = _tx, y = _ty;
-            if (w < 16 || h < 16) return false;
+            if (w < 16 || h < 16) return Fail(CapFailTargetTooSmall, $"target={w}x{h}");
 
             // 玻璃 + 放大镜可用 → 走全分辨率那条线（亚克力走 GDI，同样 1:1 抓屏）
             if (_glass && MagnifierBackdrop.IsAvailable)
-                return CaptureMagnified(x, y, w, h);
+            {
+                bool ok = CaptureMagnified(x, y, w, h);
+                if (!ok) Fail(CapFailMagnifier, $"mag中={_magUsed} 版本={_magVersion}");
+                return ok;
+            }
 
             // 还不知道岛体占哪块 → 先别抓（不然会把岛体自己拍进去，画面会往涂层色糊成一坨）
             float mSx0 = _maskSx0, mSy0 = _maskSy0, mSx1 = _maskSx1, mSy1 = _maskSy1;
-            if (mSx1 - mSx0 < 1f || mSy1 - mSy0 < 1f) return false;
+            if (mSx1 - mSx0 < 1f || mSy1 - mSy0 < 1f)
+                return Fail(CapFailMaskMissing, $"mask=({mSx0:F0},{mSy0:F0})-({mSx1:F0},{mSy1:F0})");
 
             float ds = CurrentDownscale;
             int sw = Math.Max(1, (int)(w / ds));
             int sh = Math.Max(1, (int)(h / ds));
             EnsureBuffer(sw, sh);
-            if (_memDc == IntPtr.Zero) return false;
+            // ⚠️ DIB 创建失败时 _pBits 会是空指针，后面 SampleLuminance / EraseIsland 直接裸写就会 AV：
+            //    所以这里既当"这次抓不了"的出口，也顺带把半成品缓冲判死（下次 Expire 会重建）。
+            if (_memDc == IntPtr.Zero || _hBitmap == IntPtr.Zero || _pBits == IntPtr.Zero)
+                return Fail(CapFailBuffer, $"memDc={_memDc} hBitmap={_hBitmap} pBits={_pBits} {sw}x{sh}");
 
             // 遮罩是屏幕物理像素 → 换算到本次背板图像坐标。用的是本次的原点与缩放比（下面那三个值），
             // 不是"上一张图"的 LastScale/LastOrigin，所以首帧也不会错位。
@@ -301,12 +386,13 @@ namespace NotchPeninsula
             int my1 = (int)MathF.Ceiling((mSy1 - y) * inv);
 
             IntPtr sdc = Win32.GetDC(IntPtr.Zero);
-            if (sdc == IntPtr.Zero) return false;
+            if (sdc == IntPtr.Zero) return Fail(CapFailScreenDc);
             try
             {
                 // 1:1 直拷（ds=1 时 StretchBlt 就是原样搬运，不过缩放器）
                 Win32.SetStretchBltMode(_memDc, Win32.HALFTONE);
-                if (!Win32.StretchBlt(_memDc, 0, 0, sw, sh, sdc, x, y, w, h, Win32.SRCCOPY)) return false;
+                if (!Win32.StretchBlt(_memDc, 0, 0, sw, sh, sdc, x, y, w, h, Win32.SRCCOPY))
+                    return Fail(CapFailStretchBlt, $"src=({x},{y},{w},{h}) dst={sw}x{sh}");
             }
             finally
             {
@@ -339,7 +425,7 @@ namespace NotchPeninsula
 
             var info = new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Opaque);
             using var src = SKImage.FromPixels(info, _pBits, sw * 4);
-            if (src == null) return false;
+            if (src == null) return Fail(CapFailSkia, "SKImage.FromPixels");
 
             SKImage? img;
             if (_glass)
@@ -348,7 +434,7 @@ namespace NotchPeninsula
                 // （StretchBlt 的降采样本身已是一次盒式平均）。真正的高斯模糊交给
                 // LiquidGlass 只在「胶囊 + 折射余量」那一小块上做 —— 全屏糊一遍太贵。
                 using var raw = SKSurface.Create(new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Premul));
-                if (raw == null) return false;
+                if (raw == null) return Fail(CapFailSkia, "SKSurface(glass)");
                 raw.Canvas.DrawImage(src, 0f, 0f, _resample);
                 raw.Canvas.Flush();
                 img = raw.Snapshot();
@@ -358,19 +444,19 @@ namespace NotchPeninsula
                 // 无滤镜等效模糊：先降到 1/2（双线性 = 盒式平均），再升回原尺寸
                 int hw = Math.Max(1, sw / 2), hh = Math.Max(1, sh / 2);
                 using var half = SKSurface.Create(new SKImageInfo(hw, hh, SKColorType.Bgra8888, SKAlphaType.Premul));
-                if (half == null) return false;
+                if (half == null) return Fail(CapFailSkia, "SKSurface(half)");
                 half.Canvas.DrawImage(src, new SKRect(0, 0, hw, hh), _resample);
                 half.Canvas.Flush();
                 using var halfImg = half.Snapshot();
-                if (halfImg == null) return false;
+                if (halfImg == null) return Fail(CapFailSkia, "snapshot(half)");
 
                 using var smooth = SKSurface.Create(new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Premul));
-                if (smooth == null) return false;
+                if (smooth == null) return Fail(CapFailSkia, "SKSurface(smooth)");
                 smooth.Canvas.DrawImage(halfImg, new SKRect(0, 0, sw, sh), _resample);
                 smooth.Canvas.Flush();
                 img = smooth.Snapshot();
             }
-            if (img == null) return false;
+            if (img == null) return Fail(CapFailSkia, "snapshot(final)");
 
             // 旧的那张还没被渲染线程取走 → 直接丢掉它（我们自己产的，安全）
             _originX = x;

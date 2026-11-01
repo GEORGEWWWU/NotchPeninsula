@@ -11,6 +11,7 @@
 > | `Plugin/PluginLoader.cs` | 插件目录发现与入口 DLL 挑选 |
 > | `Plugin/PluginManager.cs` | 加载 / 启用 / 禁用 / 重载 / 导入 / 移除 / 失败归类 |
 > | `Plugin/PluginHost.cs` | 宿主侧实现（注册、刷新、提醒、设置、窗口） |
+> | `Render/Renderer.Paint.cs` | 主题色与「液态玻璃」文字自适应判定（见 [10.3](#103-文字颜色是逐帧自适应的液态玻璃--液态玻璃-20)） |
 
 ## 目录
 
@@ -593,6 +594,8 @@ float slot   = host.GetSlotBudget(widgetId); // AutoWidth 专用：再扣掉我�
 2. **透明度一律乘上 `frame.Alpha`**（`颜色.WithAlpha(frame.Alpha)`），否则启动淡入、Toast 叠化时你的内容会「不跟着淡」，看起来像贴上去的。`frame.Alpha == 0` 直接 `return`。
 3. **异常会熔断**：`Draw` / `MeasureWidth` / `Layout` 抛异常，这个组件会被标记为 broken、从此不再绘制（日志里有记录）。别在这里做可能长时间阻塞的事。
 
+> 颜色的两个来源都要**每帧现取**：`frame.Alpha`（启动淡入 / 叠化）与 `frame.Theme.TextColor`（液态玻璃下会跟着桌面亮度反转黑白，见 10.3）。把任何一个存进字段都会在某个状态下出错。
+
 ### 6.7 点击、右键、双击
 
 **左键**：`HitTest` 返回 `new WidgetHit("动件名")` → 宿主调 `OnLeftClick(action, x, y)`。动作名由你定义（`"toggle"`、`"next"`、`"open"`…），`WidgetHit.None` 表示没点中。
@@ -1079,10 +1082,67 @@ public readonly record struct RenderTheme(
 ```
 
 - 颜色一律 `xxx.WithAlpha(frame.Alpha)`，才能跟着淡入 / 叠化。
+- **颜色要每帧现取，不能缓存**：液态玻璃 / 液态玻璃 2.0 下 `TextColor` / `SubTextColor` 会跟着桌面亮度自动翻转黑白（阈值、滞回与自检方法见 10.3），用户换一张壁纸就变了。
 - `GlobalDpi`：宿主把逻辑像素换成物理像素用的系数（设置里可改，默认 1.0）。你自己做坐标换算时必须用同一个，否则高 DPI 下会偏。
 - `NotchBottomRadius`：岛体底部圆角（宿主夹在 0~28），贴边画内容时用。
+- `BackgroundColor`：主题底色。**玻璃材质下没有可用底色**（玻璃自己负责背景，宿主给它的 alpha 是 0），别拿它做对比度判断。
 
-### 10.3 频谱
+### 10.3 文字颜色是逐帧自适应的（液态玻璃 / 液态玻璃 2.0）
+
+> **2026-10 起的新行为（PR #157 上调了明暗分界）。写插件时必须按这一节的规则理解 `Theme.TextColor` / `Theme.SubTextColor`。**
+
+材质是「液态玻璃」或「液态玻璃 2.0」时，岛上文字的黑白**不再由用户的主题设置（黑 / 白 / 跟随系统）决定**，而是跟着玻璃背后那片桌面的实际亮度走：
+
+| 环节 | 口径 |
+|---|---|
+| 采样 | 玻璃成品**中心区域的平均亮度**（0~255）；只在这一帧真的合成出一张玻璃图时有效 |
+| 平滑 | 每帧 `smooth += (target - smooth) * 0.22`，换壁纸约 **160ms** 渐变到位，不做硬切 |
+| 翻黑 | 平滑亮度 **> 0.78** → 黑字（白 / 近白壁纸；主文字 `SKColors.Black`，副文字 `(80,80,80)`） |
+| 翻白 | 平滑亮度 **< 0.70** → 白字（其余一律白字，**包括中亮的彩色底**；主文字 `SKColors.White`，副文字 `(200,200,200)`） |
+| 滞回 | 0.70 ~ 0.78 之间保持上一状态，挡住壁纸纹理导致的来回抖 |
+| 兜底 | 还没有量到有效亮度（启动首帧、抓屏没出图）时，沿用主题设置的明暗 |
+
+> **为什么分界这么高**：PR #157 之前是 0.58 / 0.44（按对比度最优划线），结果「亮蓝 / 彩色壁纸」这类中亮底（采样 0.65~0.70）会被判成浅底、进黑字态，而黑字的退出线 0.44 又永远够不到 —— 观感就是「浅色背景却一直黑字」。现在整体上移：**只有白 / 近白壁纸才用黑字，中亮彩色底也是白字。**
+>
+> 「实体」「亚克力」两种材质不走这套判定：它们的文字明暗仍由用户的主题设置决定。
+
+对插件的四条要求：
+
+1. **每帧现取 `frame.Theme.TextColor` / `frame.Theme.SubTextColor`，绝不缓存。** 它们是逐帧刷新的：用户换壁纸、切材质、首帧量到亮度，颜色都会变（而且是 160ms 渐变，不是瞬间跳）。缓存进字段 = 壁纸换了字色不换。
+2. **不要用 `ThemeMode` / 系统深浅色去猜文字颜色。** 玻璃下用户的主题设置不参与判定；同一份代码要同时能跑「实体 / 亚克力」（跟随主题）和「玻璃」（跟随壁纸）。
+3. **自定义强调色要能同时活过黑字和白字两种模式。** 推荐从 `Theme.TextColor` 派生（加透明度当描边 / 底槽 / 进度条），不要写死深灰或浅灰 —— 写死的颜色在另一档明暗下不是看不见就是糊成一片。
+4. **`frame.Alpha` 照旧。** 自适应只改 RGB，透明度仍由 `Alpha` 控制，两者都要乘上：`Theme.TextColor.WithAlpha(frame.Alpha)`。
+
+```csharp
+void IWidget.Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+{
+    if (frame.Alpha == 0) return;
+
+    // ✅ 每帧现取：玻璃下这两个颜色会跟着壁纸变（白壁纸→黑字，彩色底→白字）
+    var text = frame.Theme.TextColor.WithAlpha(frame.Alpha);
+    var sub  = frame.Theme.SubTextColor.WithAlpha(frame.Alpha);
+
+    // ✅ 强调色从主题色派生，自动跟着明暗反转
+    using var chip = new SKPaint { IsAntialias = true, Color = frame.Theme.TextColor.WithAlpha(28) };
+    canvas.DrawRoundRect(rect, 6f, 6f, chip);
+
+    using var main = new SKPaint { IsAntialias = true, Color = text };
+    using var minor = new SKPaint { IsAntialias = true, Color = sub };
+    canvas.DrawText("CPU", 6f, rect.Height / 2f + 4f, main);
+    canvas.DrawText("42%", 44f, rect.Height / 2f + 4f, minor);
+}
+
+// ❌ 别这么写：白壁纸的玻璃上黑字会消失，近白壁纸上白字会糊成一片
+using var bad = new SKPaint { Color = SKColors.White };
+```
+
+`host.CurrentTheme`（`IPluginHost.CurrentTheme`）和 `Draw` 里的 `frame.Theme` 是同一份快照、同一套规则 —— 同样只能当前帧用，别存进字段。
+
+**`Theme.BackgroundColor` 在玻璃模式下没有可用的底色**（玻璃自己负责背景，宿主给它的 alpha 是 0）；不要拿它做对比度判断，也不要在玻璃下依赖它的 alpha。
+
+**自检方法**（不改代码）：材质切到液态玻璃 → 桌面放白壁纸，岛上文字应变黑；换成亮蓝 / 彩色壁纸，约 0.2s 内变白。你的插件文字应该跟着一起变；如果它不跟着变，先查是不是把颜色缓存进了字段，或者自己写死了颜色。
+
+### 10.4 频谱
 
 `frame.Bars` 是宿主传进来的同一份数组（每帧数值变化，长度 5）。**可以当帧读，别存进字段当快照**，也别改它。
 
@@ -1093,7 +1153,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 }
 ```
 
-### 10.4 RequestRedraw 是空操作
+### 10.5 RequestRedraw 是空操作
 
 `host.RequestRedraw()` 目前**什么都不做** —— 宿主是常驻 60FPS 渲染，画布每帧都会重画。数据变了只要把字段更新掉（注意线程安全），下一帧自然就看到了；宽度变了再补一个 `InvalidateWidgetLayout()`。
 
@@ -1126,6 +1186,9 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 21 | 对端清单里没有我的工具 | MSP 接入关着（默认关），或工具名不合文法被拒 | 设置里打开 MSP 接入；看日志有没有「注册被拒」 |
 | 22 | 工具调用报「参数缺失」 | 把委托又包了一层，SDK 读不到默认值 | 直接传方法组 / 带默认值的 lambda，别包 `DynamicInvoke` |
 | 23 | 插件卸载了还能被调 | MSP 协议层没有「反注册工具」 | 工具实现里判状态，停用后返回明确错误 |
+| 24 | 液态玻璃下文字一直黑 / 一直白，换壁纸不变 | 把 `Theme.TextColor` 缓存进了字段 | 每帧从 `frame.Theme` 现取（见 10.3） |
+| 25 | 玻璃下自己画的文字看不清 | 写死黑 / 白或深灰，没跟着自适应翻色 | 用 `Theme.TextColor` / 由它派生的强调色（见 10.3） |
+| 26 | 插件底色把岛上文字衬没了 | 拿 `Theme.BackgroundColor` 当对比度依据 | 玻璃下它 alpha 为 0，没有可用底色（见 10.2） |
 
 ---
 
@@ -1235,6 +1298,8 @@ readonly record struct WidgetFrame(RenderTheme Theme, byte Alpha, float TextOffs
 
 class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClick }
 ```
+
+> `RenderTheme.TextColor` / `SubTextColor` 在液态玻璃下**逐帧自适应黑白**（白壁纸→黑字，其余→白字，阈值见 10.3），必须每帧现取、不能缓存；`BackgroundColor` 在玻璃材质下 alpha 为 0，没有可用底色。
 
 ### 未开放的接口（定义了但没接线）
 
