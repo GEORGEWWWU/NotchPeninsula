@@ -61,14 +61,16 @@ namespace NotchPeninsula
                         (int)key.GetValue("ToastSoundEnabled", 0) != 0,
                         (int)key.GetValue("ToastSoundVolume", ToastSoundConfig.DefaultVolumePercent));
 
-                    // 读取个性化参数
-                    Renderer.STANDBY_WIDTH = Convert.ToSingle(key.GetValue("Custom_StandbyW", 125f));
-                    Renderer.MEDIA_WIDTH = Convert.ToSingle(key.GetValue("Custom_MediaW", 250f));
-                    Renderer.MEDIA_HEIGHT = Convert.ToSingle(
-                        key.GetValue("Custom_MediaH", key.GetValue("Custom_BaseH", 35f)));
-                    Renderer.TOAST_WIDTH = Convert.ToSingle(key.GetValue("Custom_ToastW", 260f));
-                    Renderer.TOAST_HEIGHT = Convert.ToSingle(key.GetValue("Custom_ToastH", 55f));
-                    Renderer.GLOBAL_DPI = Convert.ToSingle(key.GetValue("Custom_Dpi", 1.0f));
+                    // 读取个性化参数（注册表可能被旧版本/手改写坏：一律夹到安全范围。
+                    // 视觉比例原本只有下限没有上限，点到 5x 时画布 10000×1100、每帧约 44MB，
+                    // 常驻合成负载被放大一到两个数量级 —— 这里和设置页的加减按钮一起封顶。）
+                    Renderer.STANDBY_WIDTH = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_StandbyW", 125f)), 20f, 1200f);
+                    Renderer.MEDIA_WIDTH = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_MediaW", 250f)), 20f, 1200f);
+                    Renderer.MEDIA_HEIGHT = Math.Clamp(
+                        Convert.ToSingle(key.GetValue("Custom_MediaH", key.GetValue("Custom_BaseH", 35f))), 20f, 600f);
+                    Renderer.TOAST_WIDTH = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_ToastW", 260f)), 20f, 1200f);
+                    Renderer.TOAST_HEIGHT = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_ToastH", 55f)), 20f, 600f);
+                    Renderer.GLOBAL_DPI = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_Dpi", 1.0f)), 0.5f, 3.0f);
                     Renderer.NOTCH_BOTTOM_RADIUS = Math.Clamp(Convert.ToSingle(key.GetValue("Custom_NotchBottomR", 12f)), 0f, 28f);
                     Renderer.ThemeMode = (int)key.GetValue("ThemeMode", 0);
                     Renderer.NotchStyle = (int)key.GetValue("NotchStyle", 0);
@@ -114,7 +116,8 @@ namespace NotchPeninsula
                         Renderer.TargetMonitorIndex = fallback;
                         Renderer.RememberedMonitorIndex = fallback;
                     }
-                    Renderer.BgOpacityLevel = (int)key.GetValue("BgOpacityLevel", 4);
+                    // 越界档位会让滑轨画到轨道外、且没有任何选中圆点（看起来就是"灰死轨"），必须夹回。
+                    Renderer.BgOpacityLevel = Math.Clamp((int)key.GetValue("BgOpacityLevel", 4), 0, 4);
                     Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
                     Renderer.IslandLiquidGlass = (int)key.GetValue("IslandLiquidGlass", 0) != 0;
                     Renderer.IslandLiquidGlass2 = (int)key.GetValue("IslandLiquidGlass2", 0) != 0;

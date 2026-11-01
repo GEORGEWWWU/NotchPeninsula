@@ -1443,9 +1443,9 @@ namespace NotchPeninsula
                 _dynamicStrokePaint.StrokeWidth = 2f;
                 canvas.DrawLine(sliderX, sliderY, activePx, sliderY, _dynamicStrokePaint);
 
-                bool isOpacityDisabled = Renderer.PassthroughModeEnabled;
-                // 禁用（穿透模式）也照样画出进度，只是压暗 —— 整条消失会让人以为设置没生效
-                _dynamicStrokePaint.Color = isOpacityDisabled ? Neutral(80) : new SKColor(0, 120, 212);
+                // 穿透模式下也允许调背景透明度：滑轨不再置灰、不再吞掉点击/拖动。
+                // 穿透淡出是叠在这层之上的「悬停淡出」，两者互不冲突（旧版直接禁用，用户只会以为坏了）。
+                _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
                 for (int i = 0; i < 5; i++)
                 {
                     float px = sliderX + (sliderW / 4) * i;
@@ -1453,12 +1453,10 @@ namespace NotchPeninsula
                     bool isHovered = _hoveredOpacityIndex == i;
                     if (isSelected || isHovered)
                     {
-                        _dynamicFillPaint.Color = isSelected
-                            ? (isOpacityDisabled ? Neutral(120) : new SKColor(0, 120, 212))
-                            : Overlay(80);
+                        _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212) : Overlay(80);
                         canvas.DrawCircle(px, sliderY, isSelected ? 6 : 4, _dynamicFillPaint);
                     }
-                    _dynamicTextPaint.Color = isOpacityDisabled ? Neutral(100) : (isSelected ? _fgColor : Neutral(150));
+                    _dynamicTextPaint.Color = isSelected ? _fgColor : Neutral(150);
                     _dynamicTextPaint.TextSize = 11f;
                     string pct = OpacityStopLabels[i];   // 复用静态刻度文案，避免每帧插值
                     float tw = _dynamicTextPaint.MeasureText(pct);

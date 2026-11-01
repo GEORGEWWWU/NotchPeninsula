@@ -98,6 +98,13 @@ namespace NotchPeninsula
         /// <summary>渲染线程的帧间隔（ms）。渲染循环每帧读一次，所以改完立刻生效。</summary>
         public static int FrameIntervalMs => 1000 / FrameFpsTable[EffectiveLevel(P_FrameRate)];
 
+        /// <summary>
+        /// 精确帧间隔（毫秒）。<see cref="FrameIntervalMs"/> 用整数除法表达毫秒：144 档会变成 6ms
+        /// （实际 166.7fps）、120 档变 8ms（125fps）—— 标称帧率和真实负载对不上。
+        /// 渲染循环现在按 Stopwatch ticks 排程，用这个精确值，帧率才和设置页写的一致。
+        /// </summary>
+        public static double FrameIntervalMsExact => 1000.0 / FrameFpsTable[EffectiveLevel(P_FrameRate)];
+
         // 「极致」档把「刷新」「帧率」两根滑轨锁到最高档：这个档的定位就是"能喂多快就喂多快"，
         // 玻璃再被低刷新拖成半拍前的画面，超采样和 1:1 抓屏就白做了。
         // ⚠️ 只锁「读取」，不改 _levels —— 切回别的档位时用户原来的设定原样回来。

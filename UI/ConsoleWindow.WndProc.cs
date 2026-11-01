@@ -98,7 +98,7 @@ namespace NotchPeninsula
                 float sliderX = CONTENT_TEXT_X;
                 float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
 
-                if (ShowOpacityCard && !Renderer.PassthroughModeEnabled)
+                if (ShowOpacityCard)
                 {
                     // 放宽 Y 轴的判定区域，提升拖拽时的手感，防止手抖断触
                     if (x >= sliderX - 20 && x <= sliderX + sliderW + 20 && y >= sliderY - 20 && y <= sliderY + 20)
