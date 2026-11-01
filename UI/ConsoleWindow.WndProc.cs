@@ -125,7 +125,9 @@ namespace NotchPeninsula
                 {
                     float gCardY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
                     float segY = gCardY + GLASS_SEG_Y;
-                    if (y >= segY && y <= segY + SEG_H)
+                    // 液态玻璃 2 卡上没有质量分段（见 GlassRow0Y 注释）：命中也得关，
+                    // 否则点在原分段位置上，改的仍是 v1 的档位。
+                    if (!Renderer.IslandLiquidGlass2 && y >= segY && y <= segY + SEG_H)
                     {
                         if (x >= GLASS_QUALITY_SEG_X && x <= GLASS_QUALITY_SEG_X + GLASS_QUALITY_SEG_W)
                             newHoveredGlassQuality = Math.Min(3, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 4f)));
@@ -135,7 +137,7 @@ namespace NotchPeninsula
                     int glassRows = GlassRowCount, glassParams = GlassParamCount;
                     for (int row = 0; row < glassRows; row++)
                     {
-                        float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
+                        float ry = gCardY + GlassRow0Y + (row * GLASS_ROW_H) + 17f;
                         if (y < ry - 12 || y > ry + 12) continue;
 
                         for (int col = 0; col < 3; col++)
@@ -163,8 +165,8 @@ namespace NotchPeninsula
                         break;
                     }
 
-                    // 「恢复默认参数」（与质量分段同一行）：滑轨之后判，命中就把滑轨悬停清掉
-                    float grY = segY + (SEG_H - GLASS_RESET_H) / 2f;
+                    // 「恢复默认参数」：v1 与质量分段同一行，v2 在滑轨下方右下角 —— 滑轨之后判，命中就把滑轨悬停清掉
+                    float grY = gCardY + GlassResetTopY;
                     if (x >= GLASS_RESET_X && x <= GLASS_RESET_X + GLASS_RESET_W
                         && y >= grY && y <= grY + GLASS_RESET_H)
                     {

@@ -189,12 +189,26 @@ namespace NotchPeninsula
 
         private const float GLASS_VALUE_RIGHT = 116f;          // 档位值右缘（相对列左端，= 列宽 −6）
 
-        // 「恢复默认参数」：与质量分段同一行，右对齐到卡片文字右缘；纵向在分段内居中
+        // 「恢复默认参数」：宽 96，右对齐到卡片文字右缘
         private const float GLASS_RESET_W = 96f;
 
         private const float GLASS_RESET_H = 26f;
 
         private const float GLASS_RESET_X = GLASS_TEXT_R - GLASS_RESET_W;   // 484
+
+        // ---- 液态玻璃 2 的卡内排布 ----
+        // 液态玻璃 2 的 9 根滑轨不吃「玻璃质量」：那四档只改 v1 的抓屏倍率 / 玻璃层参数，
+        // v2 的合成参数全由滑轨决定 —— 在 v2 卡上画质量分段就是「点了没反应」，比不画更误导。
+        // 所以 v2 整行不画：滑轨顶到卡片第一行，「恢复默认参数」落到滑轨下方右下角。
+        private static float GlassRow0Y => Renderer.IslandLiquidGlass2 ? GLASS_SEG_Y : GLASS_ROW0_Y;
+
+        private static float GlassResetTopY => Renderer.IslandLiquidGlass2
+            ? GlassRow0Y + 3 * GLASS_ROW_H + 6f        // 3 行滑轨之后留 6px 呼吸
+            : GLASS_SEG_Y + (SEG_H - GLASS_RESET_H) / 2f;
+
+        // v2 卡底留白：12 + 3×32（滑轨）+ 6（呼吸）+ 26（按钮）+ 12 = 152，与改前的 v2 卡同高，
+        // 窗口高度和下面控件都不用动。
+        private const float GLASS_CARD_BOTTOM_PAD = 12f;
 
         private const float OPACITY_SLIDER_DY = 44f;
 

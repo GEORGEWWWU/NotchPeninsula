@@ -725,7 +725,7 @@ namespace NotchPeninsula
 
         private void DrawDropdownBox(SKCanvas canvas, float x, float y, float w, float h,
                                      string text, bool hovered, bool enabled,
-                                     bool open = false, bool builtinTag = false)
+                                     bool open = false, bool builtinTag = false, string? warn = null)
         {
             var rect = new SKRect(x, y, x + w, y + h);
             bool hot = enabled && (hovered || open);
@@ -740,7 +740,10 @@ namespace NotchPeninsula
             }
 
             float tagW = builtinTag ? _subTextPaint.MeasureText("内置") + 14f : 0f;
-            float textLimit = w - DROPDOWN_TEXT_PAD_L - DROPDOWN_CHEVRON_AREA - (tagW > 0f ? tagW + 8f : 0f);
+            // 右侧状态字（如「加载失败」）占「内置」胶囊那一格：正文按剩余宽度截断，不会压到它。
+            float warnW = warn != null ? _subTextPaint.MeasureText(warn) + 6f : 0f;
+            float textLimit = w - DROPDOWN_TEXT_PAD_L - DROPDOWN_CHEVRON_AREA
+                - (tagW > 0f ? tagW + 8f : 0f) - warnW;
             _uiTextPaint.Color = enabled ? _fgColor : Neutral(110);
             canvas.DrawText(TruncateText(text, _uiTextPaint, textLimit),
                 rect.Left + DROPDOWN_TEXT_PAD_L, rect.Top + h / 2f + 5f, _uiTextPaint);
@@ -748,6 +751,18 @@ namespace NotchPeninsula
 
             if (builtinTag)
                 DrawBuiltinTag(canvas, rect.Right - DROPDOWN_CHEVRON_AREA - tagW - 2f, rect.Top + (h - 16f) / 2f);
+
+            if (warn != null)
+            {
+                // 红色只留给错误状态：普通说明与「内置」胶囊是灰与蓝，混成一个颜色就分不出轻重了。
+                var prevColor = _subTextPaint.Color;
+                _subTextPaint.Color = new SKColor(232, 100, 100);
+                float warnRight = rect.Right - DROPDOWN_CHEVRON_AREA - 2f;
+                // 基线跟正文对齐（12px 压在 13px 的同一基线上，底部齐平不显飘）
+                canvas.DrawText(warn, warnRight - _subTextPaint.MeasureText(warn),
+                    rect.Top + h / 2f + 5f, _subTextPaint);
+                _subTextPaint.Color = prevColor;
+            }
 
             float cx = rect.Right - 19f;
             float cy = rect.MidY;
@@ -854,9 +869,15 @@ namespace NotchPeninsula
 
             float sceneRowY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + page;
             canvas.DrawText("待机显示内容", CONTENT_TEXT_X, sceneRowY + ROW_LABEL_DY, _uiTextPaint);
+            // 选中的第三方插件没加载起来时：左边照常显示插件名（缓存名兜底，不再是裸 DLL 文件名），
+            // 右边红字写明「加载失败」；同一时刻待机岛是空白（见 Renderer.ResolveStandbyPluginId）。
+            // 不这么说的话，用户只会看到「选了个插件，岛体却什么都不显示」。
+            bool sceneFailed = TryGetStandbySceneFailure(out string sceneName);
             DrawDropdownBox(canvas, SCENE_SEG_X, sceneRowY + (ROW_H - SCENE_DD_H) / 2f, SCENE_SEG_W, SCENE_DD_H,
-                CurrentStandbySceneName(), _sceneDropdownHovered, enabled: true,
-                open: _sceneDropdownOpen, builtinTag: BuiltinWidgets.IsBuiltin(Renderer.StandbySceneKey));
+                sceneFailed ? (sceneName.Length > 0 ? sceneName : StandbySceneFailText) : CurrentStandbySceneName(),
+                _sceneDropdownHovered, enabled: true,
+                open: _sceneDropdownOpen, builtinTag: BuiltinWidgets.IsBuiltin(Renderer.StandbySceneKey),
+                warn: sceneFailed && sceneName.Length > 0 ? StandbySceneFailText : null);
 
             //（见 Core/NotchWindow 的双击分支）。
             DrawToggleRow(canvas, TOGGLE_ROW_Y + page,
@@ -1456,14 +1477,19 @@ namespace NotchPeninsula
 
                 // ── 第一行：玻璃质量（左） + 恢复默认参数（右）──
                 // 抓屏方式不再暴露：放大镜可用即用、不可用自动回退兼容抓屏，没有开关也没有状态行。
+                // 液态玻璃 2 不画质量分段：那四档只改 v1，v2 的合成参数全在下面 9 根滑轨上。
                 float segY = gY + GLASS_SEG_Y;
-                float segTextY = segY + 20f;
-                canvas.DrawText("玻璃质量", GLASS_TEXT_X, segTextY, _uiTextPaint);
-                DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
-                    ["流畅", "均衡", "精细", "极致"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
+                if (!Renderer.IslandLiquidGlass2)
+                {
+                    float segTextY = segY + 20f;
+                    canvas.DrawText("玻璃质量", GLASS_TEXT_X, segTextY, _uiTextPaint);
+                    DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
+                        ["流畅", "均衡", "精细", "极致"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
+                }
 
-                // 「恢复默认参数」：与质量分段同一行，右对齐到卡片文字右缘（原卡底位让给滑轨）
-                float rY = segY + (SEG_H - GLASS_RESET_H) / 2f;
+                // 「恢复默认参数」：v1 与质量分段同一行（右对齐到卡片文字右缘），
+                // v2 没有那一行 → 落到 3 行滑轨下方的右下角（同一右缘）。
+                float rY = gY + GlassResetTopY;
                 _dynamicFillPaint.Color = _hoveredGlassReset ? Overlay(30) : Overlay(15);
                 canvas.DrawRoundRect(new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
                     4, 4, _dynamicFillPaint);
@@ -1475,7 +1501,7 @@ namespace NotchPeninsula
                 int rows = GlassRowCount;
                 for (int row = 0; row < rows; row++)
                 {
-                    float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
+                    float rowY = gY + GlassRow0Y + row * GLASS_ROW_H;
                     for (int col = 0; col < 3; col++)
                         DrawGlassSlider(canvas, rowY, col, (int)(row * 3) + col);
                 }
@@ -1485,9 +1511,10 @@ namespace NotchPeninsula
         // 背景材质的四个档位：两种玻璃的合成模型完全不同，所以并列成两个选项，互不覆盖
         private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "液态玻璃2.0"];
 
-        // 液态玻璃 2 只有 9 根滑轨（3 行），卡片比 12 根的矮一行 —— 卡下面没有别的控件，直接按行数收
+        // 液态玻璃 2 只有 9 根滑轨（3 行），且没有质量行 —— 卡高 = 3 行滑轨 + 底部按钮行，
+        // 正好与改前的 v2 卡同高（152），窗口高度与下面控件都不动。
         private static float GlassCardH => Renderer.IslandLiquidGlass2
-            ? GLASS_ROW0_Y + 3 * GLASS_ROW_H + 10f
+            ? GlassResetTopY + GLASS_RESET_H + GLASS_CARD_BOTTOM_PAD
             : GLASS_CARD_H;
 
         // 玻璃卡的一根 5 档滑轨：标签 + 滑轨 + 档位值（数值型参数直接显示具体值）。

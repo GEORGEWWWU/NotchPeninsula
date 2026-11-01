@@ -834,6 +834,9 @@ namespace NotchPeninsula
             if (string.IsNullOrEmpty(scene) || Plugins.BuiltinWidgets.IsBuiltin(scene)) return null;
 
             var entry = Plugins.PluginManager.Instance.Find(scene);
+            // 加载失败 / 被禁用的插件一个组件都不会画：直接当成「没有内容」让待机空白，
+            // 别拿残留的 Id 继续往下试 —— 设置页那边会同时用红字写明「加载失败」。
+            if (entry != null && entry.State != Plugins.PluginState.Loaded) return null;
             if (entry != null && !string.IsNullOrEmpty(entry.Id)) return entry.Id;
             return scene;   // 兜底：按原值当 Id 试一次
         }

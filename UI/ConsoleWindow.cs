@@ -842,6 +842,27 @@ namespace NotchPeninsula
             return key;
         }
 
+        // 待机选中的第三方插件加载失败时，下拉框要说清楚是「插件坏了」还是「选了个不存在的东西」——
+        // 只把 Key（DLL 文件名）原样印出来，用户只会以为下拉框坏了。
+        private const string StandbySceneFailText = "加载失败";
+
+        /// <summary>
+        /// 待机选中的第三方插件是不是**加载失败**；失败时给出还能显示的名字（加载失败前缓存过的
+        /// 显示名优先，退到 DLL 文件名），用来在下拉框里代替裸 Key。
+        /// </summary>
+        private static bool TryGetStandbySceneFailure(out string name)
+        {
+            name = "";
+            string key = Renderer.StandbySceneKey;
+            if (string.IsNullOrEmpty(key) || BuiltinWidgets.IsBuiltin(key)) return false;
+
+            var entry = PluginManager.Instance.Find(key);
+            if (entry == null || entry.State != PluginState.Failed) return false;
+
+            name = entry.FriendlyName;
+            return true;
+        }
+
         private void GetSceneMenuLayout(out float menuTop, out int visibleRows, out int maxFirstRow)
         {
             int total = _sceneChoices.Length;
