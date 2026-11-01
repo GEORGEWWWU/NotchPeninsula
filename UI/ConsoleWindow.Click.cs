@@ -551,7 +551,9 @@ namespace NotchPeninsula
                 _hoveredGlassReset = false;
                 Render();
             }
-            else if (_selectedTab == 5 && _hoveredGlassQualityIndex != -1)
+            // 液态玻璃 2 卡上没有质量分段（见 GlassRow0Y 注释），这道分支只属于 v1：
+            // 加一道兜底，免得材质切走时残留的悬停索引被当成「点了档位」。
+            else if (_selectedTab == 5 && _hoveredGlassQualityIndex != -1 && !Renderer.IslandLiquidGlass2)
             {
                 // 换质量 = 换抓屏倍率 + 模糊核：抓屏那边已经 Expire 过，这里再兜一次重建
                 LiquidGlass.Quality = _hoveredGlassQualityIndex;
