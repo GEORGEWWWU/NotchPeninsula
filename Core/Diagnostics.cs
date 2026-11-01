@@ -252,6 +252,9 @@ namespace NotchPeninsula
 
             try { sb.AppendLine($"应用内缩放: {Renderer.GLOBAL_DPI:F2}"); } catch { }
             try { sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {(Renderer.IslandLiquidGlass2 ? "液态玻璃 2.0" : Renderer.IslandLiquidGlass ? "液态玻璃" : Renderer.IslandAcrylic ? "亚克力" : "实体")}"); } catch { }
+            // 液态玻璃 2 的可用性守卫：误降级的排查全看这一行 ——
+            // 背板有没有产出过、合成失败 / 无内容各累计了多久、本次会话是否已经降级（降级不写设置）。
+            try { sb.AppendLine($"玻璃守卫: {GlassSupport.StatusLine}"); } catch { }
             try
             {
                 if (Renderer.IslandLiquidGlass)
