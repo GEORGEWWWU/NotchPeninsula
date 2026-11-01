@@ -147,6 +147,10 @@ namespace NotchPeninsula
         public static SKRect AcrylicBackdropSrc { get; set; }
 
         public static int TargetMonitorIndex { get; set; } = 0; // 目标显示器索引
+        // 最近一次有效目标显示器的记忆值（注册表键 TargetMonitorIndex_Remembered）。
+        // 目标显示器只是暂时不在（KVM 切走输入源、重启后副屏未唤醒）时，用它兜底；
+        // 等显示器回来后按 TargetMonitorIndex 里保留的用户偏好自动恢复。
+        public static int RememberedMonitorIndex { get; set; } = -1;
 
         public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
 
