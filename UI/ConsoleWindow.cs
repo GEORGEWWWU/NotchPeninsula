@@ -1260,11 +1260,17 @@ namespace NotchPeninsula
 
             _monitorOptions = opts;
 
-            // 拔掉显示器后原下标可能越界：夹紧并写回注册表（否则设置页显示「未知」，重启依旧是越界值）。
+            // 拔掉显示器后原下标可能越界：仅在内存里夹紧兜底（优先用记忆值），
+            // 不再像旧版那样把 0 写回注册表 —— 显示器（如 KVM 切回输入源）回来后会自动恢复用户偏好。
             if (Renderer.TargetMonitorIndex < 0 || Renderer.TargetMonitorIndex >= opts.Length)
             {
-                Renderer.TargetMonitorIndex = 0;
-                Program.SaveSetting("TargetMonitorIndex", 0);
+                int fb = Renderer.RememberedMonitorIndex;
+                Renderer.TargetMonitorIndex = (fb >= 0 && fb < opts.Length) ? fb : 0;
+            }
+            else if (Renderer.TargetMonitorIndex != Renderer.RememberedMonitorIndex)
+            {
+                Renderer.RememberedMonitorIndex = Renderer.TargetMonitorIndex;
+                Program.SaveSetting("TargetMonitorIndex_Remembered", Renderer.TargetMonitorIndex);
             }
 
             var inst = _instance;
