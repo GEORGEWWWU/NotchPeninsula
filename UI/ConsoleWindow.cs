@@ -857,7 +857,10 @@ namespace NotchPeninsula
             if (string.IsNullOrEmpty(key) || BuiltinWidgets.IsBuiltin(key)) return false;
 
             var entry = PluginManager.Instance.Find(key);
-            if (entry == null || entry.State != PluginState.Failed) return false;
+            // 被禁用的插件状态是 NotLoaded（不是 Failed），但同样一个组件都不会画 ——
+            // Renderer.ResolveStandbyPluginId 已经把两种都当「不渲染」，这里却只认 Failed，
+            // 结果禁用后下拉框只剩裸 DLL 文件名、没有「加载失败」提示（与那边注释自相矛盾）。
+            if (entry == null || (entry.State != PluginState.Failed && entry.State != PluginState.NotLoaded)) return false;
 
             name = entry.FriendlyName;
             return true;

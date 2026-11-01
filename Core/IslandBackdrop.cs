@@ -333,7 +333,9 @@ namespace NotchPeninsula
             // ⚠️ 必须把 DIB 的 alpha 字节全部置 255。
             // StretchBlt/BitBlt 只写 BGR、**不写 alpha**（留下 0），而 SKImage.FromPixels 会把 a=0 当「全透明」——
             // 贴上去等于什么都没贴，亚克力整体消失（实测：不置 alpha → 画进画布后整块变透明）。
-            for (int i = 3, n = sw * sh * 4; i < n; i += 4) Marshal.WriteByte(_pBits, i, 255);
+            // 按 uint 整字置位：逐字节 Marshal.WriteByte 在 1080p 下是 140 万次托管调用（7~14ms/次）。
+            uint* pxAlpha = (uint*)_pBits;
+            for (int i = 0, n = sw * sh; i < n; i++) pxAlpha[i] |= 0xFF000000u;
 
             var info = new SKImageInfo(sw, sh, SKColorType.Bgra8888, SKAlphaType.Opaque);
             using var src = SKImage.FromPixels(info, _pBits, sw * 4);

@@ -37,6 +37,10 @@ namespace NotchPeninsula
 
         public const int SM_YVIRTUALSCREEN = 77;
 
+        public const int SM_CXVIRTUALSCREEN = 78;
+
+        public const int SM_CYVIRTUALSCREEN = 79;
+
         public enum MW_FILTERMODE
         {
             Exclude = 0,   // 列表里的窗口**不**出现在抓取结果中

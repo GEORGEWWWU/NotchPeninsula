@@ -97,6 +97,9 @@ namespace NotchPeninsula
                 lock (_lock) { _front = Array.Empty<byte>(); _back = Array.Empty<byte>(); }
             }
 
+            // force = 用户/设置页主动重试：把尝试计数清零，否则累计到 4 次后这个分支永远直接 disabled。
+            if (force) _attempts = 0;
+
             if (_attempts >= MaxAttempts) { _disabled = true; return; }
             _attempts++;
             _inited = true;
@@ -236,6 +239,19 @@ namespace NotchPeninsula
         private static void CaptureNow(int x, int y, int w, int h)
         {
             if (_mag == IntPtr.Zero || w < 1 || h < 1) return;
+
+            // 显示器拔插 / 分辨率变化后，调用方可能还拿着上一轮拓扑的矩形。
+            // 先把源矩形夹回虚拟屏：绝不把屏幕外坐标喂给 MagSetWindowSource（跨显示器/已移除的显示器
+            // 上喂旧坐标正是这条 DWM 回读路径最容易出事的地方）。
+            int vx = MagNative.GetSystemMetrics(MagNative.SM_XVIRTUALSCREEN);
+            int vy = MagNative.GetSystemMetrics(MagNative.SM_YVIRTUALSCREEN);
+            int vw = MagNative.GetSystemMetrics(MagNative.SM_CXVIRTUALSCREEN);
+            int vh = MagNative.GetSystemMetrics(MagNative.SM_CYVIRTUALSCREEN);
+            if (vw <= 0 || vh <= 0) return;
+            int cl = Math.Max(x, vx), ct = Math.Max(y, vy);
+            int cr = Math.Min(x + w, vx + vw), cb = Math.Min(y + h, vy + vh);
+            x = cl; y = ct; w = cr - cl; h = cb - ct;
+            if (w < 1 || h < 1) return;
 
             // 放大镜窗口尺寸 = 源矩形尺寸 → 缩放比 1:1，回调给的 srcdata 就是全分辨率原始像素。
             //
@@ -405,6 +421,15 @@ namespace NotchPeninsula
         {
             _available = false;
             try { DestroyWindows(); MagNative.MagUninitialize(); } catch { }
+        }
+
+        /// <summary>
+        /// 显示器拓扑变化（WM_DISPLAYCHANGE）：虚拟屏原点/尺寸都可能变了。
+        /// 忘掉缓存的抓取尺寸，下一次 CaptureNow 会重新 SetWindowPos 摆好放大镜窗口。
+        /// </summary>
+        public static void OnDisplayChange()
+        {
+            _magW = _magH = 0;
         }
 
         private static void DestroyWindows()

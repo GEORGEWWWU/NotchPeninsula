@@ -20,6 +20,11 @@ namespace NotchPeninsula
         // 渲染线程这里只写「要抓哪块」+「岛体占哪块」+ 取成品，真正的抓屏在 NPS-Backdrop 线程上（屏幕读取要 20ms 量级）。
         private void SyncIslandBackdrop()
         {
+            // 显示器拓扑刚变化时（WM_DISPLAYCHANGE 把 _cachedMonitorIndex 置 -1），
+            // UpdateWindow 还没跑（它在本帧更后面），但抓取矩形马上要用 _cachedMonitor*。
+            // 先在这里重算一次，否则会把旧显示器的坐标喂给抓屏线程 / 放大镜。
+            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
+
             // 亚克力与两种液态玻璃共用同一条抓屏管线，只是降采样倍数不同
             int kind = Renderer.IslandLiquidGlass2 ? 2 : (Renderer.IslandLiquidGlass ? 1 : 0);
             bool glass = kind != 0;

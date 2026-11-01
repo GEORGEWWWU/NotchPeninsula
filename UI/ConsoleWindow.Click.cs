@@ -485,13 +485,16 @@ namespace NotchPeninsula
                     else
                     {
                         float minLimit = updateIdx == 6 ? 0.5f : 20f;
+                        // 上上限：尺寸/DPI 是渲染画布的直接乘数，原本只有下限 ——
+                        // 一路点 + 能把画布和每帧上传量放大一个数量级（见 MEMORY 里的负载审计）。
+                        float maxLimit = updateIdx == 6 ? 3.0f : (updateIdx == 3 || updateIdx == 5 ? 600f : 1200f);
                         // 完整模式下，消息通知最小尺寸必须能容纳应用名
                         if (Renderer.IsToastFullMode)
                         {
                             if (updateIdx == 4) minLimit = Renderer.FULL_TOAST_MIN_WIDTH;
                             if (updateIdx == 5) minLimit = Renderer.FULL_TOAST_MIN_HEIGHT;
                         }
-                        _customValues[updateIdx] = Math.Max(minLimit, _customValues[updateIdx] + delta);
+                        _customValues[updateIdx] = Math.Clamp(_customValues[updateIdx] + delta, minLimit, maxLimit);
                     }
                 }
 

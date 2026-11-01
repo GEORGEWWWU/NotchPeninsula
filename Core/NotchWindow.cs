@@ -421,12 +421,29 @@ namespace NotchPeninsula
         // ---- 渲染线程主体 ----
         // 帧间隔不再是常量：用户在个性化中心可以把岛体帧率调成 30/60/90/120/144。
         // 渲染循环每帧读一次（不是启动时快照），所以改完立刻生效。
-        private static int FrameIntervalMs => LiquidGlass.FrameIntervalMs;
+        //
+        // ⚠️ 必须用精确毫秒：旧值 `1000 / fps` 是整数除法，144 档排成 6ms（实际 166.7fps），
+        //    标称 144 比设置页高 15%，常驻 DWM 提交量也跟着偏高。
+        private static double FrameIntervalMs => LiquidGlass.FrameIntervalMsExact;
 
         private const int FrameIdleWarnMs = 120;
 
         private long _lastFrameEndMs = -1;
         private long _lastPauseLogMs;
+
+        // ---- 整帧跳过与上传去重的状态（见 RenderLoop 3.5 与 UpdateWindow）----
+        private bool _invisibleFrameUploaded;   // 已经提交过一帧全透明底
+        private long _invisibleSinceMs;         // 进入不可见状态的时间戳（0 = 当前可见）
+        private bool _invisibleCaptureStopped;  // 不可见期间已把抓屏目标清空
+        private long _lastRenderErrorLogMs;
+        private long _lastBufferRetryMs;
+
+        private byte[]? _uploadBaseline;        // 上一次真正提交给 DWM 的像素（用于跳过重复上传）
+        private int _uploadBaseW, _uploadBaseH, _uploadBaseX, _uploadBaseY;
+        private long _uploadBaseTick;
+        private long _lastUploadWarnMs;
+
+        private const int UploadKeepAliveMs = 2000;   // 静止画面也至少每 2s 重推一次（DWM 重置后能自愈）
 
         private void RenderThreadLoop()
         {
@@ -447,21 +464,36 @@ namespace NotchPeninsula
                     }
                 }
 
-                RenderLoop();   // 内部自带帧内分段计时，超阈值写 [渲染卡顿]
+                try
+                {
+                    RenderLoop();   // 内部自带帧内分段计时，超阈值写 [渲染卡顿]
+                }
+                catch (Exception ex)
+                {
+                    // 单帧异常不能打死整条渲染线程（旧版未捕获 ⇒ 线程内异常 = 进程直接终止）。
+                    // 限频记录，下一帧继续跑；根因仍然靠日志里的异常链排查。
+                    long nowEx = Environment.TickCount64;
+                    if (nowEx - _lastRenderErrorLogMs >= 5000)
+                    {
+                        _lastRenderErrorLogMs = nowEx;
+                        Error("[渲染] 单帧异常，已跳过该帧继续运行", ex);
+                    }
+                }
 
                 long frameEnd = clock.ElapsedMilliseconds;
                 _lastFrameEndMs = frameEnd;
 
-                nextTick += FrameIntervalMs;
-                long remain;
-                while (!_shuttingDown && (remain = nextTick - clock.ElapsedMilliseconds) > 0)
+                // 用 Stopwatch ticks 排程（毫秒整数表达不了 144fps），实测帧率才和设置页一致
+                nextTick += (long)Math.Max(1.0, Math.Round(Stopwatch.Frequency * FrameIntervalMs / 1000.0));
+                long remainTicks;
+                while (!_shuttingDown && (remainTicks = nextTick - clock.ElapsedTicks) > 0)
                 {
                     // 富余多就让出 CPU；最后几毫秒改成忙等 ——
                     // 全交给它对齐 16ms 网格会把帧率压到 30 上下。
-                    if (remain > 4) Thread.Sleep(1);
+                    if (remainTicks > Stopwatch.Frequency / 1000 * 4) Thread.Sleep(1);
                     else Thread.Yield();
                 }
-                if (nextTick < clock.ElapsedMilliseconds) nextTick = clock.ElapsedMilliseconds;
+                if (nextTick < clock.ElapsedTicks) nextTick = clock.ElapsedTicks;
             }
         }
 
@@ -565,10 +597,18 @@ namespace NotchPeninsula
         private void ShutdownResources()
         {
             _shuttingDown = true;
+
+            // ⚠️ 渲染线程还活着时，下面绝不能释放它正在读写的 SKSurface / DIB（use-after-free）。
+            // 旧版只 Join 500ms 就继续往下走；改成 3s，并把「线程是否已退出」带下去决定释放与否。
+            bool renderThreadAlive = false;
             try
             {
                 var t = _renderThread;
-                if (t != null && !t.Join(500)) Warn("[渲染线程] 退出前未在 500ms 内收尾，交给进程终止兜底");
+                if (t != null && !t.Join(3000))
+                {
+                    renderThreadAlive = true;
+                    Warn("[渲染线程] 退出前未在 3s 内收尾，跳过 GDI/Skia 缓冲释放（交给进程终止，避免释放仍在使用中的 DIB）");
+                }
             }
             catch { }
 
@@ -619,16 +659,20 @@ namespace NotchPeninsula
             }
             catch { }
 
-            try
+            // 渲染线程已经退出才允许释放它用过的缓冲（它没退出 = 这些指针还可能在被读/写）
+            if (!renderThreadAlive)
             {
-                _renderSurface?.Dispose();
-                _renderSurface = null;
-                if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero) Win32.SelectObject(_memDc, _oldBitmap);
-                if (_hBitmap != IntPtr.Zero) Win32.DeleteObject(_hBitmap);
-                if (_memDc != IntPtr.Zero) Win32.DeleteDC(_memDc);
-                _hBitmap = _memDc = _oldBitmap = IntPtr.Zero;
+                try
+                {
+                    _renderSurface?.Dispose();
+                    _renderSurface = null;
+                    if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero) Win32.SelectObject(_memDc, _oldBitmap);
+                    if (_hBitmap != IntPtr.Zero) Win32.DeleteObject(_hBitmap);
+                    if (_memDc != IntPtr.Zero) Win32.DeleteDC(_memDc);
+                    _hBitmap = _memDc = _oldBitmap = IntPtr.Zero;
+                }
+                catch { }
             }
-            catch { }
 
             // 7) 托盘图标句柄
             try { _trayIcon?.Dispose(); } catch { }
@@ -1309,11 +1353,46 @@ namespace NotchPeninsula
                 }
             }
 
+            // ---- 3.5 整帧不可见（自动隐藏 / 穿透淡出到 0）----
+            // 旧版即使 alpha 已经是 0，也每帧画整张 2000×H 画布再提交给 DWM（静止画面 60~144 次/秒）。
+            // 现在只把「刚变透明」那一帧画出来，之后整帧跳过；留 500ms 缓冲，
+            // 免得插件 Draw 回调在隐藏瞬间被硬掐断。
+            bool frameInvisible = Renderer.PassthroughAlpha <= 0.001f && Renderer.FullHideAlpha <= 0.001f;
+            if (frameInvisible)
+            {
+                long nowInvisible = Environment.TickCount64;
+                if (_invisibleSinceMs == 0) _invisibleSinceMs = nowInvisible;
+                if (_invisibleFrameUploaded && nowInvisible - _invisibleSinceMs >= 500)
+                {
+                    // 抓屏线程也一起停：不可见时没必要每 160~250ms 回读一次屏幕。
+                    if (!_invisibleCaptureStopped)
+                    {
+                        _invisibleCaptureStopped = true;
+                        IslandBackdrop.SetTarget(0, 0, 0, 0);
+                        IslandBackdrop.ClearMask();
+                    }
+                    return;
+                }
+            }
+            else
+            {
+                _invisibleSinceMs = 0;
+                _invisibleFrameUploaded = false;
+                _invisibleCaptureStopped = false;
+            }
+
             // ---- 4. 渲染调用更新 ----
             long tFrameStart = Environment.TickCount64;
             long tLyricDone = tFrameStart, tDrawDone = tFrameStart;
 
-            var canvas = _renderSurface!.Canvas;
+            var canvas = _renderSurface?.Canvas;
+            if (canvas == null)
+            {
+                // GDI/DIB 或 SKSurface 创建失败（驱动 TDR / DWM 重置后常见）：限频重试，
+                // 绝不在这里 NRE —— 旧版 `_renderSurface!` 会让整条渲染线程带着异常死掉。
+                RetryInitRenderBuffer();
+                return;
+            }
             canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
 
             // 亚克力背板：与胶囊同口径抓一次（几何没变就什么都不做），本帧绘制直接用
@@ -1348,6 +1427,8 @@ namespace NotchPeninsula
             // ⚠️ 只在 FullHideAlpha 落到 0 且滑出动画结束时才跳过：这两个条件都意味着
             //    「这一帧和上一帧一样、且屏幕上什么都看不见」，恢复时它会重新 >0，上屏自然继续。
             if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow();
+            // 不可见帧只需要这一帧全透明底；之后整帧跳过（见 3.5）。
+            _invisibleFrameUploaded = frameInvisible;
 
             // 只有「岛体真的卡住了」才会出现这一行，平时完全静音。
             long tFrameEnd = Environment.TickCount64;
@@ -1383,20 +1464,27 @@ namespace NotchPeninsula
 
         private void UpdateWindow()
         {
+            if (_hwnd == IntPtr.Zero || _memDc == IntPtr.Zero || _pBits == IntPtr.Zero) return;
+
+            var ptSrc = new Win32.POINT(0, 0);
+            var ptDst = new Win32.POINT { x = 0, y = 0 };
+
+            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
+            ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
+            ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
+
+            var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
+
+            // 像素与窗口位置都没变就不提交：UpdateLayeredWindow 每次都会整张上传（没有脏矩形），
+            // 静止画面下这是纯浪费。2s 强制重推一次，DWM 被重置/切换后能自愈。
+            if (CanSkipUpload(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight)) return;
+
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
             if (screenDc == IntPtr.Zero) return;
 
             // 从取到 DC 到归还之间不许有裸异常路径：
             try
             {
-                var ptSrc = new Win32.POINT(0, 0);
-                var ptDst = new Win32.POINT { x = 0, y = 0 };
-
-                if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
-                ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
-                ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
-
-                var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
                 var blend = new Win32.BLENDFUNCTION
                 {
                     BlendOp = Win32.AC_SRC_OVER,
@@ -1406,13 +1494,59 @@ namespace NotchPeninsula
                 };
 
                 // 直接提交已经画好的 _memDc
-                Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA);
+                if (!Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA))
+                {
+                    long nowFail = Environment.TickCount64;
+                    if (nowFail - _lastUploadWarnMs >= 5000)
+                    {
+                        _lastUploadWarnMs = nowFail;
+                        Warn($"[渲染] UpdateLayeredWindow 失败（错误码={Marshal.GetLastWin32Error()}），下一帧重试");
+                    }
+                    return;   // 失败时不动基准图，保证下一帧一定重试
+                }
+
+                SaveUploadBaseline(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight);
             }
             finally
             {
                 Win32.ReleaseDC(IntPtr.Zero, screenDc);
             }
         }
+
+        /// <summary>本帧像素与窗口位置都和上次提交的一致 → 跳过这次整表上传。</summary>
+        private unsafe bool CanSkipUpload(int x, int y, int w, int h)
+        {
+            var baseline = _uploadBaseline;
+            if (baseline == null || _uploadBaseW != w || _uploadBaseH != h
+                || _uploadBaseX != x || _uploadBaseY != y) return false;
+            if (Environment.TickCount64 - _uploadBaseTick >= UploadKeepAliveMs) return false;
+            int bytes = w * h * 4;
+            if (baseline.Length != bytes || _pBits == IntPtr.Zero) return false;
+            fixed (byte* bp = baseline)
+            {
+                return new ReadOnlySpan<byte>((void*)_pBits, bytes)
+                    .SequenceEqual(new ReadOnlySpan<byte>(bp, bytes));
+            }
+        }
+
+        /// <summary>记下这一帧真正提交出去的像素，供下一帧比较。</summary>
+        private unsafe void SaveUploadBaseline(int x, int y, int w, int h)
+        {
+            int bytes = w * h * 4;
+            if (bytes <= 0 || _pBits == IntPtr.Zero) return;
+            if (_uploadBaseline == null || _uploadBaseline.Length != bytes) _uploadBaseline = new byte[bytes];
+            fixed (byte* bp = _uploadBaseline)
+            {
+                Buffer.MemoryCopy((void*)_pBits, bp, bytes, bytes);
+            }
+            _uploadBaseW = w;
+            _uploadBaseH = h;
+            _uploadBaseX = x;
+            _uploadBaseY = y;
+            _uploadBaseTick = Environment.TickCount64;
+        }
+
+        private void InvalidateUploadBaseline() => _uploadBaseline = null;
 
         private void RaiseWindowClicked(int x, int y, string? hitTarget = null)
         {
@@ -1643,6 +1777,9 @@ namespace NotchPeninsula
                     IslandHotkey.Detach();
                     SetRawMouseSink(false);     // 窗口要没了，原始输入先摘掉
                     RevokeIslandDropTarget();
+                    // 先让渲染线程自己停：不置这个标志的话，WM_DESTROY 之后渲染线程可能还在
+                    // UpdateLayeredWindow 提交一个正在被销毁的窗口（旧版 500ms Join 之后照样释放 DIB）。
+                    _shuttingDown = true;
                     ShutdownIslandBackdrop();   // 停掉后台抓屏线程并释放它自己的 GDI 资源
                     Win32.PostQuitMessage(0);   // 走正常退出：让 GetMessage 返回 0，Run() 收尾后 Main 返回
                     break;
@@ -1669,6 +1806,12 @@ namespace NotchPeninsula
                     // 显示器拔插 / 分辨率变化：作废缓存的显示器矩形，
                     // 下一帧 UpdateWindow 会重算并顺手夹紧越界的目标下标。
                     _cachedMonitorIndex = -1;
+                    // 拓扑刚变化时，抓屏/放大镜手里还拿着上一轮的桌面坐标：先整体作废，
+                    // 别把旧矩形喂给 MagSetWindowSource / BitBlt。上传基准也一起作废（窗口位置会变）。
+                    InvalidateUploadBaseline();
+                    IslandBackdrop.SetTarget(0, 0, 0, 0);
+                    IslandBackdrop.Expire();
+                    MagnifierBackdrop.OnDisplayChange();
                     break;
 
                 case Win32.WM_SETCURSOR:
@@ -2292,6 +2435,46 @@ namespace NotchPeninsula
             _renderSurface = SKSurface.Create(info, _pBits, _scaledWidth * 4);
 
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
+
+            // 新缓冲的像素布局变了，上一次上传的基准图作废
+            _uploadBaseline = null;
+
+            if (_hBitmap == IntPtr.Zero || _memDc == IntPtr.Zero || _renderSurface == null)
+            {
+                // 驱动 TDR / DWM 重置 / 内存紧张时 CreateDIBSection 或 SKSurface 会失败。
+                // 不能抛 —— 渲染循环看到 surface 为空会走 RetryInitRenderBuffer 限频重试。
+                Error($"[渲染] 后备缓冲创建失败（hBitmap={_hBitmap}, memDC={_memDc}, surfaceOk={_renderSurface != null}）");
+            }
+        }
+
+        /// <summary>
+        /// 后备缓冲创建失败时的限频重试。绝不把异常抛回渲染线程：
+        /// 旧版在 TDR/DWM 重置后一次分配失败 = 渲染线程带异常死掉 = 进程终止。
+        /// </summary>
+        private void RetryInitRenderBuffer()
+        {
+            long now = Environment.TickCount64;
+            if (now - _lastBufferRetryMs < 1000) return;
+            _lastBufferRetryMs = now;
+
+            try
+            {
+                _renderSurface?.Dispose();
+                _renderSurface = null;
+                if (_memDc != IntPtr.Zero && _oldBitmap != IntPtr.Zero) Win32.SelectObject(_memDc, _oldBitmap);
+                if (_hBitmap != IntPtr.Zero) Win32.DeleteObject(_hBitmap);
+                if (_memDc != IntPtr.Zero) Win32.DeleteDC(_memDc);
+                _hBitmap = _memDc = _oldBitmap = IntPtr.Zero;
+                InitRenderBuffer();
+            }
+            catch (Exception ex)
+            {
+                if (now - _lastRenderErrorLogMs >= 5000)
+                {
+                    _lastRenderErrorLogMs = now;
+                    Error("[渲染] 重建后备缓冲失败，稍后重试", ex);
+                }
+            }
         }
     }
 }
