@@ -399,8 +399,8 @@ namespace NotchPeninsula
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
             else Info($"窗口创建成功，句柄: {_hwnd}");
             InstanceHandle = _hwnd;
-            // 窗口一建好就把捕获隐身状态落实（启动读配置那一刻还没有窗口句柄）
-            Renderer.SyncCaptureAffinity();
+            // 窗口一建好就把捕获亲和性落实成「正常可见」（抓屏线程之后会按需瞬时切换）
+            Renderer.ResetCaptureAffinity();
             SetupIslandDropTarget();
 
             // 抓屏后端不再需要窗口侧初始化：DXGI 用自己的 D3D11 设备（见 Core/DxgiBackdrop.cs），

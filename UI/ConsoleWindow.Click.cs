@@ -560,8 +560,9 @@ namespace NotchPeninsula
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                     Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
                     Program.SaveSetting("IslandLiquidGlass2", Renderer.IslandLiquidGlass2 ? 1 : 0);
-                    // 切到玻璃就让它从捕获里隐身（两档背景模糊都要真实桌面），切走就恢复
-                    Renderer.SyncCaptureAffinity();
+                    // 换材质 = 换背板内容：恢复成"可见"并作废旧图，抓屏线程下一轮按需重抓
+                    Renderer.ResetCaptureAffinity();
+                    IslandBackdrop.Expire();
                     NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
                 }
                 // 切走玻璃时那张参数卡当场消失，悬停索引一并清掉，别留着下一帧误命中

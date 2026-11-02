@@ -1426,8 +1426,8 @@ namespace NotchPeninsula
                 canvas.DrawText("背景模糊", CONTENT_TEXT_X, BlurModeSegY + 20f, _uiTextPaint);
                 _subTextPaint.Color = Neutral(170);
                 canvas.DrawText(Renderer.GlassGaussBackdrop
-                        ? "真实桌面 + 档位半径再加一层高斯（截图/录屏里看不到岛）"
-                        : "真实桌面 + 档位半径的原版模糊（截图/录屏里看不到岛）",
+                        ? "真实桌面 + 档位半径再加一层高斯 · 岛体只在抓屏瞬间隐身，截图照常"
+                        : "真实桌面 + 档位半径的原版模糊 · 岛体只在抓屏瞬间隐身，截图照常",
                     CONTENT_TEXT_X, BlurModeSegY + 40f, _subTextPaint);
 
                 // 等分两档（fitLabels 保持 false）：命中侧 SegmentIndexAt 也必须用同一套分宽，

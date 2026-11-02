@@ -166,8 +166,9 @@ namespace NotchPeninsula
                     Renderer.IslandLiquidGlass2 = false;
                     // 两种材质互斥：玻璃优先于亚克力
                     if (Renderer.IslandLiquidGlass) Renderer.IslandAcrylic = false;
-                    // 隐身跟着材质走：只有液态玻璃才需要（窗口还没建，句柄落实推迟到 NotchWindow）
-                    Renderer.SyncCaptureAffinity();
+                    // 捕获隐身现在是抓屏线程按需瞬时打开的（见 Renderer.SetCaptureHide），
+                    // 这里只保证启动时是"不隐身"，窗口建好后再落实一次亲和性。
+                    Renderer.ResetCaptureAffinity();
 
                     // 液态玻璃：质量档 + 12 根滑轨（越界一律夹回，老配置/手改注册表都不怕）
                     // 抓屏方式不再读配置：放大镜可用即用、不可用自动回退兼容抓屏。
