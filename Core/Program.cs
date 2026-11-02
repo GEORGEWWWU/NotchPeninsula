@@ -112,15 +112,41 @@ namespace NotchPeninsula
                     // 现在：偏好原样保留在 TargetMonitorIndex 里；本次启动先用记忆值
                     //（TargetMonitorIndex_Remembered，仍越界则 0）兜底，显示器回来后
                     // NotchWindow.UpdateMonitorBounds 会自动恢复。
+                    //
+                    // 更关键的是：下标不是身份。注销再登录 / KVM 切输入源之后 Screen.AllScreens
+                    // 的枚举顺序会整体重排，同一个下标会落到另一块物理屏上（用户看到的就是
+                    // 「岛自己跑去别的显示器，选回来下次登录又漂走」）。所以这里优先按
+                    // TargetMonitorHardwareId 还原用户真正选的那块屏。
                     int loadedMonitor = (int)key.GetValue("TargetMonitorIndex", 0);
                     int monitorCount = System.Windows.Forms.Screen.AllScreens.Length;
                     int rememberedMonitor = (int)key.GetValue("TargetMonitorIndex_Remembered", -1);
-                    if (monitorCount > 0 && loadedMonitor >= 0 && loadedMonitor < monitorCount)
+                    string savedMonitorId = key.GetValue("TargetMonitorHardwareId") as string ?? "";
+                    int byHardwareId = MonitorIdentity.IndexOfHardwareId(savedMonitorId);
+                    if (byHardwareId >= 0)
+                    {
+                        Renderer.TargetMonitorIndex = byHardwareId;
+                        Renderer.RememberedMonitorIndex = byHardwareId;
+                        // 顺序重排过：把下标改写成当前枚举里的位置，插件（灵动岛调校）
+                        // 读的是这个下标，跟着改才不会把岛拽回旧位置。
+                        if (byHardwareId != loadedMonitor)
+                        {
+                            Program.SaveSetting("TargetMonitorIndex", byHardwareId);
+                            Program.SyncTunerMonitorMirror(byHardwareId);
+                            Logger.Info($"[显示器] 按硬件 ID 还原目标显示器：下标 {loadedMonitor} → {byHardwareId}（{savedMonitorId}）");
+                        }
+                    }
+                    else if (monitorCount > 0 && loadedMonitor >= 0 && loadedMonitor < monitorCount)
                     {
                         Renderer.TargetMonitorIndex = loadedMonitor;
                         Renderer.RememberedMonitorIndex = loadedMonitor;
                         if (rememberedMonitor != loadedMonitor)
                             Program.SaveSetting("TargetMonitorIndex_Remembered", loadedMonitor);
+                        // 老配置没存过硬件 ID：把当前这块屏的身份补记下来
+                        if (string.IsNullOrEmpty(savedMonitorId))
+                        {
+                            string? hwid = MonitorIdentity.HardwareIdOfIndex(loadedMonitor);
+                            if (!string.IsNullOrEmpty(hwid)) Program.SaveSetting("TargetMonitorHardwareId", hwid);
+                        }
                     }
                     else
                     {
@@ -184,6 +210,42 @@ namespace NotchPeninsula
             catch (Exception ex)
             {
                 Logger.Error("加载注册表配置失败，将使用默认值", ex);
+            }
+        }
+
+        /// <summary>
+        /// 把「用户选中的显示器」一次性写全：当前下标、记忆值、硬件 ID（身份），
+        /// 并同步给自带定位逻辑的插件。任何入口改显示器都该走这里，
+        /// 只写 TargetMonitorIndex 会在枚举顺序重排后指向别的屏。
+        /// </summary>
+        public static void SaveTargetMonitor(int index)
+        {
+            Renderer.TargetMonitorIndex = index;
+            Renderer.RememberedMonitorIndex = index;
+            SaveSetting("TargetMonitorIndex", index);
+            SaveSetting("TargetMonitorIndex_Remembered", index);
+            string? hwid = MonitorIdentity.HardwareIdOfIndex(index);
+            if (!string.IsNullOrEmpty(hwid)) SaveSetting("TargetMonitorHardwareId", hwid);
+            SyncTunerMonitorMirror(index);
+        }
+
+        // 灵动岛调校插件自己存了一份目标显示器下标，并负责把岛挪过去；
+        // 宿主改了目标屏它不会自动跟着变，会把岛拽回旧位置。
+        private const string TunerMonitorMirrorKey = "Plugin.com.nansai.islandtuner.monitor";
+
+        /// <summary>宿主纠正过目标下标后，把插件那份镜像值也改成同一个下标（没装插件就什么都不做）。</summary>
+        public static void SyncTunerMonitorMirror(int index)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula", writable: true);
+                if (key?.GetValue(TunerMonitorMirrorKey) == null) return;   // 没装这个插件，别凭空造键
+                if (Convert.ToInt32(key.GetValue(TunerMonitorMirrorKey)) == index) return;
+                key.SetValue(TunerMonitorMirrorKey, index);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("同步「灵动岛调校」的目标显示器失败", ex);
             }
         }
 

@@ -288,10 +288,9 @@ namespace NotchPeninsula
             else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
             else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
             {
-                Renderer.TargetMonitorIndex = _hoveredMonitorDropdownIndex;
-                Renderer.RememberedMonitorIndex = _hoveredMonitorDropdownIndex;
-                Program.SaveSetting("TargetMonitorIndex", Renderer.TargetMonitorIndex);
-                Program.SaveSetting("TargetMonitorIndex_Remembered", Renderer.TargetMonitorIndex);
+                // 用户显式选了某块屏：下标 + 记忆值 + 硬件 ID 一起写，
+                // 这样注销/登录导致枚举顺序重排后还能认回同一块物理显示器。
+                Program.SaveTargetMonitor(_hoveredMonitorDropdownIndex);
                 _monitorDropdownOpen = false;
                 Render();
             }
