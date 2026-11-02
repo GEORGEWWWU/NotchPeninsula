@@ -36,9 +36,17 @@ namespace NotchPeninsula
         // 抓屏方式不暴露成设置了：放大镜可用就走放大镜 API（玻璃模式 1:1 全分辨率），
         // 不可用自动回退老 GDI StretchBlt —— 读点只看 IsAvailable，不再有用户偏好开关。
 
-        private static volatile bool _magUsed;
+        // 本帧背板是否来自 DXGI Desktop Duplication（诊断与日志用）。
+        // DXGI 复制的是合成后的桌面，**岛体一定在画面里**，所以擦除逻辑照旧执行。
+        private static volatile bool _dxgiUsed;
 
-        public static bool UsingMagnifier => _magUsed;
+        // 是否成功产出过背板。DXGI 报「无新帧」时用它决定「复用上一帧」还是「必须 GDI 兜底」。
+        private static volatile bool _everProduced;
+
+        /// <summary>放大镜抓屏已下线（统一走 DXGI / GDI），这个属性只为兼容旧提示文案。</summary>
+        public static bool UsingMagnifier => false;
+
+        public static bool UsingDxgi => _dxgiUsed;
 
         // 本帧背板对应的【屏幕原点】：源矩形换算要用它，不能假定等于请求值
         // （放大镜在屏幕边界处可能裁掉一截，GDI 则严格等于请求值）
@@ -57,8 +65,8 @@ namespace NotchPeninsula
         // 液态玻璃 2 一律 1:1：它的观感就是「桌面被这块玻璃弯折」，
         // 抓屏先降采样再双线性放大，本身就是一层去不掉的模糊 ——
         // 那正是「桌面还是有高斯模糊」最直接的来源（与模糊算法、细节判定都无关）。
-        public static float CurrentDownscale => _magUsed ? 1f
-            : (Renderer.IslandLiquidGlass2 ? 1f : (_glass ? GlassDownscale : Downscale));
+        public static float CurrentDownscale =>
+            Renderer.IslandLiquidGlass2 ? 1f : (_glass ? GlassDownscale : Downscale);
 
         // 每次产出新背板 +1：液态玻璃靠它判断「要不要重算」（几何没动就不用再糊一遍）
         private static volatile int _version;
@@ -95,6 +103,50 @@ namespace NotchPeninsula
         private static long _lastMs;
         private static bool _disabled;
         private static int _loggedX = int.MinValue, _loggedY = int.MinValue;
+
+        // ---- 抓屏管线体检 ----
+        // 「玻璃背景永远停在第一次抓到的那张图」这种问题，光看代码看不出来是"线程没跑"、
+        // "DXGI 一直报无新帧"还是"渲染侧没取走"。这三个数 + version 的时间戳一眼就能分清：
+        //   · 产出 0 次     → 线程没在抓（target / mask 不对，或有异常）
+        //   · 产出有、version 不动 → 抓到了却没换图（DXGI 卡死）
+        //   · 产出有、version 在涨 → 抓屏没问题，问题在玻璃合成/缓存
+        private static int _statOk, _statFail;
+        private static long _diagMs;
+        private static int _diagVersion;
+        private static long _diagVersionMs;
+
+        // 「DXGI 无新帧」的处理方式：**不判死**，按时间落一次 GDI 复核。
+        //
+        // 岛体现在在捕获里隐身（两档背景模糊都要真实桌面），所以「桌面静止就没有新帧」是正确行为，
+        // 不是故障。以前那个「连续 12 次无新帧就永久切 GDI」的判据在这条路径上是纯伤害：
+        // 只要桌面安静 1.5 秒，就会永久掉进每秒 8 次的全屏 GDI 回读（每次 20ms，约 16% 单核）。
+        //
+        // 真正要防的是另一种情况：分辨率切换 / 驱动重置 / 进出全屏之后，DXGI 会话有概率长期
+        // 只报无新帧（画面明明变了），玻璃会停在最初那一张 —— 用户看到就是「换了壁纸玻璃不变」。
+        // 所以超过 DxgiResyncMs 没拿到新帧，就落一次 GDI 抓取当复核，抓到什么就用什么；
+        // DXGI 会话保留，下一秒有新帧自然跟上。3 秒一次 20ms ≈ 0.7% 单核，可以忽略。
+        private const int DxgiResyncMs = 3000;
+        private static long _lastDxgiFrameMs;
+
+        // 抓屏节拍：玻璃下由用户在「抓屏刷新」滑轨上自己调（1s / 0.5s / 250ms / 160ms / 60ms）。
+        // 只垫一个下限：GDI 回读一次要 20ms，节拍比它快多少，就白烧多少 CPU
+        // （60ms 节拍 = 一个核的 1/3 在做无效采集，这正是"越极致越卡"的来源）。
+        private static int CaptureGap
+        {
+            get
+            {
+                if (!_glass) return RefreshMs;
+                int gap = LiquidGlass.RefreshMs;
+                // GDI 回读一次要 20ms，节拍低于 60ms 就是纯空转；DXGI 超时是等待，不耗 CPU。
+                return gap < 60 ? 60 : gap;
+            }
+        }
+
+        // 两次抓屏之间的硬间隔：岛体展开/收起时 SetMask 会催抓，
+        // 没有这道闸门的话，60fps 的几何动画会把抓屏催成 60 次/秒的全屏 GDI 回读，
+        // 直接跟渲染线程抢内存带宽 —— 观感就是"一动就卡"。
+        // 80ms = 最多 12.5 次/秒，跟得上动画又不会把 CPU 吃满。
+        private const int MinCaptureMs = 80;
 
         // ---- 内容守卫：抓到的这块到底"有没有东西" ----
         // 判据只看【玻璃真正采样的那块区域】（= 遮罩区，也就是岛体那块），不看整张背板：
@@ -140,14 +192,47 @@ namespace NotchPeninsula
         //    Expire + 重建缓冲才跳出来。换算放到 Capture 里用本次的原点与缩放比做，那里没有"上一帧"。
         private static volatile float _maskSx0, _maskSy0, _maskSx1, _maskSy1;
 
+        // ---- 擦除矩形 = 「当前岛体」∪「最近 400ms 内岛体待过的地方」----
+        // 为什么需要历史：DXGI 给的是**已经合成好的桌面**，这一帧里的岛体是 100~250ms 前的位置和尺寸；
+        // 而擦除用的是"此刻"的矩形。展开/收起（以及启动时的入场动画）过程中岛体尺寸一直在变，
+        // 只擦当前矩形就会在边缘留下一圈上一帧的岛体像素 —— 玻璃里透出来就是**错位重影 / 双灵动岛**。
+        // 把最近一小段时间的矩形并起来擦，大小动画的每一帧都能盖住；700ms 覆盖最慢的抓屏节拍有余。
+        // 代价只有"多擦一圈"：这圈位置本来就在岛体背后，视觉上看不出来。
+        private static volatile float _eraseUx0, _eraseUy0, _eraseUx1, _eraseUy1;
+        private static long _eraseUnionMs;
+        private const long EraseUnionMs = 400;
+
+        // 并集每边最多比当前岛体多扩这么多：擦掉的面积就是要用平均色填掉的面积，
+        // 扩太大玻璃下面就成了一整块纯色（"高斯模糊背景没了"就是这么来的）。
+        private const float EraseUnionPadX = 20f;
+        private const float EraseUnionPadY = 14f;
+
         // 渲染线程：告诉抓屏线程「岛体在屏幕上占哪一块」（屏幕物理像素）
         public static void SetMask(float x0, float y0, float x1, float y1)
         {
             _maskSx0 = x0; _maskSy0 = y0; _maskSx1 = x1; _maskSy1 = y1;
 
-            // 放大镜抓屏已经通过「排除窗口列表」把岛体剔掉了，不用再抹自己 ——
-            // 遮罩一动还会触发重抓，白白浪费一次屏幕读取。但值本身照记：放大镜闪断回落 GDI 时靠它。
-            if (_magUsed && _glass) return;
+            // 并集：超出 EraseUnionMs 没更新就从当前矩形重新起算，否则只扩不缩（但有外扩上限）
+            long nowU = Environment.TickCount64;
+            if (nowU - _eraseUnionMs > EraseUnionMs)
+            {
+                _eraseUx0 = x0; _eraseUy0 = y0; _eraseUx1 = x1; _eraseUy1 = y1;
+            }
+            else
+            {
+                float lo = x0 - EraseUnionPadX, ro = x1 + EraseUnionPadX;
+                float to = y0 - EraseUnionPadY, bo = y1 + EraseUnionPadY;
+                if (x0 < _eraseUx0) _eraseUx0 = MathF.Max(x0, lo);
+                if (y0 < _eraseUy0) _eraseUy0 = MathF.Max(y0, to);
+                if (x1 > _eraseUx1) _eraseUx1 = MathF.Min(x1, ro);
+                if (y1 > _eraseUy1) _eraseUy1 = MathF.Min(y1, bo);
+                // 当前矩形又缩回去了 → 并集也要跟着收到「当前 ± 上限」以内
+                if (_eraseUx0 < lo) _eraseUx0 = lo;
+                if (_eraseUy0 < to) _eraseUy0 = to;
+                if (_eraseUx1 > ro) _eraseUx1 = ro;
+                if (_eraseUy1 > bo) _eraseUy1 = bo;
+            }
+            _eraseUnionMs = nowU;
 
             // 遮挡区在明显变化（展开/收起动画）→ 尽快用新矩形重抓一次，免得岛体边缘漏进模糊里；但要节流
             bool moved = MathF.Abs(x1 - _maskLastX1) > 3f || MathF.Abs(x0 - _maskLastX0) > 3f;
@@ -172,13 +257,24 @@ namespace NotchPeninsula
         {
             _maskSx0 = _maskSy0 = _maskSx1 = _maskSy1 = 0f;
             _maskLastX0 = _maskLastX1 = 0f;   // 下次 SetMask 一定会被判成"移动了"，把抓屏线程叫醒
+            _eraseUx0 = _eraseUy0 = _eraseUx1 = _eraseUy1 = 0f;   // 并集也一起作废，别拿上一轮的矩形继续擦
+            _eraseUnionMs = 0;
         }
 
 
         // ---- 交给渲染线程的成品（交换后由渲染线程释放）----
         private static SKImage? _pending;
 
-        public static void Expire() { _expire = true; _dirty = true; _magForce = true; _work.Set(); }
+        public static void Expire()
+        {
+            _expire = true; _dirty = true; _work.Set();
+            // 换材质 / 换桌面分辨率之后重新起算复核计时：首帧由 _everProduced 兜底走 GDI，
+            // 之后照常等 DXGI 供货，别因为计时器归零而每轮都落 GDI
+            _lastDxgiFrameMs = Environment.TickCount64;
+            // 换材质 / 尺寸变化后旧背板已作废：允许下一轮退回 GDI 重新起一张，
+            // 否则桌面恰好静止时 DXGI 报「无新帧」，会一直空着等不到图。
+            _everProduced = false;
+        }
 
         // 渲染线程：告诉后台线程「要抓这块屏幕矩形」。矩形没变就不会重新抓。
         public static void SetTarget(int x, int y, int w, int h)
@@ -221,6 +317,7 @@ namespace NotchPeninsula
         private const int CapFailStretchBlt = 5;       // StretchBlt 失败（驱动 / DWM 回读被拒）
         private const int CapFailSkia = 6;             // SKImage / SKSurface 建图失败
         private const int CapFailMagnifier = 7;        // 放大镜那条线没取到帧
+        private const int CapFailErase = 9;            // 遮罩擦不掉（这一帧会带着岛体，已丢弃）
         private const int CapFailDisabled = 8;         // 已被异常停用
 
         private static int _capFailStage = CapOk;
@@ -244,6 +341,7 @@ namespace NotchPeninsula
             CapFailStretchBlt => "StretchBlt 回读失败",
             CapFailSkia => "Skia 建图失败",
             CapFailMagnifier => "放大镜未取到帧",
+            CapFailErase => "遮罩擦不掉",
             CapFailDisabled => "已停用",
             _ => "未知"
         };
@@ -252,6 +350,20 @@ namespace NotchPeninsula
         {
             _capFailStage = stage;
             _capFailExtra = extra;
+
+            // 同一处失败 5 秒最多一条：连续失败由 NoteCaptureFail 汇总，这里留的是"卡在哪一步"的第一现场。
+            // 没有这一行，"玻璃背景是假的"在日志里查不到根因（之前的表现就是什么都没打，
+            // 但抓屏一次都没成功）。
+            long now = Environment.TickCount64;
+            string key = stage + "|" + extra;
+            if (key != _failWhy || now - _failLogMs >= 5000)
+            {
+                _failWhy = key;
+                _failLogMs = now;
+                Warn($"[背板] 抓屏中断：{CaptureFailStageName(stage)} target={_tw}x{_th}@{_tx},{_ty}"
+                    + $" mask=({_maskSx0:F0},{_maskSy0:F0})-({_maskSx1:F0},{_maskSy1:F0})"
+                    + (extra.Length > 0 ? " " + extra : ""));
+            }
             return false;
         }
 
@@ -305,14 +417,16 @@ namespace NotchPeninsula
                 Priority = ThreadPriority.BelowNormal
             };
             _thread.Start();
+            Info("[背板] 抓屏线程已启动");
         }
 
         private static void ThreadLoop()
         {
             while (_run)
             {
-                // 等待时长跟随当前节拍：自定义成 60ms 时不能被固定的 250ms 等待拖住
-                _work.WaitOne(_glass ? LiquidGlass.RefreshMs : RefreshMs);
+                // 等待上限压到 80ms：这样「有变化要抓」这件事最多晚 80ms 就能被发现，
+                // 而真正的抓屏频率仍由下面的 CaptureGap 把关（不会因为醒得勤就抓得勤）。
+                _work.WaitOne(Math.Min(CaptureGap, MinCaptureMs));
                 if (!_run) break;
 
                 if (_expire)
@@ -327,16 +441,19 @@ namespace NotchPeninsula
                 if (_disabled || _tw < 16 || _th < 16) continue;
 
                 long now = Environment.TickCount64;
-                int gap = _glass ? LiquidGlass.RefreshMs : RefreshMs;
+                int gap = CaptureGap;
+                // 硬间隔：动画期间 SetMask 一直催抓，没有这一条就会每帧都回读一次屏幕
+                if (now - _lastMs < MinCaptureMs) continue;
                 if (!_dirty && now - _lastMs < gap) continue;
                 _dirty = false;
 
                 try
                 {
-                    if (Capture()) { _lastMs = now; NoteCaptureOk(); }
+                    if (Capture()) { _lastMs = now; _statOk++; NoteCaptureOk(); }
                     else
                     {
                         _lastMs = now;     // 失败也别每 250ms 重试同一帧
+                        _statFail++;
                         NoteCaptureFail(); // 静默失败会变成黑盒：记下卡在哪一步，连续失败才打日志
                     }
                 }
@@ -347,21 +464,53 @@ namespace NotchPeninsula
                     _disabled = true;
                     FreeBuffer();
                 }
+
+                DiagTick();
             }
         }
+
+        // 每 10s 一行体检（只在亚克力/玻璃下打）：见 _statOk 那段的说明。
+        private static void DiagTick()
+        {
+            if (!_glass && !Renderer.IslandAcrylic) return;
+
+            long now = Environment.TickCount64;
+            int v = _version;
+            if (v != _diagVersion)
+            {
+                _diagVersion = v;
+                _diagVersionMs = now;
+            }
+            if (_diagMs == 0) { _diagMs = now; return; }
+            if (now - _diagMs < 10000) return;
+
+            long stuckMs = now - _diagVersionMs;
+            string head = $"[背板] 近 10s 抓屏 {_statOk} 次 / 空转 {_statFail} 次 · version={v}（{stuckMs}ms 未变）"
+                + $" · {(_dxgiUsed ? "DXGI" : "GDI")} · target={_tw}x{_th}@{_tx},{_ty}"
+                + $" · mask=({_maskSx0:F0},{_maskSy0:F0})-({_maskSx1:F0},{_maskSy1:F0})"
+                + $" · scale={_scale:F2} alive={_contentAlive}";
+            if (_statOk == 0 || stuckMs > 6000)
+                Warn(head + "  ← 抓屏没在更新（玻璃背景会冻住）");
+            else
+                Info(head);
+
+            _statOk = 0; _statFail = 0; _diagMs = now;
+        }
+
+        // 抓屏失败原因（节流 5s 一条）：没有这一行，"玻璃背景是假的"这件事在日志里查不到根因 ——
+        // 之前的表现就是「什么都没打，但抓屏一次都没成功」。
+        private static long _failLogMs;
+        private static string _failWhy = "";
+
 
         private static bool Capture()
         {
             int w = _tw, h = _th, x = _tx, y = _ty;
             if (w < 16 || h < 16) return Fail(CapFailTargetTooSmall, $"target={w}x{h}");
 
-            // 玻璃 + 放大镜可用 → 走全分辨率那条线（亚克力走 GDI，同样 1:1 抓屏）
-            if (_glass && MagnifierBackdrop.IsAvailable)
-            {
-                bool ok = CaptureMagnified(x, y, w, h);
-                if (!ok) Fail(CapFailMagnifier, $"mag中={_magUsed} 版本={_magVersion}");
-                return ok;
-            }
+            // 抓屏后端：玻璃走 DXGI（见下面 grabbed 那段），其余照旧 GDI。
+            // 放大镜 API 已下线：它在不少机器上初始化失败，且属于系统辅助功能组件、
+            // 会和部分录屏/截图软件互相干扰；DXGI 是 GPU 采集，兼容性更好也更快。
 
             // 还不知道岛体占哪块 → 先别抓（不然会把岛体自己拍进去，画面会往涂层色糊成一坨）
             float mSx0 = _maskSx0, mSy0 = _maskSy0, mSx1 = _maskSx1, mSy1 = _maskSy1;
@@ -385,34 +534,94 @@ namespace NotchPeninsula
             int mx1 = (int)MathF.Ceiling((mSx1 - x) * inv);
             int my1 = (int)MathF.Ceiling((mSy1 - y) * inv);
 
-            IntPtr sdc = Win32.GetDC(IntPtr.Zero);
-            if (sdc == IntPtr.Zero) return Fail(CapFailScreenDc);
-            try
+            // 擦除用「当前 ∪ 最近 700ms」的矩形（见 SetMask 里的说明）：
+            // 抓到的这一帧里的岛体可能是几百毫秒前的尺寸/位置，只擦当前矩形会在边缘留下重影。
+            float eSx0 = _eraseUx0, eSy0 = _eraseUy0, eSx1 = _eraseUx1, eSy1 = _eraseUy1;
+            if (eSx1 - eSx0 < 1f || eSy1 - eSy0 < 1f) { eSx0 = mSx0; eSy0 = mSy0; eSx1 = mSx1; eSy1 = mSy1; }
+            int ex0 = (int)MathF.Floor((eSx0 - x) * inv);
+            int ey0 = (int)MathF.Floor((eSy0 - y) * inv);
+            int ex1 = (int)MathF.Ceiling((eSx1 - x) * inv);
+            int ey1 = (int)MathF.Ceiling((eSy1 - y) * inv);
+
+            // 抓屏后端：玻璃走 DXGI（GPU 采集），其余照旧 GDI。
+            // 放大镜 API 已下线：它在不少机器上初始化失败，且属于系统辅助功能组件、
+            // 会和部分录屏/截图软件互相干扰；DXGI 是 GPU 采集，兼容性更好也更快。
+            bool grabbed = false;
+            if (_glass)
             {
-                // 1:1 直拷（ds=1 时 StretchBlt 就是原样搬运，不过缩放器）
-                Win32.SetStretchBltMode(_memDc, Win32.HALFTONE);
-                if (!Win32.StretchBlt(_memDc, 0, 0, sw, sh, sdc, x, y, w, h, Win32.SRCCOPY))
+                switch (DxgiBackdrop.TryGrab(x, y, w, h, _pBits, sw * 4, sw, sh))
+                {
+                    case DxgiBackdrop.GrabResult.Ok:
+                        grabbed = true;
+                        _dxgiUsed = true;
+                        _lastDxgiFrameMs = Environment.TickCount64;
+                        break;
+                    case DxgiBackdrop.GrabResult.NoNewFrame:
+                        // 桌面静止 → 直接复用上一帧。这是 DXGI 相对 GDI 的全部价值：
+                        // 静止时零开销，不用每 100ms 去 BitBlt 一遍整个屏幕。
+                        //
+                        // ⚠️ 判据必须是「有没有成功产出过」，不能是「_pending 还在不在」：
+                        //    _pending 会被渲染线程每帧取走（TakePending 之后就是 null），
+                        //    拿它当判据等于「几乎每一轮都判定成首次」，于是每轮都白跑一次
+                        //    20ms 的 GDI BitBlt —— 这就是之前「帧率低、卡卡的」的直接原因。
+                        //
+                        // ⚠️ 但「无新帧」不能无限信：会话切过分辨率 / 驱动重置 / 进出全屏之后，
+                        //    有概率长期只报无新帧（画面明明变了）。超时就落一次 GDI 复核，
+                        //    抓到什么用什么，DXGI 会话保留（见 DxgiResyncMs 的注释）。
+                        if (!_everProduced) break;                                  // 首帧：必须落 GDI
+                        if (Environment.TickCount64 - _lastDxgiFrameMs < DxgiResyncMs) return false;
+                        break;                                                     // 超时：落 GDI 复核
+                }
+            }
+            if (!grabbed)
+            {
+                IntPtr sdc = Win32.GetDC(IntPtr.Zero);
+                if (sdc == IntPtr.Zero) return Fail(CapFailScreenDc, "GetDC(NULL)");
+                try
+                {
+                    // 1:1 直拷（ds=1 时 StretchBlt 就是原样搬运，不过缩放器）
+                    Win32.SetStretchBltMode(_memDc, Win32.HALFTONE);
+                    if (!Win32.StretchBlt(_memDc, 0, 0, sw, sh, sdc, x, y, w, h, Win32.SRCCOPY))
                     return Fail(CapFailStretchBlt, $"src=({x},{y},{w},{h}) dst={sw}x{sh}");
-            }
-            finally
-            {
-                Win32.ReleaseDC(IntPtr.Zero, sdc);
+                }
+                finally
+                {
+                    Win32.ReleaseDC(IntPtr.Zero, sdc);
+                }
+                // 刷批：下面的擦除、亮度、SKImage 全是 CPU 直接读 DIB 的位（见 Win32.GdiFlush 的注释）
+                Win32.GdiFlush();
+                _dxgiUsed = false;
             }
 
-            // 刷批：下面的擦除、亮度、SKImage 全是 CPU 直接读 DIB 的位（见 Win32.GdiFlush 的注释）
-            Win32.GdiFlush();
-
-            // ⚠️ 这里**不再用 SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)**。
-            // 它会让窗口在录屏/截图里「隐身」，而我们必须每 250ms 开关它一次（抓屏时开、抓完关）——
-            // 实测按这个节奏，OBS 一类的捕获端有 **11.5% 的帧看不到岛体**，观感就是「亚克力模式下灵动岛一直闪」。
-            // 改成：照抓（岛体在内），然后把岛体自己占的那块用**四方向最近邻延展**抹掉 ——
-            // 岛体在屏幕顶部居中，四条边外就是它背后的那层（标题栏/壁纸），抹掉后看不出差别。
+            // 正常情况下岛体已经在捕获里隐身（见 Renderer.HideIslandInCapture），遮罩那块就是真实桌面，
+            // 下面这条擦除只是**兜底**：隐身没生效（亲和性设置失败、老系统）时，
+            // 把岛体自己占的那块用四方向最近邻延展抹掉，总比把岛体拍进玻璃里强。
+            //
+            // ⚠️ 不能在亚克力/实体材质上按 250ms 的节奏开关 WDA_EXCLUDEFROMCAPTURE：
+            // 实测那个节奏下 OBS 一类捕获端有 11.5% 的帧看不到岛体，观感是「岛一直闪」。
+            // 所以隐身是跟着「液态玻璃」材质常开的（一次设置，不再来回切）。
             //
             // 擦除前的亮度也量一次：它和"擦除后"一前一后写进诊断行，
             // 一眼就能分清「背板本来就是黑的」还是「岛体自己被抓进来了、擦除没盖住」。
             int lumBefore = SampleLuminance((byte*)_pBits, sw * 4, sw, sh, mx0, my0, mx1, my1, out _);
-            EraseIsland(sw, sh, mx0, my0, mx1, my1);
-            int lumAfter = SampleLuminance((byte*)_pBits, sw * 4, sw, sh, mx0, my0, mx1, my1, out int rangeAfter);
+            int lumAfter;
+            int rangeAfter;
+            if (Renderer.HideIslandInCapture)
+            {
+                // 岛体已在捕获里隐身（WDA_EXCLUDEFROMCAPTURE）：遮罩那块本来就是**真实桌面**，
+                // 再擦一次等于把真实内容抹成平均色 —— 玻璃下面就又成了平滑色块。
+                // 这条路径下 EraseIsland / FillSoft 一律不跑。
+                lumAfter = lumBefore;
+                rangeAfter = 0;
+            }
+            else
+            {
+                // 擦不掉就别发这张图：发出去的那一刻玻璃里就是"岛体自己"，也就是错位重影 / 双灵动岛。
+                // 宁可这一轮不产出（沿用上一张），也不能把带岛体的背板交出去。
+                if (!EraseIsland(sw, sh, ex0, ey0, ex1, ey1))
+                return Fail(CapFailErase, $"erase=({ex0},{ey0})-({ex1},{ey1})");
+                lumAfter = SampleLuminance((byte*)_pBits, sw * 4, sw, sh, mx0, my0, mx1, my1, out rangeAfter);
+            }
 
             if (_glass) TrackContent(lumAfter, rangeAfter);
 
@@ -462,8 +671,8 @@ namespace NotchPeninsula
             _originX = x;
             _originY = y;
             _scale = sw / (float)w;
-            _magUsed = false;
 
+            _everProduced = true;
             var stale = Interlocked.Exchange(ref _pending, img);
             stale?.Dispose();
             Interlocked.Increment(ref _version);   // 液态玻璃据此重算折射层
@@ -492,72 +701,13 @@ namespace NotchPeninsula
                         cnt++;
                     }
                 Info($"[{(_glass ? "液态玻璃" : "亚克力")}/{(CurrentDownscale == 1f ? "原分辨率" : "1/" + CurrentDownscale)}]"
-                    + $" 抓屏 ok：屏幕矩形=({x},{y},{w},{h})  图={sw}x{sh}"
+                    + $" 抓屏 ok（{(_dxgiUsed ? "DXGI" : "GDI")}）：屏幕矩形=({x},{y},{w},{h})  图={sw}x{sh}"
                     + $"  遮罩=({mx0},{my0})-({mx1},{my1})"
                     + $"  玻璃区亮度 擦除前={lumBefore}/擦除后={lumAfter}"
                     + $"  背板中央平均 RGB=({(cnt == 0 ? -1 : ar / cnt)},{(cnt == 0 ? -1 : ag / cnt)},{(cnt == 0 ? -1 : ab / cnt)})");
             }
             return true;
         }
-
-        // ---- 放大镜路径：UI 线程抓，这里只取走成品 ----
-        // 与 GDI 那条线的差别：1:1 全分辨率（不降采样）、岛体被排除列表直接剔掉（不用再抹自己）。
-        private static bool CaptureMagnified(int x, int y, int w, int h)
-        {
-            // 告诉宿主窗口"抓这块"，真正的抓取在 UI 线程的下一条消息里发生（异步，不阻塞渲染线程）
-            MagnifierBackdrop.Request(x, y, w, h);
-
-            if (!MagnifierBackdrop.Take(out byte[] buf, out int bw, out int bh,
-                    out int ox, out int oy, out int ver))
-                return false;
-
-            // 同一张图就别重复做一遍快照（放大镜回调频率可能高于刷新节拍）
-            if (ver == _magVersion && !_magForce) return false;
-            _magVersion = ver;
-            _magForce = false;
-
-            // 放大镜裁过一截时以它给的原点为准，否则源矩形会偏
-            if (ox == 0 && oy == 0) { ox = x; oy = y; }
-
-            fixed (byte* p = buf)
-            {
-                var info = new SKImageInfo(bw, bh, SKColorType.Bgra8888, SKAlphaType.Opaque);
-                using var src = SKImage.FromPixels(info, (IntPtr)p, bw * 4);
-                if (src == null) return false;
-
-                // 玻璃模式：原样搬运，模糊留给 LiquidGlass 只在胶囊那一小块上做
-                using var raw = SKSurface.Create(new SKImageInfo(bw, bh, SKColorType.Bgra8888, SKAlphaType.Premul));
-                if (raw == null) return false;
-                raw.Canvas.DrawImage(src, 0f, 0f, _resample);
-                raw.Canvas.Flush();
-                var img = raw.Snapshot();
-                if (img == null) return false;
-
-                _originX = ox;
-                _originY = oy;
-                _scale = bw / (float)w;
-                _magUsed = true;
-
-                // 这条线虽然由排除列表把岛体剔掉了，但"显示休眠 / DWM 没合成完"一样会抓到黑。
-                // 同一条内容守卫：死黑→重建缓冲，死黑→有内容→作废玻璃缓存。
-                float minv = bw / (float)w;
-                int gx0 = (int)MathF.Floor((_maskSx0 - ox) * minv);
-                int gy0 = (int)MathF.Floor((_maskSy0 - oy) * minv);
-                int gx1 = (int)MathF.Ceiling((_maskSx1 - ox) * minv);
-                int gy1 = (int)MathF.Ceiling((_maskSy1 - oy) * minv);
-                int mLum = SampleLuminance(p, bw * 4, bw, bh, gx0, gy0, gx1, gy1, out int mRange);
-                TrackContent(mLum, mRange);
-
-                var stale = Interlocked.Exchange(ref _pending, img);
-                stale?.Dispose();
-                Interlocked.Increment(ref _version);
-                return true;
-            }
-        }
-
-        private static int _magVersion;
-
-        private static bool _magForce;
 
         // 把岛体自己占的那块（背板图坐标）抹掉。
         //
@@ -567,19 +717,83 @@ namespace NotchPeninsula
         //    · 左右邻列横向插值 → 贯穿整个胶囊的横向渐变带（"条纹"）
         //    · 上下邻行垂直插值 → 胶囊内容被纵向拉长（"上下拉太长了"）
         // 最近邻延展只在 45° 方向留一条分界，玻璃自己的高斯模糊会把它揉开，观感最接近磨砂。
-        private static void EraseIsland(int sw, int sh, int x0, int y0, int x1, int y1)
+        /// <summary>
+        /// 大面积遮罩的低频填充：取四条边（遮罩外紧邻那一圈）的平均色，在遮罩内做双线性过渡。
+        /// 相比最近邻延展，这里没有任何「按最近边取色」的方向性分界，所以不会再出现
+        /// 45° 菱形 / 圆顶状的伪结构 —— 展开态玻璃上就只剩一层极缓的明暗过渡，
+        /// 高斯一糊就是「纯玻璃 + 模糊」，看不出被填充过。
+        /// </summary>
+        private static unsafe void FillSoft(int sw, int sh, int x0, int y0, int x1, int y1,
+            int lx, int rx, int ty, int by, bool hasL, bool hasR, bool hasT, bool hasB)
         {
-            // 余量：兜住「遮挡矩形比实际岛体晚一帧」的滞后（动画中胶囊在变宽变窄）
-            x0 -= 2; x1 += 2; y0 -= 1; y1 += 1;
+            byte* bits = (byte*)_pBits;
+            float lb = 0, lg = 0, lr = 0; int ln = 0;
+            float rb = 0, rg = 0, rr = 0; int rn = 0;
+            float tb = 0, tg = 0, tr = 0; int tn = 0;
+            float bb = 0, bg = 0, br = 0; int bn = 0;
+
+            if (hasL)
+                for (int j = y0; j < y1; j++) { int s = (j * sw + lx) * 4; lb += bits[s]; lg += bits[s + 1]; lr += bits[s + 2]; ln++; }
+            if (hasR)
+                for (int j = y0; j < y1; j++) { int s = (j * sw + rx) * 4; rb += bits[s]; rg += bits[s + 1]; rr += bits[s + 2]; rn++; }
+            if (hasT)
+                for (int i = x0; i < x1; i++) { int s = (ty * sw + i) * 4; tb += bits[s]; tg += bits[s + 1]; tr += bits[s + 2]; tn++; }
+            if (hasB)
+                for (int i = x0; i < x1; i++) { int s = (by * sw + i) * 4; bb += bits[s]; bg += bits[s + 1]; br += bits[s + 2]; bn++; }
+
+            // 整块的平均色：某条边够不到（遮罩贴着抓屏边缘）时用它兜底
+            float allB = lb + rb + tb + bb, allG = lg + rg + tg + bg, allR = lr + rr + tr + br;
+            int allN = ln + rn + tn + bn;
+            float invN = allN > 0 ? 1f / allN : 0f;
+            float avgB = allB * invN, avgG = allG * invN, avgR = allR * invN;
+
+            float Lb = ln > 0 ? lb / ln : avgB, Lg = ln > 0 ? lg / ln : avgG, Lr = ln > 0 ? lr / ln : avgR;
+            float Rb = rn > 0 ? rb / rn : avgB, Rg = rn > 0 ? rg / rn : avgG, Rr = rn > 0 ? rr / rn : avgR;
+            float Tb = tn > 0 ? tb / tn : avgB, Tg = tn > 0 ? tg / tn : avgG, Tr = tn > 0 ? tr / tn : avgR;
+            float Bb = bn > 0 ? bb / bn : avgB, Bg = bn > 0 ? bg / bn : avgG, Br = bn > 0 ? br / bn : avgR;
+
+            float mw = MathF.Max(1f, x1 - x0), mh = MathF.Max(1f, y1 - y0);
+            float invMw = 1f / mw;
+            for (int j = y0; j < y1; j++)
+            {
+                float fy = (j - y0 + 0.5f) / mh;
+                float vb = Tb + (Bb - Tb) * fy, vg = Tg + (Bg - Tg) * fy, vr = Tr + (Br - Tr) * fy;
+                int row = j * sw * 4;
+                for (int i = x0; i < x1; i++)
+                {
+                    float fx = (i - x0 + 0.5f) * invMw;
+                    float hb = Lb + (Rb - Lb) * fx, hg = Lg + (Rg - Lg) * fx, hr = Lr + (Rr - Lr) * fx;
+                    int p = row + i * 4;
+                    bits[p] = (byte)Math.Clamp(hb * (1 - fy) + vb * fy, 0, 255);
+                    bits[p + 1] = (byte)Math.Clamp(hg * (1 - fy) + vg * fy, 0, 255);
+                    bits[p + 2] = (byte)Math.Clamp(hr * (1 - fy) + vr * fy, 0, 255);
+                }
+            }
+        }
+
+        // 返回 false = 遮罩无效/贴边到四条参考边都取不到，这一帧擦不掉岛体（调用方应丢弃这张图）。
+        private static bool EraseIsland(int sw, int sh, int x0, int y0, int x1, int y1)
+        {
+            // 余量：兜住「遮挡矩形比实际岛体晚一帧」的滞后（动画中胶囊在变宽变窄），
+            // 以及窗口定位/DWM 取整留下的 1~2px 偏差（那点偏差在玻璃里就是一条岛体自己的边）。
+            x0 -= 6; x1 += 6; y0 -= 4; y1 += 4;
             if (x0 < 0) x0 = 0;
             if (y0 < 0) y0 = 0;
             if (x1 > sw) x1 = sw;
             if (y1 > sh) y1 = sh;
-            if (x1 - x0 < 1 || y1 - y0 < 1) return;
+            if (x1 - x0 < 1 || y1 - y0 < 1) return false;
 
             int lx = x0 - 1, rx = x1, ty = y0 - 1, by = y1;
             bool hasL = lx >= 0, hasR = rx < sw, hasT = ty >= 0, hasB = by < sh;
-            if (!hasL && !hasR && !hasT && !hasB) return;
+            if (!hasL && !hasR && !hasT && !hasB) return false;
+
+            // ── 大面积（展开态 / 详情页卡片）走低频填充 ──
+            // 最近邻延展是按「离哪条边最近」取色的：四条边的分界线正好是 45° 对角线，
+            // 抹出来的块因此是个菱形/圆顶，面积一大就透过玻璃显形成「梯形色块」。
+            // 折叠态高 35px 看不出来，展开态高 200px+ 就成了明显的伪结构。
+            // 大面积改用「四边平均色 + 双线性」的极低频填充：没有任何可辨认的方向性结构，
+            // 玻璃再高斯一糊就是纯色玻璃（用户要的「纯玻璃 + 高斯模糊」）。
+            if (y1 - y0 >= 64) { FillSoft(sw, sh, x0, y0, x1, y1, lx, rx, ty, by, hasL, hasR, hasT, hasB); return true; }
 
             byte* bits = (byte*)_pBits;
             for (int j = y0; j < y1; j++)
@@ -609,6 +823,7 @@ namespace NotchPeninsula
             // 最近邻延展在 45° 会留硬分界：折叠态面积小看不出来，展开态整块胶囊被填成大色斑，
             // 观感就是"尺寸一大背景就被放大了"。补一次盒式模糊把分界揉开（玻璃自己的高斯只有 4px）。
             SoftenErasedRegion(sw, sh, x0, y0, x1, y1);
+            return true;
         }
 
         private static byte[] _eraseSrc = Array.Empty<byte>();

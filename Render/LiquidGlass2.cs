@@ -6,8 +6,8 @@ namespace NotchPeninsula
     // 液态玻璃背景（Liquid Glass）—— C++ / HLSL 版 Liquid Glass Demo 的纯 C# + SkiaSharp 移植。
     //
     // 管线与 demo 一一对应：
-    //   1. 抓屏      ：优先 MagnifierBackdrop（放大镜 API，1:1 全分辨率 + 排除岛体自身），
-    //                  不可用时回退 IslandBackdrop 的 GDI 抓屏
+    //   1. 抓屏      ：DXGI Desktop Duplication（Core/DxgiBackdrop.cs，GPU 采集、脏帧机制），
+    //                  不可用（跨屏 / HDR / 初始化失败）时回退 IslandBackdrop 的 GDI 抓屏
     //   2. 可分离高斯 ：ComputeGaussianWeights + 水平/垂直两趟（对应 BlurH_PS / BlurV_PS）
     //   3. 玻璃本体   ：SDF 圆角矩形 → 边缘折射位移 + RGB 色散 + 饱和度提升 + 玻璃本色
     //                  （对应 GlassDispersionPS 的 sdRoundedRect / gradSdRoundedRect / circleMap）
@@ -46,21 +46,28 @@ namespace NotchPeninsula
         public const int P_Frost = 7;         // 玻璃雾度：掺白比例
         public const int P_Brightness = 8;    // 明度
 
-        // 液态玻璃 2 不暴露抓屏刷新 / 岛体帧率 / 放大倍率：
-        //   前两项跟「样式」无关（沿用全局的抓屏节拍与帧率），
-        //   放大倍率在参考实现里没有 —— 它是靠位移场本身做出透镜感，再叠一层整体缩放只会变假。
-        public const int ParamCount = 9;
+        // 「抓屏刷新」「岛体帧率」是管线参数，跟材质无关：
+        // 两种玻璃共用同一份值（同一个注册表键），切材质不用重设。
+        public const int P_CaptureHz = 9;     // 抓屏刷新间隔（多久读一次屏幕）
+        public const int P_FrameRate = 10;    // 岛体渲染帧率上限（影响整个岛，不只是玻璃）
+
+        // 放大倍率在液态玻璃 2 里恒为 1：透镜感由位移场本身给出，再叠一层整体缩放只会变假，
+        // 所以不比 v1 多这一项。9 根材质参数 + 2 根管线参数 = 11。
+        public const int ParamCount = 11;
 
         public static readonly string[] ParamNames =
         {
-            "背景模糊", "折射强度", "边缘色散", "边缘高光", "玻璃厚度", "透镜感", "饱和度", "玻璃雾度", "明度"
+            "背景模糊", "折射强度", "边缘色散", "边缘高光", "玻璃厚度", "透镜感", "饱和度", "玻璃雾度", "明度",
+            "抓屏刷新", "岛体帧率"
         };
 
         public static readonly string[] ParamKeys =
         {
             "LiquidGlass2Blur", "LiquidGlass2Refraction", "LiquidGlass2Dispersion", "LiquidGlass2Rim",
             "LiquidGlass2Thickness", "LiquidGlass2Depth", "LiquidGlass2Saturation", "LiquidGlass2Frost",
-            "LiquidGlass2Brightness"
+            "LiquidGlass2Brightness",
+            // 后两根与液态玻璃 1 共用同一批键：管线节拍不属于某个材质
+            "LiquidGlassCaptureMs", "LiquidGlassFps"
         };
 
         // 设置页用的两字简写。一列只有 123px（标签 24 + 滑轨 52 + 档位值 27），
@@ -68,15 +75,19 @@ namespace NotchPeninsula
         // ParamNames 保留完整名：诊断日志要能和注册表键对得上。
         public static readonly string[] ParamLabels =
         {
-            "模糊", "折射", "色散", "高光", "厚度", "透镜", "饱和", "雾度", "明度"
+            "模糊", "折射", "色散", "高光", "厚度", "透镜", "饱和", "雾度", "明度",
+            "刷新", "帧率"
         };
+
+        /// <summary>这根滑轨是不是「靠 v1 存」的管线参数（刷新 / 帧率）。</summary>
+        private static bool IsSharedTiming(int index) => index == P_CaptureHz || index == P_FrameRate;
 
         /// <summary>
         /// 后台抓屏线程的刷新节拍（ms）。
         /// 液态玻璃 2 不暴露这根滑轨：它属于全局抓屏管线（v1 的「抓屏刷新」照样能调），
         /// 这里只把节拍固定在 250ms，玻璃 2 自己跟质量档走（精细档抓得更勤）。
         /// </summary>
-        public static int RefreshMs => _quality >= 3 ? 100 : (_quality == 2 ? 160 : 250);
+        public static int RefreshMs => LiquidGlass.RefreshMs;
 
         private static volatile int _glassLum;
 
@@ -109,6 +120,8 @@ namespace NotchPeninsula
                 case P_Rim: return ["无", "0.05", "0.10", "0.15", "0.20"];
                 case P_Thickness: return ["8", "14", "22", "32", "44"];
                 case P_Depth: return ["0", "0.15", "0.30", "0.50", "0.70"];
+                case P_CaptureHz: return ["1s", "0.5s", "250ms", "160ms", "60ms"];
+                case P_FrameRate: return ["30", "60", "90", "120", "144"];
                 default: return ["最低", "偏低", "标准", "偏高", "最高"];
             }
         }
@@ -122,21 +135,34 @@ namespace NotchPeninsula
         // 桌面（壁纸 / 照片 / 图标 / 渐变）一律 0px，原样清晰透过。
         // 0 档 = 关闭自动加糊（用户显式要求"任何情况都别糊"）。
         // 折射 2（14px）/ 色散 2 / 高光 2 / 厚度 2（22px）/ 透镜 2 / 饱和 2 / 雾度 2 / 明度 2
-        private static readonly int[] DefaultLevels = { 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+        private static readonly int[] DefaultLevels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
 
         private static readonly int[] _levels = (int[])DefaultLevels.Clone();
 
         /// <summary>出厂默认档位（设置页「恢复默认参数」用）。</summary>
         public static int DefaultLevelOf(int index)
-            => index >= 0 && index < ParamCount ? DefaultLevels[index] : 0;
+        {
+            if (index < 0 || index >= ParamCount) return 0;
+            return IsSharedTiming(index) ? LiquidGlass.DefaultLevelOf(index) : DefaultLevels[index];
+        }
 
         // 设置页读的是「实际生效值」：被质量档锁住的两根滑轨直接显示最高档，
         // 用户拖它也会立刻弹回最高 —— 比"能拖但没反应"清楚。
-        public static int GetLevel(int index) => index >= 0 && index < ParamCount ? EffectiveLevel(index) : 0;
+        public static int GetLevel(int index)
+        {
+            if (index < 0 || index >= ParamCount) return 0;
+            return IsSharedTiming(index) ? LiquidGlass.GetLevel(index) : EffectiveLevel(index);
+        }
 
         public static void SetLevel(int index, int value)
         {
             if (index < 0 || index >= ParamCount) return;
+            // 刷新 / 帧率共用 v1 那份存储：改完两边同时生效
+            if (IsSharedTiming(index))
+            {
+                LiquidGlass.SetLevel(index, value);
+                return;
+            }
             int v = value < 0 ? 0 : (value > MaxLevel ? MaxLevel : value);
             if (v == _levels[index]) return;
             _levels[index] = v;
@@ -176,7 +202,19 @@ namespace NotchPeninsula
 
         public static float TintAlpha => _levels[P_Frost] * 0.04f;               // 0 .. 0.16
 
-        public static float Darkening => BrightnessTable[_levels[P_Brightness]];
+        public static float Darkening
+        {
+            get
+            {
+                float b = BrightnessTable[_levels[P_Brightness]];
+                // 「玻璃下显示真实桌面」开着时，背板从"四边平均色填充"换成了实拍桌面：
+                // 填充色往往是整块区域的平均（偏亮），实拍桌面更暗，再叠一层大半径模糊又把高光压掉，
+                // 观感就是"一开这个开关整个岛变暗一截"。
+                // 补 14%（约一档半明度）—— 实测 6% 仍然偏闷，桌面顶部这块壁纸本身是暗蓝，
+                // 玻璃要压在上面还得比底下亮一截才像玻璃。用户仍可用「明度」滑轨继续加。
+                return Renderer.HideIslandInCapture ? b * 1.14f : b;
+            }
+        }
 
         // ---- 高斯模糊 ----
         // ⚠️ _radius 是**背板像素**口径，不是逻辑像素：抓屏被降采样 1/2、1/3 时抽头数不变，
@@ -243,6 +281,12 @@ namespace NotchPeninsula
         // 检测到文字时，在档位半径之上再补的半径（逻辑像素）。
         // 一页正文只用 4px 糊不干净，笔画边缘会透出来抢岛上的字。
         private const int DetailExtraPx = 10;
+
+        // 「玻璃下显示真实桌面」开启时，背板就是真实桌面本身 —— 直接铺上去太透、太"亮"，
+        // 玻璃看起来不像玻璃。这一档固定撒一层模糊（半径 = 档位半径 + 这个基础值），
+        // 不再按"这块像不像文字"去判定：真实桌面本来就没被判成文字的资格，靠细节量永远糊不起来。
+        // 默认档（背景模糊=标准，半径 4）→ 10px，胶囊尺寸下刚好是"看得出磨砂、又还认得出是什么"。
+        private const int RealDesktopBlurPx = 6;
 
         private static void SetRadius(int r)
         {
@@ -314,7 +358,7 @@ namespace NotchPeninsula
         public static void ReapplyQuality() => ApplyQuality();
 
         // 质量档只管「抓屏倍率 / 玻璃层上限 / 色散采样数 / 超采样」——
-        // 刷新间隔由 RefreshMs 按质量档给出，不再单列一根滑轨。
+        // 刷新间隔与 v1 共用「抓屏刷新」滑轨（LiquidGlass.P_CaptureHz），不再按质量档写死。
         private static void ApplyQuality()
         {
             switch (_quality)
@@ -534,9 +578,50 @@ namespace NotchPeninsula
 
         private static int _keyVersion = -1;
 
+        /// <summary>
+        /// 折射尺度：环宽（lensDepth）与边缘最大位移（refractPx）。
+        /// 口径与液态玻璃 1 完全一致（用户实测 v1 的折射观感正确）：
+        ///   带宽 = min(厚度档, 短边×0.35)，位移 = min(折射量, 短边×0.20)。
+        /// 两处都被短边夹紧，所以折叠胶囊不会"翻面"，展开卡片也能保留边缘那圈折射。
+        /// ⚠️ 裁切余量必须用这里的真实 refrasctPx（见调用点）：折射是向玻璃外侧采样，
+        ///    余量若按标称值留，边缘采样点会被钳制在裁切边界上 → 边缘"看起来没有折射"。
+        /// </summary>
+        private static void RefractScale(float logicalW, float logicalH, float flareX,
+            out float minHs, out float lensDepth, out float refractPx)
+        {
+            float halfW = logicalW * 0.5f - flareX;
+            if (halfW < 1f) halfW = 1f;
+            float hsy = logicalH * 0.5f;
+            minHs = MathF.Min(halfW, hsy);
+
+            float rh = RefractionHeight;           // 厚度档 8 / 14 / 22 / 32 / 44
+            float ra = RefractionAmount;           // 折射档 0 / 7 / 14 / 21 / 28
+            float cap = minHs * 0.35f;
+            if (cap < rh) rh = cap;
+            cap = minHs * 0.20f;
+            if (cap < ra) ra = cap;
+
+            lensDepth = rh < 1f ? 1f : rh;
+            refractPx = ra < 0f ? 0f : ra;
+        }
+
         private static int _keyW, _keyH;
 
         private static float _keySx, _keySy, _keyLw, _keyLh, _keyRt, _keyRb;
+
+        // 临时调试快照：GlassDebug 导出真实链路参数用（正常渲染不读）
+        private static float _dbgMinHs, _dbgLensDepth, _dbgRefractPx, _dbgMaxShift;
+        private static int _dbgGw, _dbgGh, _dbgSs, _dbgBlur;
+
+        internal static string DebugState()
+        {
+            var lv = new int[ParamCount];
+            for (int i = 0; i < ParamCount; i++) lv[i] = _levels[i];
+            return $"minHs={_dbgMinHs:F1} lensDepth={_dbgLensDepth:F1} refractPx={_dbgRefractPx:F1} maxShiftSeen={_dbgMaxShift:F2} "
+                 + $"glassPx={_dbgGw}x{_dbgGh} ss={_dbgSs} blurPx={_dbgBlur} "
+                 + $"detailSmooth={_detailSmooth:F2} levelRadius={_levelRadius} "
+                 + $"levels=[{string.Join(",", lv)}]";
+        }
 
         // 材质切走 / 岛体重建时调用：放掉缓存位图，别白占内存
         public static void Invalidate()
@@ -604,7 +689,9 @@ namespace NotchPeninsula
 
             int blurPx = _levelRadius <= 0
                 ? 0
-                : (int)MathF.Round(_detailSmooth * (_levelRadius + DetailExtraPx));
+                : Renderer.HideIslandInCapture
+                    ? _levelRadius + RealDesktopBlurPx          // 真实桌面：固定一层高斯模糊
+                    : (int)MathF.Round(_detailSmooth * (_levelRadius + DetailExtraPx));
             if (blurPx != _effBlurPx)
             {
                 _effBlurPx = blurPx;
@@ -658,9 +745,16 @@ namespace NotchPeninsula
                 //    纯色 / 壁纸 / 照片 / 渐变一律 0，桌面原样清晰地透过来。
                 //    裁切区余量按「最大可能半径」算（档位 + 补偿），这样半径变化时裁切区不动，
                 //    缓存键稳定，也不会因为余量不够采到裁切区外面。
-                int maxBlurPx = _levelRadius <= 0 ? 0 : _levelRadius + DetailExtraPx;
+                int maxBlurPx = _levelRadius <= 0
+                ? 0
+                : _levelRadius + Math.Max(DetailExtraPx, RealDesktopBlurPx);
 
-                float maxShift = RefractionAmount * (1f + Dispersion) + 4f;
+                // 裁切余量必须按**真实最大位移**留：折射是向玻璃外侧采样，
+                // 位移有多大，裁切区就要往外扩多远（另加模糊半径与色散余量）。
+                // 之前用标称 RefractionAmount（档 2 = 14px）算余量，详情页真实位移 37px，
+                // 超出的采样点被钳制在裁切边界上 → 边缘一圈"没有折射"的亮边。
+                RefractScale(logicalW, logicalH, flareX, out _, out _, out float shiftForMargin);
+                float maxShift = shiftForMargin * (1f + Dispersion) + 4f;
                 int margin = (int)MathF.Ceiling((maxShift + maxBlurPx + flareX) * MathF.Max(imgPerX, imgPerY)) + 2;
 
                 int cx0 = AlignDown((int)MathF.Floor(src.Left) - margin, CropGrid);
@@ -758,38 +852,29 @@ namespace NotchPeninsula
                     float sdfDy = flushTop ? 4096f : 0f;
                     float sdfHy = hsy + sdfDy;
 
-                    float minHs = MathF.Min(halfW, hsy);
-
-                    // ── 折射尺度：一律按短边夹紧 ──
+                    // ── 折射尺度（与裁切余量同一公式，见 RefractScale）──
                     // lensDepth：位移场从「最大」衰减到 0 所需的深度；
                     // refractPx：边缘的最大位移（逻辑像素）。
-                    // 折叠态胶囊半高只有 20，照搬 22px 的透镜深度会把整块玻璃"翻"过去
-                    // （映射不单调 → 内容折叠 + 扇贝状亮斑），所以两者都按短边夹紧，
-                    // 让任何尺寸下比例都落在同一区间：短边越短，折射带就越薄。
-                    float lensDepth = MathF.Min(RefractionHeight, minHs * 0.95f);
-                    if (lensDepth < 1f) lensDepth = 1f;
+                    // 折叠态胶囊半高只有 20，大深度会把整块玻璃"翻"过去
+                    // （映射不单调 → 内容折叠 + 扇贝状亮斑），所以小面由厚度档夹紧；
+                    // 展开态（详情页卡片）按短边 0.38 倍加宽（上限 64px），环覆盖边缘一整圈，
+                    // 中心仍由 midFade 收敛为中性区。
+                    RefractScale(logicalW, logicalH, flareX, out float minHs, out float lensDepth, out float refractPx);
 
-                    // 位移量按短边给（参考实现里约等于半高的 12%，折叠胶囊需要更大比例才看得出）。
-                    // 上限 44px：再大采样就会跨过中轴，映射不单调 → 玻璃"翻面"。
                     // 着色末段要用到的三个系数：每帧算一次，逐像素只读静态字段
                     _rsSat = Saturation;
                     _rsDark = Darkening;
                     _rsTint = TintAlpha;
 
-                    // ⚠️ 上限必须压在折射带宽度以内（0.7 倍）：位移一旦超过 lensDepth，
-                    //    边缘像素就会采到「带外」的内容 —— 展开态上表现为边界处的网格线
-                    //    被整段挖空、圆形被切掉一角，看着像玻璃把背景"吃"了一块。
-                    float refractPx = minHs * 0.30f * (_levels[P_Refraction] / 2f);
-                    float refractCap = lensDepth * 0.7f;
-                    if (refractPx > refractCap) refractPx = refractCap;
-                    if (refractPx > 44f) refractPx = 44f;
-                    if (refractPx < 0f) refractPx = 0f;
+                    // 调试快照（临时）：供 GlassDebug 输出真实参数
+                    _dbgMinHs = minHs; _dbgLensDepth = lensDepth; _dbgRefractPx = refractPx; _dbgMaxShift = 0f;
+                    _dbgGw = gw; _dbgGh = gh; _dbgSs = ss; _dbgBlur = blurPx;
                     float disp = Dispersion;
                     float rimStrength = RimStrength;
 
                     // 轮廓内侧这段距离内位移必须为 0：参考实现里 `saturate(edgeDistance / 2)` 那一圈
                     // 干净的贴边像素 —— 它让轮廓看起来是「一片玻璃的边缘」而不是被拉扯的贴图。
-                    const float CleanBandPx = 2f;
+                    const float CleanBandPx = 0.25f;
                     // 轮廓光的带宽（只贴边界内侧这几像素亮，再往里没有）
                     const float RimBandPx = 2.6f;
 
@@ -895,29 +980,45 @@ namespace NotchPeninsula
                                 // 到边界的深度（往里为正）
                                 float depth = sd < 0f ? -sd : 0f;
 
-                                // ── ① 内核位移剖面 ──
-                                // tIn：1 = 轮廓，0 = 折射带外沿（再往里就完全不位移）。
-                                // ⚠️ 方向不能反：边缘位移最大、往里衰减到 0，才是「边缘把背景掰弯」；
-                                //    反过来写（边缘 0、深处满）在展开态上表现为整块内容被平移，
-                                //    完全看不到边缘折射。
-                                // baseM 用 smoothstep 而不是 1-sqrt(1-t²)：后者在 t→1 时导数无穷，
-                                // 贴边几像素内采样映射不单调，会折叠出扇贝状亮斑。
+                                // ── ① 内核位移剖面（与液态玻璃 1 同口径）──
+                                // tIn：1 = 轮廓，0 = 折射带外沿（再往里完全不位移）。
+                                // ⚠️ 方向不能反：边缘位移最大、往里衰减到 0，才是「边缘把背景掰弯」。
+                                // circleMap（1-sqrt(1-t²)）是 v1 用的剖面：边缘处斜率大、往里收得快，
+                                // 观感是贴着轮廓的一圈"厚玻璃壁"。它虽然在 t→1 时导数发散，但
+                                // 贴边 2px 的干净带（cleanBand）正好压住那一段，不会折叠出扇贝亮斑。
                                 float tIn = 1f - depth / lensDepth;
                                 if (tIn < 0f) tIn = 0f; else if (tIn > 1f) tIn = 1f;
-                                float baseM = tIn * tIn * (3f - 2f * tIn);
-                                // 贴边 2px 干净带 + 3px 过渡：玻璃轮廓本身不该被弯折
-                                float cleanBand = SmoothStep(CleanBandPx, CleanBandPx + 3f, depth);
-                                // 中心收敛：细长胶囊的中轴上方向会翻向，位移必须在那里归零，
-                                // 否则收起态中间会横贯一条接缝
-                                float midFade = 1f - SmoothStep(minHs * 0.55f, minHs, depth);
-                                float m = baseM * cleanBand * midFade;
+                                float baseM = 1f - MathF.Sqrt(1f - tIn * tIn);
+                                // 贴边干净带：只保住最外那不到 1px（防轮廓被自己掰出锯齿），
+                                // 1px 之后立刻满幅。circleMap 的位移几乎全部集中在最贴边的 1~2px，
+                                // 任何比这更宽的过渡都会把唯一看得见的那段砍掉 ——
+                                // 液态玻璃 1 根本没有干净带，这也是它边缘折射比 v2 明显的原因。
+                                float cleanBand = SmoothStep(CleanBandPx, CleanBandPx + 0.75f, depth);
+                                // 中心收敛（v1 的 centerFade）：0.3 倍带宽之后开始收，1 倍带宽处精确归零。
+                                // 位移本来就只该发生在边缘那圈；中部若残留几个像素的位移，
+                                // 在展开态会被整片共享成一层次横向拉丝。
+                                float centerFade = 1f - SmoothStep(lensDepth * 0.3f, lensDepth, depth);
+                                float m = baseM * cleanBand * centerFade;
 
                                 // ── 中部快路径：位移不足 0.3px 时方向毫无意义 ──
                                 // 展开态九成面积都在这里（lensDepth 只有二十几像素），
                                 // 提前返回能省掉每像素 4 次除法 + 4 次平方。
                                 float shift = refractPx * m;
+                                if (shift > _dbgMaxShift) _dbgMaxShift = shift;
                                 if (shift < 0.3f)
                                 {
+                                    // ⚠️ 快路径也必须算轮廓光：高光带宽只有 2.6px，
+                                    //    整条都落在「位移 < 0.3px」的范围里 —— 以前这里固定传 0，
+                                    //    于是「边缘高光」滑轨怎么调都没有任何变化。
+                                    float hl0 = 0f;
+                                    if (rimStrength > 0f && depth < RimBandPx)
+                                    {
+                                        float ring0 = 1f - SmoothStep(0f, RimBandPx, depth);
+                                        float diag0 = (ccx / halfW) * -0.7071068f + (ccy / hsy) * 0.7071068f;
+                                        if (diag0 < -1f) diag0 = -1f; else if (diag0 > 1f) diag0 = 1f;
+                                        hl0 = ring0 * rimStrength * (0.35f + 0.85f * (0.5f - 0.5f * diag0));
+                                    }
+
                                     // ⚠️ 减 0.5：不位移时采样点正好落在 4 个像素的中点上
                                     // （lx*imgPerX 在 1:1 抓屏下恒等于 gx+0.5），双线性会做一次
                                     // 4 点平均 —— 既白花 3 次内存读，又让整块玻璃轻微发糊。
@@ -926,7 +1027,7 @@ namespace NotchPeninsula
                                     float by0 = (src.Top + ly * imgPerY - cy0) * invBs - 0.5f;
                                     float cr0 = 0f, cg0 = 0f, cb0 = 0f;
                                     AccumSample(blurLocal, bcw, bch, blurStride, bx0, by0, 1f, 1f, 1f, ref cr0, ref cg0, ref cb0);
-                                    FinishColor(ref cr0, ref cg0, ref cb0, 0f);
+                                    FinishColor(ref cr0, ref cg0, ref cb0, hl0);
                                     WritePixel(row, p, cr0, cg0, cb0, edge, DitherAt(gx, gy));
                                     continue;
                                 }
@@ -958,28 +1059,56 @@ namespace NotchPeninsula
                                     if (dlen < 1e-6f) { dirX = 0f; dirY = -1f; }
                                     else { dirX /= dlen; dirY /= dlen; }
                                 }
+                                // ── ②b 透镜感：法线里叠加径向分量 ──
+                                // v1 的中部法线几乎全靠这一项撑着：越靠中心，采样方向越朝外辐射，
+                                // 整块玻璃读起来像一片凸透镜，而不是"只有边框会弯的贴图"。
+                                // 档位 0 时整段跳过（退化为纯边缘折射）。
+                                // ⚠️ v2 之前把这个参数定义了却从未使用 —— 滑块怎么调都没反应。
+                                if (DepthEffect > 0f)
+                                {
+                                    float rl = MathF.Sqrt(ccx * ccx + ccy * ccy) + 1e-6f;
+                                    dirX += DepthEffect * (ccx / rl);
+                                    dirY += DepthEffect * (ccy / rl);
+                                    float dl = MathF.Sqrt(dirX * dirX + dirY * dirY);
+                                    if (dl < 1e-6f) { dirX = 0f; dirY = -1f; }
+                                    else { dirX /= dl; dirY /= dl; }
+                                }
+
                                 float nrmY = dirY;   // 外法线的 Y 分量（屏幕 y 向下，负 = 朝上）
 
                                 // ── ③ 折射位移（逻辑像素 → 背板像素）──
                                 // ⚠️ 朝**外**采样（+dir）：玻璃是凸的，边缘处看到的是更外侧的内容。
                                 //    写成向内会在边缘形成一圈"阴天边"——外圈的网格线被吸走、
                                 //    内侧多出一条本该在边界外的重影。
-                                float rootX = dirX * shift * imgPerX * invBs;
-                                float rootY = dirY * shift * imgPerY * invBs;
+                                // ⚠️ 位移必须**烘进基准采样坐标**（dispX/dispY）。
+                                //    之前这里只把 shift 乘进了 ±disp 的色散偏移，基准坐标仍是原位 ——
+                                //    于是"折射位移"实际只有 shift×Dispersion（0.02~0.08 倍），
+                                //    也就是 0.5px 级别的彩边，肉眼完全看不到折射。
+                                // ⚠️ 朝**外**采样（+dir）：dir 本身就是外法线（见上面 dirX = drt - dlf）。
+                                //    v1 的 baseX = x + d·∇sd，∇sd 在内部指向外，同样朝外。
+                                //    两边同向才是「玻璃把外面的背景掰弯拉进来」；
+                                //    写成向内会采到玻璃内侧已被擦除/填充的平滑区域，
+                                //    位移再大也看不出形变 —— 观感就是"折射完全没效果"。
+                                float dispX = dirX * shift * imgPerX * invBs;
+                                float dispY = dirY * shift * imgPerY * invBs;
 
-                                float baseX = (src.Left + lx * imgPerX - cx0) * invBs - 0.5f;
-                                float baseY = (src.Top + ly * imgPerY - cy0) * invBs - 0.5f;
+                                float baseX = (src.Left + lx * imgPerX - cx0) * invBs - 0.5f + dispX;
+                                float baseY = (src.Top + ly * imgPerY - cy0) * invBs - 0.5f + dispY;
+
+
+                                // 色散：在位移后的位置上把 R/B 再前后错开一点（量级 1px 以内）
+                                float frX = dispX * disp, frY = dispY * disp;
 
                                 float ar = 0f, ag = 0f, ab = 0f;
                                 if (_samples < 7)
                                 {
                                     // 流畅档：每通道各采一次（R 沿位移推、B 往回拉），色散更糙但省 6 次采样
                                     AccumSample(blurLocal, bcw, bch, blurStride,
-                                        baseX + rootX * disp, baseY + rootY * disp, 1f, 0f, 0f, ref ar, ref ag, ref ab);
+                                        baseX + frX, baseY + frY, 1f, 0f, 0f, ref ar, ref ag, ref ab);
                                     AccumSample(blurLocal, bcw, bch, blurStride,
                                         baseX, baseY, 0f, 1f, 0f, ref ar, ref ag, ref ab);
                                     AccumSample(blurLocal, bcw, bch, blurStride,
-                                        baseX - rootX * disp, baseY - rootY * disp, 0f, 0f, 1f, ref ar, ref ag, ref ab);
+                                        baseX - frX, baseY - frY, 0f, 0f, 1f, ref ar, ref ag, ref ab);
                                 }
                                 else
                                 {
@@ -987,11 +1116,11 @@ namespace NotchPeninsula
                                     // 在观感上换不到任何东西（色散只出现在边缘那圈 2px 细边上），
                                     // 展开态却要多花 15~20ms。统一成「每通道一次」。
                                     AccumSample(blurLocal, bcw, bch, blurStride,
-                                        baseX + rootX * disp, baseY + rootY * disp, 1f, 0f, 0f, ref ar, ref ag, ref ab);
+                                        baseX + frX, baseY + frY, 1f, 0f, 0f, ref ar, ref ag, ref ab);
                                     AccumSample(blurLocal, bcw, bch, blurStride,
                                         baseX, baseY, 0f, 1f, 0f, ref ar, ref ag, ref ab);
                                     AccumSample(blurLocal, bcw, bch, blurStride,
-                                        baseX - rootX * disp, baseY - rootY * disp, 0f, 0f, 1f, ref ar, ref ag, ref ab);
+                                        baseX - frX, baseY - frY, 0f, 0f, 1f, ref ar, ref ag, ref ab);
                                 }
 
                                 // ── ④ 轮廓光：135° 对角渐变 + 朝上那侧的内发光 ──

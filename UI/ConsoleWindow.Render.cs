@@ -1418,6 +1418,24 @@ namespace NotchPeninsula
             DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
                 MaterialLabels, Renderer.IslandMaterialIndex, _hoveredMaterialIndex, fitLabels: true);
 
+            // 第三行：只有液态玻璃才有这回事。
+            // 两档的背板都是真实桌面（岛体在捕获里隐身），区别只在糊多厚：
+            // 原模糊 = 档位半径那层，高斯模糊 = 再叠一层固定厚度。
+            if (Renderer.IslandAnyGlass)
+            {
+                canvas.DrawText("背景模糊", CONTENT_TEXT_X, BlurModeSegY + 20f, _uiTextPaint);
+                _subTextPaint.Color = Neutral(170);
+                canvas.DrawText(Renderer.GlassGaussBackdrop
+                        ? "真实桌面 + 档位半径再加一层高斯（截图/录屏里看不到岛）"
+                        : "真实桌面 + 档位半径的原版模糊（截图/录屏里看不到岛）",
+                    CONTENT_TEXT_X, BlurModeSegY + 40f, _subTextPaint);
+
+                // 等分两档（fitLabels 保持 false）：命中侧 SegmentIndexAt 也必须用同一套分宽，
+                // 否则"点左边却选中右边"。
+                DrawSegmented(canvas, BlurModeSegX, BlurModeSegY, BLUR_MODE_SEG_W, SEG_H,
+                    BlurModeLabels, Renderer.GlassGaussBackdrop ? 1 : 0, _hoveredBlurModeIndex);
+            }
+
             // 液态玻璃模式下整卡不画：玻璃的着色由「玻璃雾度」管，涂层恒为 0（见 ApplyThemeColors），
             // 这条滑轨摆在那儿只会让人以为能调。尺寸卡/玻璃卡跟着上移（见 SIZE_CARD_Y）。
             if (ShowOpacityCard)
@@ -1508,13 +1526,13 @@ namespace NotchPeninsula
         }
 
         // 背景材质的四个档位：两种玻璃的合成模型完全不同，所以并列成两个选项，互不覆盖
-        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "液态玻璃2.0"];
+        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃"];
 
-        // 液态玻璃 2 只有 9 根滑轨（3 行），且没有质量行 —— 卡高 = 3 行滑轨 + 底部按钮行，
-        // 正好与改前的 v2 卡同高（152），窗口高度与下面控件都不动。
-        private static float GlassCardH => Renderer.IslandLiquidGlass2
-            ? GlassResetTopY + GLASS_RESET_H + GLASS_CARD_BOTTOM_PAD
-            : GLASS_CARD_H;
+        // 卡高必须由「实际排了几行」算出来，不能写死：
+        // 液态玻璃 2 从 9 根涨到 11 根（多了刷新 / 帧率），行数从 3 变 4，
+        // 写死 3 行的话第 4 行两根滑轨会直接画到卡片外面（"新加的两根不在父 UI 里"）。
+        private static float GlassCardH
+            => GLASS_ROW0_Y + Math.Max(3, GlassRowCount) * GLASS_ROW_H + 10f;
 
         // 玻璃卡的一根 5 档滑轨：标签 + 滑轨 + 档位值（数值型参数直接显示具体值）。
         // 两张玻璃卡共用这套画法，只是标签 / 档位 / 数值文案各自取表。

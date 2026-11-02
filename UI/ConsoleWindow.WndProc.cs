@@ -80,6 +80,7 @@ namespace NotchPeninsula
             int newHoveredGlassParamLevel = -1;   // 悬停到的档位
             bool newHoveredGlassReset = false;    // 卡底「恢复默认参数」
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
+            int newHoveredBlurMode = -1;   // 个性化卡第三行：背景模糊（0 原模糊 / 1 高斯模糊）
             if (_selectedTab == 5)
             {
                 float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
@@ -93,6 +94,11 @@ namespace NotchPeninsula
                 if (y >= matSegY && y <= matSegY + SEG_H
                     && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
                     newHoveredMaterial = SegmentIndexAt(MaterialLabels, MAT_SEG_W, fitLabels: true, dx: x - MAT_SEG_X);
+
+                // 个性化卡第三行「背景模糊」：两档分段，按落点算选中哪一档。
+                if (HitBlurModeRow(x, y))
+                    newHoveredBlurMode = SegmentIndexAt(BlurModeLabels, BLUR_MODE_SEG_W, fitLabels: false,
+                        dx: x - BlurModeSegX);
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
@@ -113,7 +119,7 @@ namespace NotchPeninsula
                             {
                                 Renderer.BgOpacityLevel = newHoveredOpacityIndex;
                                 Renderer.ApplyThemeColors();
-                                Program.SaveSetting("BgOpacityLevel", newHoveredOpacityIndex);
+                                Program.SaveSetting(Renderer.BgOpacityKey, newHoveredOpacityIndex);
                                 Render(); // 数据一旦跨越档位，立刻触发重绘，实现跟手滑动
                             }
                         }
@@ -792,6 +798,10 @@ namespace NotchPeninsula
                 newHoveredGlassParam != _hoveredGlassParamIndex ||
                 newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
                 newHoveredGlassReset != _hoveredGlassReset ||
+                // ⚠️ 这一项漏掉过：它只在被比较的几个状态里"顺带"赋值，
+                //    于是鼠标只停在这一行时整块 if 不成立 → 悬停永远不更新，
+                //    表现为「控件画得出来、高亮不亮、点了没反应」。
+                newHoveredBlurMode != _hoveredBlurModeIndex ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
@@ -833,6 +843,7 @@ namespace NotchPeninsula
             {
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                 _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
+                _hoveredBlurModeIndex = newHoveredBlurMode;
                 _toastToggleHovered = newToastToggleHovered;
                 _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
                 _focusHideToggleHovered = newFocusHideToggleHovered;

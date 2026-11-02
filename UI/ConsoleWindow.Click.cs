@@ -206,6 +206,7 @@ namespace NotchPeninsula
             _islandHotkeyHint = "";
             _fontHint = "";
             _soundHint = "";
+            _hoveredBlurModeIndex = -1;   // 换页签后旧档位不该留着继续高亮
         }
 
         // 鼠标左键按下：整窗点击分派。
@@ -517,6 +518,20 @@ namespace NotchPeninsula
                 NotchWindow.RequestAcrylicRebuild(); // 明暗换了，亚克力色调也要重贴
                 Render(); // 刷新控制台UI
             }
+            else if (_selectedTab == 5 && HitBlurModeRow(clickX, clickY))
+            {
+                // 背景模糊：0 = 原模糊（岛体那块抹成平均色再按档位糊），
+                //           1 = 高斯模糊（岛体在捕获里隐身 → 玻璃下是真实桌面 + 一层固定高斯）。
+                // 落点重算一次档位：窗口刚弹出就点、鼠标没发过 MOVE 时 hover 还是旧值。
+                int mode = SegmentIndexAt(BlurModeLabels, BLUR_MODE_SEG_W, fitLabels: false,
+                    dx: clickX - BlurModeSegX);
+                if (mode >= 0)
+                {
+                    Renderer.GlassGaussBackdrop = mode == 1;
+                    Program.SaveSetting("GlassBackdropBlur", mode);
+                    Render();
+                }
+            }
             else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
             {
                 // 切到「液态玻璃 2」之前先跑一遍合成链路自检（纯内存小图，不碰抓屏）：
@@ -545,6 +560,8 @@ namespace NotchPeninsula
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                     Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
                     Program.SaveSetting("IslandLiquidGlass2", Renderer.IslandLiquidGlass2 ? 1 : 0);
+                    // 切到玻璃就让它从捕获里隐身（两档背景模糊都要真实桌面），切走就恢复
+                    Renderer.SyncCaptureAffinity();
                     NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
                 }
                 // 切走玻璃时那张参数卡当场消失，悬停索引一并清掉，别留着下一帧误命中
@@ -579,7 +596,7 @@ namespace NotchPeninsula
             {
                 Renderer.BgOpacityLevel = _hoveredOpacityIndex;
                 Renderer.ApplyThemeColors(); // 立刻应用透明度
-                Program.SaveSetting("BgOpacityLevel", _hoveredOpacityIndex); // 持久化保存
+                Program.SaveSetting(Renderer.BgOpacityKey, _hoveredOpacityIndex); // 只存当前材质那一份
                 Render(); // 刷新UI
             }
             else if (_cacheCleanHovered)

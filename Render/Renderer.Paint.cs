@@ -116,9 +116,167 @@ namespace NotchPeninsula
                 ApplyThemeColors();
         }
 
-        public static void ApplyThemeColors() // 刷新颜色的方法
+        // ── 元素级文字明暗 ──
+        //
+        // 以前整块玻璃只有一个明暗状态：要么全黑字、要么全白字。壁纸横向从深到浅时
+        // 总有一半文字压在错的那半边底色上（左边白字糊在黑底、右边黑字糊在白底）。
+        //
+        // 现在每个元素按自己下方那块玻璃的亮度决定黑白：
+        //   每帧把背板（隐身抓到的真实桌面）降采样成一张 24×6 的亮度网格，
+        //   查询时按元素矩形取覆盖格的平均 —— 144 个采样点，比逐像素便宜得多，
+        //   而且天然平滑，不会出现「同一个字一半黑一半白」。
+        // 网格与上一帧插值一次：背板 250ms 才换一张，硬切会看到文字颜色跳一下。
+        private const int ToneGridX = 24;
+
+        private const int ToneGridY = 6;
+
+        private static readonly float[] _toneGrid = new float[ToneGridX * ToneGridY];
+
+        private static readonly float[] _toneGridPrev = new float[ToneGridX * ToneGridY];
+
+        private static bool _toneReady;
+
+        private static bool _tonePrimed;
+
+        private static float _toneDstL, _toneDstT, _toneDstW, _toneDstH;
+
+        private static float _toneSrcL, _toneSrcT, _toneSrcW, _toneSrcH;
+
+        // 元素级判定阈值：亮过它就用黑字。
+        // 全局那套是 0.78/0.70 的滞回，这里单值就够 —— 网格本身已经平滑过，
+        // 而且同一帧里相邻元素应该看到同一个判断，迟滞的「各自记状态」反而会造成黑白不一致。
+        private const float ToneLightAt = 0.74f;
+
+        /// <summary>
+        /// 本帧重新采样「文字底色亮度网格」。必须在玻璃画完之后、画文字之前调一次。
+        /// 非玻璃材质 / 背板为空 / 取不到像素时置 _toneReady=false，所有元素回落到全局文字色。
+        /// </summary>
+        private static void BeginToneGrid(SKImage? backdrop, SKRect dst, SKRect src)
         {
-            bool isLight = ThemeMode == 1;
+            _toneReady = false;
+            if (!IslandAnyGlass || backdrop == null) { _tonePrimed = false; return; }
+            if (dst.Width < 4f || dst.Height < 4f || src.Width < 4f || src.Height < 4f)
+            { _tonePrimed = false; return; }
+
+            using var pm = backdrop.PeekPixels();
+            if (pm == null) { _tonePrimed = false; return; }
+            IntPtr basePtr = pm.GetPixels();
+            if (basePtr == IntPtr.Zero) { _tonePrimed = false; return; }
+
+            SKColorType ct = pm.ColorType;
+            if (ct != SKColorType.Bgra8888 && ct != SKColorType.Rgba8888) { _tonePrimed = false; return; }
+            int bOff = ct == SKColorType.Bgra8888 ? 0 : 2;
+            int rOff = ct == SKColorType.Bgra8888 ? 2 : 0;
+            int stride = pm.RowBytes;
+            int pw = pm.Width, ph = pm.Height;
+            if (pw < 1 || ph < 1) { _tonePrimed = false; return; }
+
+            // 玻璃自己的着色（明度补偿 / 雾度掺白）也要算进来 —— 判的是「玻璃成品」多亮，
+            // 不是桌面原样多亮，否则暗壁纸在明度拉高之后仍会被判成暗底。
+            float dark = LiquidGlass.Darkening;
+            float tint = LiquidGlass.TintAlpha;
+
+            _toneDstL = dst.Left; _toneDstT = dst.Top; _toneDstW = dst.Width; _toneDstH = dst.Height;
+            _toneSrcL = src.Left; _toneSrcT = src.Top; _toneSrcW = src.Width; _toneSrcH = src.Height;
+
+            for (int gy = 0; gy < ToneGridY; gy++)
+            {
+                int py = (int)(_toneSrcT + _toneSrcH * (gy + 0.5f) / ToneGridY);
+                if (py < 0) py = 0; else if (py >= ph) py = ph - 1;
+                IntPtr row = basePtr + py * stride;
+                for (int gx = 0; gx < ToneGridX; gx++)
+                {
+                    int px = (int)(_toneSrcL + _toneSrcW * (gx + 0.5f) / ToneGridX);
+                    if (px < 0) px = 0; else if (px >= pw) px = pw - 1;
+                    int i = px * 4;
+                    float b = Marshal.ReadByte(row, i + bOff);
+                    float g = Marshal.ReadByte(row, i + 1);
+                    float r = Marshal.ReadByte(row, i + rOff);
+                    float lum = (0.213f * r + 0.715f * g + 0.072f * b) * (1f / 255f);
+                    lum *= dark;
+                    lum += (1f - lum) * tint;
+                    if (lum < 0f) lum = 0f; else if (lum > 1f) lum = 1f;
+
+                    int idx = gy * ToneGridX + gx;
+                    _toneGrid[idx] = _tonePrimed
+                        ? _toneGridPrev[idx] + (lum - _toneGridPrev[idx]) * 0.35f
+                        : lum;
+                }
+            }
+
+            Array.Copy(_toneGrid, _toneGridPrev, _toneGrid.Length);
+            _tonePrimed = true;
+            _toneReady = true;
+        }
+
+        /// <summary>取某个矩形覆盖的网格平均亮度；没有网格时返回 -1（调用方回落到全局判定）。</summary>
+        private static float ToneAt(SKRect area)
+        {
+            if (!_toneReady || _toneDstW < 1f || _toneDstH < 1f) return -1f;
+
+            float fx0 = (area.Left - _toneDstL) / _toneDstW * ToneGridX;
+            float fx1 = (area.Right - _toneDstL) / _toneDstW * ToneGridX;
+            float fy0 = (area.Top - _toneDstT) / _toneDstH * ToneGridY;
+            float fy1 = (area.Bottom - _toneDstT) / _toneDstH * ToneGridY;
+
+            int ix0 = (int)MathF.Floor(fx0), ix1 = (int)MathF.Ceiling(fx1);
+            int iy0 = (int)MathF.Floor(fy0), iy1 = (int)MathF.Ceiling(fy1);
+            if (ix0 < 0) ix0 = 0; if (ix1 >= ToneGridX) ix1 = ToneGridX - 1;
+            if (iy0 < 0) iy0 = 0; if (iy1 >= ToneGridY) iy1 = ToneGridY - 1;
+            if (ix1 < ix0) ix1 = ix0;
+            if (iy1 < iy0) iy1 = iy0;
+            // 元素跑到岛外（滑入/滑出的中间态）时别拿边缘格凑答案
+            if (fx1 < 0f || fx0 > ToneGridX || fy1 < 0f || fy0 > ToneGridY) return -1f;
+
+            float sum = 0f;
+            int n = 0;
+            for (int y = iy0; y <= iy1; y++)
+            {
+                int rowBase = y * ToneGridX;
+                for (int x = ix0; x <= ix1; x++) { sum += _toneGrid[rowBase + x]; n++; }
+            }
+            return n > 0 ? sum / n : -1f;
+        }
+
+        /// <summary>
+        /// 某个文字元素该用什么颜色：亮底黑字、暗底白字，逐个元素独立判定。
+        /// 拿不到网格（实体/亚克力、背板为空）时回落到全局主题色。
+        /// </summary>
+        private static SKColor ToneText(string text, float x, float baseline, SKPaint paint, byte alpha, bool sub)
+        {
+            // 次级文字的画笔（副标题/时间轴/日期/紧凑模式应用名）自动走灰色档，调用方不用逐个标注
+            if (!sub && IsSecondaryPaint(paint)) sub = true;
+            SKColor fallback = sub ? _currentSubTextColor : _currentTextColor;
+            if (!_toneReady || string.IsNullOrEmpty(text)) return fallback.WithAlpha(alpha);
+
+            float w = paint.MeasureText(text);
+            if (w <= 0f) return fallback.WithAlpha(alpha);
+            SKFontMetrics fm = paint.FontMetrics;
+            var area = new SKRect(x, baseline + fm.Ascent, x + w, baseline + fm.Descent);
+
+            float t = ToneAt(area);
+            if (t < 0f) return fallback.WithAlpha(alpha);
+
+            if (t > ToneLightAt)
+                return sub ? new SKColor(70, 70, 70).WithAlpha(alpha) : SKColors.Black.WithAlpha(alpha);
+            return sub ? new SKColor(205, 205, 205).WithAlpha(alpha) : SKColors.White.WithAlpha(alpha);
+        }
+
+        /// <summary>根据元素自己的底色选黑白再画 —— 内置文字全部走这里，别直接 canvas.DrawText。</summary>
+        private static void DrawToneText(SKCanvas canvas, string text, float x, float baseline,
+            SKPaint paint, byte alpha, bool sub = false)
+        {
+            paint.Color = ToneText(text, x, baseline, paint, alpha, sub);
+            canvas.DrawText(text, x, baseline, paint);
+        }
+
+        /// <summary>这个画笔画的是不是「次级文字」（灰字那几档）。</summary>
+        private static bool IsSecondaryPaint(SKPaint paint)
+            => ReferenceEquals(paint, _bodyPaint) || ReferenceEquals(paint, _tlTextPaint)
+            || ReferenceEquals(paint, _datePaint) || ReferenceEquals(paint, _compactAppPaint);
+
+        public static void ApplyThemeColors() // 刷新颜色的方法
+        {            bool isLight = ThemeMode == 1;
             if (ThemeMode == 2) // 跟随系统
             {
                 isLight = SystemIsLightTheme;

@@ -6,8 +6,8 @@ namespace NotchPeninsula
     // 液态玻璃背景（Liquid Glass）—— C++ / HLSL 版 Liquid Glass Demo 的纯 C# + SkiaSharp 移植。
     //
     // 管线与 demo 一一对应：
-    //   1. 抓屏      ：优先 MagnifierBackdrop（放大镜 API，1:1 全分辨率 + 排除岛体自身），
-    //                  不可用时回退 IslandBackdrop 的 GDI 抓屏
+    //   1. 抓屏      ：DXGI Desktop Duplication（Core/DxgiBackdrop.cs，GPU 采集、脏帧机制），
+    //                  不可用（跨屏 / HDR / 初始化失败）时回退 IslandBackdrop 的 GDI 抓屏
     //   2. 可分离高斯 ：ComputeGaussianWeights + 水平/垂直两趟（对应 BlurH_PS / BlurV_PS）
     //   3. 玻璃本体   ：SDF 圆角矩形 → 边缘折射位移 + RGB 色散 + 饱和度提升 + 玻璃本色
     //                  （对应 GlassDispersionPS 的 sdRoundedRect / gradSdRoundedRect / circleMap）
@@ -105,11 +105,10 @@ namespace NotchPeninsula
         /// </summary>
         public static double FrameIntervalMsExact => 1000.0 / FrameFpsTable[EffectiveLevel(P_FrameRate)];
 
-        // 「极致」档把「刷新」「帧率」两根滑轨锁到最高档：这个档的定位就是"能喂多快就喂多快"，
-        // 玻璃再被低刷新拖成半拍前的画面，超采样和 1:1 抓屏就白做了。
-        // ⚠️ 只锁「读取」，不改 _levels —— 切回别的档位时用户原来的设定原样回来。
-        private static bool IsLockedByQuality(int index)
-            => _quality == 3 && (index == P_CaptureHz || index == P_FrameRate);
+        // 以前「极致」档会把「刷新」「帧率」锁死到最高档（60ms / 144fps）。
+        // 实测这条锁弊大于利：60ms 的 GDI 回读本身要 20ms，等于每三帧就白烧一帧的采集时间，
+        // 观感是"越调极致越卡"。现在两根滑轨全部交给用户自己调，档位只管质量相关的那几项。
+        private static bool IsLockedByQuality(int index) => false;
 
         /// <summary>该滑轨是否被当前质量档锁在固定值（设置页据此把标签画灰、数值画成强调色）。</summary>
         public static bool IsLevelLocked(int index)
@@ -187,7 +186,25 @@ namespace NotchPeninsula
 
         public static float TintAlpha => _levels[P_Frost] * 0.04f;               // 0 .. 0.16
 
-        public static float Darkening => BrightnessTable[_levels[P_Brightness]];
+        // 两档「背景模糊」的亮度补偿系数。
+        //
+        // 背板都是真实桌面，但需要的补偿差得远，原因在模糊本身：
+        //   · 高斯档糊得厚，高光被抹平、整体偏暗 → 补到 1.32 才是「标准明度」该有的样子；
+        //   · 原模糊档保留细节，采到的就是桌面本来的亮度，再补 1.20 会整体发白 ——
+        //     用户实测得把「明度」压到最低档（0.80）才能和高斯档观感对上，也就是 0.80 × 1.20 ≈ 0.96。
+        // 这里把那次手调的结果固化成默认：两档都在「明度 = 标准」时得到各自合适的整体亮度，
+        // 不用再为了换一档回来重调滑轨。
+        private const float DarkenOriginal = 0.96f;
+        private const float DarkenGauss = 1.32f;
+
+        public static float Darkening
+        {
+            get
+            {
+                float b = BrightnessTable[_levels[P_Brightness]];
+                return b * (Renderer.GlassGaussBackdrop ? DarkenGauss : DarkenOriginal);
+            }
+        }
 
         // ---- 高斯模糊 ----
         // ⚠️ _radius 是**背板像素**口径，不是逻辑像素：抓屏被降采样 1/2、1/3 时抽头数不变，
@@ -198,6 +215,10 @@ namespace NotchPeninsula
         // 档位原始半径（逻辑像素口径 0/2/4/6/10）。初值取默认档下标 2 的表值：
         // 注册表值恰好等于默认时 SetLevel 会早退，ApplyBlur 根本不会被调用。
         private static int _levelRadius = 4;
+
+        // 「高斯模糊」这一档在档位半径之外再加的厚度（逻辑像素）。
+        // 10px 左右在胶囊尺寸下刚好：看得出是磨砂，又还认得出底下是什么。
+        private const int GaussExtraPx = 8;
 
         private static float _sigma = 2.2f;
 
@@ -490,7 +511,12 @@ namespace NotchPeninsula
 
                 // 模糊半径换算成背板像素：抓屏降采样 1/2 时半径也要 ×2，否则视觉上糊一倍。
                 // 这一条是「只有精细档不糊」的根治 —— 抓屏倍率变了，抽头数不能原地不动。
-                SetRadius(Math.Max(0, (int)MathF.Round(_levelRadius * MathF.Max(imgPerX, imgPerY))));
+                //
+                // 两档的背板都是**真实桌面**（岛体在捕获里隐身），所以：
+                //   原模糊 = 档位半径本身（就是原版那层糊）；
+                //   高斯模糊 = 档位半径 + GaussExtraPx，桌面细节再压平一档。
+                int blurLogical = _levelRadius + (Renderer.GlassGaussBackdrop ? GaussExtraPx : 0);
+                SetRadius(Math.Max(0, (int)MathF.Round(blurLogical * MathF.Max(imgPerX, imgPerY))));
 
                 float maxShift = RefractionAmount * (1f + Dispersion) + 4f;
                 int margin = (int)MathF.Ceiling(maxShift * MathF.Max(imgPerX, imgPerY)) + _radius + 2;

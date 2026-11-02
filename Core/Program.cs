@@ -76,6 +76,19 @@ namespace NotchPeninsula
                     Renderer.NotchStyle = (int)key.GetValue("NotchStyle", 0);
                     Renderer.MediaInteractionMode = (int)key.GetValue("MediaInteractionMode", 1);
                     Renderer.StandbyDisplayMode = (int)key.GetValue("StandbyDisplayMode", 2);
+                    // 液态玻璃 2.0 已下线：旧配置里选着它的一律迁回液态玻璃 1
+                    if ((int)key.GetValue("IslandLiquidGlass2", 0) != 0)
+                    {
+                        Program.SaveSetting("IslandLiquidGlass2", 0);
+                        Program.SaveSetting("IslandLiquidGlass", 1);
+                    }
+                    Renderer.IslandLiquidGlass2 = false;
+
+                    // 背景模糊模式：0 = 原模糊（档位半径），1 = 高斯模糊（档位半径 + 厚高斯）。
+                    // 两档的背板都是隐身后的真实桌面 —— 隐不隐身已经跟着「液态玻璃」材质走，
+                    // 旧的「玻璃下显示真实桌面」开关值只用来推断默认档，不再单独读取。
+                    Renderer.GlassGaussBackdrop =
+                        (int)key.GetValue("GlassBackdropBlur", key.GetValue("HideIslandInCapture", 0)) != 0;
 
                     // 待机显示内容：新键存插件 Key（空串 = 空白）。
                     // 老键 StandbyScene 存的是 1/2/3 的场景号，只在没写过新键时用于迁移。
@@ -142,14 +155,19 @@ namespace NotchPeninsula
                         Renderer.TargetMonitorIndex = fallback;
                         Renderer.RememberedMonitorIndex = fallback;
                     }
-                    // 越界档位会让滑轨画到轨道外、且没有任何选中圆点（看起来就是"灰死轨"），必须夹回。
-                    Renderer.BgOpacityLevel = Math.Clamp((int)key.GetValue("BgOpacityLevel", 4), 0, 4);
+                    // 背景透明度分材质各存一份：纯色沿用老键 BgOpacityLevel，亚克力 / 液态玻璃各用新键
+                    // （液态玻璃只是记忆位，默认 100%）。越界档位会让滑轨画到轨道外、且没有选中圆点，必须夹回。
+                    Renderer.SolidBgOpacity = Math.Clamp((int)key.GetValue("BgOpacityLevel", 4), 0, 4);
+                    Renderer.AcrylicBgOpacity = Math.Clamp((int)key.GetValue("BgOpacityAcrylic", 4), 0, 4);
+                    Renderer.GlassBgOpacity = Math.Clamp((int)key.GetValue("BgOpacityGlass", 4), 0, 4);
                     Renderer.IslandAcrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
                     Renderer.IslandLiquidGlass = (int)key.GetValue("IslandLiquidGlass", 0) != 0;
-                    Renderer.IslandLiquidGlass2 = (int)key.GetValue("IslandLiquidGlass2", 0) != 0;
-                    // 三种材质互斥：玻璃2 优先于玻璃，玻璃优先于亚克力
-                    if (Renderer.IslandLiquidGlass2) Renderer.IslandLiquidGlass = false;
+                    // 液态玻璃 2.0 已下线（字段留着是为了不改动渲染侧的分支），永远不选它
+                    Renderer.IslandLiquidGlass2 = false;
+                    // 两种材质互斥：玻璃优先于亚克力
                     if (Renderer.IslandLiquidGlass) Renderer.IslandAcrylic = false;
+                    // 隐身跟着材质走：只有液态玻璃才需要（窗口还没建，句柄落实推迟到 NotchWindow）
+                    Renderer.SyncCaptureAffinity();
 
                     // 液态玻璃：质量档 + 12 根滑轨（越界一律夹回，老配置/手改注册表都不怕）
                     // 抓屏方式不再读配置：放大镜可用即用、不可用自动回退兼容抓屏。
@@ -157,7 +175,7 @@ namespace NotchPeninsula
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
                         LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], LiquidGlass.DefaultLevelOf(i)));
 
-                    // 液态玻璃 2：9 根滑轨（质量档与抓屏管线跟液态玻璃共用同一个设置项）
+                    // 液态玻璃 2：11 根滑轨（9 根材质参数 + 与液态玻璃 1 共用的「抓屏刷新」「岛体帧率」）
                     for (int i = 0; i < LiquidGlass2.ParamCount; i++)
                         LiquidGlass2.SetLevel(i, (int)key.GetValue(LiquidGlass2.ParamKeys[i], LiquidGlass2.DefaultLevelOf(i)));
 

@@ -399,12 +399,12 @@ namespace NotchPeninsula
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
             else Info($"窗口创建成功，句柄: {_hwnd}");
             InstanceHandle = _hwnd;
+            // 窗口一建好就把捕获隐身状态落实（启动读配置那一刻还没有窗口句柄）
+            Renderer.SyncCaptureAffinity();
             SetupIslandDropTarget();
 
-            // 放大镜抓屏：宿主窗口与放大镜窗口必须建在消息泵这条线上，所以放在这里（构造函数跑在主线程）。
-            // 不可用会自己回退 GDI，不影响启动；之后随时可以重试（见 EnsureMagnifier）。
-            if (Renderer.IslandAnyGlass || Renderer.IslandAcrylic)
-                MagnifierBackdrop.Initialize(_hwnd, _ownerHwnd);
+            // 抓屏后端不再需要窗口侧初始化：DXGI 用自己的 D3D11 设备（见 Core/DxgiBackdrop.cs），
+            // 首帧在后台线程懒建。放大镜 API 已下线。
             _renderThread = new Thread(RenderThreadLoop)
             {
                 IsBackground = true,
@@ -1784,15 +1784,6 @@ namespace NotchPeninsula
 
         private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
-            // 放大镜窗口只允许建在消息泵这条线上：设置里后切到玻璃材质时，
-            // 由这条消息把初始化"补"到 UI 线程来做（岛体窗口自己的 WndProc 就在这条线上）。
-            if (msg == MagNative.WM_APP_ENSURE_MAG)
-            {
-                if (Renderer.IslandAnyGlass || Renderer.IslandAcrylic)
-                    MagnifierBackdrop.EnsureInitialized(_hwnd, _ownerHwnd, wParam != IntPtr.Zero);
-                return IntPtr.Zero;
-            }
-
             switch (msg)
             {
                 case Win32.WM_HOTKEY:

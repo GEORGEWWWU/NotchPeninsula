@@ -100,9 +100,34 @@ namespace NotchPeninsula
 
         private const float THEME_CARD_Y = CARD_TOP_Y;
 
-        private const float THEME_CARD_H = 112f;   // 两行：主题配色 + 背景材质
+        // 两行：主题配色 + 背景材质；液态玻璃再多一行「背景模糊」两档分段。
+        // 只在这一档出现 —— 实体 / 亚克力没有"玻璃下透什么"这回事。
+        // 高 180 = 材质分段底（108）+ 8 呼吸 + 分段行 56 + 8 底部内边距。
+        // ⚠️ 112 那版把新增行叠到卡外画：控件和副标题都露在卡片下面，看着像浮在两张卡中间。
+        private static float THEME_CARD_H => Renderer.IslandAnyGlass ? 180f : 112f;
 
-        private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;   // 134
+        // 「背景模糊」这一行相对卡片顶部的偏移（材质分段底 108，留 8px 呼吸）
+        private const float BLUR_MODE_DY = 116f;
+
+        // 整行（标题 + 副标题）的高度：绘制与命中共用
+        private const float BLUR_MODE_H = 56f;
+
+        private const float BLUR_MODE_SEG_W = 168f;
+
+        private static float BlurModeSegX => WIDTH - CONTENT_TEXT_RM - BLUR_MODE_SEG_W;
+
+        /// <summary>「背景模糊」分段的顶边（窗口坐标）。</summary>
+        private static float BlurModeSegY => TITLE_BAR_HEIGHT + THEME_CARD_Y + BLUR_MODE_DY;
+
+        private static readonly string[] BlurModeLabels = ["原模糊", "高斯模糊"];
+
+        /// <summary>这一行在窗口里的命中区间（窗口坐标）。</summary>
+        private static bool HitBlurModeRow(float x, float y)
+            => Renderer.IslandAnyGlass
+               && x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_RM
+               && y >= BlurModeSegY - 6f && y <= BlurModeSegY + BLUR_MODE_H;
+
+        private static float OPACITY_CARD_Y => THEME_CARD_Y + THEME_CARD_H + CARD_GAP;   // 134（非玻璃2）/ 202（玻璃2）
 
         private const float OPACITY_CARD_H = 78f;
 

@@ -15,6 +15,23 @@ namespace NotchPeninsula
         private bool _lastGlassMode;
         private int _lastGlassKind;   // 0 实体/亚克力，1 液态玻璃，2 液态玻璃2
 
+        // 背板自愈用：最近一次看到的背板版本号 + 它的时间戳（见 SyncIslandBackdrop）
+        private int _lastBackdropVer = -1;
+        private long _lastBackdropVerMs;
+
+        // 「跳过抓屏」的原因也要能查：玻璃背景是假的时候，日志里必须能看出是渲染侧没给矩形。
+        private long _backdropSkipMs;
+        private string _backdropSkipWhy = "";
+
+        private void LogBackdropSkip(string why)
+        {
+            long now = Environment.TickCount64;
+            if (why == _backdropSkipWhy && now - _backdropSkipMs < 5000) return;
+            _backdropSkipWhy = why;
+            _backdropSkipMs = now;
+            Logger.Warn($"[背板] 跳过抓屏：{why}");
+        }
+
         // 亚克力背板：抓的是【整个画布框 ∩ 屏幕】，不是当前胶囊框。
         // 这样胶囊变大变小（悬停展开 / 待机↔媒体切换）时只挪源矩形，完全不用重抓 —— 尺寸变换期间的闪烁就没了。
         // 渲染线程这里只写「要抓哪块」+「岛体占哪块」+ 取成品，真正的抓屏在 NPS-Backdrop 线程上（屏幕读取要 20ms 量级）。
@@ -30,6 +47,8 @@ namespace NotchPeninsula
             bool glass = kind != 0;
             if ((!Renderer.IslandAcrylic && !glass) || Renderer.FullHideAlpha < 0.5f)
             {
+                if (Renderer.IslandAcrylic || glass)
+                    LogBackdropSkip($"材质已切走或岛体处于隐藏态 FullHideAlpha={Renderer.FullHideAlpha:F2}");
                 IslandBackdrop.SetTarget(0, 0, 0, 0);
                 IslandBackdrop.ClearMask();
                 if (_acrylicOwned != null)
@@ -90,7 +109,7 @@ namespace NotchPeninsula
             int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, capBaseY + _scaledHeight) - capY;
             // 放大镜是 1:1 全分辨率，"整块画布"那么大一张图没必要 —— 玻璃只用到屏幕上边一条。
             // 按 32px 量化，免得胶囊高度一动就重抓。
-            if (glass && MagnifierBackdrop.IsAvailable && capH > 120)
+            if (glass && DxgiBackdrop.Available && capH > 120)
             {
                 int need = (int)Math.Ceiling((_currentHeight + 60f) * _dpiScale);
                 if (need < 120) need = 120;
@@ -101,6 +120,7 @@ namespace NotchPeninsula
             // 交矩形与胶囊尺寸无关 → 胶囊变大变小只挪源矩形，不重抓，尺寸变换期间不闪
             if (capW < 16 || capH < 16)
             {
+                LogBackdropSkip($"抓取矩形无效 {capW}x{capH}@({capX},{capY}) 屏幕={_cachedMonitorX},{_cachedMonitorY},{_cachedMonitorWidth}x{_cachedMonitorHeight} dpi={_dpiScale:F2}");
                 IslandBackdrop.SetTarget(0, 0, 0, 0);
                 IslandBackdrop.ClearMask();
                 return;
@@ -157,6 +177,21 @@ namespace NotchPeninsula
             }
 
             _acrFrames++;
+
+            // 背板自愈：玻璃/亚克力下 version 超过 5 秒没动 = 抓屏线程没产出新图
+            // （DXGI 会话卡死、线程被拖住、待取图丢了……都会是这一种表现）。
+            // 不兜这一下，玻璃背景就会永远停在最开始抓到的那一张 —— 换壁纸 / 换桌面颜色都不动。
+            // Expire 只是置标记 + 唤醒线程并释放缓冲，下一轮抓屏会自己重来，代价可忽略。
+            int bdVer = IslandBackdrop.Version;
+            if (bdVer != _lastBackdropVer) { _lastBackdropVer = bdVer; _lastBackdropVerMs = Environment.TickCount64; }
+            else if (Environment.TickCount64 - _lastBackdropVerMs > 5000)
+            {
+                _lastBackdropVerMs = Environment.TickCount64;
+                Logger.Warn($"[背板] {5} 秒没有新背板（version={bdVer}），强制重建抓屏");
+                IslandBackdrop.Expire();
+                LiquidGlass.Invalidate();
+                LiquidGlass2.Invalidate();
+            }
 
             // 启动刷新：等岛体**完全落位**（淡入完成、没有滑动/下沉偏移）再做，
             // 动作与设置页点一次「玻璃质量」逐句对应（见 ConsoleWindow.Click）：
@@ -236,7 +271,7 @@ namespace NotchPeninsula
         private static void ShutdownIslandBackdrop()
         {
             IslandBackdrop.Stop();
-            MagnifierBackdrop.Stop();
+
         }
     }
 }
