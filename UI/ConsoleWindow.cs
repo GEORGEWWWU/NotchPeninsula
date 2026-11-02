@@ -501,6 +501,9 @@ namespace NotchPeninsula
 
         private bool _toggleHovered = false;
 
+        // 个性化卡第三行：「背景模糊」两档分段（仅液态玻璃），-1 = 没悬停
+        private int _hoveredBlurModeIndex = -1;
+
         private bool _toastToggleHovered = false;
 
         private bool _topmostToggleHovered = false;

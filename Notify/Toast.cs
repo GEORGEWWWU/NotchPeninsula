@@ -514,13 +514,6 @@ namespace NotchPeninsula
                 return null;
             }
 
-            if (toast.Title.Contains("微信") || toast.Title.Contains("WeChat") ||
-                toast.Body.Contains("微信") || toast.Body.Contains("WeChat"))
-            {
-                Logger.Debug($"[Toast] 已过滤微信通知 -> 应用: {appName}, 标题: {toast.Title}, ID: {notification.Id}");
-                return null;
-            }
-
             Logger.Info($"[Toast] 捕获系统通知 -> 应用: {appName} ({aumid}), 标题: {toast.Title}, 内容: {toast.Body}, ID: {notification.Id}");
 
             // 应用图标必须趁快照新鲜时就地取：InternalNotification 随时可能被系统撤走，

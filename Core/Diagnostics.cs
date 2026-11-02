@@ -261,7 +261,8 @@ namespace NotchPeninsula
                 {
                     sb.Append($"液态玻璃: 质量={LiquidGlass.QualityName}  抓屏=");
                     sb.AppendLine($"  玻璃层命中: {LiquidGlass.Stats}");
-                    sb.AppendLine(IslandBackdrop.UsingMagnifier ? "放大镜(1:1)" : $"兼容(1/{LiquidGlass.CaptureDownscale})");
+                    sb.AppendLine(IslandBackdrop.UsingDxgi ? $"DXGI(1/{LiquidGlass.CaptureDownscale})"
+                        : $"GDI 兜底(1/{LiquidGlass.CaptureDownscale})");
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
                         sb.Append($"  {LiquidGlass.ParamNames[i]}={LiquidGlass.GetLevel(i)}/{LiquidGlass.MaxLevel}");
                     sb.AppendLine();
@@ -269,7 +270,7 @@ namespace NotchPeninsula
                 else if (Renderer.IslandLiquidGlass2)
                 {
                     sb.Append($"液态玻璃 2.0: 质量={LiquidGlass.QualityName}  抓屏=");
-                    sb.AppendLine(IslandBackdrop.UsingMagnifier ? "放大镜(1:1)" : "兼容(1:1)");
+                    sb.AppendLine(IslandBackdrop.UsingDxgi ? "DXGI(1:1)" : "GDI 兜底(1:1)");
                     sb.AppendLine($"  玻璃层: {LiquidGlass2.Stats}");
                     sb.AppendLine($"  背景细节 {LiquidGlass2.BackgroundDetail:F2}"
                         + $"（均值 {LiquidGlass2.DetailMeanGradient:F1} / 密度 {LiquidGlass2.DetailEdgeDensity:F2}）"

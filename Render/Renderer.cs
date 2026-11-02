@@ -49,6 +49,79 @@ namespace NotchPeninsula
 
         private static int _themeMode = 0; // 0=黑, 1=白, 2=跟随系统
 
+        // 玻璃抓屏时是否让岛体在屏幕捕获里「隐身」（WDA_EXCLUDEFROMCAPTURE）。
+        //
+        // 为什么需要它：DXGI Desktop Duplication 复制的是**合成后的桌面**，岛体本身就在画面里，
+        // 所以玻璃覆盖的那块只能拿到岛体自己、再靠 FillSoft 用四周平均色填平 ——
+        // 观感就是「玻璃下是一块平滑色块，和周围真实桌面对不上」。隐身之后岛体从捕获中消失，
+        // 玻璃下面直接就是真实桌面，折射也有内容可弯。
+        //
+        // 两档「背景模糊」都要真实桌面，所以它不再是用户开关，而是**液态玻璃材质自身的必要条件**：
+        // 切到玻璃就隐，切走就恢复（见 SyncCaptureAffinity）。代价是玻璃下自己的截图/录屏里也看不到岛。
+        private static volatile bool _hideInCapture;
+
+        public static bool HideIslandInCapture
+        {
+            get => _hideInCapture;
+            set
+            {
+                if (_hideInCapture == value) return;
+                _hideInCapture = value;
+                ApplyCaptureAffinity();
+                // 岛体在不在画面里，背板内容完全不同 —— 立刻作废重抓
+                IslandBackdrop.Expire();
+                LiquidGlass.Invalidate();
+                LiquidGlass2.Invalidate();
+            }
+        }
+
+        // 「背景模糊」模式（液态玻璃的设置项）：
+        //   false = 原模糊：真实桌面，按「背景模糊」档位的半径糊一层（就是原版的模糊效果）；
+        //   true  = 高斯模糊：真实桌面，在档位半径之外再叠一层厚高斯。
+        // 两档的背板完全一样（都是隐身后的真实桌面），区别只在糊多厚 ——
+        // 所以切换只让玻璃缓存失效，不用重抓背板。
+        private static volatile bool _glassGauss;
+
+        public static bool GlassGaussBackdrop
+        {
+            get => _glassGauss;
+            set
+            {
+                if (_glassGauss == value) return;
+                _glassGauss = value;
+                LiquidGlass.Invalidate();
+                LiquidGlass2.Invalidate();
+            }
+        }
+
+        /// <summary>材质变了以后重新对齐捕获隐身：只有液态玻璃需要它。</summary>
+        public static void SyncCaptureAffinity()
+        {
+            bool want = IslandAnyGlass;
+            if (_hideInCapture == want)
+            {
+                // 状态没变也要落实一次：窗口重建后句柄是新的，亲和性得重新贴。
+                ApplyCaptureAffinity();
+                return;
+            }
+            _hideInCapture = want;
+            ApplyCaptureAffinity();
+            // 岛体在不在捕获里，背板内容完全不同 —— 立刻作废重抓
+            IslandBackdrop.Expire();
+            LiquidGlass.Invalidate();
+            LiquidGlass2.Invalidate();
+        }
+
+        /// <summary>把当前的捕获隐身设置应用到岛体窗口（窗口重建 / 启动时也要调一次）。</summary>
+        public static void ApplyCaptureAffinity()
+        {
+            IntPtr hwnd = NotchWindow.InstanceHandle;
+            if (hwnd == IntPtr.Zero) return;
+            uint aff = _hideInCapture ? Win32.WDA_EXCLUDEFROMCAPTURE : Win32.WDA_NONE;
+            if (!Win32.SetWindowDisplayAffinity(hwnd, aff))
+                Logger.Warn($"[玻璃] SetWindowDisplayAffinity(0x{aff:X}) 失败 err={Marshal.GetLastWin32Error()}");
+        }
+
         public static int ThemeMode
         {
             get => _themeMode;
@@ -152,7 +225,48 @@ namespace NotchPeninsula
         // 等显示器回来后按 TargetMonitorIndex 里保留的用户偏好自动恢复。
         public static int RememberedMonitorIndex { get; set; } = -1;
 
-        public static int BgOpacityLevel { get; set; } = 4; // 透明度档位：0=0%, 1=25%, 2=50%, 3=75%, 4=100%
+        // ---- 背景透明度：三种材质各存一份，互不串档 ----
+        // 档位 0..4 = 0% / 25% / 50% / 75% / 100%，数值越大涂层越厚（越不透明）。
+        // 纯色：alpha 0..255；亚克力：alpha 0..140（上限压到 55%，保住"奶感"）。
+        // 液态玻璃：这一份只是记忆位 —— 玻璃的涂层恒为 0（着色由雾度/明度负责），
+        // 默认 100% 的含义是"完全透出桌面"。不跟纯色/亚克力共用一份，切来切去才不会串档。
+        private static int _opacitySolid = 4;
+        private static int _opacityAcrylic = 4;
+        private static int _opacityGlass = 4;
+
+        public static int SolidBgOpacity
+        {
+            get => _opacitySolid;
+            set => _opacitySolid = Math.Clamp(value, 0, 4);
+        }
+
+        public static int AcrylicBgOpacity
+        {
+            get => _opacityAcrylic;
+            set => _opacityAcrylic = Math.Clamp(value, 0, 4);
+        }
+
+        public static int GlassBgOpacity
+        {
+            get => _opacityGlass;
+            set => _opacityGlass = Math.Clamp(value, 0, 4);
+        }
+
+        /// <summary>当前材质那一份透明度档位（滑轨读它）。</summary>
+        public static int BgOpacityLevel
+        {
+            get => IslandAnyGlass ? _opacityGlass : IslandAcrylic ? _opacityAcrylic : _opacitySolid;
+            set
+            {
+                if (IslandAnyGlass) _opacityGlass = Math.Clamp(value, 0, 4);
+                else if (IslandAcrylic) _opacityAcrylic = Math.Clamp(value, 0, 4);
+                else _opacitySolid = Math.Clamp(value, 0, 4);
+            }
+        }
+
+        /// <summary>当前材质那一份档位的落库键（滑轨拖动/点击保存时用，三份各存各的）。</summary>
+        public static string BgOpacityKey =>
+            IslandAnyGlass ? "BgOpacityGlass" : IslandAcrylic ? "BgOpacityAcrylic" : "BgOpacityLevel";
 
         //    「待机显示内容」，勾多个就是多模块并排。
         public static bool CompositeModeEnabled => true;
@@ -298,6 +412,9 @@ namespace NotchPeninsula
                     Logger.Warn("[玻璃] 背板为空，玻璃层未绘制（抓屏线程无产出或已被停用）");
                 }
                 bool glassDrawn = false;
+                // 玻璃位图在岛体上的落点 / 在背板上的源矩形：元素级文字明暗采样要用它做坐标映射
+                var toneDst = new SKRect(islandLeft, 0f, islandRight, currentHeight);
+                var toneSrc = AcrylicBackdropSrc;
                 if (backdrop != null && (IslandAcrylic || IslandAnyGlass))
                 {
                     canvas.Save();
@@ -322,6 +439,9 @@ namespace NotchPeninsula
                             gW += flareX * 2f;
                             gdst = new SKRect(islandLeft - flareX, 0f, islandRight + flareX, currentHeight);
                         }
+                        // 元素级文字明暗要用同一套映射（含 flare 外扩），否则刘海模式下越靠边越偏
+                        toneSrc = gsrc;
+                        toneDst = gdst;
                         // 刘海顶边贴着屏幕：顶边不该淡出、也不该有一条横向高光（详见 Compose 的 flushTop）
                         bool flushTop = flareX > 0.25f && styleProgress < 0.02f;
                         // 两种玻璃各有一套独立的合成与缓存：v2 用的是另一套位移场与描边光照。
@@ -351,7 +471,13 @@ namespace NotchPeninsula
 
                         glassDrawn = glass != null;
                         if (glass != null)
+                        {
                             canvas.DrawBitmap(glass, gdst, _acrylicPaint);
+                            // 临时调试导出（注册表 GlassDump=1 才生效）：真实玻璃位图 + 背板 + 参数
+                            if (IslandLiquidGlass2)
+                                GlassDebug.Dump(glass, backdrop, gsrc, gdst, gW, currentHeight,
+                                    flareX > 0f ? 0f : MathF.Abs(rTopY), rBottom);
+                        }
                         else
                             canvas.DrawImage(backdrop, AcrylicBackdropSrc,
                                 new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
@@ -384,6 +510,9 @@ namespace NotchPeninsula
                     bool glValid = IslandLiquidGlass2 ? LiquidGlass2.HasLuminance : LiquidGlass.HasLuminance;
                     UpdateGlassTextTone(gl, glValid);
 
+                    // 元素级明暗网格：本帧把背板采样成 24×6 的亮度表，下面每个文字元素按自己的矩形查
+                    BeginToneGrid(backdrop, toneDst, toneSrc);
+
                     _coatPaint.Color = backdrop == null
                         ? SKColors.Black.WithAlpha(45)
                         : SKColors.Transparent;
@@ -391,6 +520,7 @@ namespace NotchPeninsula
                 }
                 else
                 {
+                    BeginToneGrid(null, default, default);   // 非玻璃：清掉上一帧的网格，文字回落主题色
                     canvas.DrawPath(_bgPath, _bgPaint);
                 }
 

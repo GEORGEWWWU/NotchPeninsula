@@ -23,9 +23,9 @@ namespace NotchPeninsula
                 _timePaint.Color = _currentTextColor.WithAlpha(alpha);
                 _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
                 float timeBaselineY = centerY + 5f;
-                canvas.DrawText(_cachedTimeStr, currentX, timeBaselineY, _timePaint);
+                DrawToneText(canvas, _cachedTimeStr, currentX, timeBaselineY, _timePaint, alpha);
                 float dateX = currentX + _cachedTimeWidth + 12f;
-                canvas.DrawText(_cachedDateStr, dateX, timeBaselineY, _datePaint);
+                DrawToneText(canvas, _cachedDateStr, dateX, timeBaselineY, _datePaint, alpha, sub: true);
                 _clockZoneL = currentX;
                 _clockZoneR = dateX + _cachedDateWidth;
                 currentX = dateX + _cachedDateWidth + moduleGap;
@@ -70,8 +70,8 @@ namespace NotchPeninsula
                     cpuX, textBaseline - 10f - tagPadY,
                     cpuX + cpuTagW, textBaseline + 2.5f + tagPadY);
                 canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
-                canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
-                canvas.DrawText(cpuPct, cpuTagRect.Right + gapLabelPct, textBaseline, _textPaint);
+                DrawToneText(canvas, cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint, alpha);
+                DrawToneText(canvas, cpuPct, cpuTagRect.Right + gapLabelPct, textBaseline, _textPaint, alpha);
                 canvas.DrawRoundRect(new SKRect(cpuX, barTop, cpuX + cpuGroupW, barTop + barH),
                     barH / 2f, barH / 2f, _barBgPaint);
                 float cpuFillW = cpuGroupW * (_smoothCpuUsage / 100f);
@@ -84,8 +84,8 @@ namespace NotchPeninsula
                     ramX, textBaseline - 10f - tagPadY,
                     ramX + ramTagW, textBaseline + 2.5f + tagPadY);
                 canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
-                canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
-                canvas.DrawText(ramPct, ramTagRect.Right + gapLabelPct, textBaseline, _textPaint);
+                DrawToneText(canvas, ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint, alpha);
+                DrawToneText(canvas, ramPct, ramTagRect.Right + gapLabelPct, textBaseline, _textPaint, alpha);
                 canvas.DrawRoundRect(new SKRect(ramX, barTop, ramX + ramGroupW, barTop + barH),
                     barH / 2f, barH / 2f, _barBgPaint);
                 float ramFillW = ramGroupW * (_smoothRamUsage / 100f);
@@ -202,8 +202,8 @@ namespace NotchPeninsula
                 _timePaint.Color = _currentTextColor.WithAlpha(alpha);
                 _datePaint.Color = _currentSubTextColor.WithAlpha(alpha);
                 float baselineY = currentHeight / 2f + 5f + textOffsetY;
-                canvas.DrawText(_cachedTimeStr, left + 16f, baselineY, _timePaint);
-                canvas.DrawText(_cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint);
+                DrawToneText(canvas, _cachedTimeStr, left + 16f, baselineY, _timePaint, alpha);
+                DrawToneText(canvas, _cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint, alpha, sub: true);
                 // 待机时整条原生内容区（时间 + 日期）都算时钟区域
                 _clockZoneL = left + 16f;
                 _clockZoneR = right - 16f;
@@ -266,8 +266,8 @@ namespace NotchPeninsula
                     textBaseline + 2.5f + tagPadY
                 );
                 canvas.DrawRoundRect(cpuTagRect, tagRadius, tagRadius, _tagBgPaint);
-                canvas.DrawText(cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint);
-                canvas.DrawText(cpuPct, cpuTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
+                DrawToneText(canvas, cpuLabel, cpuX + tagPadX, textBaseline, _tagTextPaint, alpha);
+                DrawToneText(canvas, cpuPct, cpuTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint, alpha);
                 canvas.DrawRoundRect(
                     new SKRect(cpuX, barTop, cpuX + cpuBarW, barTop + barH),
                     barH / 2f, barH / 2f, _barBgPaint);
@@ -286,8 +286,8 @@ namespace NotchPeninsula
                     textBaseline + 2.5f + tagPadY
                 );
                 canvas.DrawRoundRect(ramTagRect, tagRadius, tagRadius, _tagBgPaint);
-                canvas.DrawText(ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint);
-                canvas.DrawText(ramPct, ramTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint);
+                DrawToneText(canvas, ramLabel, ramX + tagPadX, textBaseline, _tagTextPaint, alpha);
+                DrawToneText(canvas, ramPct, ramTagRect.Right + gapBetweenLabelAndPct, textBaseline, _textPaint, alpha);
                 canvas.DrawRoundRect(
                     new SKRect(ramX, barTop, ramX + ramBarW, barTop + barH),
                     barH / 2f, barH / 2f, _barBgPaint);

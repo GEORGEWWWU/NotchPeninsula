@@ -5,6 +5,11 @@ using static NotchPeninsula.Logger;
 
 namespace NotchPeninsula
 {
+    // ⚠️ 已下线（2026-11）：抓屏改为 DXGI Desktop Duplication（Core/DxgiBackdrop.cs）。
+    // 保留本文件仅为可回退参考，运行期不再初始化、也不再被 IslandBackdrop 调用。
+    // 下线原因：放大镜在不少机器上初始化失败（本机 8/8 次「环境不支持放大镜抓屏」），
+    // 它属于系统辅助功能组件，会和部分录屏/截图软件互相干扰；DXGI 走 GPU 采集更快也更兼容。
+    //
     // 放大镜（Magnification API）抓屏：给液态玻璃提供**全分辨率**的真实桌面像素。
     //
     // 线程模型（这里最容易踩坑，写死在下面）：

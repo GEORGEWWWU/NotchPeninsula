@@ -205,6 +205,8 @@ namespace NotchPeninsula
                 // 应用名用【真裁切】收口（不再盖遮罩层）
                 canvas.Save();
                 canvas.ClipRect(new SKRect(0, 0, toastMaxTextRight, currentHeight), SKClipOperation.Intersect, true);
+                // 元素级明暗：整行按自己那一块底色的黑白走
+                _bodyPaint.Color = ToneText(_cachedToastAppName, toastTextX, line1Y, _bodyPaint, 255, false);
                 foreach (var run in _cachedToastAppNameRuns)
                 {
                     _bodyPaint.Typeface = run.Type;
@@ -214,7 +216,7 @@ namespace NotchPeninsula
                 _bodyPaint.Typeface = _normalTypeface; // 重置
 
                 float nowWidth = _bodyPaint.MeasureText("现在");
-                canvas.DrawText("现在", rightTextEdge - nowWidth, line1Y, _bodyPaint);
+                DrawToneText(canvas, "现在", rightTextEdge - nowWidth, line1Y, _bodyPaint, 255);
             }
 
             // 发送者 / 正文同样用真裁切收口 —— 不再叠渐变或纯色层（那层在亚克力 / 低透明度下会露出来）
@@ -224,6 +226,7 @@ namespace NotchPeninsula
 
             // 完整模式在第2行，缩略模式在第1行
             float senderY = IsToastFullMode ? line2Y : line1Y;
+            _titlePaint.Color = ToneText(_cachedToastSender, toastTextX, senderY, _titlePaint, 255, false);
             foreach (var run in _cachedToastSenderRuns)
             {
                 _titlePaint.Typeface = run.Type;
@@ -233,6 +236,7 @@ namespace NotchPeninsula
 
             // 渲染内容主体（缩略模式在第2行，完整模式在第3行）
             float bodyY = IsToastFullMode ? line3Y : line2Y;
+            _bodyPaint.Color = ToneText(_cachedToastBody, toastTextX, bodyY, _bodyPaint, 255, false);
             foreach (var run in _cachedToastBodyRuns)
             {
                 _bodyPaint.Typeface = run.Type;
@@ -245,8 +249,8 @@ namespace NotchPeninsula
             if (IsToastCompactMode)
             {
                 string compactAppName = string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName;
-                canvas.DrawText("现在", rightTextEdge - compactNowWidth, line1Y, _compactTimePaint);
-                canvas.DrawText(compactAppName, rightTextEdge - compactAppW, line2Y, _compactAppPaint);
+                DrawToneText(canvas, "现在", rightTextEdge - compactNowWidth, line1Y, _compactTimePaint, 255);
+                DrawToneText(canvas, compactAppName, rightTextEdge - compactAppW, line2Y, _compactAppPaint, 255);
             }
 
             // 右侧操作按钮：「拒收」这类一次性动作。画在岛体右缘内侧，和文字裁切区完全分开。
@@ -260,8 +264,8 @@ namespace NotchPeninsula
 
                 _tagTextPaint.Color = _currentTextColor;
                 float aw = _tagTextPaint.MeasureText(toast.ActionLabel);
-                canvas.DrawText(toast.ActionLabel, actionRect.MidX - aw / 2f,
-                    actionRect.MidY + _tagTextPaint.TextSize * 0.35f, _tagTextPaint);
+                DrawToneText(canvas, toast.ActionLabel, actionRect.MidX - aw / 2f,
+                    actionRect.MidY + _tagTextPaint.TextSize * 0.35f, _tagTextPaint, 255);
                 _tagTextPaint.Color = _currentTextColor;   // 与 ApplyThemeColors 的默认值一致
             }
         }

@@ -222,9 +222,9 @@ namespace NotchPeninsula
 
             _tlTextPaint.Color = _currentSubTextColor.WithAlpha(alpha);
             string elapsed = media.TimelineElapsed, total = media.TimelineTotal;
-            canvas.DrawText(elapsed, padL, baseline, _tlTextPaint);
+            DrawToneText(canvas, elapsed, padL, baseline, _tlTextPaint, alpha);
             float totalW = _tlTextPaint.MeasureText(total);
-            canvas.DrawText(total, padR - totalW, baseline, _tlTextPaint);
+            DrawToneText(canvas, total, padR - totalW, baseline, _tlTextPaint, alpha);
 
             float x1 = padL + _tlTextPaint.MeasureText(elapsed) + TL_TEXT_GAP;
             float x2 = padR - totalW - TL_TEXT_GAP;
@@ -245,6 +245,10 @@ namespace NotchPeninsula
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)
         {
             SKTypeface baseTypeface = paint.Typeface;
+
+            // 元素级明暗：整行文字按它自己那一小块玻璃的底色定黑白。
+            // 逐字判会让同一个词一半黑一半白（相邻字落在不同网格格里），整行统一才好看。
+            paint.Color = ToneText(text, x, y, paint, 255, false);
 
             List<(string Text, SKTypeface Type, float X)> runs;
             float totalWidth;
