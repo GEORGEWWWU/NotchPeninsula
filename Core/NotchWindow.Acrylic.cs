@@ -178,16 +178,20 @@ namespace NotchPeninsula
 
             _acrFrames++;
 
-            // 背板自愈：玻璃/亚克力下 version 超过 5 秒没动 = 抓屏线程没产出新图
-            // （DXGI 会话卡死、线程被拖住、待取图丢了……都会是这一种表现）。
-            // 不兜这一下，玻璃背景就会永远停在最开始抓到的那一张 —— 换壁纸 / 换桌面颜色都不动。
-            // Expire 只是置标记 + 唤醒线程并释放缓冲，下一轮抓屏会自己重来，代价可忽略。
+            // 背板自愈：抓屏线程真的卡住时兜一下（DXGI 会话卡死、线程被拖住、待取图丢了……）。
+            //
+            // ⚠️ 判据不能只看「version 多久没变」：液态玻璃现在是**按需抓屏**——
+            //    桌面静止时背板本来就不更新（这是它省 CPU 的核心），version 停着是正常状态。
+            //    原来那个「5 秒不动就 Expire」会在静止桌面下每 5 秒拆一次缓冲，
+            //    表现为玻璃周期性闪一下黑纱 + 每 5 秒白白隐一次身（截图周期性地拍不到岛）。
+            //    现在要求「长时间没更新 **且** 抓屏确实在连续失败」才动手。
             int bdVer = IslandBackdrop.Version;
             if (bdVer != _lastBackdropVer) { _lastBackdropVer = bdVer; _lastBackdropVerMs = Environment.TickCount64; }
-            else if (Environment.TickCount64 - _lastBackdropVerMs > 5000)
+            else if (Environment.TickCount64 - _lastBackdropVerMs > 15000 && IslandBackdrop.CaptureFailStreak >= 3)
             {
                 _lastBackdropVerMs = Environment.TickCount64;
-                Logger.Warn($"[背板] {5} 秒没有新背板（version={bdVer}），强制重建抓屏");
+                Logger.Warn($"[背板] 15 秒没有新背板且抓屏连续失败 {IslandBackdrop.CaptureFailStreak} 次"
+                    + $"（version={bdVer}），强制重建抓屏");
                 IslandBackdrop.Expire();
                 LiquidGlass.Invalidate();
                 LiquidGlass2.Invalidate();

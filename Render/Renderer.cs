@@ -56,24 +56,43 @@ namespace NotchPeninsula
         // 观感就是「玻璃下是一块平滑色块，和周围真实桌面对不上」。隐身之后岛体从捕获中消失，
         // 玻璃下面直接就是真实桌面，折射也有内容可弯。
         //
-        // 两档「背景模糊」都要真实桌面，所以它不再是用户开关，而是**液态玻璃材质自身的必要条件**：
-        // 切到玻璃就隐，切走就恢复（见 SyncCaptureAffinity）。代价是玻璃下自己的截图/录屏里也看不到岛。
+        // ⚠️ 但它现在是**瞬时状态**，不是常开：抓屏线程只在"确实要读一帧真实桌面"的那一下打开，
+        //    读完立刻关掉（见 IslandBackdrop.Capture）。常开虽然玻璃最干净，代价是用户自己的
+        //    截图 / 录屏里永远看不到岛 —— 瞬时开关把两者兼顾了：
+        //      · 桌面静止时完全不隐身（不变化就不需要新背板），截图 100% 能看到岛；
+        //      · 桌面变了才隐身大约 40ms 抓一帧，之后恢复，屏幕上没有任何闪烁
+        //        （WDA_EXCLUDEFROMCAPTURE 只影响捕获，不影响实际显示）。
         private static volatile bool _hideInCapture;
 
-        public static bool HideIslandInCapture
+        public static bool HideIslandInCapture => _hideInCapture;
+
+        /// <summary>
+        /// 抓屏线程专用：临时把窗口从屏幕捕获里摘掉 / 放回来。
+        /// 不动背板与玻璃缓存 —— 这里切换的是"这一次读取能不能看到岛体"，不是显示状态。
+        /// 返回是否**确实生效**：调用方必须按返回值决定要不要跳过擦除，否则会在亲和性设置失败时
+        /// 把带岛体的帧当背板发布出去（观感就是双灵动岛）。
+        /// </summary>
+        public static bool SetCaptureHide(bool hide)
         {
-            get => _hideInCapture;
-            set
+            if (_hideInCapture != hide)
             {
-                if (_hideInCapture == value) return;
-                _hideInCapture = value;
-                ApplyCaptureAffinity();
-                // 岛体在不在画面里，背板内容完全不同 —— 立刻作废重抓
-                IslandBackdrop.Expire();
-                LiquidGlass.Invalidate();
-                LiquidGlass2.Invalidate();
+                _hideInCapture = hide;
+                if (!ApplyCaptureAffinity()) return false;
+                return true;
             }
+            // 状态已经一致时也要确认窗口上确实是这个亲和性（窗口可能刚重建）
+            return ApplyCaptureAffinity();
         }
+
+        /// <summary>把捕获亲和性恢复成「正常可见」：切走液态玻璃、窗口重建时调。</summary>
+        public static void ResetCaptureAffinity()
+        {
+            _hideInCapture = false;
+            ApplyCaptureAffinity();
+        }
+
+        /// <summary>卸载 / 抓屏线程停摆时兜底：绝不能让窗口停在"隐身"状态（用户会以为岛没了）。</summary>
+        public static void EnsureVisibleInCapture() => ResetCaptureAffinity();
 
         // 「背景模糊」模式（液态玻璃的设置项）：
         //   false = 原模糊：真实桌面，按「背景模糊」档位的半径糊一层（就是原版的模糊效果）；
@@ -94,32 +113,21 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>材质变了以后重新对齐捕获隐身：只有液态玻璃需要它。</summary>
-        public static void SyncCaptureAffinity()
-        {
-            bool want = IslandAnyGlass;
-            if (_hideInCapture == want)
-            {
-                // 状态没变也要落实一次：窗口重建后句柄是新的，亲和性得重新贴。
-                ApplyCaptureAffinity();
-                return;
-            }
-            _hideInCapture = want;
-            ApplyCaptureAffinity();
-            // 岛体在不在捕获里，背板内容完全不同 —— 立刻作废重抓
-            IslandBackdrop.Expire();
-            LiquidGlass.Invalidate();
-            LiquidGlass2.Invalidate();
-        }
-
-        /// <summary>把当前的捕获隐身设置应用到岛体窗口（窗口重建 / 启动时也要调一次）。</summary>
-        public static void ApplyCaptureAffinity()
+        /// <summary>
+        /// 把当前的捕获亲和性应用到岛体窗口（窗口重建 / 启动时也要调一次）。
+        /// 返回是否落实成功 —— 隐身失败时抓屏必须退回擦除，否则会把岛体自己拍进玻璃。
+        /// </summary>
+        public static bool ApplyCaptureAffinity()
         {
             IntPtr hwnd = NotchWindow.InstanceHandle;
-            if (hwnd == IntPtr.Zero) return;
+            if (hwnd == IntPtr.Zero) return false;
             uint aff = _hideInCapture ? Win32.WDA_EXCLUDEFROMCAPTURE : Win32.WDA_NONE;
             if (!Win32.SetWindowDisplayAffinity(hwnd, aff))
+            {
                 Logger.Warn($"[玻璃] SetWindowDisplayAffinity(0x{aff:X}) 失败 err={Marshal.GetLastWin32Error()}");
+                return false;
+            }
+            return true;
         }
 
         public static int ThemeMode

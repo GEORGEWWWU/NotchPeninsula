@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using Microsoft.Win32;
+using System.Windows.Threading;
 
 namespace NotchPeninsula.Plugins;
 
@@ -86,6 +87,12 @@ public sealed class PluginManager
 
     private readonly PluginHost _host = new();
     private readonly List<PluginEntry> _entries = new();
+
+    // 分批加载状态：Initialize 不再一口气做完，每个插件一个消息回合
+    private Dispatcher? _uiDispatcher;
+    private volatile bool _loadBatchRunning;
+    private int _loadBatchTotal;
+    private readonly Stopwatch _loadBatchClock = new();
     private readonly HashSet<string> _disabled = new(StringComparer.OrdinalIgnoreCase);
     // 插件照常运行（不卸载、不禁用），下次启动也保持不显示。
     private readonly HashSet<string> _hidden = new(StringComparer.OrdinalIgnoreCase);
@@ -131,24 +138,83 @@ public sealed class PluginManager
             CleanShadowRoot();
             Directory.CreateDirectory(PluginsRoot);
             Refresh();
-            foreach (var e in Entries)
-                if (!_disabled.Contains(e.Key) && e.State != PluginState.Loaded)
-                    Load(e);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("[PluginManager] 初始化失败", ex);
+            return;
+        }
 
+        var todo = new List<PluginEntry>();
+        foreach (var e in Entries)
+            if (!_disabled.Contains(e.Key) && e.State != PluginState.Loaded)
+                todo.Add(e);
+
+        // 逐帧加载：一次把 8 个插件的「影子拷贝 + 程序集加载 + JIT + 插件自己的 Initialize」
+        // 连着做完，UI 线程会好几秒不响应消息 —— 观感就是「启动时岛体整体卡住」。
+        // 这里改成每个插件占一个消息回合（Background 优先级），回合之间消息循环能照常跑，
+        // 拖拽 / 悬停 / 窗口动画都不会被整段吃掉。
+        var disp = Dispatcher.FromThread(Thread.CurrentThread);
+        if (disp == null || todo.Count == 0)
+        {
+            // 非 UI 线程（或没有待加载项）：保持原来的同步语义，调用方拿到的就是最终状态
+            foreach (var e in todo) Load(e);
+            FinishLoadBatch(0);
+            return;
+        }
+
+        _uiDispatcher = disp;
+        _loadBatchRunning = true;
+        _loadBatchClock.Restart();
+        _loadBatchTotal = todo.Count;
+
+        void Step(int i)
+        {
+            if (!_loadBatchRunning) return;
+            if (i >= todo.Count)
+            {
+                FinishLoadBatch(_loadBatchClock.ElapsedMilliseconds);
+                return;
+            }
+
+            var e = todo[i];
+            long t0 = Environment.TickCount64;
+            try
+            {
+                if (!_disabled.Contains(e.Key) && e.State != PluginState.Loaded) Load(e);
+            }
+            catch (Exception ex) { Logger.Error($"[PluginManager] 加载 {e.Key} 抛异常", ex); }
+
+            long cost = Environment.TickCount64 - t0;
+            // 只记慢的：单个插件超过 40ms 就会让这一帧明显掉帧，值得留证据
+            if (cost >= 40)
+                Logger.Info($"[PluginManager] {e.Key} 加载耗时 {cost}ms（{i + 1}/{todo.Count}）");
+
+            _uiDispatcher?.BeginInvoke(DispatcherPriority.Background, new Action(() => Step(i + 1)));
+        }
+
+        _uiDispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => Step(0)));
+    }
+
+    /// <summary>批量加载收尾：去重、排序、同步给宿主、打总耗时。</summary>
+    private void FinishLoadBatch(long totalMs)
+    {
+        if (_loadBatchRunning) _loadBatchRunning = false;
+        try
+        {
             // 历史遗留：同一个插件装在两个目录（插件改过 Id / 目录名，或手工复制过）。
             // 不收敛的话两份都会加载，插件中心和组件都会出现重复项；这里只留版本新的那份。
             DedupeInstalledCopies();
 
             EnsureOrder();
             PushOrderToHost();
+        }
+        catch (Exception ex) { Logger.Error("[PluginManager] 加载收尾失败", ex); }
 
-            Logger.Info($"[PluginManager] 初始化完成，共发现 {Entries.Count} 个插件，已加载 {Entries.Count(x => x.State == PluginState.Loaded)} 个");
-            RaiseChanged();
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("[PluginManager] 初始化失败", ex);
-        }
+        Logger.Info($"[PluginManager] 初始化完成，共发现 {Entries.Count} 个插件，已加载 "
+            + $"{Entries.Count(x => x.State == PluginState.Loaded)} 个"
+            + (totalMs > 0 ? $"（{_loadBatchTotal} 个插件分批加载共 {totalMs}ms）" : ""));
+        RaiseChanged();
     }
 
     public void Refresh()
@@ -853,6 +919,9 @@ public sealed class PluginManager
 
     public void ShutdownAll()
     {
+        // 分批加载还没走完就退出：先掐断后续投递，免得退出过程中又把插件拉起来
+        _loadBatchRunning = false;
+
         foreach (var e in Entries)
         {
             if (e.Context == null) continue;

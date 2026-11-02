@@ -66,9 +66,33 @@ namespace NotchPeninsula
         private static bool _inited;
         private static bool _failed;        // 永久失败：已回退 GDI
 
+        // 体检计数（5 秒窗口，由 IslandBackdrop 的 10s 体检行读走）：
+        //   Frame = 真的拿到帧 / Timeout = 桌面没变化 / Blank = 拿到但整幅纯黑（初始化空帧）
+        private static int _nFrame, _nTimeout, _nBlank;
+
+        /// <summary>体检用：近一窗口内的帧 / 无新帧 / 空白帧次数。</summary>
+        public static (int Frame, int Timeout, int Blank) TakeStats()
+        {
+            var r = (_nFrame, _nTimeout, _nBlank);
+            _nFrame = _nTimeout = _nBlank = 0;
+            return r;
+        }
+
 
         /// <summary>抓屏后端是否可用（初始化成功且没有永久失败）。</summary>
         public static bool Available => !_failed;
+
+        /// <summary>
+        /// 本次会话里是否真的产出过帧。
+        ///
+        /// 有些机器（本机 Intel HD 530 实测）能建起 Desktop Duplication，但
+        /// <c>AcquireNextFrame</c> 永远 WAIT_TIMEOUT —— 连新会话首帧的 300ms 都等不到内容。
+        /// 这时它给不出「桌面变没变」的任何信息，上层若还按"无新帧 = 桌面静止"处理，
+        /// 就会一路等到 3 秒超时才回落 GDI，背景刷新直接变成 3 秒一次。
+        /// </summary>
+        public static bool HasProduced => _everFrame;
+
+        private static volatile bool _everFrame;
 
         /// <summary>诊断用：当前用的输出矩形与最近一次结果。</summary>
         public static string DebugState
@@ -437,7 +461,10 @@ namespace NotchPeninsula
                 // （AccumulatedFrames=0 / LastPresentTime=0），等一会儿再要成功率明显更高。
                 // ⚠️ 只做一次。放在每次抓取里会把抓屏线程拖慢 180ms，背板刷新周期直接翻倍。
                 Thread.Sleep(180);
-                target.Primed = true;
+                // ⚠️ 这里**不能**把 Primed 置 true：置了之后下面的 Acquire 就用 timeout=0（纯非阻塞），
+                //    而新会话第一次往往还没有可复制的帧 → 立刻 WAIT_TIMEOUT → 上层判定「桌面静止」，
+                //    其实一帧都没抓到过。这时又因为「DXGI 从没成功过」，每轮都回落 GDI 全屏回读。
+                //    改成第一次用 300ms 真正等一帧，拿到之后再切成非阻塞轮询。
             }
 
             // 双保险：即便等过一轮，拿到的仍可能是空帧（整幅纯黑 / alpha=0）。
@@ -462,8 +489,15 @@ namespace NotchPeninsula
                     target.Dup = IntPtr.Zero;
                     return wrote ? GrabResult.Ok : GrabResult.NoNewFrame;
                 }
-                if (hr == DXGI_ERROR_WAIT_TIMEOUT) break;    // 桌面没变化：用手上已有的
+                if (hr == DXGI_ERROR_WAIT_TIMEOUT)
+                {
+                    _nTimeout++;
+                    break;                                   // 桌面没变化：用手上已有的
+                }
                 if (hr < 0 || res == IntPtr.Zero) break;
+
+                // 真的拿到一帧了 → 之后的轮询可以走非阻塞（timeout=0）
+                target.Primed = true;
 
                 bool good = false;
                 try
@@ -526,6 +560,7 @@ namespace NotchPeninsula
                         try
                         {
                             good = !LooksBlank((byte*)mapped.pData, (int)mapped.RowPitch, cw2, ch2);
+                            if (!good) _nBlank++;
                             if (good || !wrote)
                             {
                                 // staging 里就是这条矩形本身，源区域从 (0,0) 起
@@ -554,6 +589,7 @@ namespace NotchPeninsula
                 if (good) break;   // 拿到有效画面，收工
             }
 
+            if (wrote) { _nFrame++; _everFrame = true; }
             return wrote ? GrabResult.Ok : GrabResult.NoNewFrame;
         }
 

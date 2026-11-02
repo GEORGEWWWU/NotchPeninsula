@@ -935,6 +935,24 @@ namespace NotchPeninsula
         private static int AlignUp(int v, int grid) => (int)MathF.Ceiling(v / (float)grid) * grid;
 
         // ---- 可分离高斯：只糊裁切区，边缘夹取（对应 demo 的水平/垂直两趟）----
+        // 模糊体检（节流 1.5s 一行）：玻璃"不糊"的时候，这一行能直接看出是半径小、
+        // 还是裁切区被降采样、还是用户把档位调到 0 —— 这三种在画面上是完全不同的表现，
+        // 没有这行日志只能靠猜。
+        private static long _diagBlurMs;
+        private static string _diagBlurKey = "";
+
+        private static void DiagBlur(int bs, int cw, int ch, bool skip)
+        {
+            long now = Environment.TickCount64;
+            string key = $"{_radius}|{bs}|{skip}|{cw}x{ch}";
+            if (key == _diagBlurKey && now - _diagBlurMs < 1500) return;
+            _diagBlurKey = key;
+            _diagBlurMs = now;
+            Logger.Debug($"[玻璃] 模糊体检：档位半径={_levelRadius} 高斯档={(Renderer.GlassGaussBackdrop ? 1 : 0)}"
+                + $" 最终半径={_radius} 降采样=1/{bs} 裁切={cw}x{ch}（{cw * ch}px / 上限 {MaxBlurPixels}）"
+                + $" 跳过核={skip}");
+        }
+
         private static void BuildBlur(byte* src, int srcStride, int iw, int ih,
                                      int cx0, int cy0, int cw, int ch, int cB, int cG, int cR, int version,
                                      out int outW, out int outH)
@@ -944,7 +962,14 @@ namespace NotchPeninsula
             // 抽头数同步减半（R/2），等效模糊半径保持不变 —— 结果几乎一致，工作量却是 1/8。
             // ⚠️ 阈值从 4 提到 6：整张玻璃（包括中部没折射的部分）采的都是这张模糊图，
             //    默认档 4px 也降采样等于把"清晰的玻璃"再糊掉一半分辨率。
+            //
+            // ⚠️ 裁切区像素量超上限时，只能**继续升高降采样倍数**，绝不能"跳过核直接搬原像素"。
+            //    背板现在是隐身后的真实桌面，一旦不糊，玻璃就成了一块透明窗 ——
+            //    底下的工具栏、窗口标题清晰可读（用户视角就是「岛里冒出别人的界面」）。
+            //    而裁切区大小是跟着展开态走的：胶囊越大越容易顶破上限，
+            //    于是表现为「小胶囊还好、一展开就露馅」。降采样只是更糊，永远不会变清晰。
             int bs = _radius >= 6 ? 2 : 1;
+            while ((long)((cw + bs - 1) / bs) * ((ch + bs - 1) / bs) > MaxBlurPixels && bs < 16) bs *= 2;
             _blurScale = bs;
 
             int bw = (cw + bs - 1) / bs;
@@ -957,8 +982,9 @@ namespace NotchPeninsula
             int R = _radius / bs;
             if (R < 1) R = 1;
             float[] weights = _weights;
-            bool skipKernel = _radius <= 0 || cw * ch > MaxBlurPixels;
+            bool skipKernel = _radius <= 0;   // 只有用户把「背景模糊」调到 0 才真的不糊
             if (!skipKernel && weights.Length < R + 1) return;
+            DiagBlur(bs, cw, ch, skipKernel);
 
             int need = Math.Max(cw * ch * 4, bw * bh * 4);
             if (_blurA.Length < need) _blurA = new byte[need];
