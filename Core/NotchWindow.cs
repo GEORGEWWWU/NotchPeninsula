@@ -226,26 +226,54 @@ namespace NotchPeninsula
         private static int _cachedMonitorWidth = 1920;
         private static int _cachedMonitorHeight = 1080;
 
-        private static int _lastKnownMonitorCount = -1;
+        // 显示器拓扑签名（设备名 + 矩形）。只比数量不够：注销/登录之后数量可能不变，
+        // 但枚举顺序整体重排，同一个下标已经指向另一块屏了。
+        private static string _lastMonitorSignature = "";
+
+        private static string MonitorSignature(System.Windows.Forms.Screen[] screens)
+        {
+            var sb = new System.Text.StringBuilder(screens.Length * 40);
+            foreach (var s in screens)
+                sb.Append(s.DeviceName).Append(':').Append(s.Bounds).Append('|');
+            return sb.ToString();
+        }
 
         private void UpdateMonitorBounds()
         {
             var screens = System.Windows.Forms.Screen.AllScreens;
             if (screens.Length == 0) return;   // 枚举不到就沿用上一次的矩形，别把岛体甩出屏幕
-            // 显示器拓扑变化后（拔插 / KVM 切回输入源 / 重启唤醒副屏）重读用户偏好：
+            // 显示器拓扑变化后（拔插 / KVM 切回输入源 / 重启唤醒副屏 / 注销重登后顺序重排）重读用户偏好：
             // 旧版会在越界时把 0 就地写回注册表，显示器一回来偏好已经丢了。
             // 现在偏好原样保留，拓扑恢复后在这里自动恢复到用户选的那块屏。
-            if (screens.Length != _lastKnownMonitorCount)
+            string signature = MonitorSignature(screens);
+            if (signature != _lastMonitorSignature)
             {
-                _lastKnownMonitorCount = screens.Length;
+                _lastMonitorSignature = signature;
                 try
                 {
                     using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
                     if (key != null)
                     {
-                        int pref = Convert.ToInt32(key.GetValue("TargetMonitorIndex", Renderer.TargetMonitorIndex));
-                        if (pref >= 0 && pref < screens.Length && pref != Renderer.TargetMonitorIndex)
-                            Renderer.TargetMonitorIndex = pref;   // 偏好的显示器回来了，自动恢复
+                        // 优先按硬件 ID 找：顺序重排（注销/登录、切输入源）之后下标会指向别的屏，
+                        // 只有硬件 ID 认得原来是哪一块。
+                        string savedId = key.GetValue("TargetMonitorHardwareId") as string ?? "";
+                        int byHardwareId = MonitorIdentity.IndexOfHardwareId(savedId);
+                        if (byHardwareId >= 0)
+                        {
+                            if (byHardwareId != Renderer.TargetMonitorIndex)
+                            {
+                                Renderer.TargetMonitorIndex = byHardwareId;
+                                Program.SaveSetting("TargetMonitorIndex", byHardwareId);
+                                Program.SyncTunerMonitorMirror(byHardwareId);
+                                Logger.Info($"[显示器] 拓扑变化后按硬件 ID 还原目标显示器：下标 → {byHardwareId}");
+                            }
+                        }
+                        else
+                        {
+                            int pref = Convert.ToInt32(key.GetValue("TargetMonitorIndex", Renderer.TargetMonitorIndex));
+                            if (pref >= 0 && pref < screens.Length && pref != Renderer.TargetMonitorIndex)
+                                Renderer.TargetMonitorIndex = pref;   // 偏好的显示器回来了，自动恢复
+                        }
                     }
                 }
                 catch { /* 读不到偏好就用当前值，一次注册表失败不该影响布局 */ }

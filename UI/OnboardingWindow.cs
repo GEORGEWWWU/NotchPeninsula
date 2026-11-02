@@ -560,10 +560,7 @@ namespace NotchPeninsula
 
                 case ACT_MONITOR:
                     _monitor = val;
-                    Renderer.TargetMonitorIndex = _monitor;
-                    Renderer.RememberedMonitorIndex = _monitor;
-                    Program.SaveSetting("TargetMonitorIndex", _monitor);
-                    Program.SaveSetting("TargetMonitorIndex_Remembered", _monitor);
+                    Program.SaveTargetMonitor(_monitor);   // 下标 + 记忆值 + 硬件 ID 一起写
                     break;
 
                 case ACT_MONITOR_DD:
