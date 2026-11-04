@@ -225,6 +225,9 @@ namespace NotchPeninsula
         private static int _cachedMonitorY = 0;
         private static int _cachedMonitorWidth = 1920;
         private static int _cachedMonitorHeight = 1080;
+        // 缓存矩形对应的是哪一块屏（设备名）。只比下标不够：顺序一变，同一个下标就指向
+        // 另一块物理屏了，岛体看着就会「自己跳过去」，而且下标没变、没人会去纠正它。
+        private static string _cachedMonitorDevice = "";
 
         // 显示器拓扑签名（设备名 + 矩形）。只比数量不够：注销/登录之后数量可能不变，
         // 但枚举顺序整体重排，同一个下标已经指向另一块屏了。
@@ -325,7 +328,25 @@ namespace NotchPeninsula
             _cachedMonitorWidth = screens[idx].Bounds.Width;
             _cachedMonitorHeight = screens[idx].Bounds.Height;
             _cachedMonitorIndex = idx;
+            _cachedMonitorDevice = screens[idx].DeviceName;
             UpdateIslandWidthCap();
+        }
+
+        /// <summary>
+        /// 缓存矩形要不要重算。除了下标变化，还必须看**这个下标现在还指着同一块屏吗**：
+        /// 枚举顺序一变，下标没变但已指向别的显示器，岛体就会停在错误的位置上且永远不自愈。
+        /// </summary>
+        private bool NeedsMonitorRefresh()
+        {
+            if (_cachedMonitorIndex < 0) return true;
+            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) return true;
+            try
+            {
+                var screens = System.Windows.Forms.Screen.AllScreens;
+                if (_cachedMonitorIndex >= screens.Length) return true;
+                return !string.Equals(_cachedMonitorDevice, screens[_cachedMonitorIndex].DeviceName, StringComparison.Ordinal);
+            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -1523,7 +1544,7 @@ namespace NotchPeninsula
             var ptSrc = new Win32.POINT(0, 0);
             var ptDst = new Win32.POINT { x = 0, y = 0 };
 
-            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
+            if (NeedsMonitorRefresh()) UpdateMonitorBounds();
             ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
             ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
 
