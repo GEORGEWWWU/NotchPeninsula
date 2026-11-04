@@ -286,7 +286,6 @@ namespace NotchPeninsula
                     Renderer.RememberedMonitorIndex = byHardwareId;
                     Program.SaveSetting("TargetMonitorIndex", byHardwareId);
                     Program.SaveSetting("TargetMonitorIndex_Remembered", byHardwareId);
-                    Program.SyncTunerMonitorMirror(byHardwareId);
                     Logger.Info($"[显示器] 按硬件 ID 还原目标显示器：下标 → {byHardwareId}（{screens[byHardwareId].DeviceName}，{screens[byHardwareId].Bounds}，{_resolvedTargetHwid}）");
                 }
             }
