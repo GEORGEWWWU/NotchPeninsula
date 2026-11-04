@@ -609,20 +609,6 @@ namespace NotchPeninsula
 
         private static float _keySx, _keySy, _keyLw, _keyLh, _keyRt, _keyRb;
 
-        // 临时调试快照：GlassDebug 导出真实链路参数用（正常渲染不读）
-        private static float _dbgMinHs, _dbgLensDepth, _dbgRefractPx, _dbgMaxShift;
-        private static int _dbgGw, _dbgGh, _dbgSs, _dbgBlur;
-
-        internal static string DebugState()
-        {
-            var lv = new int[ParamCount];
-            for (int i = 0; i < ParamCount; i++) lv[i] = _levels[i];
-            return $"minHs={_dbgMinHs:F1} lensDepth={_dbgLensDepth:F1} refractPx={_dbgRefractPx:F1} maxShiftSeen={_dbgMaxShift:F2} "
-                 + $"glassPx={_dbgGw}x{_dbgGh} ss={_dbgSs} blurPx={_dbgBlur} "
-                 + $"detailSmooth={_detailSmooth:F2} levelRadius={_levelRadius} "
-                 + $"levels=[{string.Join(",", lv)}]";
-        }
-
         // 材质切走 / 岛体重建时调用：放掉缓存位图，别白占内存
         public static void Invalidate()
         {
@@ -866,9 +852,6 @@ namespace NotchPeninsula
                     _rsDark = Darkening;
                     _rsTint = TintAlpha;
 
-                    // 调试快照（临时）：供 GlassDebug 输出真实参数
-                    _dbgMinHs = minHs; _dbgLensDepth = lensDepth; _dbgRefractPx = refractPx; _dbgMaxShift = 0f;
-                    _dbgGw = gw; _dbgGh = gh; _dbgSs = ss; _dbgBlur = blurPx;
                     float disp = Dispersion;
                     float rimStrength = RimStrength;
 
@@ -1004,7 +987,6 @@ namespace NotchPeninsula
                                 // 展开态九成面积都在这里（lensDepth 只有二十几像素），
                                 // 提前返回能省掉每像素 4 次除法 + 4 次平方。
                                 float shift = refractPx * m;
-                                if (shift > _dbgMaxShift) _dbgMaxShift = shift;
                                 if (shift < 0.3f)
                                 {
                                     // ⚠️ 快路径也必须算轮廓光：高光带宽只有 2.6px，
@@ -1407,7 +1389,7 @@ namespace NotchPeninsula
                 if (skipKernel)
                 {
                     // 模糊档位设成 0（最清晰），或超大岛体跳过核：直接搬像素，不做降采样。
-                    // 后者靠抓屏那一步的盒式降采样 / 放大镜 1:1，已经够用。
+                    // 后者靠抓屏那一步的盒式降采样 / DXGI 1:1，已经够用。
                     _blurScale = 1;
                     outW = cw;
                     outH = ch;

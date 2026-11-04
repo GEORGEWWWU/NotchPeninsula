@@ -158,7 +158,7 @@ namespace NotchPeninsula
             // ── ① 合成本身失败：退回液态玻璃（v1）──
             if (_failMs >= FailLimitMs)
             {
-                string capture = IslandBackdrop.UsingMagnifier ? "放大镜（1:1）" : "兼容模式";
+                string capture = IslandBackdrop.UsingDxgi ? "DXGI" : "GDI";
 
                 // HealthDetail 只在「读到坏像素 / 合成抛异常」时才有值。Compose 因为几何太小、
                 // 模糊核建不出来直接返回 null 时它是空的 —— 这时必须把渲染侧真正知道的状态补上，
@@ -187,7 +187,7 @@ namespace NotchPeninsula
             // 没背板时压根不会计数，更不会在这里误判成「抓不到桌面画面」。
             if (_noContentMs >= NoContentLimitMs)
             {
-                string capture = IslandBackdrop.UsingMagnifier ? "放大镜（1:1）" : "兼容模式";
+                string capture = IslandBackdrop.UsingDxgi ? "DXGI" : "GDI";
                 string why = $"背板版本 {IslandBackdrop.Version}，"
                            + $"玻璃源区域连续 {_noContentMs / 1000.0:F1} 秒无内容";
 
@@ -233,14 +233,14 @@ namespace NotchPeninsula
             string target = landOnGlassV1 ? "液态玻璃" : "实体";
             _fallbackNote = $"已降级到「{target}」：{why}";
 
-            // 抓屏那条线要按新材质重建（降采样倍数、放大镜矩形都会变）
+            // 抓屏那条线要按新材质重建（降采样倍数、抓取矩形都会变）
             NotchWindow.RequestAcrylicRebuild();
 
             // 留痕只写日志 / 诊断：设置项保持用户原来选的材质，重启后还会重新试一次 v2。
             Logger.Warn($"[液态玻璃2.0] 本次会话已降级到「{target}」"
                         + $"（仅本会话生效，设置未改，重启 / 重选材质会重新尝试）"
                         + $"；原因：{OneLine(why)}"
-                        + $"；抓屏：{(IslandBackdrop.UsingMagnifier ? "放大镜（1:1）" : "兼容模式")}"
+                        + $"；抓屏：{(IslandBackdrop.UsingDxgi ? "DXGI" : "GDI")}"
                         + $"；{IslandBackdrop.DebugState}");
             UiAlert.ShowOnce(key, message);
         }

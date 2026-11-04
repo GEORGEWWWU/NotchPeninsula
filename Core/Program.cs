@@ -186,7 +186,7 @@ namespace NotchPeninsula
                     Renderer.ResetCaptureAffinity();
 
                     // 液态玻璃：质量档 + 12 根滑轨（越界一律夹回，老配置/手改注册表都不怕）
-                    // 抓屏方式不再读配置：放大镜可用即用、不可用自动回退兼容抓屏。
+                    // 抓屏方式不读配置：优先 DXGI，不可用自动回退 GDI。
                     LiquidGlass.Quality = (int)key.GetValue("LiquidGlassQuality", 1);
                     for (int i = 0; i < LiquidGlass.ParamCount; i++)
                         LiquidGlass.SetLevel(i, (int)key.GetValue(LiquidGlass.ParamKeys[i], LiquidGlass.DefaultLevelOf(i)));

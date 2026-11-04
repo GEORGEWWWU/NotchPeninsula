@@ -1493,7 +1493,7 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
                 // ── 第一行：玻璃质量（左） + 恢复默认参数（右）──
-                // 抓屏方式不再暴露：放大镜可用即用、不可用自动回退兼容抓屏，没有开关也没有状态行。
+                // 抓屏方式不暴露：优先 DXGI、不可用自动回退 GDI，没有开关也没有状态行。
                 // 液态玻璃 2 不画质量分段：那四档只改 v1，v2 的合成参数全在下面 9 根滑轨上。
                 float segY = gY + GLASS_SEG_Y;
                 if (!Renderer.IslandLiquidGlass2)

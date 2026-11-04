@@ -33,8 +33,7 @@ namespace NotchPeninsula
         // 渲染线程每帧告知一次当前材质；切换会触发过期重抓
         private static volatile bool _glass;
 
-        // 抓屏方式不暴露成设置了：放大镜可用就走放大镜 API（玻璃模式 1:1 全分辨率），
-        // 不可用自动回退老 GDI StretchBlt —— 读点只看 IsAvailable，不再有用户偏好开关。
+        // 抓屏方式不暴露成设置项：玻璃走 DXGI Desktop Duplication，不可用自动回退 GDI StretchBlt。
 
         // 本帧背板是否来自 DXGI Desktop Duplication（诊断与日志用）。
         // DXGI 复制的是合成后的桌面，**岛体一定在画面里**，所以擦除逻辑照旧执行。
@@ -43,20 +42,16 @@ namespace NotchPeninsula
         // 是否成功产出过背板。DXGI 报「无新帧」时用它决定「复用上一帧」还是「必须 GDI 兜底」。
         private static volatile bool _everProduced;
 
-        /// <summary>放大镜抓屏已下线（统一走 DXGI / GDI），这个属性只为兼容旧提示文案。</summary>
-        public static bool UsingMagnifier => false;
-
         public static bool UsingDxgi => _dxgiUsed;
 
-        // 本帧背板对应的【屏幕原点】：源矩形换算要用它，不能假定等于请求值
-        // （放大镜在屏幕边界处可能裁掉一截，GDI 则严格等于请求值）
+        // 本帧背板对应的【屏幕原点】：源矩形换算要用它，不能假定等于请求值（屏幕边界处可能裁掉一截）
         private static volatile int _originX, _originY;
 
         public static int LastOriginX => _originX;
 
         public static int LastOriginY => _originY;
 
-        // 背板图 1 像素 = 屏幕多少像素（= 1 / 降采样倍数，放大镜就是 1）。
+        // 背板图 1 像素 = 屏幕多少像素（= 1 / 降采样倍数）。
         // 用实际产出图的尺寸反推，而不是用请求值 —— 首帧/边界裁剪时也不会算错源矩形。
         private static volatile float _scale = 1f / Downscale;
 
@@ -124,10 +119,7 @@ namespace NotchPeninsula
         // 真正要防的是另一种情况：分辨率切换 / 驱动重置 / 进出全屏之后，DXGI 会话有概率长期
         // 只报无新帧（画面明明变了），玻璃会停在最初那一张 —— 用户看到就是「换了壁纸玻璃不变」。
         // 所以超过 DxgiResyncMs 没拿到新帧，就落一次 GDI 抓取当复核，抓到什么就用什么；
-        // DXGI 会话保留，下一秒有新帧自然跟上。3 秒一次 20ms ≈ 0.7% 单核，可以忽略。
-        // 万不得已的兜底周期：DXGI 说无新帧时，最多隔这么久落一次 GDI 复核。
-        // 原来写 3000 —— 在这台「DXGI 基本不出帧」的机器上，它成了唯一的更新来源，
-        // 背景三秒才动一次。150ms 已经够用，判死之后这条路径根本不会走到。
+        // DXGI 会话保留，下一秒有新帧自然跟上。一次回读只有岛体上方那一条，成本可忽略。
         private const int DxgiResyncMs = 150;
 
         //「上一次 DXGI 复核」的时刻。**不能只靠 _lastDxgiFrameMs**：它只在 DXGI 真的产出帧时才更新，
@@ -136,8 +128,7 @@ namespace NotchPeninsula
         private static long _lastDxgiFrameMs = Environment.TickCount64;
 
         // 抓屏节拍：玻璃下由用户在「抓屏刷新」滑轨上自己调（1s / 0.5s / 250ms / 160ms / 60ms）。
-        // 只垫一个下限：GDI 回读一次要 20ms，节拍比它快多少，就白烧多少 CPU
-        // （60ms 节拍 = 一个核的 1/3 在做无效采集，这正是"越极致越卡"的来源）。
+        // 只垫一个下限：GDI 回读一次要 20ms，节拍比它快多少，就白烧多少 CPU。
         private static int CaptureGap
         {
             get
@@ -155,8 +146,8 @@ namespace NotchPeninsula
         private const int MinCaptureMs = 80;
 
         // DXGI 的检查节拍：AcquireNextFrame(timeout=0) 报"无新帧"是立即返回的空查询，
-        // 一次几十微秒，跟 250ms 的「刷新」档完全不是一个量级。
-        // 一次空查询约几十微秒（125 次/秒 ≈ 0.5% 单核），按 10ms 一轮问，
+        // 一次几十微秒（100 次/秒 ≈ 0.5% 单核），跟 GDI 全屏回读不是一个量级。
+        // 按 10ms 一轮问，
         // 桌面一变最多 10ms 就被发现 —— 这是背景跟手度的下限。
         private const int DxgiCheckMs = 10;
 
@@ -168,7 +159,7 @@ namespace NotchPeninsula
         //
         // 为什么必须这么判：它偶尔能成功抓到一帧（HasProduced 就永久为真），
         // 但之后大部分时候只报 WAIT_TIMEOUT。上层若继续信它，就会一路等到超时才回落
-        // GDI —— 背景三秒才更新一次（实测就是这么卡的）。
+        // GDI，背景刷新掉到秒级。
         private static int _dxgiMissedChanges;
         private static bool _dxgiUnreliable;
         private static bool _dxgiSaidNoChange;
@@ -372,7 +363,6 @@ namespace NotchPeninsula
         private const int CapFailScreenDc = 4;         // GetDC(NULL) 失败
         private const int CapFailStretchBlt = 5;       // StretchBlt 失败（驱动 / DWM 回读被拒）
         private const int CapFailSkia = 6;             // SKImage / SKSurface 建图失败
-        private const int CapFailMagnifier = 7;        // 放大镜那条线没取到帧
         private const int CapFailErase = 9;            // 遮罩擦不掉（这一帧会带着岛体，已丢弃）
         private const int CapFailDisabled = 8;         // 已被异常停用
 
@@ -396,7 +386,6 @@ namespace NotchPeninsula
             CapFailScreenDc => "取屏幕 DC 失败",
             CapFailStretchBlt => "StretchBlt 回读失败",
             CapFailSkia => "Skia 建图失败",
-            CapFailMagnifier => "放大镜未取到帧",
             CapFailErase => "遮罩擦不掉",
             CapFailDisabled => "已停用",
             _ => "未知"
@@ -647,7 +636,7 @@ namespace NotchPeninsula
 
         // 「DXGI 说有新帧、但岛体外那一圈没变」连击几次就无条件隐身抓：
         // 变化很可能全落在岛体正下方（窗口刚好被它盖住后消失/出现），这种情况下环带永远看不出，
-        // 只能靠这个兜底。3 × 10ms = 30ms，比原来的 1.5 秒周期快一个数量级。
+        // 只能靠这个兜底。3 × 10ms = 30ms。
         private const int SuspiciousMax = 3;
 
         private static int _suspicious;
@@ -703,10 +692,6 @@ namespace NotchPeninsula
             int w = _tw, h = _th, x = _tx, y = _ty;
             if (w < 16 || h < 16) return Fail(CapFailTargetTooSmall, $"target={w}x{h}");
 
-            // 抓屏后端：玻璃走 DXGI（见下面 grabbed 那段），其余照旧 GDI。
-            // 放大镜 API 已下线：它在不少机器上初始化失败，且属于系统辅助功能组件、
-            // 会和部分录屏/截图软件互相干扰；DXGI 是 GPU 采集，兼容性更好也更快。
-
             // 还不知道岛体占哪块 → 先别抓（不然会把岛体自己拍进去，画面会往涂层色糊成一坨）
             float mSx0 = _maskSx0, mSy0 = _maskSy0, mSx1 = _maskSx1, mSy1 = _maskSy1;
             if (mSx1 - mSx0 < 1f || mSy1 - mSy0 < 1f)
@@ -738,9 +723,7 @@ namespace NotchPeninsula
             int ex1 = (int)MathF.Ceiling((eSx1 - x) * inv);
             int ey1 = (int)MathF.Ceiling((eSy1 - y) * inv);
 
-            // 抓屏后端：玻璃走 DXGI（GPU 采集），其余照旧 GDI。
-            // 放大镜 API 已下线：它在不少机器上初始化失败，且属于系统辅助功能组件、
-            // 会和部分录屏/截图软件互相干扰；DXGI 是 GPU 采集，兼容性更好也更快。
+            // 抓屏后端：玻璃优先 DXGI（GPU 采集），其余走 GDI StretchBlt。
             // gdiOnly：跳过 DXGI 直接读屏幕。隐身后的第二次抓取要用它兜底 ——
             // GDI 读的是"当前这一刻"的屏幕，岛体已隐身就一定拿得到干净桌面；
             // 而 DXGI 只在 DWM 重新合成时才有新帧，切换亲和性后的那一次并不保证存在。
