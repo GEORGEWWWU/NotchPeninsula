@@ -228,10 +228,18 @@ namespace NotchPeninsula
         private static int _cachedMonitorY = 0;
         private static int _cachedMonitorWidth = 1920;
         private static int _cachedMonitorHeight = 1080;
+        // 缓存矩形对应的是哪一块屏（设备名）。只比下标不够：顺序一变，同一个下标就指向
+        // 另一块物理屏了，岛体看着就会「自己跳过去」，而且下标没变、没人会去纠正它。
+        private static string _cachedMonitorDevice = "";
 
         // 显示器拓扑签名（设备名 + 矩形）。只比数量不够：注销/登录之后数量可能不变，
         // 但枚举顺序整体重排，同一个下标已经指向另一块屏了。
         private static string _lastMonitorSignature = "";
+
+        // 当前拓扑下「用户选的那块屏」解析结果，按拓扑签名缓存，避免每帧读注册表：
+        // -2 = 还没解析过；-1 = 有硬件 ID 但此刻不在线；-3 = 老配置，根本没有硬件 ID。
+        private static int _resolvedTargetIndex = -2;
+        private static string _resolvedTargetHwid = "";
 
         private static string MonitorSignature(System.Windows.Forms.Screen[] screens)
         {
@@ -245,64 +253,102 @@ namespace NotchPeninsula
         {
             var screens = System.Windows.Forms.Screen.AllScreens;
             if (screens.Length == 0) return;   // 枚举不到就沿用上一次的矩形，别把岛体甩出屏幕
-            // 显示器拓扑变化后（拔插 / KVM 切回输入源 / 重启唤醒副屏 / 注销重登后顺序重排）重读用户偏好：
-            // 旧版会在越界时把 0 就地写回注册表，显示器一回来偏好已经丢了。
-            // 现在偏好原样保留，拓扑恢复后在这里自动恢复到用户选的那块屏。
+
+            // 目标显示器只认硬件 ID（哪一块物理屏），下标只是它此刻的坐标换算。
+            // 注册表里的裸下标一律不再直接拿来定位：它只是「某一次进程的枚举顺序」，
+            // 注销重登 / 切输入源之后同一个数字会落到另一块屏上 —— 这正是
+            // 「岛自己跑去别的显示器」「设置里选完立刻又跳回」的根源。
             string signature = MonitorSignature(screens);
             if (signature != _lastMonitorSignature)
             {
                 _lastMonitorSignature = signature;
+                _resolvedTargetIndex = -2;
+            }
+
+            if (_resolvedTargetIndex == -2)
+            {
+                _resolvedTargetHwid = "";
                 try
                 {
                     using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
-                    if (key != null)
-                    {
-                        // 优先按硬件 ID 找：顺序重排（注销/登录、切输入源）之后下标会指向别的屏，
-                        // 只有硬件 ID 认得原来是哪一块。
-                        string savedId = key.GetValue("TargetMonitorHardwareId") as string ?? "";
-                        int byHardwareId = MonitorIdentity.IndexOfHardwareId(savedId);
-                        if (byHardwareId >= 0)
-                        {
-                            if (byHardwareId != Renderer.TargetMonitorIndex)
-                            {
-                                Renderer.TargetMonitorIndex = byHardwareId;
-                                Program.SaveSetting("TargetMonitorIndex", byHardwareId);
-                                Program.SyncTunerMonitorMirror(byHardwareId);
-                                Logger.Info($"[显示器] 拓扑变化后按硬件 ID 还原目标显示器：下标 → {byHardwareId}");
-                            }
-                        }
-                        else
-                        {
-                            int pref = Convert.ToInt32(key.GetValue("TargetMonitorIndex", Renderer.TargetMonitorIndex));
-                            if (pref >= 0 && pref < screens.Length && pref != Renderer.TargetMonitorIndex)
-                                Renderer.TargetMonitorIndex = pref;   // 偏好的显示器回来了，自动恢复
-                        }
-                    }
+                    _resolvedTargetHwid = key?.GetValue("TargetMonitorHardwareId") as string ?? "";
                 }
-                catch { /* 读不到偏好就用当前值，一次注册表失败不该影响布局 */ }
+                catch { /* 读不到就按没有硬件 ID 处理，下面的下标逻辑还能用 */ }
+
+                _resolvedTargetIndex = string.IsNullOrEmpty(_resolvedTargetHwid)
+                    ? -3                                            // 老配置：没有身份，只能按下标
+                    : MonitorIdentity.IndexOfHardwareId(_resolvedTargetHwid);
             }
+
+            int byHardwareId = _resolvedTargetIndex >= 0 ? _resolvedTargetIndex : -1;
+            if (byHardwareId >= 0)
+            {
+                if (byHardwareId != Renderer.TargetMonitorIndex)
+                {
+                    Renderer.TargetMonitorIndex = byHardwareId;
+                    Renderer.RememberedMonitorIndex = byHardwareId;
+                    Program.SaveSetting("TargetMonitorIndex", byHardwareId);
+                    Program.SaveSetting("TargetMonitorIndex_Remembered", byHardwareId);
+                    Logger.Info($"[显示器] 按硬件 ID 还原目标显示器：下标 → {byHardwareId}（{screens[byHardwareId].DeviceName}，{screens[byHardwareId].Bounds}，{_resolvedTargetHwid}）");
+                }
+            }
+            else if (_resolvedTargetIndex == -1)
+            {
+                // 有身份但解析不到 = 目标屏暂时不在线（KVM 切走输入源、副屏还没唤醒）。
+                // 此时保持原位，什么都不改：把岛甩到别的屏上才是用户眼里的「自己跳过去」。
+                if (_cachedMonitorIndex >= 0 && _cachedMonitorIndex < screens.Length)
+                {
+                    Logger.Info($"[显示器] 目标显示器暂时不在线（{_resolvedTargetHwid}），岛体保持在 {screens[_cachedMonitorIndex].DeviceName}");
+                    UpdateIslandWidthCap();
+                    return;
+                }
+                // 首次就没解析到（开机那几秒目标屏还没唤醒）：本次先落到记忆值 / 主屏，
+                // 只在内存里兜底、不写注册表；等它上线后上面的分支会自己纠正回来。
+            }
+
             int want = Renderer.TargetMonitorIndex;
-            // 目标下标越界（显示器暂时不在）：只在内存里夹紧兜底 —— 优先用记忆值，
-            // 不再像旧版那样把 0 写回注册表，避免把用户偏好永久冲掉。
-            int idx = want >= 0 && want < screens.Length ? want
-                : (Renderer.RememberedMonitorIndex >= 0 && Renderer.RememberedMonitorIndex < screens.Length
-                    ? Renderer.RememberedMonitorIndex : 0);
-            if (idx != want)
+            int fallback = Renderer.RememberedMonitorIndex >= 0 && Renderer.RememberedMonitorIndex < screens.Length
+                ? Renderer.RememberedMonitorIndex
+                : MonitorIdentity.PrimaryIndex();          // 主屏，不是 0 —— 0 早就不能代表主屏了
+            if (fallback < 0) fallback = 0;
+            int idx = want >= 0 && want < screens.Length ? want : fallback;
+            if (idx != want) Renderer.TargetMonitorIndex = idx;
+
+            // 只有确认当前下标就是用户选的那块屏（硬件 ID 对得上）时才刷新记忆值；
+            // 否则会把「临时兜底的屏」记成偏好，下次启动又错上加错。
+            if (byHardwareId >= 0 && idx == byHardwareId && Renderer.RememberedMonitorIndex != idx)
             {
-                Renderer.TargetMonitorIndex = idx;
-            }
-            else if (idx != Renderer.RememberedMonitorIndex)
-            {
-                // 下标有效且与记忆值不同：更新记忆值，供下次显示器暂时缺席时兜底
                 Renderer.RememberedMonitorIndex = idx;
                 Program.SaveSetting("TargetMonitorIndex_Remembered", idx);
             }
+
+            if (idx != _cachedMonitorIndex)
+                Logger.Info($"[显示器] 岛体目标屏 → 下标 {idx}（{screens[idx].DeviceName}，{screens[idx].Bounds}）");
+
             _cachedMonitorX = screens[idx].Bounds.X;
             _cachedMonitorY = screens[idx].Bounds.Y;
             _cachedMonitorWidth = screens[idx].Bounds.Width;
             _cachedMonitorHeight = screens[idx].Bounds.Height;
             _cachedMonitorIndex = idx;
+            _cachedMonitorDevice = screens[idx].DeviceName;
             UpdateIslandWidthCap();
+        }
+
+        /// <summary>
+        /// 缓存矩形要不要重算。除了下标变化，还必须看**这个下标现在还指着同一块屏吗**：
+        /// 枚举顺序一变，下标没变但已指向别的显示器，岛体就会停在错误的位置上且永远不自愈。
+        /// </summary>
+        private bool NeedsMonitorRefresh()
+        {
+            if (_cachedMonitorIndex < 0) return true;
+            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) return true;
+            try
+            {
+                var screens = System.Windows.Forms.Screen.AllScreens;
+                if (_cachedMonitorIndex >= screens.Length) return true;
+                return !string.Equals(_cachedMonitorDevice, screens[_cachedMonitorIndex].DeviceName, StringComparison.Ordinal);
+            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -1511,7 +1557,7 @@ namespace NotchPeninsula
             var ptSrc = new Win32.POINT(0, 0);
             var ptDst = new Win32.POINT { x = 0, y = 0 };
 
-            if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
+            if (NeedsMonitorRefresh()) UpdateMonitorBounds();
             ptDst.x = _cachedMonitorX + (_cachedMonitorWidth - _scaledWidth) / 2;
             ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
 

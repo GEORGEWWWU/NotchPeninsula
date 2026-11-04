@@ -65,6 +65,29 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 主显示器在**当前**枚举顺序里的下标。不要再用 0 充当主屏：
+        /// 顺序重排之后 0 指向哪块屏完全看运气，兜底落到 0 就是「岛自己跑去别的显示器」。
+        /// </summary>
+        public static int PrimaryIndex()
+        {
+            try
+            {
+                var screens = System.Windows.Forms.Screen.AllScreens;
+                var primary = System.Windows.Forms.Screen.PrimaryScreen;
+                for (int i = 0; i < screens.Length; i++)
+                {
+                    if (screens[i].DeviceName == primary?.DeviceName) return i;
+                }
+                return screens.Length > 0 ? 0 : -1;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("解析主显示器下标失败", ex);
+                return -1;
+            }
+        }
+
+        /// <summary>
         /// 按硬件 ID 找到它在**当前**枚举顺序里的下标；该显示器不在线时返回 -1。
         /// 找不到不猜、不兜底 —— 调用方拿 -1 自己决定怎么退让。
         /// </summary>

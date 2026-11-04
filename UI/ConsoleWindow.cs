@@ -1266,15 +1266,20 @@ namespace NotchPeninsula
 
             _monitorOptions = opts;
 
-            // 拔掉显示器后原下标可能越界：仅在内存里夹紧兜底（优先用记忆值），
-            // 不再像旧版那样把 0 写回注册表 —— 显示器（如 KVM 切回输入源）回来后会自动恢复用户偏好。
+            // 拔掉显示器后原下标可能越界：仅在内存里夹紧兜底（优先用记忆值，其次主屏 ——
+            // 别再用 0，顺序重排后 0 早就不是主屏了），绝不写回注册表。
             if (Renderer.TargetMonitorIndex < 0 || Renderer.TargetMonitorIndex >= opts.Length)
             {
                 int fb = Renderer.RememberedMonitorIndex;
-                Renderer.TargetMonitorIndex = (fb >= 0 && fb < opts.Length) ? fb : 0;
+                if (fb < 0 || fb >= opts.Length) fb = MonitorIdentity.PrimaryIndex();
+                if (fb < 0 || fb >= opts.Length) fb = 0;
+                Renderer.TargetMonitorIndex = fb;
             }
-            else if (Renderer.TargetMonitorIndex != Renderer.RememberedMonitorIndex)
+            else if (Renderer.TargetMonitorIndex != Renderer.RememberedMonitorIndex
+                     && Program.IsTargetMonitor(Renderer.TargetMonitorIndex))
             {
+                // 只有确认当前下标就是用户选的那块屏时才刷新记忆值；
+                // 否则会把「临时兜底的屏」记成偏好，下次启动又错上加错。
                 Renderer.RememberedMonitorIndex = Renderer.TargetMonitorIndex;
                 Program.SaveSetting("TargetMonitorIndex_Remembered", Renderer.TargetMonitorIndex);
             }
