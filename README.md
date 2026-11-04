@@ -184,8 +184,6 @@ NotchPeninsula/
 │   ├── brightness.cs                 # 屏幕亮度控制
 │   ├── IslandBackdrop.cs             # 岛体背板（后台线程抓屏 + 缩略，避免渲染线程硬停顿）
 │   ├── DxgiBackdrop.cs               # DXGI Desktop Duplication 抓屏（GPU 采集，静止桌面零开销，不可用自动退回 GDI）
-│   ├── MagnifierBackdrop.cs          # 放大镜 API 抓屏（已下线，代码保留未接入）
-│   ├── MagNative.cs                  # Windows Magnification API 的 P/Invoke 声明（随放大镜一并下线）
 │   ├── IslandDropTarget.cs           # 岛体 OLE 拖入目标（让插件详情页也能接文件拖放）
 │   ├── DataResources.cs              # data\ 内置资源解析（磁盘优先、嵌入兜底）
 │   ├── UpdateManager.cs              # GitHub 版本检测与更新弹窗

@@ -152,17 +152,8 @@ namespace NotchPeninsula
                     device, desc, IntPtr.Zero, pt);
         }
 
-        private static int Device_GetImmediateContext(IntPtr device, out IntPtr ctx)
-        {
-            fixed (IntPtr* pc = &ctx)
-                return ((delegate* unmanaged<IntPtr, IntPtr*, int>)Slot(device, 39))(device, pc);
-        }
-
         private static void Texture2D_GetDesc(IntPtr tex, Tex2DDesc* desc)
             => ((delegate* unmanaged<IntPtr, Tex2DDesc*, void>)Slot(tex, 10))(tex, desc);
-
-        private static void Ctx_CopyResource(IntPtr ctx, IntPtr dst, IntPtr src)
-            => ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Slot(ctx, 47))(ctx, dst, src);
 
         // ⚠️ box 必须给：不给（nullptr）表示「整幅子资源」，而目标 staging 只有一条高，
         //    尺寸对不上 CopySubresourceRegion 会静默失败 —— 表现就是「抓回来全黑」。
@@ -521,7 +512,7 @@ namespace NotchPeninsula
                         if (cw2 <= 0 || ch2 <= 0) return wrote ? GrabResult.Ok : GrabResult.Unsupported;
 
                         // ⚠️ 只建「需要的那一条」的 staging、只拷这一条。
-                        //    之前是整幅 1920×1080：每次 CopyResource 8MB + Map 8MB，
+                        //    整幅 1920×1080 的话每次要搬 8MB + Map 8MB，
                         //    而玻璃其实只用到屏幕上方二百来行 —— 白白多花十倍的内存带宽，
                         //    抓屏线程占着 CPU，渲染帧率就被拖下来了。
                         if (_staging == IntPtr.Zero || _stgW != (uint)cw2 || _stgH != (uint)ch2 || _stgFormat != sd.Format)

@@ -96,6 +96,10 @@ namespace NotchPeninsula
 
         private static readonly object _pluginSlotLock = new();
 
+        // 画布栈不平衡的日志节流（同一个来源 2 秒最多一行）
+        private static long _canvasLeakMs;
+        private static string _canvasLeakKey = "";
+
         private static readonly object _pluginSnapshotLock = new();
 
         private static float _pluginMouseX = -1f;
@@ -935,15 +939,51 @@ namespace NotchPeninsula
 
                     bool hovered = mouseX >= r.Left && mouseX <= r.Right && mouseY >= r.Top && mouseY <= r.Bottom;
                     var frame = new Plugins.WidgetFrame(theme, alpha, textOffsetY, bars, hovered);
+                    // 画布栈由插件自己管，宿主不能假定它平衡：多一次 Restore 会弹掉宿主的裁切/平移，
+                    // 少一次会把插件自己的变换留在栈里 —— 两种都会让「这一帧之后画的东西」整块错位或消失。
+                    int depth = canvas.SaveCount;
                     canvas.Save();
                     try { widgets[i].Draw(canvas, r, frame); }
                     catch (Exception ex) { MarkPluginBroken(i, ex); }
-                    finally { canvas.Restore(); }
+                    finally { RestoreToDepth(canvas, depth, SafeWidgetId(i)); }
 
                     x += w + 16f;
                 }
             }
             return x;
+        }
+
+        /// <summary>
+        /// 把画布回卷到 <paramref name="depth"/>：插件少 Restore 时替它补齐（把它的变换/图层收掉），
+        /// 插件多 Restore 到已把宿主的 save 弹掉时无法复原，只能记一行日志指出是谁干的 ——
+        /// 这种不平衡一旦跨帧留着，下一帧的 Scale/Translate 会叠加，最终整块内容画到窗口外，
+        /// 表现为「岛还在、里面什么都不显示」。
+        /// </summary>
+        private static void RestoreToDepth(SKCanvas canvas, int depth, string who)
+        {
+            int now = canvas.SaveCount;
+            if (now > depth)
+            {
+                try { canvas.RestoreToCount(depth); return; } catch { return; }
+            }
+            if (now >= depth) return;
+
+            long t = Environment.TickCount64;
+            if (who == _canvasLeakKey && t - _canvasLeakMs < 2000) return;
+            _canvasLeakKey = who;
+            _canvasLeakMs = t;
+            Logger.Warn($"[Renderer] {who} 多调了 {-now + depth} 次 canvas.Restore()，"
+                + "已弹掉宿主自己的画布状态（下一帧可能整块错位/空白）");
+        }
+
+        private static string SafeWidgetId(int index)
+        {
+            try
+            {
+                return _pluginWidgets != null && index >= 0 && index < _pluginWidgets.Length
+                    ? _pluginWidgets[index].Id : "?";
+            }
+            catch { return "?"; }
         }
 
         private static void MarkPluginBroken(int index, Exception ex)
@@ -1107,10 +1147,11 @@ namespace NotchPeninsula
 
             bool hovered = mouseX >= rect.Left && mouseX <= rect.Right && mouseY >= rect.Top && mouseY <= rect.Bottom;
             var frame = new Plugins.WidgetFrame(GetCurrentTheme(), alpha, textOffsetY, bars, hovered);
+            int depth = canvas.SaveCount;
             canvas.Save();
             try { page.Draw(canvas, rect, frame); }
             catch (Exception ex) { MarkDetailBroken(ex); }
-            finally { canvas.Restore(); }
+            finally { RestoreToDepth(canvas, depth, "详情页"); }
         }
 
         public static bool DispatchDetailPageClick(float x, float y)

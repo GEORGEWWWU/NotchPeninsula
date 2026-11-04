@@ -265,13 +265,12 @@ namespace NotchPeninsula
 
         public static string QualityName => _quality switch { 0 => "流畅", 1 => "均衡", 2 => "精细", _ => "极致" };
 
-        // GDI 抓屏降采样（放大镜抓屏固定 1:1，不受它影响）：
+        // GDI 抓屏降采样（DXGI 固定 1:1，不受它影响）：
         // 折射位移要看得出来，不能像亚克力那样糊到 1/12
         private static float _downscale = 2f;
 
         public static float CaptureDownscale => _downscale;
 
-        // 玻璃图层分辨率上限：超出后按面积等比降采样（内容本来就模糊，看不出来）
         // 玻璃图层分辨率上限：超出后按面积等比降采样。
         // ⚠️ 这个上限一超，玻璃图就比胶囊小 → 贴图时被放大 → 观感是"展开态整个背景被放大、还糊"。
         // 展开态 900×400 逻辑 @125% = 1125×500 ≈ 56 万像素，所以默认档必须给到 60 万。
@@ -1011,8 +1010,7 @@ namespace NotchPeninsula
 
                 if (skipKernel)
                 {
-                    // 模糊档位设成 0（最清晰），或超大岛体跳过核：直接搬像素，不做降采样。
-                    // 后者靠抓屏那一步的盒式降采样 / 放大镜 1:1，已经够用。
+                    // 模糊档位设成 0（最清晰）：直接搬像素，不做降采样。
                     _blurScale = 1;
                     outW = cw;
                     outH = ch;

@@ -39,7 +39,7 @@ namespace NotchPeninsula
         {
             // 显示器拓扑刚变化时（WM_DISPLAYCHANGE 把 _cachedMonitorIndex 置 -1），
             // UpdateWindow 还没跑（它在本帧更后面），但抓取矩形马上要用 _cachedMonitor*。
-            // 先在这里重算一次，否则会把旧显示器的坐标喂给抓屏线程 / 放大镜。
+            // 先在这里重算一次，否则会把旧显示器的坐标喂给抓屏线程。
             if (_cachedMonitorIndex != Renderer.TargetMonitorIndex) UpdateMonitorBounds();
 
             // 亚克力与两种液态玻璃共用同一条抓屏管线，只是降采样倍数不同
@@ -107,7 +107,7 @@ namespace NotchPeninsula
             int capY = Math.Max(_cachedMonitorY, capBaseY);
             int capW = Math.Min(_cachedMonitorX + _cachedMonitorWidth, dstX + _scaledWidth) - capX;
             int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, capBaseY + _scaledHeight) - capY;
-            // 放大镜是 1:1 全分辨率，"整块画布"那么大一张图没必要 —— 玻璃只用到屏幕上边一条。
+            // 玻璃只用到屏幕上边一条，整块画布那么大一张图没必要。
             // 按 32px 量化，免得胶囊高度一动就重抓。
             if (glass && DxgiBackdrop.Available && capH > 120)
             {
@@ -152,7 +152,7 @@ namespace NotchPeninsula
             // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
             IslandBackdrop.SetMask(islandX - flare, islandY, islandX + islandW + flare, islandY + islandH);
 
-            // 贴图用的源矩形仍按【实际产出图】的比例与原点换算：放大镜是 1:1，GDI 是 1/k，切换材质时也不会错位
+            // 贴图用的源矩形按【实际产出图】的比例与原点换算（DXGI 是 1:1，GDI 是 1/k），切换后端时不会错位
             float inv = IslandBackdrop.LastScale;
             float orgX = IslandBackdrop.LastOriginX;
             float orgY = IslandBackdrop.LastOriginY;
@@ -180,11 +180,10 @@ namespace NotchPeninsula
 
             // 背板自愈：抓屏线程真的卡住时兜一下（DXGI 会话卡死、线程被拖住、待取图丢了……）。
             //
-            // ⚠️ 判据不能只看「version 多久没变」：液态玻璃现在是**按需抓屏**——
+            // ⚠️ 判据不能只看「version 多久没变」：液态玻璃是**按需抓屏**——
             //    桌面静止时背板本来就不更新（这是它省 CPU 的核心），version 停着是正常状态。
-            //    原来那个「5 秒不动就 Expire」会在静止桌面下每 5 秒拆一次缓冲，
-            //    表现为玻璃周期性闪一下黑纱 + 每 5 秒白白隐一次身（截图周期性地拍不到岛）。
-            //    现在要求「长时间没更新 **且** 抓屏确实在连续失败」才动手。
+            //    所以要求「长时间没更新 **且** 抓屏确实在连续失败」才动手，
+            //    否则会在静止桌面下反复拆缓冲，玻璃周期性闪黑纱。
             int bdVer = IslandBackdrop.Version;
             if (bdVer != _lastBackdropVer) { _lastBackdropVer = bdVer; _lastBackdropVerMs = Environment.TickCount64; }
             else if (Environment.TickCount64 - _lastBackdropVerMs > 15000 && IslandBackdrop.CaptureFailStreak >= 3)
@@ -254,28 +253,8 @@ namespace NotchPeninsula
         }
 
         // 设置面板切材质 / 换主题后调用（UI 线程）：标记过期，后台线程下一轮重抓
-        public static void RequestAcrylicRebuild()
-        {
-            IslandBackdrop.Expire();
-            // 启动时是「实体」材质的机器，切到玻璃时放大镜还没建过 —— 这里补一次，
-            // 走消息是为了保证它一定发生在 UI 线程（本方法也可能被系统主题事件那条线调用）
-            EnsureMagnifier(force: false);
-        }
+        public static void RequestAcrylicRebuild() => IslandBackdrop.Expire();
 
-        /// <summary>
-        /// 把「放大镜初始化」送到 UI 线程上执行。force = true 会拆掉旧的重建一遍（手动重试）。
-        /// </summary>
-        public static void EnsureMagnifier(bool force)
-        {
-            IntPtr h = InstanceHandle;
-            if (h != IntPtr.Zero)
-                Win32.PostMessage(h, MagNative.WM_APP_ENSURE_MAG, force ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
-        }
-
-        private static void ShutdownIslandBackdrop()
-        {
-            IslandBackdrop.Stop();
-
-        }
+        private static void ShutdownIslandBackdrop() => IslandBackdrop.Stop();
     }
 }

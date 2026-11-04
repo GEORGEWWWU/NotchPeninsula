@@ -207,6 +207,9 @@ namespace NotchPeninsula
         // 用于跟踪内容状态，实现 0.3s 叠化过渡
         private int _lastDisplayState = -1;
         private DateTime _stateChangeTime;
+
+        // 画布栈深度异常的日志节流
+        private long _canvasDepthLogMs;
         // DPI 缩放相关
         private float _dpiScale = 1f;
         private int _scaledWidth;
@@ -403,8 +406,8 @@ namespace NotchPeninsula
             Renderer.ResetCaptureAffinity();
             SetupIslandDropTarget();
 
-            // 抓屏后端不再需要窗口侧初始化：DXGI 用自己的 D3D11 设备（见 Core/DxgiBackdrop.cs），
-            // 首帧在后台线程懒建。放大镜 API 已下线。
+            // 抓屏后端不需要窗口侧初始化：DXGI 用自己的 D3D11 设备（见 Core/DxgiBackdrop.cs），
+            // 首帧在后台线程懒建。
             _renderThread = new Thread(RenderThreadLoop)
             {
                 IsBackground = true,
@@ -611,7 +614,7 @@ namespace NotchPeninsula
             // 这一句原本是 Environment.Exit(0)，而它跑在托盘菜单的窗口过程里（Execute ← 鼠标消息 ←
             // DispatchMessage），等于在 user32 的栈帧上做 ExitProcess：WM_DESTROY 永远不会来，
             // 注销热键 / 撤销拖放目标 / 停抓屏线程 / MagUninitialize 全部被跳过。进程于是带着一个还在
-            // 全屏 BitBlt 的线程、没反初始化的放大镜 API，以及还握着 SetCapture 的菜单窗口被强杀，
+            // 全屏 BitBlt 的线程、没释放的抓屏后端，以及还握着 SetCapture 的菜单窗口被强杀，
             // Windows 把这判成 fail-fast，每次退出都弹「发生快速异常检测失败……进程立即终止」（0xC0000409）。
             // 改成投一记 WM_CLOSE：窗口正常销毁 → WM_DESTROY 收尾 → PostQuitMessage → Run() 返回
             //   → Main 正常 return，CLR 才会按部就班地关掉 COM、跑终结器、收线程。
@@ -640,7 +643,7 @@ namespace NotchPeninsula
             }
             catch { }
 
-            // 后台抓屏线程（NPS-Backdrop / 放大镜）：必须在 Environment.Exit 之前显式停掉。
+            // 后台抓屏线程（NPS-Backdrop）：必须在 Environment.Exit 之前显式停掉。
             // 退出走托盘「退出」时不经过 WM_DESTROY，WM_DESTROY 那条 ShutdownIslandBackdrop 不会跑；
             // 这两条线程不停，Environment.Exit 拆除阶段会把它们从 unsafe 抓屏途中强杀 ⇒ 未处理异常
             // ⇒ Fail Fast，每次退出都弹。这里补一次，与 WM_DESTROY 那次幂等。
@@ -1426,10 +1429,12 @@ namespace NotchPeninsula
             // 亚克力背板：与胶囊同口径抓一次（几何没变就什么都不做），本帧绘制直接用
             SyncIslandBackdrop();
 
-            // 存档矩阵状态，避免缩放无限叠加
-            // 关键是"回滚到基线"而不是"Restore 一次"：异常可能发生在 Draw 内部的第 N 级 save 之后，
+            // 存档矩阵状态，避免缩放无限叠加。
+            // 关键是「回滚到基线」而不是「Restore 一次」：Draw 内部有多级 save（图层 / 裁切 / 平移），
+            // 其中任何一级被插件多弹一次，单次 Restore 就会把这次的 Scale 留在画布上，下一帧再叠一遍，
+            // 几帧之后岛内所有内容都画到窗口外 —— 观感就是「岛还在，里面什么都不显示」。
+            int saveBase = canvas.SaveCount;
             canvas.Save();
-            int saveBaseline = canvas.SaveCount;
             try
             {
                 // 让底层 C++ 引擎接管坐标放大
@@ -1440,14 +1445,23 @@ namespace NotchPeninsula
 
                 Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
                 tDrawDone = Environment.TickCount64;
-
-                // 恢复原始矩阵状态
-                canvas.Restore();
             }
-            catch
+            finally
             {
-                try { canvas.RestoreToCount(saveBaseline); } catch { }
-                throw;
+                // 正常情况栈深应只剩这次 canvas.Save()；不等就说明有 save/restore 没配对（宿主或插件），
+                // 留一行证据，然后无条件回卷 —— 谁的错都不能把画布状态带进下一帧。
+                int nowDepth = canvas.SaveCount;
+                if (nowDepth != saveBase + 1)
+                {
+                    long tDepth = Environment.TickCount64;
+                    if (tDepth - _canvasDepthLogMs >= 2000)
+                    {
+                        _canvasDepthLogMs = tDepth;
+                        Logger.Warn($"[渲染] 画布栈深度异常：期望 {saveBase + 1}，实际 {nowDepth}"
+                            + "（Draw 内部有 save/restore 未配对，已强制回卷）");
+                    }
+                }
+                try { canvas.RestoreToCount(saveBase); } catch { }
             }
 
             // 完全隐藏且动画已停 → 整帧都是全透明的，画了也白画，更别提那次
@@ -1825,12 +1839,11 @@ namespace NotchPeninsula
                     // 显示器拔插 / 分辨率变化：作废缓存的显示器矩形，
                     // 下一帧 UpdateWindow 会重算并顺手夹紧越界的目标下标。
                     _cachedMonitorIndex = -1;
-                    // 拓扑刚变化时，抓屏/放大镜手里还拿着上一轮的桌面坐标：先整体作废，
-                    // 别把旧矩形喂给 MagSetWindowSource / BitBlt。上传基准也一起作废（窗口位置会变）。
+                    // 拓扑刚变化时，抓屏线程手里还拿着上一轮的桌面坐标：先整体作废，
+                    // 别把旧矩形喂给 BitBlt。上传基准也一起作废（窗口位置会变）。
                     InvalidateUploadBaseline();
                     IslandBackdrop.SetTarget(0, 0, 0, 0);
                     IslandBackdrop.Expire();
-                    MagnifierBackdrop.OnDisplayChange();
                     break;
 
                 case Win32.WM_SETCURSOR:

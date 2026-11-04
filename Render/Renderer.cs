@@ -198,6 +198,9 @@ namespace NotchPeninsula
         // 诊断：背板为空只报一次（玻璃模式下背板为空 = 玻璃层整帧不画）
         private static bool _backdropNullLogged;
 
+        // 「内容整体不可见」诊断的日志节流
+        private static long _alphaDiagMs;
+
         public static event Action? StandbyActiveChanged;
 
         public static bool StandbyToggleByDoubleClick { get; set; } = false;
@@ -213,7 +216,7 @@ namespace NotchPeninsula
         // 与上面两种互斥。合成与缓存完全独立（LiquidGlass2），互不影响。
         public static bool IslandLiquidGlass2 { get; set; } = false;
 
-        /// <summary>两种液态玻璃的并集：抓屏、放大镜、涂层置零等处只关心「是不是玻璃材质」。</summary>
+        /// <summary>两种液态玻璃的并集：抓屏、涂层置零等处只关心「是不是玻璃材质」。</summary>
         public static bool IslandAnyGlass => IslandLiquidGlass || IslandLiquidGlass2;
 
         /// <summary>材质编号（设置页 / 引导页共用）：0 实体，1 亚克力，2 液态玻璃，3 液态玻璃 2。</summary>
@@ -481,10 +484,6 @@ namespace NotchPeninsula
                         if (glass != null)
                         {
                             canvas.DrawBitmap(glass, gdst, _acrylicPaint);
-                            // 临时调试导出（注册表 GlassDump=1 才生效）：真实玻璃位图 + 背板 + 参数
-                            if (IslandLiquidGlass2)
-                                GlassDebug.Dump(glass, backdrop, gsrc, gdst, gW, currentHeight,
-                                    flareX > 0f ? 0f : MathF.Abs(rTopY), rBottom);
                         }
                         else
                             canvas.DrawImage(backdrop, AcrylicBackdropSrc,
@@ -536,6 +535,19 @@ namespace NotchPeninsula
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
 
                 byte alpha = (byte)(255 * startupProgress * transitionAlpha);
+                // 诊断：启动淡入早已结束、内容却仍近乎全透明 —— 只可能是状态机在反复重置
+                // （每次状态切换都把 _stateChangeTime 刷成「现在」，transitionAlpha 就永远起不来）。
+                // 这一档的表现正是「岛还在，里面的文字和组件全都不显示」，留一行证据便于对时间点。
+                if (alpha < 8 && startupProgress > 0.99f)
+                {
+                    long tA = Environment.TickCount64;
+                    if (tA - _alphaDiagMs >= 2000)
+                    {
+                        _alphaDiagMs = tA;
+                        Logger.Warn($"[渲染] 内容透明度只有 {alpha}/255（transitionAlpha={transitionAlpha:F2}），"
+                            + "岛内元素会整体不可见");
+                    }
+                }
                 float textOffsetY = 0f;
 
                 // 仅恢复原版代码中软件刚启动时的位移，不影响状态切换
