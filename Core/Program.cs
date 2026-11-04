@@ -119,28 +119,44 @@ namespace NotchPeninsula
                         {
                             Program.SaveSetting("TargetMonitorIndex", byHardwareId);
                             Program.SyncTunerMonitorMirror(byHardwareId);
+                            if (rememberedMonitor != byHardwareId)
+                                Program.SaveSetting("TargetMonitorIndex_Remembered", byHardwareId);
                             Logger.Info($"[显示器] 按硬件 ID 还原目标显示器：下标 {loadedMonitor} → {byHardwareId}（{savedMonitorId}）");
                         }
                     }
-                    else if (monitorCount > 0 && loadedMonitor >= 0 && loadedMonitor < monitorCount)
+                    else if (string.IsNullOrEmpty(savedMonitorId)
+                             && monitorCount > 0 && loadedMonitor >= 0 && loadedMonitor < monitorCount)
                     {
+                        // 老配置（还没记过硬件 ID）：只能先按旧下标走，
+                        // 同时把当前这块屏的身份补记下来，之后就靠硬件 ID 认屏了。
                         Renderer.TargetMonitorIndex = loadedMonitor;
                         Renderer.RememberedMonitorIndex = loadedMonitor;
                         if (rememberedMonitor != loadedMonitor)
                             Program.SaveSetting("TargetMonitorIndex_Remembered", loadedMonitor);
-                        // 老配置没存过硬件 ID：把当前这块屏的身份补记下来
-                        if (string.IsNullOrEmpty(savedMonitorId))
-                        {
-                            string? hwid = MonitorIdentity.HardwareIdOfIndex(loadedMonitor);
-                            if (!string.IsNullOrEmpty(hwid)) Program.SaveSetting("TargetMonitorHardwareId", hwid);
-                        }
+                        string? hwid = MonitorIdentity.HardwareIdOfIndex(loadedMonitor);
+                        if (!string.IsNullOrEmpty(hwid)) Program.SaveSetting("TargetMonitorHardwareId", hwid);
                     }
                     else
                     {
+                        // 有硬件 ID 但此刻解析不到（目标屏还没唤醒 / 被 KVM 切走了）：
+                        // 绝不能退回去用注册表里的裸下标 —— 它在这个进程里可能指向完全
+                        // 另一块屏。先落到记忆值或主屏，只在内存里兜底，不写注册表；
+                        // 目标屏一上线，UpdateMonitorBounds 会按硬件 ID 自己纠正回来。
                         int fallback = (monitorCount > 0 && rememberedMonitor >= 0 && rememberedMonitor < monitorCount)
-                            ? rememberedMonitor : 0;
+                            ? rememberedMonitor
+                            : MonitorIdentity.PrimaryIndex();
+                        if (fallback < 0) fallback = 0;
                         Renderer.TargetMonitorIndex = fallback;
-                        Renderer.RememberedMonitorIndex = fallback;
+                        Renderer.RememberedMonitorIndex = rememberedMonitor;
+                        Logger.Info($"[显示器] 目标屏暂时解析不到（{savedMonitorId}），本次先兜底到下标 {fallback}");
+                    }
+
+                    // 枚举顺序在各次进程之间会浮动，把这份清单打出来，排查时才有据可依。
+                    var allScreens = System.Windows.Forms.Screen.AllScreens;
+                    for (int mi = 0; mi < allScreens.Length; mi++)
+                    {
+                        var sc = allScreens[mi];
+                        Logger.Info($"[显示器] [{mi}] {sc.DeviceName} primary={sc.Primary} bounds={sc.Bounds} hwid={MonitorIdentity.HardwareIdOfDevice(sc.DeviceName)}");
                     }
                     // 越界档位会让滑轨画到轨道外、且没有任何选中圆点（看起来就是"灰死轨"），必须夹回。
                     Renderer.BgOpacityLevel = Math.Clamp((int)key.GetValue("BgOpacityLevel", 4), 0, 4);
@@ -214,6 +230,26 @@ namespace NotchPeninsula
         // 灵动岛调校插件自己存了一份目标显示器下标，并负责把岛挪过去；
         // 宿主改了目标屏它不会自动跟着变，会把岛拽回旧位置。
         private const string TunerMonitorMirrorKey = "Plugin.com.nansai.islandtuner.monitor";
+
+        /// <summary>读回用户选中的那块屏的硬件 ID（身份），没存过返回空串。</summary>
+        public static string SavedTargetMonitorHardwareId()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"SOFTWARE\NotchPeninsula");
+                return key?.GetValue("TargetMonitorHardwareId") as string ?? "";
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>当前下标指向的屏，是否就是用户选中的那一块（以硬件 ID 为准）。</summary>
+        public static bool IsTargetMonitor(int index)
+        {
+            string saved = SavedTargetMonitorHardwareId();
+            if (string.IsNullOrEmpty(saved)) return true;   // 老配置没有身份，无从校验，按兼容处理
+            string? cur = MonitorIdentity.HardwareIdOfIndex(index);
+            return !string.IsNullOrEmpty(cur) && string.Equals(cur, saved, StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>宿主纠正过目标下标后，把插件那份镜像值也改成同一个下标（没装插件就什么都不做）。</summary>
         public static void SyncTunerMonitorMirror(int index)
