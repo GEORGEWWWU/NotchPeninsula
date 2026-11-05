@@ -61,13 +61,15 @@ namespace NotchPeninsula
         private float _startStyleProgress = Renderer.NotchStyle;
         private float _targetStyleProgress = Renderer.NotchStyle;
         private bool _isStyleAnimating = false;
-        private DateTime _styleAnimStartTime;
+        // 动画起点一律用 Stopwatch 时间戳（单调、亚毫秒）：DateTime.Now 会被系统校时回拨，
+        // 差值变负 ⇒ 动画进度卡在起点，内容层会一直停在全透明。
+        private long _styleAnimStartTs;
 
         // Toast 状态控制
         private ToastData? _currentToast = new ToastData();
         public ToastData? CurrentToast => _currentToast;
         private DateTime _toastEndTime;
-        private DateTime _animStartTime;
+        private long _animStartTs;
         private readonly IntPtr _hCursorArrow;
         private readonly SystemSettingsManager audio;
         private readonly IntPtr _hCursorHand;
@@ -159,7 +161,7 @@ namespace NotchPeninsula
         private float _targetY = 0f;
         private float _startY = 0f;
         private bool _isYAnimating = false;
-        private DateTime _yAnimStartTime;
+        private long _yAnimStartTs;
         private bool _isManuallyExpanded = false; // 用户是否点击了尾巴展开
         // 落到岛体之外，被兜底轮询误判：
         //     —— 用户看到的是「抽一下又回去了」。
@@ -206,7 +208,12 @@ namespace NotchPeninsula
         public static bool _isPassthroughAwake = false; // 本体是否已被唤醒并锁定交互
         // 用于跟踪内容状态，实现 0.3s 叠化过渡
         private int _lastDisplayState = -1;
-        private DateTime _stateChangeTime;
+        private long _stateChangedAtTs;
+
+        // 状态切换诊断：_rawFlipCount 计原始变化（含抖动），每秒最多一行日志
+        private int _rawFlipCount;
+        private long _stateStatMs;
+        private long _alphaZeroLogMs;
 
         // 画布栈深度异常的日志节流
         private long _canvasDepthLogMs;
@@ -1241,13 +1248,13 @@ namespace NotchPeninsula
             {
                 _startY = _currentY;
                 _targetY = expectedTargetY;
-                _yAnimStartTime = DateTime.Now;
+                _yAnimStartTs = Stopwatch.GetTimestamp();
                 _isYAnimating = true;
             }
 
             if (_isYAnimating)
             {
-                double elapsedY = (DateTime.Now - _yAnimStartTime).TotalSeconds;
+                double elapsedY = (Stopwatch.GetTimestamp() - _yAnimStartTs) / (double)Stopwatch.Frequency;
 
                 if (elapsedY >= SpringDurationSeconds)
                 {
@@ -1269,12 +1276,36 @@ namespace NotchPeninsula
                 bool currentActive = _media.IsActive;
 
                 int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0);
+                long stateNowTs = Stopwatch.GetTimestamp();
+                long stateNowMs = Environment.TickCount64;
+
+                // 原始变化计数（含抖动）：每秒最多一行，用来区分「状态源在抖」与「叠化计时坏了」
+                if (currentDisplayState != _lastDisplayState) _rawFlipCount++;
+                if (_rawFlipCount > 0 && stateNowMs - _stateStatMs >= 1000)
+                {
+                    _stateStatMs = stateNowMs;
+                    Logger.Warn($"[状态] 近 1s 状态变化 {_rawFlipCount} 次"
+                        + $"（当前={currentDisplayState} 已确认={_lastDisplayState}"
+                        + $" · 媒体激活={currentActive} 面板展开={Renderer.IsMediaExpanded} 通知={isToastActive}）");
+                    _rawFlipCount = 0;
+                }
+
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
-                    _stateChangeTime = DateTime.Now;
+                    _stateChangedAtTs = stateNowTs;
                 }
-                float transitionAlpha = (float)Math.Clamp((DateTime.Now - _stateChangeTime).TotalSeconds / 0.3, 0, 1);
+                double sinceSwitchMs = (stateNowTs - _stateChangedAtTs) * 1000.0 / Stopwatch.Frequency;
+                float transitionAlpha = (float)Math.Clamp(sinceSwitchMs / 300.0, 0, 1);
+
+                // 叠化进度起不来 = 内容整块全透明（布局与命中不受影响，看着就是「宽度在、什么都不显示」）。
+                if (transitionAlpha < 0.031f && stateNowMs - _alphaZeroLogMs >= 2000)
+                {
+                    _alphaZeroLogMs = stateNowMs;
+                    Logger.Warn($"[状态] 叠化进度只有 {transitionAlpha:F3}"
+                        + $"（距上次切换 {sinceSwitchMs:F1}ms，状态={currentDisplayState}，"
+                        + $"媒体激活={currentActive} 面板展开={Renderer.IsMediaExpanded} 通知={isToastActive}）");
+                }
 
                 float detailW = 0f, detailH = 0f;
                 bool detailOpen = !isToastActive && Renderer.TryGetDetailPageSize(out detailW, out detailH);
@@ -1351,13 +1382,13 @@ namespace NotchPeninsula
                 {
                     _startStyleProgress = _currentStyleProgress;
                     _targetStyleProgress = expectedStyleTarget;
-                    _styleAnimStartTime = DateTime.Now;
+                    _styleAnimStartTs = Stopwatch.GetTimestamp();
                     _isStyleAnimating = true;
                 }
 
                 if (_isStyleAnimating)
                 {
-                    double elapsedS = (DateTime.Now - _styleAnimStartTime).TotalSeconds;
+                    double elapsedS = (Stopwatch.GetTimestamp() - _styleAnimStartTs) / (double)Stopwatch.Frequency;
 
                     if (elapsedS >= SpringDurationSeconds)
                     {
@@ -1378,13 +1409,13 @@ namespace NotchPeninsula
                 _startHeight = _currentHeight;
                 _targetHeight = expectedTargetHeight;
 
-                _animStartTime = DateTime.Now;
+                _animStartTs = Stopwatch.GetTimestamp();
                 _isAnimating = true;
             }
 
             if (_isAnimating)
             {
-                double elapsed = (DateTime.Now - _animStartTime).TotalSeconds;
+                double elapsed = (Stopwatch.GetTimestamp() - _animStartTs) / (double)Stopwatch.Frequency;
 
                     if (elapsed >= SpringDurationSeconds)
                     {
