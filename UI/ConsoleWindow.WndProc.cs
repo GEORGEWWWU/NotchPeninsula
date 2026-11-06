@@ -81,6 +81,7 @@ namespace NotchPeninsula
             bool newHoveredGlassReset = false;    // 卡底「恢复默认参数」
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             int newHoveredBlurMode = -1;   // 个性化卡第三行：背景模糊（0 原模糊 / 1 高斯模糊）
+            int newHoveredCapture = -1;    // 个性化卡第四行：抓屏方式（0 默认 / 1 DXGI / 2 GDI）
             if (_selectedTab == 5)
             {
                 float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
@@ -99,6 +100,11 @@ namespace NotchPeninsula
                 if (HitBlurModeRow(x, y))
                     newHoveredBlurMode = SegmentIndexAt(BlurModeLabels, BLUR_MODE_SEG_W, fitLabels: false,
                         dx: x - BlurModeSegX);
+
+                // 第四行「抓屏方式」：三档分段，同上。
+                if (HitCaptureRow(x, y))
+                    newHoveredCapture = SegmentIndexAt(CaptureBackendLabels, CAPTURE_SEG_W, fitLabels: true,
+                        dx: x - CaptureSegX);
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
@@ -802,6 +808,7 @@ namespace NotchPeninsula
                 //    于是鼠标只停在这一行时整块 if 不成立 → 悬停永远不更新，
                 //    表现为「控件画得出来、高亮不亮、点了没反应」。
                 newHoveredBlurMode != _hoveredBlurModeIndex ||
+                newHoveredCapture != _hoveredCaptureIndex ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
@@ -844,6 +851,7 @@ namespace NotchPeninsula
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                 _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
                 _hoveredBlurModeIndex = newHoveredBlurMode;
+                _hoveredCaptureIndex = newHoveredCapture;
                 _toastToggleHovered = newToastToggleHovered;
                 _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
                 _focusHideToggleHovered = newFocusHideToggleHovered;

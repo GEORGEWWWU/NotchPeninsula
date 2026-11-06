@@ -109,7 +109,7 @@ namespace NotchPeninsula
             int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, capBaseY + _scaledHeight) - capY;
             // 玻璃只用到屏幕上边一条，整块画布那么大一张图没必要。
             // 按 32px 量化，免得胶囊高度一动就重抓。
-            if (glass && DxgiBackdrop.Available && capH > 120)
+            if (glass && IslandBackdrop.DxgiAllowed && DxgiBackdrop.Available && capH > 120)
             {
                 int need = (int)Math.Ceiling((_currentHeight + 60f) * _dpiScale);
                 if (need < 120) need = 120;

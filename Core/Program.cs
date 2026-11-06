@@ -90,6 +90,9 @@ namespace NotchPeninsula
                     Renderer.GlassGaussBackdrop =
                         (int)key.GetValue("GlassBackdropBlur", key.GetValue("HideIslandInCapture", 0)) != 0;
 
+                    // 抓屏后端：0 = 默认（DXGI 优先、判死后退 GDI），1 = 强制 DXGI，2 = 只用 GDI。
+                    IslandBackdrop.CaptureBackend = (int)key.GetValue("GlassCaptureBackend", 0);
+
                     // 待机显示内容：新键存插件 Key（空串 = 空白）。
                     // 老键 StandbyScene 存的是 1/2/3 的场景号，只在没写过新键时用于迁移。
                     string? savedSceneKey = key.GetValue("StandbySceneKey") as string;

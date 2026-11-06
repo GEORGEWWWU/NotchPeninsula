@@ -100,11 +100,11 @@ namespace NotchPeninsula
 
         private const float THEME_CARD_Y = CARD_TOP_Y;
 
-        // 两行：主题配色 + 背景材质；液态玻璃再多一行「背景模糊」两档分段。
-        // 只在这一档出现 —— 实体 / 亚克力没有"玻璃下透什么"这回事。
-        // 高 180 = 材质分段底（108）+ 8 呼吸 + 分段行 56 + 8 底部内边距。
-        // ⚠️ 112 那版把新增行叠到卡外画：控件和副标题都露在卡片下面，看着像浮在两张卡中间。
-        private static float THEME_CARD_H => Renderer.IslandAnyGlass ? 180f : 112f;
+        // 两行：主题配色 + 背景材质；液态玻璃再多两行（背景模糊 / 抓屏方式）。
+        // 这两行只在这一档出现 —— 实体 / 亚克力没有"玻璃下透什么"这回事。
+        // 高 236 = 材质分段底（108）+ 8 呼吸 + 模糊行 56 + 抓屏行 56 + 8 底部内边距。
+        // ⚠️ 每一行都要算进卡高：写死的话新增行会画到卡片外面，看着像浮在两张卡中间。
+        private static float THEME_CARD_H => Renderer.IslandAnyGlass ? 236f : 112f;
 
         // 「背景模糊」这一行相对卡片顶部的偏移（材质分段底 108，留 8px 呼吸）
         private const float BLUR_MODE_DY = 116f;
@@ -126,6 +126,40 @@ namespace NotchPeninsula
             => Renderer.IslandAnyGlass
                && x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_RM
                && y >= BlurModeSegY - 6f && y <= BlurModeSegY + BLUR_MODE_H;
+
+        // ---- 第四行：抓屏方式（仅液态玻璃）----
+        // 三档：默认（自动判死后退 GDI）/ 强制 DXGI / 只用 GDI。
+        // 位置由模糊行派生，改模糊行的行高这里自动跟。
+        private const float CAPTURE_ROW_DY = BLUR_MODE_DY + BLUR_MODE_H;   // 172
+
+        private const float CAPTURE_ROW_H = 56f;
+
+        // 宽度取「卡片文字右缘 − 左侧标签与「实验性」徽标实测宽度 − 8px 呼吸」，
+        // 即这一行能给出的最大宽度；三档（默认 / DXGI / GDI（兼容））够用。
+        private static float CAPTURE_SEG_W =>
+            (WIDTH - CONTENT_TEXT_RM) - (CONTENT_TEXT_X
+                + _uiTextPaint.MeasureText("抓屏方式") + BADGE_GAP_X
+                + _badgeTextPaint.MeasureText("实验性") + BADGE_PAD_X * 2f + 8f);
+
+        private static float CaptureSegX => WIDTH - CONTENT_TEXT_RM - CAPTURE_SEG_W;
+
+        /// <summary>「抓屏方式」分段的顶边（窗口坐标）。</summary>
+        private static float CaptureSegY => TITLE_BAR_HEIGHT + THEME_CARD_Y + CAPTURE_ROW_DY;
+
+        private static readonly string[] CaptureBackendLabels = ["默认", "DXGI", "GDI（兼容）"];
+
+        /// <summary>分段下方那行小字：随当前档位变，说清这一档到底做了什么。</summary>
+        private static string CaptureBackendHint => IslandBackdrop.CaptureBackend switch
+        {
+            1 => "每轮都问 DXGI，不再自动判死 · 不支持时背景会变慢甚至不动",
+            2 => "只用位图回读，连 D3D 设备都不建 · 兼容性好，占用略高",
+            _ => "自动 · 优先 DXGI，连续拿不到画面就退回位图回读",
+        };
+
+        private static bool HitCaptureRow(float x, float y)
+            => Renderer.IslandAnyGlass
+               && x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_RM
+               && y >= CaptureSegY - 6f && y <= CaptureSegY + CAPTURE_ROW_H;
 
         private static float OPACITY_CARD_Y => THEME_CARD_Y + THEME_CARD_H + CARD_GAP;   // 134（非玻璃2）/ 202（玻璃2）
 

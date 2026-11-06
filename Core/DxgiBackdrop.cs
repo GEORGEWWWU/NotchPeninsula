@@ -139,11 +139,16 @@ namespace NotchPeninsula
         private static int Dup_AcquireNextFrame(IntPtr dup, uint timeoutMs, FrameInfo* info, out IntPtr resource)
         {
             fixed (IntPtr* pr = &resource)
+            {
+                // 句柄为空说明会话已经销毁（ACCESS_LOST 分支会置零）：这里必须挡住，
+                // 否则直接解引用空指针取 vtable → 原生访问违例 0xc0000005，托管层 catch 不住。
+                if (dup == IntPtr.Zero) { resource = IntPtr.Zero; return DXGI_ERROR_ACCESS_LOST; }
                 return ((delegate* unmanaged<IntPtr, uint, FrameInfo*, IntPtr*, int>)Slot(dup, 8))(dup, timeoutMs, info, pr);
+            }
         }
 
         private static int Dup_ReleaseFrame(IntPtr dup)
-            => ((delegate* unmanaged<IntPtr, int>)Slot(dup, 11))(dup);
+            => dup == IntPtr.Zero ? 0 : ((delegate* unmanaged<IntPtr, int>)Slot(dup, 11))(dup);
 
         private static int Device_CreateTexture2D(IntPtr device, Tex2DDesc* desc, out IntPtr tex)
         {
@@ -302,7 +307,8 @@ namespace NotchPeninsula
                                     Logger.Info($"[DXGI] 输出 {i} 带旋转（{d.Rotation}），该输出回退 GDI");
                                     o.DuplicateFailed = true;
                                 }
-                                else if (QI(output, IID_IDXGIOutput1, out IntPtr output1) >= 0)
+                                else if (QI(output, IID_IDXGIOutput1, out IntPtr output1) >= 0
+                                         && output1 != IntPtr.Zero)
                                 {
                                     o.Output1 = output1;
                                 }
@@ -403,6 +409,19 @@ namespace NotchPeninsula
             _inited = false;
         }
 
+        /// <summary>
+        /// 用户切换抓屏后端 / 手动重试 DXGI 时调用：释放现有 D3D 与复制会话，并清掉「永久失败」标记，
+        /// 下一次 TryGrab 重新建一遍。
+        /// ⚠️ 只能在抓屏线程上调用：这里释放的正是 TryGrab 正在用的对象，
+        ///    从 UI 线程释放会与进行中的抓取撞上，后果同样是原生访问违例。
+        /// </summary>
+        public static void Reinitialize()
+        {
+            Release();
+            _failed = false;
+            _everFrame = false;
+        }
+
         // ================= 抓取 =================
 
         /// <summary>抓取结果。NoNewFrame 必须与 Unsupported 区分：前者要沿用上一帧，后者才回退 GDI。</summary>
@@ -438,6 +457,11 @@ namespace NotchPeninsula
             // 该输出还没有复制会话 → 建一个（失败就长期跳过这个输出）
             if (target.Dup == IntPtr.Zero)
             {
+                if (target.Output1 == IntPtr.Zero)
+                {
+                    target.DuplicateFailed = true;
+                    return GrabResult.Unsupported;
+                }
                 int hrd = Output1_DuplicateOutput(target.Output1, _device, out IntPtr dup);
                 if (hrd < 0 || dup == IntPtr.Zero)
                 {
@@ -458,6 +482,13 @@ namespace NotchPeninsula
                 //    改成第一次用 300ms 真正等一帧，拿到之后再切成非阻塞轮询。
             }
 
+            // ⚠️ 会话句柄先快照到局部：下面 AcquireNextFrame 与 ReleaseFrame 必须落在**同一个**
+            //    对象上。直接读字段 target.Dup 有两个坑：ACCESS_LOST 分支会把字段置零；
+            //    万一有第二条抓屏线程并发改它，finally 就会拿零指针去取 vtable ——
+            //    原生访问违例 0xc0000005，托管层 catch 不住，进程直接消失。
+            IntPtr session = target.Dup;
+            if (session == IntPtr.Zero) return GrabResult.Unsupported;
+
             // 双保险：即便等过一轮，拿到的仍可能是空帧（整幅纯黑 / alpha=0）。
             // 黑帧先落进 dst 兜底，再要一帧覆盖它；第二帧还是黑就认了
             // （用户桌面本来就是纯黑时不该无限重试）。
@@ -472,12 +503,13 @@ namespace NotchPeninsula
                 // primed 之后用 0（纯非阻塞轮询）：DXGI 会把「自上次 ReleaseFrame 以来的最新帧」
                 // 留着，所以只要有变化就一定拿得到，不需要靠超时去等。
                 uint timeout = target.Primed ? 0u : 300u;
-                int hr = Dup_AcquireNextFrame(target.Dup, timeout, &info, out IntPtr res);
+                int hr = Dup_AcquireNextFrame(session, timeout, &info, out IntPtr res);
                 if (hr == DXGI_ERROR_ACCESS_LOST)
                 {
-                    // 显示器切换 / 全屏游戏 / UAC 提权：销毁会话，下次调用重建
-                    Marshal.Release(target.Dup);
-                    target.Dup = IntPtr.Zero;
+                    // 显示器切换 / 全屏游戏 / UAC 提权：销毁会话，下次调用重建。
+                    // 只在字段仍指向本次句柄时才置零 —— 否则会把别人刚建好的新会话抹掉。
+                    if (target.Dup == session) target.Dup = IntPtr.Zero;
+                    Marshal.Release(session);
                     return wrote ? GrabResult.Ok : GrabResult.NoNewFrame;
                 }
                 if (hr == DXGI_ERROR_WAIT_TIMEOUT)
@@ -573,7 +605,7 @@ namespace NotchPeninsula
                 }
                 finally
                 {
-                    Dup_ReleaseFrame(target.Dup);
+                    Dup_ReleaseFrame(session);
                     Marshal.Release(res);
                 }
 

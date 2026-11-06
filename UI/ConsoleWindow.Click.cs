@@ -532,6 +532,20 @@ namespace NotchPeninsula
                     Render();
                 }
             }
+            else if (_selectedTab == 5 && HitCaptureRow(clickX, clickY))
+            {
+                // 抓屏方式：0 = 默认（DXGI 优先、判死后退 GDI），
+                //           1 = 强制 DXGI，2 = 只用 GDI（兼容）。
+                // 落点重算一次档位（同背景模糊行：鼠标没发过 MOVE 时 hover 还是旧值）。
+                int backend = SegmentIndexAt(CaptureBackendLabels, CAPTURE_SEG_W, fitLabels: true,
+                    dx: clickX - CaptureSegX);
+                if (backend >= 0)
+                {
+                    IslandBackdrop.CaptureBackend = backend;
+                    Program.SaveSetting("GlassCaptureBackend", backend);
+                    Render();
+                }
+            }
             else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
             {
                 // 切到「液态玻璃 2」之前先跑一遍合成链路自检（纯内存小图，不碰抓屏）：
