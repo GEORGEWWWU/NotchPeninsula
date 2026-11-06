@@ -611,6 +611,15 @@ namespace NotchPeninsula
         public string Title { get => _title; set => _title = NormalizeText(value); }
         public string Body { get => _body; set => _body = NormalizeText(value); }
         public string Aumid { get; set; } = "";
+
+        /// <summary>
+        /// 通知自带的应用启动协议（QQ 是 <c>ntqq-notification://externalCommand?subcmd=openExternalWindow...</c>）。
+        /// 由 <see cref="ToastAvatarProbe"/> 在查头像的同一趟里顺带填上。
+        /// 点通知时优先用它交回给应用自己 —— QQ 关到托盘后窗口是「隐藏」态，
+        /// 外部 ShowWindow 硬拽出来的只是一个不接收输入的僵界面，必须让 QQ 自己开。
+        /// </summary>
+        public string LaunchUri { get; set; } = "";
+
         public uint NotificationId { get; set; }
         public UserNotification? InternalNotification { get; set; }
         public string ProcessName { get; set; } = "";

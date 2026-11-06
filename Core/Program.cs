@@ -373,25 +373,25 @@ namespace NotchPeninsula
 
                             try
                             {
-                                var (ok, msg) = await AppActivator.active_app(window.CurrentToast.Aumid);
-                                if (!ok)
+                                var toast = window.CurrentToast;
+
+                                // 通知自带启动协议时优先交给应用自己（QQ 是 ntqq-notification://…）。
+                                // 后台那趟扫描可能还没跑到，点击时现补一刀，几十毫秒。
+                                if (string.IsNullOrEmpty(toast.LaunchUri))
                                 {
-                                    Logger.Debug($"[AppActivator] 唤醒失败：{msg}");
-                                    // 置前候选先 AUMID 再显示名：AUMID 可能整串匹配不到进程
-                                    //（如 WorkBuddy.WorkBuddy），显示名反而就是进程名。
-                                    if (!string.IsNullOrWhiteSpace(window.CurrentToast.Aumid))
-                                    {
-                                        var (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.Aumid);
-                                        if (!ok2 && !string.IsNullOrWhiteSpace(window.CurrentToast.AppName))
-                                            (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.AppName);
-                                        if (!ok2)
-                                            Logger.Debug($"[AppActivator] 按应用名置前失败：{msg2}");
-                                    }
-                                }else window.clicked_info = true;
+                                    string? late = ToastAvatarProbe.TryResolveLaunchNow(toast.Title, toast.Body);
+                                    if (!string.IsNullOrEmpty(late)) toast.LaunchUri = late;
+                                }
+
+                                var (ok, msg) = await AppActivator.active_app(
+                                    toast.Aumid, toast.AppName, toast.Title, toast.LaunchUri);
+
+                                if (ok) window.clicked_info = true;
+                                else Logger.Warn($"[AppActivator] 唤醒失败：{msg}");
                             }
                         catch (Exception ex)
                         {
-                            Logger.Debug($"[AppActivator] 异步唤醒异常：{ex.Message}");
+                            Logger.Error("[AppActivator] 异步唤醒异常", ex);
                         }
                     }
                 };
