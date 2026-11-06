@@ -243,7 +243,13 @@ namespace NotchPeninsula
             SaveSetting("TargetMonitorIndex", index);
             SaveSetting("TargetMonitorIndex_Remembered", index);
             string? hwid = MonitorIdentity.HardwareIdOfIndex(index);
-            if (!string.IsNullOrEmpty(hwid)) SaveSetting("TargetMonitorHardwareId", hwid);
+            // 必须覆盖写：万一这次没解析出身份，留着上一块屏的硬件 ID 会让用户的新选择
+            // 被旧屏拉回去（下一次解析仍认旧屏）。
+            SaveSetting("TargetMonitorHardwareId", hwid ?? "");
+            Logger.Info($"[显示器] 用户选择目标显示器 → 下标 {index}（{hwid}）");
+            // 关键：拓扑没变，NotchWindow 里按拓扑签名缓存的硬件 ID 解析结果不会自动失效。
+            // 不作废就会在下一帧把 TargetMonitorIndex 改回旧屏，表现成「选完瞬间跳回」。
+            NotchWindow.OnTargetMonitorPreferenceChanged();
         }
 
         /// <summary>读回用户选中的那块屏的硬件 ID（身份），没存过返回空串。</summary>
@@ -376,25 +382,25 @@ namespace NotchPeninsula
 
                             try
                             {
-                                var (ok, msg) = await AppActivator.active_app(window.CurrentToast.Aumid);
-                                if (!ok)
+                                var toast = window.CurrentToast;
+
+                                // 通知自带启动协议时优先交给应用自己（QQ 是 ntqq-notification://…）。
+                                // 后台那趟扫描可能还没跑到，点击时现补一刀，几十毫秒。
+                                if (string.IsNullOrEmpty(toast.LaunchUri))
                                 {
-                                    Logger.Debug($"[AppActivator] 唤醒失败：{msg}");
-                                    // 置前候选先 AUMID 再显示名：AUMID 可能整串匹配不到进程
-                                    //（如 WorkBuddy.WorkBuddy），显示名反而就是进程名。
-                                    if (!string.IsNullOrWhiteSpace(window.CurrentToast.Aumid))
-                                    {
-                                        var (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.Aumid);
-                                        if (!ok2 && !string.IsNullOrWhiteSpace(window.CurrentToast.AppName))
-                                            (ok2, msg2) = AppActivator.TryBringToFrontByAppName(window.CurrentToast.AppName);
-                                        if (!ok2)
-                                            Logger.Debug($"[AppActivator] 按应用名置前失败：{msg2}");
-                                    }
-                                }else window.clicked_info = true;
+                                    string? late = ToastAvatarProbe.TryResolveLaunchNow(toast.Title, toast.Body);
+                                    if (!string.IsNullOrEmpty(late)) toast.LaunchUri = late;
+                                }
+
+                                var (ok, msg) = await AppActivator.active_app(
+                                    toast.Aumid, toast.AppName, toast.Title, toast.LaunchUri);
+
+                                if (ok) window.clicked_info = true;
+                                else Logger.Warn($"[AppActivator] 唤醒失败：{msg}");
                             }
                         catch (Exception ex)
                         {
-                            Logger.Debug($"[AppActivator] 异步唤醒异常：{ex.Message}");
+                            Logger.Error("[AppActivator] 异步唤醒异常", ex);
                         }
                     }
                 };

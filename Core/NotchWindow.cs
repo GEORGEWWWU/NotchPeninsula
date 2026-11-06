@@ -359,6 +359,23 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 用户在设置里主动换了目标显示器：作废所有按「拓扑签名」缓存的解析结果。
+        /// 手动换屏并不改变拓扑，若不作废，UpdateMonitorBounds 会继续拿着旧硬件 ID，
+        /// 把刚写好的 Renderer.TargetMonitorIndex 又改回旧屏并回写注册表 ——
+        /// 用户看到的就是「选完立刻跳回去」。Onboarding 阶段窗口还没建也能安全调用。
+        /// </summary>
+        public static void OnTargetMonitorPreferenceChanged()
+        {
+            _resolvedTargetIndex = -2;   // 强制下次重读注册表里的 TargetMonitorHardwareId
+            _resolvedTargetHwid = "";
+            _lastMonitorSignature = "";
+            _cachedMonitorIndex = -1;    // 让下一帧 NeedsMonitorRefresh() 必为真
+            // 背板手里还拿着旧屏坐标，换屏后必须重抓，避免玻璃残影
+            IslandBackdrop.SetTarget(0, 0, 0, 0);
+            IslandBackdrop.Expire();
+        }
+
+        /// <summary>
         /// 按目标显示器的可用宽度收窄岛体上限：屏幕就是天花板，不能拿 1920 当死基准。
         /// 枚举不到屏幕、或算出非正数时保持原值 —— 这类失败绝不能把上限写成 0，那会让插件全部消失。
         /// </summary>
