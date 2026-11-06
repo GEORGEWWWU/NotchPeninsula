@@ -37,10 +37,12 @@ namespace NotchPeninsula
 
         private static readonly Encoding[] Encodings = [Encoding.UTF8, Encoding.Unicode];
 
-        /// <summary>后台把系统通知里的头像挂到这条通知上；不覆盖已存在的头像（插件/HTTP/MSP 给的那张优先）。</summary>
+        /// <summary>后台把系统通知里的头像挂到这条通知上；不覆盖已存在的头像（插件/HTTP/MSP 给的那张优先）。
+        /// 同一趟扫描顺手把 toast 的 <c>launch</c> 协议记到 <see cref="ToastData.LaunchUri"/> ——
+        /// 那是 QQ 这类 Electron 应用**唯一**能正确唤醒的入口（点了要能用，不能靠 ShowWindow 硬拽）。</summary>
         public static void ResolveInBackground(ToastData toast)
         {
-            if (toast.Avatar != null) return;
+            if (toast.Avatar != null && !string.IsNullOrEmpty(toast.LaunchUri)) return;
 
             string title = toast.Title;
             string body = toast.Body;
@@ -53,9 +55,24 @@ namespace NotchPeninsula
                     foreach (int delay in RetryDelaysMs)
                     {
                         if (delay > 0) Thread.Sleep(delay);
-                        if (toast.Avatar != null) return;
+                        if (toast.Avatar != null && !string.IsNullOrEmpty(toast.LaunchUri)) return;
 
-                        string? src = FindImageSrc(title, body);
+                        string? xml = FindToastXml(title, body);
+                        if (string.IsNullOrEmpty(xml)) continue;
+
+                        if (string.IsNullOrEmpty(toast.LaunchUri))
+                        {
+                            string? uri = LaunchUriOf(xml);
+                            if (uri != null)
+                            {
+                                toast.LaunchUri = uri;
+                                Logger.Info($"[通知启动] 记下通知自带启动协议: {uri}");
+                            }
+                        }
+
+                        if (toast.Avatar != null) continue;
+
+                        string? src = ImageSrcOf(xml);
                         if (string.IsNullOrEmpty(src)) continue;
 
                         var bmp = Load(src);
@@ -82,7 +99,26 @@ namespace NotchPeninsula
             });
         }
 
-        private static string? FindImageSrc(string title, string body)
+        /// <summary>
+        /// 点击那一刻现查一次启动协议。后台那趟可能还没跑到（通知刚落库就被点），
+        /// 也可能因为头像已经存在而提前收工；这里同步补一刀，几十毫秒，点击路径可以接受。
+        /// </summary>
+        internal static string? TryResolveLaunchNow(string title, string body)
+        {
+            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(body)) return null;
+            try
+            {
+                string? xml = FindToastXml(title, body);
+                return xml == null ? null : LaunchUriOf(xml);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"[通知启动] 点击时补查启动协议失败: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static string? FindToastXml(string title, string body)
         {
             string dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -93,10 +129,37 @@ namespace NotchPeninsula
                 byte[]? data = ReadTail(Path.Combine(dir, name));
                 if (data == null) continue;
 
-                string? src = Scan(data, title, body);
-                if (!string.IsNullOrEmpty(src)) return src;
+                string? xml = Scan(data, title, body);
+                if (!string.IsNullOrEmpty(xml)) return xml;
             }
             return null;
+        }
+
+        /// <summary>
+        /// 取 toast 的 <c>launch</c> 参数（QQ 是 <c>ntqq-notification://externalCommand?...</c>）。
+        /// 只认「看起来像协议 URI」的值：activationType=foreground 的普通参数传给它没用。
+        /// </summary>
+        private static string? LaunchUriOf(string toastXml)
+        {
+            int at = toastXml.IndexOf("<toast", StringComparison.OrdinalIgnoreCase);
+            if (at < 0) return null;
+
+            int end = toastXml.IndexOf('>', at);
+            if (end < 0) return null;
+
+            string openTag = toastXml.Substring(at, end - at);
+
+            int l = openTag.IndexOf("launch=", StringComparison.OrdinalIgnoreCase);
+            if (l < 0) return null;
+
+            int q1 = openTag.IndexOf('"', l + 7);
+            if (q1 < 0) return null;
+
+            int q2 = openTag.IndexOf('"', q1 + 1);
+            if (q2 <= q1) return null;
+
+            string uri = Unescape(openTag.Substring(q1 + 1, q2 - q1 - 1)).Trim();
+            return uri.Contains("://", StringComparison.Ordinal) ? uri : null;
         }
 
         private static byte[]? ReadTail(string path)
@@ -127,6 +190,7 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>在这段库数据里找「标题（和正文）对得上」的那条 toast，返回它自己的 &lt;toast&gt; 片段。</summary>
         private static string? Scan(byte[] data, string title, string body)
         {
             foreach (var enc in Encodings)
@@ -148,12 +212,8 @@ namespace NotchPeninsula
 
                     if (toast != null)
                     {
-                        string? src = ImageSrcOf(toast);
-                        if (!string.IsNullOrWhiteSpace(src))
-                        {
-                            if (body.Length == 0 || IsElementText(toast, body)) return src;
-                            titleOnly ??= src;
-                        }
+                        if (body.Length == 0 || IsElementText(toast, body)) return toast;
+                        titleOnly ??= toast;
                     }
 
                     at = data.AsSpan(0, at).LastIndexOf(needle);
