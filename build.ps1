@@ -151,6 +151,9 @@ try {
         '-c', 'Release'
         '-r', 'win-x64'
         '--self-contained', 'false'
+        # .NET 10 ignores the CLI switch when -r win-x64 is also present on some SDK builds,
+        # which bundles the whole Desktop Runtime (203 MB). Force the MSBuild property too.
+        '-p:SelfContained=false'
         '-p:PublishSingleFile=true'
         '-p:IncludeNativeLibrariesForSelfExtract=true'
         '-p:IncludeAllContentForSelfExtract=true'
