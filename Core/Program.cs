@@ -240,7 +240,13 @@ namespace NotchPeninsula
             SaveSetting("TargetMonitorIndex", index);
             SaveSetting("TargetMonitorIndex_Remembered", index);
             string? hwid = MonitorIdentity.HardwareIdOfIndex(index);
-            if (!string.IsNullOrEmpty(hwid)) SaveSetting("TargetMonitorHardwareId", hwid);
+            // 必须覆盖写：万一这次没解析出身份，留着上一块屏的硬件 ID 会让用户的新选择
+            // 被旧屏拉回去（下一次解析仍认旧屏）。
+            SaveSetting("TargetMonitorHardwareId", hwid ?? "");
+            Logger.Info($"[显示器] 用户选择目标显示器 → 下标 {index}（{hwid}）");
+            // 关键：拓扑没变，NotchWindow 里按拓扑签名缓存的硬件 ID 解析结果不会自动失效。
+            // 不作废就会在下一帧把 TargetMonitorIndex 改回旧屏，表现成「选完瞬间跳回」。
+            NotchWindow.OnTargetMonitorPreferenceChanged();
         }
 
         /// <summary>读回用户选中的那块屏的硬件 ID（身份），没存过返回空串。</summary>
