@@ -33,7 +33,39 @@ namespace NotchPeninsula
         // 渲染线程每帧告知一次当前材质；切换会触发过期重抓
         private static volatile bool _glass;
 
-        // 抓屏方式不暴露成设置项：玻璃走 DXGI Desktop Duplication，不可用自动回退 GDI StretchBlt。
+        // 玻璃优先走 DXGI Desktop Duplication，拿不到画面时回退 GDI StretchBlt；
+        // 用哪种由下面的 CaptureBackend 决定（个性化 → 抓屏方式）。
+
+        // 抓屏后端（个性化 → 抓屏方式）：0 = 默认，1 = 强制 DXGI，2 = 只用 GDI。
+        // 只影响玻璃：亚克力本来就只走 GDI。
+        private static volatile int _captureBackend;
+
+        // 后端刚被切过：由抓屏线程在下一轮循环开头自行释放 DXGI 资源（见 ThreadLoop）。
+        private static volatile bool _backendReset;
+
+        /// <summary>
+        /// 抓屏后端：0 = 默认（DXGI 优先，连续拿不到画面就自动退回 GDI）；
+        /// 1 = DXGI（每轮都问，不再自动判死）；2 = GDI（连 D3D 设备都不建）。
+        /// 切换立即生效：DXGI 资源由抓屏线程在下一轮循环开头自行释放并重建。
+        /// </summary>
+        public static int CaptureBackend
+        {
+            get => _captureBackend;
+            set
+            {
+                int v = Math.Clamp(value, 0, 2);
+                if (v == _captureBackend) return;
+                _captureBackend = v;
+                _backendReset = true;
+                Expire();          // 顺带清掉判死状态与背板，下一轮按新后端重抓
+            }
+        }
+
+        /// <summary>
+        /// 当前选的后端是否允许走 DXGI。渲染侧据此决定抓取矩形要不要只截屏幕顶部一条
+        /// （DXGI 是 1:1，整块画布那么大的拷贝纯属浪费；选了 GDI 就没有这个前提）。
+        /// </summary>
+        public static bool DxgiAllowed => _captureBackend != 2;
 
         // 本帧背板是否来自 DXGI Desktop Duplication（诊断与日志用）。
         // DXGI 复制的是合成后的桌面，**岛体一定在画面里**，所以擦除逻辑照旧执行。
@@ -91,6 +123,9 @@ namespace NotchPeninsula
 
         // ---- 后台线程独占 ----
         private static Thread? _thread;
+        // 抓屏线程只允许存在一条：Capture/TryGrab 会改写 DXGI 复制会话、staging、D3D 上下文，
+        // 两条线程同时跑就是重复 AcquireNextFrame/ReleaseFrame —— 原生访问违例，进程直接消失。
+        private static readonly object _threadLock = new();
         private static volatile bool _run;
         private static readonly AutoResetEvent _work = new(false);
         private static IntPtr _memDc, _hBitmap, _oldBitmap, _pBits;
@@ -346,7 +381,7 @@ namespace NotchPeninsula
         /// </summary>
         public static string DebugState
             => $"target={_tw}x{_th}@{_tx},{_ty} dirty={_dirty} expire={_expire} "
-             + $"disabled={_disabled} thread={(_thread != null)} lastMs={_lastMs} "
+             + $"disabled={_disabled} thread={(_thread?.IsAlive == true)} lastMs={_lastMs} "
              + $"alive={_contentAlive} deadStreak={_deadStreak} "
              + $"mask=({_maskSx0:F0},{_maskSy0:F0})-({_maskSx1:F0},{_maskSy1:F0})"
              + $" cap=阶段{CaptureFailStage}/连续失败{CaptureFailStreak}次";
@@ -443,25 +478,46 @@ namespace NotchPeninsula
             // ⚠️ 必须等线程真正退出：之前只 _run=false + Set 就走，线程多半还在 Capture() 的
             //    unsafe 块里（StretchBlt / EraseIsland，持着屏幕 DC 与 DIB 指针）。
             //    Environment.Exit 随后强杀它 ⇒ 未处理异常 ⇒ Fail Fast（每次退出都弹）。
-            var t = _thread;
+            Thread? t;
+            lock (_threadLock) t = _thread;
             if (t != null && !t.Join(2000))
+            {
+                // ⚠️ 这里**不能**把 _thread 置空：线程还活着，置空之后 EnsureThread 会再起一条，
+                //    两条线程并发往同一个 DXGI 复制会话里 AcquireNextFrame / ReleaseFrame，
+                //    重复释放是原生访问违例 0xc0000005（崩在 DxgiBackdrop.Dup_ReleaseFrame，
+                //    托管层 catch 不住，进程直接消失）。
+                //    留给 EnsureThread：它按 IsAlive 判断，旧线程真正退出之后才重建。
                 Warn("[IslandBackdrop] 抓屏线程未在 2s 内退出（已置 _run=false，迟早退；不强行 Abort）");
-            _thread = null;
+            }
+            else
+            {
+                // 只在字段仍指向这条已退出的线程时清空：期间可能已经有新线程接管
+                lock (_threadLock)
+                {
+                    if (ReferenceEquals(_thread, t)) _thread = null;
+                }
+            }
             var p = Interlocked.Exchange(ref _pending, null);
             p?.Dispose();
         }
 
         private static void EnsureThread()
         {
-            if (_thread != null) return;
-            _run = true;
-            _thread = new Thread(ThreadLoop)
+            lock (_threadLock)
             {
-                IsBackground = true,
-                Name = "NPS-Backdrop",
-                Priority = ThreadPriority.BelowNormal
-            };
-            _thread.Start();
+                // ⚠️ 必须判 IsAlive：Stop() 里 Join 超时会保留 _thread（不置空），
+                //    只判 != null 会把已经退出的线程当成还在跑，或者反过来在它还活着时重建。
+                var live = _thread;
+                if (live != null && live.IsAlive) return;
+                _run = true;
+                _thread = new Thread(ThreadLoop)
+                {
+                    IsBackground = true,
+                    Name = "NPS-Backdrop",
+                    Priority = ThreadPriority.BelowNormal
+                };
+                _thread.Start();
+            }
             Info("[背板] 抓屏线程已启动");
         }
 
@@ -481,6 +537,14 @@ namespace NotchPeninsula
                     var old = Interlocked.Exchange(ref _pending, null);
                     old?.Dispose();
                     _lastMs = 0;
+                }
+
+                // 抓屏后端刚被切过：在这里（抓屏线程自己、且没有抓取在进行）释放 DXGI 资源。
+                // 不能在 UI 线程释放 —— TryGrab 正在用这些对象，跨线程释放就是原生访问违例。
+                if (_backendReset)
+                {
+                    _backendReset = false;
+                    DxgiBackdrop.Reinitialize();
                 }
 
                 if (_disabled || _tw < 16 || _th < 16) continue;
@@ -729,11 +793,16 @@ namespace NotchPeninsula
             // 而 DXGI 只在 DWM 重新合成时才有新帧，切换亲和性后的那一次并不保证存在。
             bool GrabOnce(bool gdiOnly = false)
             {
+                // 抓屏后端：0 默认（下面那套自动判死）/ 1 强制 DXGI / 2 只用 GDI。
+                bool forceGdi = _captureBackend == 2;
+                bool forceDxgi = _captureBackend == 1;
+
                 // 启动后 8 秒一帧都没出过 → 判死。正常桌面在这段时间里几乎不可能完全没有 present
                 // （时钟、光标、任何窗口动画都会产生帧）；就算真是静止壁纸，判死的代价也只是
                 // 走 GDI 轮询 —— 而继续等它，代价是背景三秒才更新一次。
                 // ⚠️ 这条必须放在 tryDxgi 判断之前：判死之后 tryDxgi 恒为 false，放里面就再也走不到。
-                if (_glass && !_dxgiUnreliable && !DxgiBackdrop.HasProduced
+                // 用户手动选了「DXGI」就不替他判：他就是要这条路，慢也是他的选择。
+                if (!forceDxgi && _glass && !_dxgiUnreliable && !DxgiBackdrop.HasProduced
                     && _dxgiStartMs > 0
                     && Environment.TickCount64 - _dxgiStartMs >= DxgiStartupGiveUpMs)
                 {
@@ -743,12 +812,15 @@ namespace NotchPeninsula
                 }
 
                 // 是否值得调用 DXGI：
-                //   · 它这一辈子出过帧 → 每次都问（静止时零开销，有变化立刻给）
-                //   · 从没出过帧（本机 Intel HD 530 就是这样）→ 每 DxgiProbeMs 试一次，
-                //     其余时候直接 GDI —— 它给不出「桌面变没变」的任何信息，问它只会白等。
-                bool tryDxgi = _glass && !gdiOnly && !_dxgiUnreliable
-                    && (DxgiBackdrop.HasProduced
-                        || Environment.TickCount64 - _dxgiProbeMs >= DxgiProbeMs);
+                //   · 强制 DXGI → 每轮都问，不看历史（拿不到帧就落 GDI 兜底，不会给一块空玻璃）
+                //   · 默认档：它这一辈子出过帧 → 每次都问（静止时零开销，有变化立刻给）
+                //             从没出过帧（本机 Intel HD 530 就是这样）→ 每 DxgiProbeMs 试一次，
+                //             其余时候直接 GDI —— 它给不出「桌面变没变」的任何信息，问它只会白等。
+                bool tryDxgi = _glass && !gdiOnly && !forceGdi
+                    && (forceDxgi
+                        || (!_dxgiUnreliable
+                            && (DxgiBackdrop.HasProduced
+                                || Environment.TickCount64 - _dxgiProbeMs >= DxgiProbeMs)));
                 if (tryDxgi)
                 {
                     if (_dxgiStartMs == 0) _dxgiStartMs = Environment.TickCount64;

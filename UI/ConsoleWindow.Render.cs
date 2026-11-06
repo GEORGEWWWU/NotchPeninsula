@@ -1434,6 +1434,19 @@ namespace NotchPeninsula
                 // 否则"点左边却选中右边"。
                 DrawSegmented(canvas, BlurModeSegX, BlurModeSegY, BLUR_MODE_SEG_W, SEG_H,
                     BlurModeLabels, Renderer.GlassGaussBackdrop ? 1 : 0, _hoveredBlurModeIndex);
+
+                // 第四行：抓屏方式。玻璃的背景来自抓屏，换后端直接决定「背景跟不跟手 / 会不会崩」。
+                // 说明行放在分段下方，随选中的档位换文案。
+                canvas.DrawText("抓屏方式", CONTENT_TEXT_X, CaptureSegY + 20f, _uiTextPaint);
+                DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("抓屏方式") + BADGE_GAP_X,
+                    CaptureSegY + 20f - TEXT_INK_MID_OFFSET, "实验性");
+                _subTextPaint.Color = Neutral(170);
+                canvas.DrawText(CaptureBackendHint, CONTENT_TEXT_X, CaptureSegY + 40f, _subTextPaint);
+                // fitLabels：三档文字宽度差得多（「默认」两字 vs「GDI（兼容）」五字），
+                // 等分会让最长那档顶到邻格，交给 LayoutSegments 按实测宽度分格。
+                DrawSegmented(canvas, CaptureSegX, CaptureSegY, CAPTURE_SEG_W, SEG_H,
+                    CaptureBackendLabels, IslandBackdrop.CaptureBackend, _hoveredCaptureIndex,
+                    fitLabels: true);
             }
 
             // 液态玻璃模式下整卡不画：玻璃的着色由「玻璃雾度」管，涂层恒为 0（见 ApplyThemeColors），
@@ -1493,7 +1506,6 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
                 // ── 第一行：玻璃质量（左） + 恢复默认参数（右）──
-                // 抓屏方式不暴露：优先 DXGI、不可用自动回退 GDI，没有开关也没有状态行。
                 // 液态玻璃 2 不画质量分段：那四档只改 v1，v2 的合成参数全在下面 9 根滑轨上。
                 float segY = gY + GLASS_SEG_Y;
                 if (!Renderer.IslandLiquidGlass2)
