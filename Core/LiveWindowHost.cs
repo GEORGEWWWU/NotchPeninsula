@@ -273,7 +273,14 @@ public static class LiveWindowHost
                 if (e.Suppressed == suppressed) continue;
                 if (!string.Equals(e.Owner, ownerId, StringComparison.OrdinalIgnoreCase)) continue;
                 e.Suppressed = suppressed;
-                if (suppressed) e.Hovered = false;
+                if (suppressed)
+                {
+                    e.Hovered = false;
+                    // 正在显示这个气泡的详情面板要跟着收起（走正常收起动画，而不是下一帧被 Drop）。
+                    if (_panel != null && !_panel.Closing
+                        && string.Equals(_panel.EntryId, e.Id, StringComparison.OrdinalIgnoreCase))
+                        ClosePanel();
+                }
                 if (e.Window != null && !e.Exiting) windows.Add(e.Window);
             }
             UpdateSizingLocked();
@@ -788,9 +795,13 @@ public static class LiveWindowHost
             {
                 var e = _entries[i];
 
+                // 插件级开关挂起的窗：不占槽位、不更新位置、不回调插件。
+                // X 冻结在最后位置，供正在收起的面板动画当锚点；
+                // 退出动画中的窗已经没有插件对象，仍按原节奏收尾并从列表里移除。
+                if (e.Suppressed && !e.Exiting) continue;
+
                 // 未退出、未断开的窗取一帧视觉快照。插件抛异常 = 熔断该窗（走退出动画）。
-                // 插件级开关关闭时整窗挂起：连 GetVisual 都不再回调，插件完全退回主岛。
-                if (e.Window != null && !e.Exiting && !e.Suppressed)
+                if (e.Window != null && !e.Exiting)
                 {
                     try
                     {
@@ -870,6 +881,12 @@ public static class LiveWindowHost
         if (panel == null) return;
 
         var entry = FindAttachedLocked(panel.EntryId);
+        if (entry == null)
+        {
+            // 面板的主人被插件级开关挂起：气泡已经不画了，但已经展开的面板要照常收完 ——
+            // 直接 DropPanelLocked 会让它「啪」一下消失，与其它收起路径的动画不一致。
+            entry = panel.Closing ? FindSuppressedLocked(panel.EntryId) : null;
+        }
         if (entry == null)
         {
             DropPanelLocked();
@@ -1101,6 +1118,18 @@ public static class LiveWindowHost
         {
             var e = _entries[i];
             if (e.Window != null && !e.Exiting && !e.Suppressed
+                && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
+        }
+        return null;
+    }
+
+    /// <summary>被插件级开关挂起、但仍持有插件对象的窗 —— 给面板收起动画做几何锚点。</summary>
+    private static Entry? FindSuppressedLocked(string id)
+    {
+        for (int i = 0; i < _entries.Count; i++)
+        {
+            var e = _entries[i];
+            if (e.Suppressed && e.Window != null && !e.Exiting
                 && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
         }
         return null;
