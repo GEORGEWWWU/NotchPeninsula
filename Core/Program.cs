@@ -393,7 +393,8 @@ namespace NotchPeninsula
                                 }
 
                                 var (ok, msg) = await AppActivator.active_app(
-                                    toast.Aumid, toast.AppName, toast.Title, toast.LaunchUri);
+                                    toast.Aumid, toast.AppName, toast.Title, toast.LaunchUri,
+                                    toast.ConversationName);
 
                                 if (ok) window.clicked_info = true;
                                 else Logger.Warn($"[AppActivator] 唤醒失败：{msg}");
