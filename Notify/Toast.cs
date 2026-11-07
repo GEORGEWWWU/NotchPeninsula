@@ -502,6 +502,10 @@ namespace NotchPeninsula
                     AppName = appName,
                     Title = textElements[0]?.Text ?? "",
                     Body = string.Join(" ", textElements.Skip(1).Select(t => t.Text)),
+                    // 单独留一份第 2 段：手机连接转发的微信通知里它就是会话名，
+                    // 拼进 Body 之后就再也拆不干净了（名字本身可能带空格）。
+                    ConversationName = textElements.Count > 1
+                        ? ToastData.NormalizeText(textElements[1]?.Text) : "",
                     Aumid = aumid,
                     InternalNotification = notification,
                     NotificationId = notification.Id,
@@ -512,6 +516,16 @@ namespace NotchPeninsula
             {
                 Logger.Warn($"[Toast] 提取异常：{DescribeException(ex)}（ID: {notification.Id}）");
                 return null;
+            }
+
+            // 【本机修复】上游按「微信 / WeChat」文本匹配把整条通知无条件丢弃（return null）。
+            // 手机连接（Phone Link）转发来的通知标题就是手机上的 App 名——「微信」「企业微信」——
+            // 因此所有手机微信消息都被误杀，连正文都没机会读。现按用户要求彻底移除该过滤：
+            // 手机转发与桌面端微信一视同仁全部放行，只留一行 INFO 便于日后排查。
+            if (toast.Title.Contains("微信") || toast.Title.Contains("WeChat") ||
+                toast.Body.Contains("微信") || toast.Body.Contains("WeChat"))
+            {
+                Logger.Info($"[Toast] 微信类通知已放行 -> 应用: {appName}, 标题: {toast.Title}, ID: {notification.Id}");
             }
 
             Logger.Info($"[Toast] 捕获系统通知 -> 应用: {appName} ({aumid}), 标题: {toast.Title}, 内容: {toast.Body}, ID: {notification.Id}");
@@ -619,6 +633,13 @@ namespace NotchPeninsula
         /// 外部 ShowWindow 硬拽出来的只是一个不接收输入的僵界面，必须让 QQ 自己开。
         /// </summary>
         public string LaunchUri { get; set; } = "";
+
+        /// <summary>
+        /// ToastGeneric 的第 2 段文本。手机连接转发通知里它是「会话名 / 发送者」
+        /// （微信通知：text[1]=周陀螺，text[2]=消息正文），上游把 text[1..] 全拼进 Body 了，
+        /// 点岛要跳到对应会话时得留一份没被拼过的原文。其它通知该字段可能只是副标题，用不用由调用方判断。
+        /// </summary>
+        public string ConversationName { get; set; } = "";
 
         public uint NotificationId { get; set; }
         public UserNotification? InternalNotification { get; set; }
