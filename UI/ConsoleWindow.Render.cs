@@ -265,7 +265,9 @@ namespace NotchPeninsula
             }
         }
 
-        private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false, string rightHint = "", bool rowHovered = false)
+        // rowHovered：整行悬停（可选）。不传时退回「开关本体悬停」—— 否则调用方只传 rightHint
+        // 会得到一个永远不显示的提示（参数默认 false 是个坑），这里用 null 表示「没单独跟踪，用 hovered」。
+        private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false, string rightHint = "", bool? rowHovered = null)
         {
             float titleBaseline = TITLE_BAR_HEIGHT + yOffset
                 + (sub.Length > 0 ? ROW_TEXT_BASELINE : ROW_TEXT_BASELINE_SINGLE);
@@ -315,8 +317,9 @@ namespace NotchPeninsula
                 }
             }
 
-            // 右侧蓝字提示：塞在标题与开关之间的空档里；只在鼠标悬浮整行时才出现。
-            if (rightHint.Length > 0 && rowHovered)
+            // 右侧蓝字提示：塞在标题与开关之间的空档里；悬浮才出现。
+            // 没单独跟踪整行悬停时用开关悬停兜底，避免「传了 rightHint 却永远不显示」。
+            if (rightHint.Length > 0 && (rowHovered ?? hovered))
             {
                 var prevColor = _subTextPaint.Color;
                 float prevSize = _subTextPaint.TextSize;
