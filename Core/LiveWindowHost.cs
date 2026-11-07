@@ -162,6 +162,8 @@ public static class LiveWindowHost
         public bool Completed;
         public bool Hovered;
         public bool Hidden;
+        public bool Suppressed;   // 插件级开关关闭：先播收起动画，播完后留在列表里但不再绘制
+        public double SuppressElapsed;   // 挂起收起的动画进度（0..ExitSeconds）
         public bool Broken;
 
         public float Alpha = 255f;
@@ -235,13 +237,79 @@ public static class LiveWindowHost
     {
         if (string.IsNullOrEmpty(ownerId) || ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase)) return;
         EnsureOwnerSettingsLoaded();
+
+        bool changed;
         lock (_ownerGate)
         {
-            if (enabled) _disabledOwners.Remove(ownerId);
-            else _disabledOwners.Add(ownerId);
-            SaveOwnerSettingsLocked();
+            changed = enabled ? _disabledOwners.Remove(ownerId) : _disabledOwners.Add(ownerId);
+            if (changed) SaveOwnerSettingsLocked();
         }
+        if (!changed) return;
+
+        // 先把新状态挂到该插件的每一个活窗上（本帧起不再绘制 / 命中），再逐个通知插件：
+        // 禁用 → 插件把内容挪回主岛组件行；恢复 → 内容可以重新交给实况窗。
+        // 通知放在所有锁之外：插件回调里可能拿自己的锁，甚至重新注册。
+        var windows = SetOwnerSuppressed(ownerId, suppressed: !enabled);
+        foreach (var window in windows)
+        {
+            try { window.OnHostEnabledChanged(enabled); }
+            catch (Exception ex) { Logger.Error($"[实况窗] 插件 {ownerId} 处理实况窗开关通知异常", ex); }
+        }
+
         Logger.Info($"[实况窗] 插件 {ownerId} 的实况窗已{(enabled ? "启用" : "禁用")}（禁用时内容只允许留在主岛）");
+    }
+
+    /// <summary>
+    /// 挂起 / 恢复某插件的全部实况窗，返回需要通知的窗口对象。
+    /// 退出动画中的窗已经没有插件对象，只标记不通知；已在目标状态的不重复处理。
+    /// </summary>
+    private static List<ILiveWindow> SetOwnerSuppressed(string ownerId, bool suppressed)
+    {
+        var windows = new List<ILiveWindow>(2);
+        lock (_lock)
+        {
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                var e = _entries[i];
+                if (e.Suppressed == suppressed) continue;
+                if (!string.Equals(e.Owner, ownerId, StringComparison.OrdinalIgnoreCase)) continue;
+                e.Suppressed = suppressed;
+                if (suppressed)
+                {
+                    // 和主动注销一模一样的「往右滑回岛体」收起动画；播完由 Tick 留在列表里不绘制，
+                    // 重新启用时再播一遍生成动画 —— 开关的手感和插件自己注销 / 注册完全一致。
+                    e.SuppressElapsed = 0d;
+                    e.Hovered = false;
+                    // 正在显示这个气泡的详情面板要跟着收起（走正常收起动画，而不是下一帧被 Drop）。
+                    if (_panel != null && !_panel.Closing
+                        && string.Equals(_panel.EntryId, e.Id, StringComparison.OrdinalIgnoreCase))
+                        ClosePanel();
+                }
+                else
+                {
+                    // 重新启用：与「插件重新注册」完全同一套细胞分裂生成动画 ——
+                    // 从岛体左缘长出，旁边已有气泡时母圆也一起缩一次。
+                    e.SuppressElapsed = 0d;
+                    e.SpawnElapsed = 0d;
+                    e.DisplayProgress = e.TargetProgress;
+                    e.X = e.SpawnFromX = _lastIslandLeft - IslandGap - BubbleDiameter / 2f;
+
+                    Entry? parent = null;
+                    for (int j = _entries.Count - 1; j >= 0; j--)
+                    {
+                        var p = _entries[j];
+                        if (p == e || p.Window == null || p.Exiting || p.Suppressed) continue;
+                        parent = p;
+                        break;
+                    }
+                    e.SplitElapsed = parent != null ? 0d : SplitSeconds;
+                    if (parent != null) parent.SplitElapsed = 0d;   // 母圆也重播一次分裂
+                }
+                if (e.Window != null && !e.Exiting) windows.Add(e.Window);
+            }
+            UpdateSizingLocked();
+        }
+        return windows;
     }
 
     private static void EnsureOwnerSettingsLoaded()
@@ -388,6 +456,7 @@ public static class LiveWindowHost
                 existing.Window = window;
                 existing.Broken = false;
                 existing.Completed = false;
+                existing.Suppressed = false;   // 重新启用后插件重注册：解除挂起
                 existing.DisplayProgress = 0f;
                 existing.LastPercentKey = "";
                 return new Handle(existing, window);
@@ -750,6 +819,25 @@ public static class LiveWindowHost
             {
                 var e = _entries[i];
 
+                if (e.Suppressed && !e.Exiting)
+                {
+                    // 插件级开关关闭：播一遍和主动注销相同的「滑回岛体」收起动画，
+                    // 播完后窗口对象继续留在列表里（不绘制、不命中、不回调插件），
+                    // 重新启用时直接重生，插件不必重新注册。
+                    if (e.Window != null)
+                    {
+                        e.SuppressElapsed = Math.Min(ExitSeconds + 1d, e.SuppressElapsed + dt);
+                        float ep = (float)Math.Clamp(e.SuppressElapsed / ExitSeconds, 0.0, 1.0);
+                        e.TargetX = islandLeft + diameter * 0.02f;
+                        float fade = Math.Clamp((ep - 0.55f) / 0.45f, 0f, 1f);
+                        e.Alpha = 255f * (1f - fade * fade);
+                    }
+                    e.Hovered = false;
+                    float kSup = 1f - MathF.Exp(-12f * dt);
+                    e.X += (e.TargetX - e.X) * kSup;
+                    continue;
+                }
+
                 // 未退出、未断开的窗取一帧视觉快照。插件抛异常 = 熔断该窗（走退出动画）。
                 if (e.Window != null && !e.Exiting)
                 {
@@ -831,6 +919,12 @@ public static class LiveWindowHost
         if (panel == null) return;
 
         var entry = FindAttachedLocked(panel.EntryId);
+        if (entry == null)
+        {
+            // 面板的主人被插件级开关挂起：气泡已经不画了，但已经展开的面板要照常收完 ——
+            // 直接 DropPanelLocked 会让它「啪」一下消失，与其它收起路径的动画不一致。
+            entry = panel.Closing ? FindSuppressedLocked(panel.EntryId) : null;
+        }
         if (entry == null)
         {
             DropPanelLocked();
@@ -926,6 +1020,8 @@ public static class LiveWindowHost
         {
             var e = _entries[i];
             if (e.Hidden) continue;
+            // 挂起收起的动画要照常画完；播完之后才彻底不绘制。
+            if (e.Suppressed && !e.Exiting && e.SuppressElapsed >= ExitSeconds) continue;
             if (frame.Count >= MaxItems) break;
 
             ref var item = ref frame.Items[frame.Count];
@@ -946,9 +1042,14 @@ public static class LiveWindowHost
             item.SplitProgress = (float)Math.Clamp(e.SplitElapsed / SplitSeconds, 0.0, 1.0);
             item.SpawnFromX = e.SpawnFromX;
             item.MergeTargetX = islandLeft + diameter * 0.02f;   // 「移回宿主」的终点：岛体左缘
-            item.ExitProgress = e.Exiting ? (float)Math.Clamp(e.ExitElapsed / ExitSeconds, 0.0, 1.0) : 0f;
+            // 挂起收起也走同一套「被宿主吞进去」的动画：渲染器只认 Exiting / ExitProgress，
+            // 所以这里把挂起前段也当成退出态发布。
+            bool swallowing = e.Exiting || (e.Suppressed && e.SuppressElapsed < ExitSeconds);
+            item.ExitProgress = swallowing
+                ? (float)Math.Clamp((e.Exiting ? e.ExitElapsed : e.SuppressElapsed) / ExitSeconds, 0.0, 1.0)
+                : 0f;
             item.Scale = e.Scale;
-            item.Exiting = e.Exiting;
+            item.Exiting = swallowing;
             frame.Count++;
         }
 
@@ -1052,7 +1153,7 @@ public static class LiveWindowHost
     {
         int n = 0;
         for (int i = 0; i < _entries.Count; i++)
-            if (_entries[i].Window != null && !_entries[i].Exiting) n++;
+            if (_entries[i].Window != null && !_entries[i].Exiting && !_entries[i].Suppressed) n++;
         return n;
     }
 
@@ -1061,7 +1162,20 @@ public static class LiveWindowHost
         for (int i = 0; i < _entries.Count; i++)
         {
             var e = _entries[i];
-            if (e.Window != null && !e.Exiting && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
+            if (e.Window != null && !e.Exiting && !e.Suppressed
+                && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
+        }
+        return null;
+    }
+
+    /// <summary>被插件级开关挂起、但仍持有插件对象的窗 —— 给面板收起动画做几何锚点。</summary>
+    private static Entry? FindSuppressedLocked(string id)
+    {
+        for (int i = 0; i < _entries.Count; i++)
+        {
+            var e = _entries[i];
+            if (e.Suppressed && e.Window != null && !e.Exiting
+                && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
         }
         return null;
     }

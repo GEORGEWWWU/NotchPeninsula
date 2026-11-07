@@ -2157,6 +2157,10 @@ namespace NotchPeninsula
                             return (IntPtr)0;
                         }
 
+                        // 气泡本体同样画在岛体之外，IsBlankAt 会把它算成岛内空白：
+                        // 双击气泡（不是详情面板）必须在这里消费掉，不能触发待机模式切换。
+                        if (LiveWindowHost.HitBubble(dx, dy, out _)) return (IntPtr)0;
+
                         // 它主动声明要双击，语义比宿主的内置手势更明确）。
                         {
                             float dblTopY = 12f * _currentStyleProgress;
