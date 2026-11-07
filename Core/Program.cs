@@ -39,6 +39,8 @@ namespace NotchPeninsula
                     MediaController.IsLyricScanEnabled = (int)key.GetValue("LyricScanEnabled", legacyScan ? 1 : 0) != 0;
                     // 一律以注册表里的值为准。
                     MediaController.IsAppLaunchEnabled = (int)key.GetValue("MediaAppLaunchEnabled", 0) != 0;
+                    // 实况窗展示媒体（默认关）：启动只落开关状态，真正的注册等检测到媒体后由控制器走 3 秒预览。
+                    MediaLiveWindowController.SetEnabled((int)key.GetValue("MediaLiveWindow", 0) != 0);
                     MediaController.LyricDelayOffset = Convert.ToSingle(key.GetValue("LyricDelayOffset", 0f));
                     NotchWindow.IsToastEnabled = (int)key.GetValue("ToastEnabled", 1) != 0;
                     // 「推荐安装网易酷狗时间轴插件」：用户点过拒收就永久静默。
@@ -414,6 +416,11 @@ namespace NotchPeninsula
                 {
                     Logger.Info("[MSP] 未启用（设置 → 通用设置 → MSP 接入）");
                 }
+
+#if DEBUG
+                // 实况窗视觉验收开关：Release 不编译演示代码，正常用户永远看不到这些气泡。
+                if (Environment.GetEnvironmentVariable("NPS_LIVE_DEMO") == "1") LiveWindowDemo.Start();
+#endif
 
                 window.Run();
 

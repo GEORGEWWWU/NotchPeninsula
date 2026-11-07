@@ -41,6 +41,8 @@ namespace NotchPeninsula
         private readonly MediaController _media;
         private bool _isHovered = false;
         private bool _isTrackingMouse = false;
+        // 光标停在实况窗（气泡/展开面板）上：主岛的 hover 高亮不该跟着亮起来。
+        private bool _isOverLiveWindow = false;
 
         // ---- 渲染线程 ----
         private Thread? _renderThread;
@@ -145,7 +147,8 @@ namespace NotchPeninsula
         }
 
         private bool HasAnyExpanded
-            => _isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage;
+            => _isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage
+               || LiveWindowHost.HasOpenPanel;
         private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
         // ---- 弹簧动画引擎（三处共用） ----
         //（峰值在 t≈0.154s），即「Q 弹」的来源。
@@ -181,6 +184,7 @@ namespace NotchPeninsula
 
         private static readonly PanelCollapseTimer _mediaPanelCollapse = new(MediaCollapseDelayMs);
         private static readonly PanelCollapseTimer _detailPanelCollapse = new(DetailCollapseDelayMs);
+        private static readonly PanelCollapseTimer _livePanelCollapse = new(900);
         private static string? _detailCollapseWidgetId;
 
         private const int MediaCollapseDelayMs = 3000;
@@ -1209,6 +1213,8 @@ namespace NotchPeninsula
 
                 TickPanelCollapse();
                 TickRightDoubleClickPending();
+                // 媒体 → 实况窗的切换时序（3 秒后在左侧出现，开关关闭 / 媒体结束时收回）。
+                MediaLiveWindowController.Tick(_media);
 
                 // 没有待办时只是一次 Count 判断，稳态零开销。
                 PluginManager.Instance.Host.DrainPendingWindowClose();
@@ -1230,7 +1236,7 @@ namespace NotchPeninsula
                     if (_suppressOutsideCollapse && !leftDown) _suppressOutsideCollapse = false;
 
                     Win32.GetCursorPos(out var expPt);
-                    bool isOverIsland = IsOverIslandScreenPoint(expPt);
+                    bool isOverIsland = IsOverIslandScreenPoint(expPt) || IsOverLiveWindowScreenPoint(expPt);
 
                     if (!isOverIsland && !_suppressOutsideCollapse
                         && (eventOutsidePress || leftDown) && !Renderer.HasActiveDetailPage)
@@ -1290,7 +1296,8 @@ namespace NotchPeninsula
                 if (Renderer.FullHideAlpha > 0.99f) Renderer.FullHideAlpha = 1f;
 
                 // 二维 (X轴宽度与Y轴高度) 弹簧动画逻辑
-                bool currentActive = _media.IsActive;
+                // 媒体已交给左侧实况窗时，主岛按「没有媒体」处理：不重复显示、宽度退回普通内容。
+                bool currentActive = _media.IsActive && !Renderer.SuppressMediaInIsland;
 
                 int currentDisplayState = isToastActive ? 3 : (currentActive ? (Renderer.IsMediaExpanded ? 2 : 1) : 0);
                 long stateNowTs = Stopwatch.GetTimestamp();
@@ -1523,6 +1530,10 @@ namespace NotchPeninsula
             // 亚克力背板：与胶囊同口径抓一次（几何没变就什么都不做），本帧绘制直接用
             SyncIslandBackdrop();
 
+            // 实况窗要「不出屏」：窗口比屏幕宽，content x=0 可能落在屏幕外，把可见范围喂给宿主。
+            float viewLeft = (_scaledWidth - _cachedMonitorWidth) / 2f / _dpiScale;
+            LiveWindowHost.SetViewport(viewLeft, viewLeft + _cachedMonitorWidth / _dpiScale);
+
             // 存档矩阵状态，避免缩放无限叠加。
             // 关键是「回滚到基线」而不是「Restore 一次」：Draw 内部有多级 save（图层 / 裁切 / 平移），
             // 其中任何一级被插件多弹一次，单次 Restore 就会把这次的 Scale 留在画布上，下一帧再叠一遍，
@@ -1537,7 +1548,7 @@ namespace NotchPeninsula
                 _media.UpdateLyrics(); // 更新歌词
                 tLyricDone = Environment.TickCount64;
 
-                Renderer.Draw(canvas, _media, _isHovered, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
+                Renderer.Draw(canvas, _media, _isHovered && !_isOverLiveWindow, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
                 tDrawDone = Environment.TickCount64;
             }
             finally
@@ -1732,6 +1743,17 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 屏幕坐标是否落在实况窗（气泡 / 展开面板）上。坐标系与 <see cref="IsOverIslandScreenPoint"/>
+        /// 的区别：实况窗几何用的是「含 topY 的画布坐标」，转换时不能再减 topY。
+        /// </summary>
+        private bool IsOverLiveWindowScreenPoint(Win32.POINT pt)
+        {
+            float x = (pt.x - _cachedMonitorX - (_cachedMonitorWidth - _scaledWidth) / 2) / _dpiScale;
+            float y = (pt.y - _cachedMonitorY - Renderer.IslandBaseY * _dpiScale - _currentY) / _dpiScale;
+            return LiveWindowHost.HitAny(x, y);
+        }
+
+        /// <summary>
         /// 挂 / 摘「原始鼠标输入」。只在有展开态时挂：RIDEV_INPUTSINK 会把每一条鼠标移动
         /// 都投成一次 WM_INPUT，没展开时白敲窗口过程。注册是进程级的一次 win32k 调用，
         /// 不要求调用线程有消息泵，所以渲染线程直接调没问题。
@@ -1773,7 +1795,7 @@ namespace NotchPeninsula
             if ((raw.mouse.usButtonFlags & Win32.RI_MOUSE_LEFT_BUTTON_DOWN) == 0) return;
 
             if (!HasAnyExpanded || _suppressOutsideCollapse || _media.IsDragging) return;
-            if (!Win32.GetCursorPos(out var pt) || IsOverIslandScreenPoint(pt)) return;
+            if (!Win32.GetCursorPos(out var pt) || IsOverIslandScreenPoint(pt) || IsOverLiveWindowScreenPoint(pt)) return;
 
             _outsideLeftPressPending = true;
         }
@@ -1904,6 +1926,7 @@ namespace NotchPeninsula
                     IslandHotkey.Detach();
                     SetRawMouseSink(false);     // 窗口要没了，原始输入先摘掉
                     RevokeIslandDropTarget();
+                    LiveWindowHost.Reset();     // 实况窗引用一并摘掉，别再回调解载中的插件
                     // 先让渲染线程自己停：不置这个标志的话，WM_DESTROY 之后渲染线程可能还在
                     // UpdateLayeredWindow 提交一个正在被销毁的窗口（旧版 500ms Join 之后照样释放 DIB）。
                     _shuttingDown = true;
@@ -1962,6 +1985,29 @@ namespace NotchPeninsula
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
                         int mx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
                         int my = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
+
+                        // 实况窗是主岛之外的独立层：先吃悬停，避免气泡 / 展开面板把岛内媒体高亮带出来。
+                        LiveWindowHost.SetMouse(mx, my);
+                        if (LiveWindowHost.HasOpenPanel && LiveWindowHost.HitPanel(mx, my))
+                        {
+                            _isOverLiveWindow = true;
+                            Renderer.UpdatePluginMouse(-1f, -1f);
+                            LiveWindowHost.DispatchPanelMouseMove(mx, my);
+                            CancelLivePanelCollapse();
+                            _isCursorOverIcon = true;
+                            break;
+                        }
+                        if (LiveWindowHost.HitBubble(mx, my, out _))
+                        {
+                            _isOverLiveWindow = true;
+                            Renderer.UpdatePluginMouse(-1f, -1f);
+                            CancelLivePanelCollapse();
+                            _isCursorOverIcon = true;
+                            break;
+                        }
+                        _isOverLiveWindow = false;
+                        if (LiveWindowHost.HasOpenPanel) RequestLivePanelCollapse();
+
                         // 记录鼠标逻辑坐标，供插件组件的悬停判定使用
                         Renderer.UpdatePluginMouse(mx, my);
                         float hitTopY = 12f * _currentStyleProgress;
@@ -2041,6 +2087,15 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONUP:
                     _suppressOutsideCollapse = false;
+                    {
+                        int ux = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
+                        int uy = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
+                        if (LiveWindowHost.HasOpenPanel && LiveWindowHost.HitPanel(ux, uy))
+                        {
+                            LiveWindowHost.DispatchPanelMouseUp(ux, uy);
+                            return (IntPtr)0;
+                        }
+                    }
                     // 免得被下面媒体拖动分支的 return 漏掉。
                     if (Renderer.HasActiveDetailPage)
                     {
@@ -2062,6 +2117,10 @@ namespace NotchPeninsula
                         _isTrackingMouse = false;
                         _isHovered = false;
                         _isCursorOverIcon = false;
+                        _isOverLiveWindow = false;
+                        LiveWindowHost.SetMouse(-1f, -1f);
+                        LiveWindowHost.DispatchPanelMouseLeave();
+                        if (LiveWindowHost.HasOpenPanel) RequestLivePanelCollapse();
                         Renderer.ToastActionHovered = false;
                         Renderer.HoveredExpandedButton = -1;
                         // 鼠标离开灵动岛，清空插件组件悬停状态
@@ -2151,6 +2210,19 @@ namespace NotchPeninsula
                         int cx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
                         int cy = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
+
+                        // 实况窗独立层优先：展开面板吃自己的点击，气泡左键交给注册方。
+                        if (LiveWindowHost.HasOpenPanel && LiveWindowHost.HitPanel(cx, cy))
+                        {
+                            LiveWindowHost.DispatchPanelMouseDown(cx, cy);
+                            LiveWindowHost.DispatchPanelClick(cx, cy);
+                            return (IntPtr)0;
+                        }
+                        if (LiveWindowHost.HitBubble(cx, cy, out var liveClickId) && liveClickId != null)
+                        {
+                            LiveWindowHost.NotifyBubbleLeftClick(liveClickId);
+                            return (IntPtr)0;
+                        }
 
                         // 完美对齐渲染中心点，精准拦截唤醒点击
                         if (Renderer.PassthroughModeEnabled && !_isPassthroughAwake && HitWakeButton(cx, cy))
@@ -2271,6 +2343,21 @@ namespace NotchPeninsula
                     {
                         int rx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
                         int ry = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
+
+                        // 右键实况窗 = 原有的展开态（复用详情页，从气泡长出来，主岛不变形）。
+                        if (LiveWindowHost.HasOpenPanel && LiveWindowHost.HitPanel(rx, ry))
+                        {
+                            LiveWindowHost.ClosePanel();
+                            CancelLivePanelCollapse();
+                            return (IntPtr)0;
+                        }
+                        if (LiveWindowHost.HitBubble(rx, ry, out var liveRightId) && liveRightId != null)
+                        {
+                            LiveWindowHost.TogglePanel(liveRightId);
+                            CancelLivePanelCollapse();
+                            return (IntPtr)0;
+                        }
+
                         HandleIslandRightClick(rx, ry, 12f * _currentStyleProgress, fromDoubleClickTimeout: false);
                     }
                     break;
@@ -2497,9 +2584,18 @@ namespace NotchPeninsula
             _detailCollapseWidgetId = null;
         }
 
+        private static void RequestLivePanelCollapse()
+        {
+            int delay = LiveWindowHost.PanelCollapseDelayMs;
+            if (delay >= 0) _livePanelCollapse.Schedule(delay);
+        }
+
+        private static void CancelLivePanelCollapse() => _livePanelCollapse.Cancel();
+
         private static void TickPanelCollapse()
         {
             if (_mediaPanelCollapse.Tick()) Renderer.IsMediaExpanded = false;
+            if (_livePanelCollapse.Tick()) LiveWindowHost.ClosePanel();
 
             if (!_detailPanelCollapse.Tick()) return;
 
@@ -2519,6 +2615,8 @@ namespace NotchPeninsula
         private static void ClosePanelsNow(bool forceCloseDetail = false)
         {
             CancelPanelCollapse();
+            CancelLivePanelCollapse();
+            LiveWindowHost.ClosePanel();
             Renderer.IsMediaExpanded = false;
 
             if (Renderer.HasActiveDetailPage

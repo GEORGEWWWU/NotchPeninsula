@@ -392,7 +392,7 @@ namespace NotchPeninsula
                 else if (string.Equals(scene, Plugins.BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase))
                     own = MeasureHardwareBlockWidth();
                 else if (string.Equals(scene, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase))
-                    own = media != null && media.IsActive ? MeasureMediaBlockWidth(media) : 0f;
+                    own = media != null && media.IsActive && !SuppressMediaInIsland ? MeasureMediaBlockWidth(media) : 0f;
                 else if (includePlugins)
                 {
                     // 同上：Key → 插件 Id 才能命中组件。
@@ -437,7 +437,7 @@ namespace NotchPeninsula
                 else if (string.Equals(item, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase))
                 {
                     mediaHandled = true;
-                    if (CompShowMedia && media != null && media.IsActive) AddModule(MeasureMediaBlockWidth(media));
+                    if (CompShowMedia && media != null && media.IsActive && !SuppressMediaInIsland) AddModule(MeasureMediaBlockWidth(media));
                 }
                 else if (includePlugins)
                 {
@@ -448,7 +448,7 @@ namespace NotchPeninsula
             // 兜底：顺序表里尚未登记的内容按默认次序补上
             if (!clockHandled && CompShowDateTime) AddModule(_cachedTimeWidth + 12f + _cachedDateWidth);
             if (!hardwareHandled && CompShowHardware) AddModule(MeasureHardwareBlockWidth());
-            if (!mediaHandled && CompShowMedia && media != null && media.IsActive) AddModule(MeasureMediaBlockWidth(media));
+            if (!mediaHandled && CompShowMedia && media != null && media.IsActive && !SuppressMediaInIsland) AddModule(MeasureMediaBlockWidth(media));
             if (includePlugins) AddModule(SumPluginRowWidthNotIn(orderSet!));
 
             width += 16f; // 右侧边距与 Draw 中每模块尾距(16px)对齐，避免最后一个模块被裁切 6px
