@@ -969,13 +969,13 @@ namespace NotchPeninsula
             bool dropdownOpened = false;
             bool jumped = false;
 
-            // 剪贴板放到后台线程写好，和「等前台 / 微信建搜索框」并行；真要用之前才等它。
+            // 输入会话名有两条路，优先不碰剪贴板的那条：
+            //   · 直接输入：SendInput + KEYEVENTF_UNICODE 逐字注入 WM_CHAR，不产生剪贴板事件；
+            //   · 剪贴板粘贴：只在直接输入没出结果时兜底 —— 它会顶掉用户原来的剪贴内容，
+            //     还会触发 Quicker / 其它剪贴板工具的「复制提示」。
             System.Windows.IDataObject? savedClipboard = null;
-            var writeClip = Task.Run(() => RunOnStaThread(() =>
-            {
-                try { savedClipboard = System.Windows.Clipboard.GetDataObject(); } catch { }
-                System.Windows.Clipboard.SetText(name);
-            }, 1500));
+            bool clipboardUsed = false;
+            string inputMode = "直接输入";
 
             try
             {
@@ -1008,41 +1008,61 @@ namespace NotchPeninsula
                 dropdownOpened = true;
                 long tOpen = Environment.TickCount64 - t0;
 
-                if (!writeClip.Result)
-                    return (false, "写剪贴板失败");
-
-                // 搜索框已就绪，Ctrl+A 覆盖可能残留的旧关键词，再粘贴。
+                // 搜索框已就绪，Ctrl+A 覆盖可能残留的旧关键词，然后直接敲字（不经过剪贴板）。
                 WxInput.Combo(WxInput.VK_CONTROL, WxInput.VK_A);
                 await Task.Delay(20);
-                WxInput.Combo(WxInput.VK_CONTROL, WxInput.VK_V);
+                WxInput.TypeUnicode(name);
 
                 int height = await WaitForDropdownHeightAsync(pids, 160, 700, 10);
 
-                // 下拉在、但没长高 = 粘贴被吞，覆盖重贴一次（只有确认搜索框已开才重试，
-                // 避免把会话名反复粘进聊天输入框）。
+                // 下拉在、但没长高 = 字没进去。少数情况 Qt 不接收合成的 WM_CHAR（例如输入法
+                // 正停在组字状态），这时才退回剪贴板粘贴，并承担一次剪贴板事件。
                 if (height < 160)
                 {
-                    Logger.Debug("[AppActivator] 首次粘贴没出结果，重试一次");
+                    Logger.Debug("[AppActivator] 直接输入没出结果，退回剪贴板粘贴");
+                    inputMode = "剪贴板";
+                    clipboardUsed = true;
+
+                    var clip = Task.Run(() => RunOnStaThread(() =>
+                    {
+                        try { savedClipboard = System.Windows.Clipboard.GetDataObject(); } catch { }
+                        System.Windows.Clipboard.SetText(name);
+                    }, 1500));
+                    if (!await clip) return (false, "写剪贴板失败");
+
+                    // 只有确认搜索框已开才重试，避免把会话名反复粘进聊天输入框。
                     WxInput.Combo(WxInput.VK_CONTROL, WxInput.VK_A);
                     await Task.Delay(20);
                     WxInput.Combo(WxInput.VK_CONTROL, WxInput.VK_V);
-                    height = await WaitForDropdownHeightAsync(pids, 160, 500, 10);
+                    height = await WaitForDropdownHeightAsync(pids, 160, 600, 10);
+
+                    if (height < 160)
+                    {
+                        Logger.Debug("[AppActivator] 首次粘贴没出结果，重试一次");
+                        WxInput.Combo(WxInput.VK_CONTROL, WxInput.VK_A);
+                        await Task.Delay(20);
+                        WxInput.Combo(WxInput.VK_CONTROL, WxInput.VK_V);
+                        height = await WaitForDropdownHeightAsync(pids, 160, 500, 10);
+                    }
                 }
 
                 if (height < 160)
                     return (false, "搜索无匹配结果");
                 long tReady = Environment.TickCount64 - t0;
 
-                // 剪贴板在后台还回去，不挡点击。
-                _ = Task.Run(() => RunOnStaThread(() =>
+                // 只有真的用过剪贴板才需要还回去（后台做，不挡点击）。
+                if (clipboardUsed)
                 {
-                    try
+                    _ = Task.Run(() => RunOnStaThread(() =>
                     {
-                        if (savedClipboard != null) System.Windows.Clipboard.SetDataObject(savedClipboard, true);
-                        else System.Windows.Clipboard.Clear();
-                    }
-                    catch { }
-                }, 1500));
+                        try
+                        {
+                            if (savedClipboard != null) System.Windows.Clipboard.SetDataObject(savedClipboard, true);
+                            else System.Windows.Clipboard.Clear();
+                        }
+                        catch { }
+                    }, 1500));
+                }
 
                 dd = FindWeChatSearchDropdown(pids);
                 if (dd == IntPtr.Zero || !Win32.GetWindowRect(dd, out Win32.RECT r))
@@ -1067,7 +1087,7 @@ namespace NotchPeninsula
                 jumped = true;
                 long cost = Environment.TickCount64 - t0;
                 Logger.Info($"[AppActivator] 微信会话跳转：搜索「{name}」并点开首个联系人结果" +
-                            $"（下拉 {r.Right - r.Left}×{height}, DPI {dpi}, 分段 焦点 {tFocus}ms / 搜索框 {tOpen - tFocus}ms" +
+                            $"（输入 {inputMode}, 下拉 {r.Right - r.Left}×{height}, DPI {dpi}, 分段 焦点 {tFocus}ms / 搜索框 {tOpen - tFocus}ms" +
                             $" / 出结果 {tReady - tOpen}ms / 点击 {cost - tReady}ms / 合计 {cost}ms）");
                 return (true, $"已跳到「{name}」会话（{cost}ms）");
             }
@@ -1191,8 +1211,31 @@ namespace NotchPeninsula
             internal const byte VK_F = 0x46;
             internal const byte VK_V = 0x56;
             private const uint KEYEVENTF_KEYUP = 0x0002;
+            private const uint KEYEVENTF_UNICODE = 0x0004;
+            private const uint INPUT_KEYBOARD = 1;
             private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
             private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct KEYBDINPUT
+            {
+                public ushort wVk;
+                public ushort wScan;
+                public uint dwFlags;
+                public uint time;
+                public IntPtr dwExtraInfo;
+            }
+
+            // INPUT 是个 union：type(4) + 4 字节填充 + 最大成员 MOUSEINPUT(32) = 40（x64）。
+            [StructLayout(LayoutKind.Explicit, Size = 40)]
+            private struct INPUT
+            {
+                [FieldOffset(0)] public uint type;
+                [FieldOffset(8)] public KEYBDINPUT ki;
+            }
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
             [DllImport("user32.dll")]
             private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
@@ -1215,6 +1258,30 @@ namespace NotchPeninsula
             {
                 mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
                 mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+            }
+
+            /// <summary>
+            /// 逐字注入 Unicode 字符（KEYEVENTF_UNICODE）：目标窗口收到的是 WM_CHAR，
+            /// 和手敲键盘等价，**不经过输入法、也不碰剪贴板**。
+            /// 之前用剪贴板 + Ctrl+V，缺点是既顶掉用户的剪贴内容，又会让 Quicker 的
+            /// 「复制提示」事件触发多弹一次提示，所以改成直接输入。
+            /// </summary>
+            internal static void TypeUnicode(string text)
+            {
+                if (string.IsNullOrEmpty(text)) return;
+
+                var inputs = new INPUT[text.Length * 2];
+                for (int i = 0; i < text.Length; i++)
+                {
+                    inputs[i * 2].type = INPUT_KEYBOARD;
+                    inputs[i * 2].ki.wScan = text[i];
+                    inputs[i * 2].ki.dwFlags = KEYEVENTF_UNICODE;
+
+                    inputs[i * 2 + 1].type = INPUT_KEYBOARD;
+                    inputs[i * 2 + 1].ki.wScan = text[i];
+                    inputs[i * 2 + 1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+                }
+                SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
             }
         }
 
