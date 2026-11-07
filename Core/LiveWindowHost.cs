@@ -533,22 +533,22 @@ public static class LiveWindowHost
             return _panelHitActive && _panelHitRect.Contains(x, y);
     }
 
-    /// <summary>左键点气泡：交给注册方（不抢右键的展开语义）。</summary>
-    public static void NotifyBubbleLeftClick(string id)
+    /// <summary>
+    /// 落点是否在展开面板当前显示的区域上（含展开动画中、还没进入正式命中的那一段）。
+    /// 双击这类「不该落到主岛」的宿主手势用它：面板从气泡长出来的过程里也不能被当成岛内空白。
+    /// </summary>
+    public static bool ContainsPanelPoint(float x, float y)
     {
-        if (string.IsNullOrEmpty(id)) return;
-        ILiveWindow? window;
         lock (_lock)
         {
-            var entry = FindAttachedLocked(id);
-            window = entry?.Window;
+            var p = _panel;
+            if (p == null) return false;
+            if (_panelHitActive && _panelHitRect.Contains(x, y)) return true;
+            return p.Reveal.Width > 1f && p.Reveal.Height > 1f && p.Reveal.Contains(x, y);
         }
-        if (window == null) return;
-        try { window.OnLeftClick(); }
-        catch (Exception ex) { Logger.Error($"[实况窗] {id} 左键回调异常", ex); }
     }
 
-    // ---- 右键展开态 ----
+    // ---- 展开态（左右键共用同一个入口）----
 
     public static void TogglePanel(string id)
     {
@@ -679,6 +679,24 @@ public static class LiveWindowHost
             if (hit.IsHit) page.OnAction(hit.Action, x - rect.Left, y - rect.Top);
         }
         catch (Exception ex) { Logger.Error("[实况窗] 展开面板点击异常", ex); }
+    }
+
+    /// <summary>
+    /// 双击透传：面板复用的是插件原有 <see cref="IDetailPage"/>，声明了
+    /// <see cref="IDetailPage.AcceptsDoubleClick"/> 的页面应当和岛内详情页一样收到回调。
+    /// </summary>
+    public static bool DispatchPanelDoubleClick(bool isRight, float x, float y)
+    {
+        var (page, rect) = GetPanelForInput();
+        if (page == null) return false;
+        try
+        {
+            if (!page.AcceptsDoubleClick) return false;
+            if (isRight) page.OnRightDoubleClick(x - rect.Left, y - rect.Top);
+            else page.OnLeftDoubleClick(x - rect.Left, y - rect.Top);
+        }
+        catch (Exception ex) { Logger.Error("[实况窗] 展开面板双击异常", ex); return false; }
+        return true;
     }
 
     public static void DispatchPanelMouseLeave()
@@ -819,6 +837,11 @@ public static class LiveWindowHost
             return;
         }
 
+        // 声明了「尺寸随内容变」的页面每帧重测（媒体面板有没有时间轴会换高度）：
+        // 浮层要跟主岛展开态保持同一尺寸，不能只在展开那一刻量一次。
+        if (!panel.Closing)
+            RemeasurePanelIfNeededLocked(panel);
+
         float bubbleTop = MathF.Max(2f, islandCenterY - diameter / 2f);
         float bubbleBottom = bubbleTop + diameter;
         float left = Math.Clamp(entry.X - panel.Width / 2f,
@@ -859,6 +882,37 @@ public static class LiveWindowHost
         // 展开完成才吃鼠标，避免动画期误点。
         _panelHitActive = !panel.Closing && panel.RevealProgress >= 0.85f && panel.Page != null;
         _panelHitRect = panel.Target;
+    }
+
+    /// <summary>
+    /// 页面声明「尺寸随内容变」时每帧重测一次宽高（普通插件详情页 reszie=false，仍只在展开时测一次）。
+    /// 目前只有媒体详情页用：时间轴晚到 / 消失时，浮层高度要在 130 / 158 之间跟主岛展开面板同步。
+    /// 调用方已持有 <see cref="_lock"/>。
+    /// </summary>
+    private static void RemeasurePanelIfNeededLocked(PanelState panel)
+    {
+        var page = panel.Page;
+        if (page == null) return;
+        try
+        {
+            if (!page.ResizeWithContent) return;
+
+            float w = page.MeasureWidth();
+            float h = page.MeasureHeight();
+            if (float.IsNaN(w) || float.IsNaN(h) || w <= 0f || h <= 0f) return;
+
+            w = Math.Clamp(w, 120f, 1000f);
+            h = Math.Clamp(h, 48f, 480f);
+            if (MathF.Abs(w - panel.Width) < 0.5f && MathF.Abs(h - panel.Height) < 0.5f) return;
+
+            panel.Width = w;
+            panel.Height = h;
+            UpdateSizingLocked();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("[实况窗] 详情页尺寸重测异常", ex);
+        }
     }
 
     private static void PublishFrameLocked(float bubbleTop, float islandLeft, float diameter)

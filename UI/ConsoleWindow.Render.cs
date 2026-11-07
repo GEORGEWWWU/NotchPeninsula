@@ -265,7 +265,7 @@ namespace NotchPeninsula
             }
         }
 
-        private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
+        private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false, string rightHint = "")
         {
             float titleBaseline = TITLE_BAR_HEIGHT + yOffset
                 + (sub.Length > 0 ? ROW_TEXT_BASELINE : ROW_TEXT_BASELINE_SINGLE);
@@ -313,6 +313,19 @@ namespace NotchPeninsula
                     canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
                     _toggleCirclePaint.Color = SKColors.White;
                 }
+            }
+
+            // 右侧蓝字提示：塞在标题与开关之间的空档里，字号收到 10.5 才放得下整句。
+            if (rightHint.Length > 0)
+            {
+                var prevColor = _subTextPaint.Color;
+                float prevSize = _subTextPaint.TextSize;
+                _subTextPaint.TextSize = 10.5f;
+                _subTextPaint.Color = disabled ? Neutral(90) : new SKColor(0, 140, 240);
+                float hintRight = tX - 10f;
+                canvas.DrawText(rightHint, hintRight - _subTextPaint.MeasureText(rightHint), titleBaseline, _subTextPaint);
+                _subTextPaint.TextSize = prevSize;
+                _subTextPaint.Color = prevColor;
             }
         }
 
@@ -952,7 +965,8 @@ namespace NotchPeninsula
             //（见 Core/NotchWindow 的双击分支）。
             DrawToggleRow(canvas, TOGGLE_ROW_Y + page,
                 "双击空白切换待机模式", "",
-                Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered);
+                Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered,
+                rightHint: "请在主岛空白处双击，实况窗双击无效");
 
             // ── 显示内容列表 ──
             // 靠「悬停才亮的那层底」表达可点，视觉上跟整页连成一体。

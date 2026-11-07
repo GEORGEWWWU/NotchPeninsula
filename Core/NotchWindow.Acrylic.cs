@@ -23,6 +23,9 @@ namespace NotchPeninsula
         private long _backdropSkipMs;
         private string _backdropSkipWhy = "";
 
+        // 额外遮罩（详情页面板 + 实况窗气泡）的 flat 缓冲：渲染线程独占，稳态零分配。
+        private static readonly float[] _extraMaskScratch = new float[IslandBackdrop.MaxExtraMaskRects * 4];
+
         private void LogBackdropSkip(string why)
         {
             long now = Environment.TickCount64;
@@ -111,7 +114,11 @@ namespace NotchPeninsula
             // 按 32px 量化，免得胶囊高度一动就重抓。
             if (glass && IslandBackdrop.DxgiAllowed && DxgiBackdrop.Available && capH > 120)
             {
-                int need = (int)Math.Ceiling((_currentHeight + 60f) * _dpiScale);
+                // 实况窗的详情页面板挂在岛体下方，也吃同一张背板：抓取高度必须盖住面板底部
+                //（LiveWindowHost.RequiredWindowHeight 已经是「气泡 + 面板 + 余量」的整段高度）。
+                // 玻璃合成还要在玻璃边缘向外多采几十像素做折射 / 模糊，所以面板那一路再留 64。
+                float needLogical = MathF.Max(_currentHeight + 60f, LiveWindowHost.RequiredWindowHeight + 64f);
+                int need = (int)Math.Ceiling(needLogical * _dpiScale);
                 if (need < 120) need = 120;
                 need = (need + 31) / 32 * 32;
                 if (capH > need) capH = need;
@@ -151,6 +158,33 @@ namespace NotchPeninsula
 
             // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
             IslandBackdrop.SetMask(islandX - flare, islandY, islandX + islandW + flare, islandY + islandH);
+
+            // 实况窗（详情页面板 + 左侧气泡）也要计入遮罩，口径同样是屏幕物理像素。
+            // 它们现在也吃玻璃材质：不擦掉的话，抓屏兜底路径会让玻璃采到自己上一帧的残影。
+            {
+                var liveFrame = LiveWindowHost.Frame;
+                var extra = _extraMaskScratch;
+                int n = 0;
+                if (liveFrame.PanelVisible && liveFrame.PanelRect.Width > 1f && liveFrame.PanelRect.Height > 1f)
+                {
+                    var pr = liveFrame.PanelRect;
+                    extra[n++] = dstX + pr.Left * _dpiScale;
+                    extra[n++] = dstY + pr.Top * _dpiScale;
+                    extra[n++] = dstX + pr.Right * _dpiScale;
+                    extra[n++] = dstY + pr.Bottom * _dpiScale;
+                }
+                for (int i = 0; i < liveFrame.Count && n + 4 <= extra.Length; i++)
+                {
+                    ref readonly var item = ref liveFrame.Items[i];
+                    if (item.Alpha < 16 || item.Rect.Width < 1f || item.Rect.Height < 1f) continue;
+                    var r = item.Rect;
+                    extra[n++] = dstX + r.Left * _dpiScale;
+                    extra[n++] = dstY + r.Top * _dpiScale;
+                    extra[n++] = dstX + r.Right * _dpiScale;
+                    extra[n++] = dstY + r.Bottom * _dpiScale;
+                }
+                IslandBackdrop.SetExtraMasks(extra.AsSpan(0, n));
+            }
 
             // 贴图用的源矩形按【实际产出图】的比例与原点换算（DXGI 是 1:1，GDI 是 1/k），切换后端时不会错位
             float inv = IslandBackdrop.LastScale;

@@ -125,6 +125,12 @@ public interface IDetailPage
     void OnFilesDrop(string[] paths) { }
 
     TimeSpan AutoCollapseDelay => TimeSpan.Zero;
+
+    /// <summary>
+    /// 尺寸会随内容变化（例如媒体面板有没有时间轴）：true 时宿主每帧重测宽高，
+    /// 让实况窗浮层和主岛展开态始终同尺寸。默认 false（只在展开时测一次）。
+    /// </summary>
+    bool ResizeWithContent => false;
 }
 
 public interface ISecondaryWidget

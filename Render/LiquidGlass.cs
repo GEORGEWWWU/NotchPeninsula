@@ -456,9 +456,14 @@ namespace NotchPeninsula
         /// <param name="flareY">外扩带厚度（逻辑像素，竖直）= 路径里那条贝塞尔的竖直跨度</param>
         /// <param name="flushTop">顶边是否贴合屏幕边缘（刘海模式）：贴合时顶边不算边界</param>
         /// <returns>玻璃图层；null 表示这台机器读不到像素，调用方应退回普通模糊背板</returns>
+        /// <param name="transient">
+        /// true = 临时合成：返回一张调用方独占的位图，绝不写 <c>_glass</c> / 缓存键 / 亮度 / 缓动状态。
+        /// 实况窗详情页（岛外浮动面板）复用它，既不用另写一套合成，也不会把岛体那份缓存冲掉。
+        /// </param>
         public static SKBitmap? Compose(SKImage backdrop, int version, SKRect src,
                                        float logicalW, float logicalH, float rTop, float rBottom,
-                                       float flareX = 0f, float flareY = 0f, bool flushTop = false)
+                                       float flareX = 0f, float flareY = 0f, bool flushTop = false,
+                                       bool transient = false)
         {
             if (logicalW < 8f || logicalH < 4f) return null;
             if (src.Width < 4f || src.Height < 2f) return null;
@@ -479,10 +484,11 @@ namespace NotchPeninsula
             }
 
             // ── ① 缓动跟随（demo 的 g_smoothSrc*）──
-            ApplyEase(ref src);
+            // 临时合成是另一块几何（实况窗详情页），不能共用岛体那条缓动位置，否则岛体玻璃的源矩形会被带偏。
+            if (!transient) ApplyEase(ref src);
 
             // 命中缓存：抓屏没换、几何没动 → 直接复用上一帧的玻璃
-            if (_glass != null && _keyVersion == version && _keyW == gw && _keyH == gh
+            if (!transient && _glass != null && _keyVersion == version && _keyW == gw && _keyH == gh
                 && MathF.Abs(_keySx - src.Left) < 0.5f && MathF.Abs(_keySy - src.Top) < 0.5f
                 && MathF.Abs(_keyLw - logicalW) < 0.5f && MathF.Abs(_keyLh - logicalH) < 0.5f
                 && MathF.Abs(_keyRt - rTop) < 0.5f && MathF.Abs(_keyRb - rBottom) < 0.5f)
@@ -534,8 +540,9 @@ namespace NotchPeninsula
                 // ── ③ 内容未变 → 连模糊带折射全省掉 ──
                 // 抽样哈希（每 4 行、每 4 像素采一次）比糊一遍 + 算一遍折射便宜一到两个数量级，
                 // 而桌面绝大多数时候是静止的：默认 250ms 一抓，这一条能把稳态开销打到接近 0。
-                ulong hash = HashCrop((byte*)pxs, istride, cx0, cy0, cw, ch);
-                if (_glass != null && _keyHash == hash && _keyW == gw && _keyH == gh
+                // 临时合成不进缓存，哈希也就不用算了（这块本来就只在面板几何 / 背板更新时才重算）。
+                ulong hash = transient ? 0UL : HashCrop((byte*)pxs, istride, cx0, cy0, cw, ch);
+                if (!transient && _glass != null && _keyHash == hash && _keyW == gw && _keyH == gh
                     && _keyCropX == cx0 && _keyCropY == cy0 && _keyCropW == cw && _keyCropH == ch
                     && MathF.Abs(_keySx - src.Left) < 0.5f && MathF.Abs(_keySy - src.Top) < 0.5f
                     && MathF.Abs(_keyLw - logicalW) < 0.5f && MathF.Abs(_keyLh - logicalH) < 0.5f
@@ -804,6 +811,10 @@ namespace NotchPeninsula
                     }
                     else RenderRows(0, gh);
                 }
+
+                // 临时合成：位图归调用方，岛体那份缓存 / 亮度 / 诊断一行都不能动
+                //（否则详情页面板的亮度会把岛体的文字明暗带跑）。
+                if (transient) return bmp;
 
                 if (_glass != null) _glass.Dispose();
                 _glass = bmp;
