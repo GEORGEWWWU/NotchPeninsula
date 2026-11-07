@@ -218,6 +218,7 @@ namespace NotchPeninsula
             int newHoveredStandbySceneIndex = -1; // 待机显示内容下拉：列表项的悬停下标
             bool newSceneDropdownHovered = false; // 待机显示内容下拉：框本体的悬停
             bool newStandbyToggleHovered = false; // 待机模式：「双击空白切换」开关
+            bool newStandbyRowHovered = false;    // 待机模式：整行（只用来显示右侧蓝字提示，不参与点击）
             bool newPageScrollbarHovered = false; // 显示设置：整页滚动条
             bool newListScrollbarHovered = false; // 显示设置：「显示内容」列表滚动条
             int newHoveredDisplayRow = -1;        // 「显示内容」列表：悬停在行本体上
@@ -420,6 +421,13 @@ namespace NotchPeninsula
                 if (!monitorListOpen && !sceneListOpen && x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
                     newStandbyToggleHovered = true;
+
+                // 整行悬停只服务右侧那句蓝字提示（悬浮才显示，点击仍只认开关本体）。
+                float standbyRowTop = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page;
+                if (!monitorListOpen && !sceneListOpen
+                    && x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_RM
+                    && y >= standbyRowTop && y <= standbyRowTop + ROW_H)
+                    newStandbyRowHovered = true;
 
                 GetDisplayListLayout(out int displayVisibleRows, out int displayMaxFirstRow);
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
@@ -816,6 +824,7 @@ namespace NotchPeninsula
                 newHoveredStandbySceneIndex != _hoveredSceneIndex ||
                 newSceneDropdownHovered != _sceneDropdownHovered ||
                 newStandbyToggleHovered != _standbyToggleHovered ||
+                newStandbyRowHovered != _standbyRowHovered ||
                 newPageScrollbarHovered != _pageScrollbarHovered ||
                 newListScrollbarHovered != _listScrollbarHovered ||
                 newHoveredDisplayRow != _hoveredDisplayRow ||
@@ -902,6 +911,7 @@ namespace NotchPeninsula
                 _hoveredSceneIndex = newHoveredStandbySceneIndex;
                 _sceneDropdownHovered = newSceneDropdownHovered;
                 _standbyToggleHovered = newStandbyToggleHovered;
+                _standbyRowHovered = newStandbyRowHovered;
                 _pageScrollbarHovered = newPageScrollbarHovered;
                 _listScrollbarHovered = newListScrollbarHovered;
                 _hoveredMinusIndex = newHoverMinus;

@@ -265,7 +265,9 @@ namespace NotchPeninsula
             }
         }
 
-        private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false, string rightHint = "")
+        // rowHovered：整行悬停（可选）。不传时退回「开关本体悬停」—— 否则调用方只传 rightHint
+        // 会得到一个永远不显示的提示（参数默认 false 是个坑），这里用 null 表示「没单独跟踪，用 hovered」。
+        private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false, string rightHint = "", bool? rowHovered = null)
         {
             float titleBaseline = TITLE_BAR_HEIGHT + yOffset
                 + (sub.Length > 0 ? ROW_TEXT_BASELINE : ROW_TEXT_BASELINE_SINGLE);
@@ -315,14 +317,15 @@ namespace NotchPeninsula
                 }
             }
 
-            // 右侧蓝字提示：塞在标题与开关之间的空档里，字号收到 10.5 才放得下整句。
-            if (rightHint.Length > 0)
+            // 右侧蓝字提示：塞在标题与开关之间的空档里；悬浮才出现。
+            // 没单独跟踪整行悬停时用开关悬停兜底，避免「传了 rightHint 却永远不显示」。
+            if (rightHint.Length > 0 && (rowHovered ?? hovered))
             {
                 var prevColor = _subTextPaint.Color;
                 float prevSize = _subTextPaint.TextSize;
-                _subTextPaint.TextSize = 10.5f;
+                _subTextPaint.TextSize = 12f;
                 _subTextPaint.Color = disabled ? Neutral(90) : new SKColor(0, 140, 240);
-                float hintRight = tX - 10f;
+                float hintRight = tX - 6f;
                 canvas.DrawText(rightHint, hintRight - _subTextPaint.MeasureText(rightHint), titleBaseline, _subTextPaint);
                 _subTextPaint.TextSize = prevSize;
                 _subTextPaint.Color = prevColor;
@@ -966,7 +969,8 @@ namespace NotchPeninsula
             DrawToggleRow(canvas, TOGGLE_ROW_Y + page,
                 "双击空白切换待机模式", "",
                 Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered,
-                rightHint: "请在主岛空白处双击，实况窗双击无效");
+                rightHint: "主岛空白处双击，实况窗双击无效",
+                rowHovered: _standbyRowHovered);
 
             // ── 显示内容列表 ──
             // 靠「悬停才亮的那层底」表达可点，视觉上跟整页连成一体。
