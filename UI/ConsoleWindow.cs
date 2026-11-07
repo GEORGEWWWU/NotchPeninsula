@@ -467,9 +467,10 @@ namespace NotchPeninsula
 
         private const float HOTKEY_CARD_Y = LYRIC_CARD_Y + LYRIC_CARD_H + CARD_GAP;   // 404
 
-        private const float HOTKEY_CARD_H = 210f;
+        private const float HOTKEY_CARD_H = 214f;
 
-        private const float HOTKEY_HEAD_H = 44f;
+        // 卡片头部留白：标题 + 副标题 + 总开关整体下移 4px，顶部留一点呼吸
+        private const float HOTKEY_HEAD_H = 48f;
 
         private const float HOTKEY_ROW_H = 32f;
 
