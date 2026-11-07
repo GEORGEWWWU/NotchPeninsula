@@ -61,16 +61,20 @@ public interface ILiveWindow
     void DrawInner(SKCanvas canvas, SKRect rect, WidgetFrame frame);
 
     /// <summary>
-    /// 右键「原有的展开态」：**一般不用实现（返回 null 即可）** —— 宿主会自动复用该插件组件原有的
+    /// 「原有的展开态」：**一般不用实现（返回 null 即可）** —— 宿主会自动复用该插件组件原有的
     /// <see cref="IDetailPage"/>；只有内置消费者 / 想给实况窗单独做页面的特殊场景才返回自定义页。
-    /// 宿主把它从气泡位置展开成浮动面板，主岛不参与变形。null 且找不到可复用页时右键改走 <see cref="OnExpand"/>。
+    /// 宿主把它从气泡位置展开成浮动面板，主岛不参与变形。null 且找不到可复用页时改走 <see cref="OnExpand"/>。
+    /// <para>左右键都由宿主直接展开，插件不需要自己管「展开按钮」。</para>
     /// </summary>
     IDetailPage? DetailPage => null;
 
-    /// <summary>左键点击气泡。</summary>
+    /// <summary>
+    /// 左键点击气泡。**保留做二进制兼容：宿主已统一接管左右键展开，不再调用本回调**。
+    /// 想给实况窗做点击动作请用 <see cref="DetailPage"/>（打开面板）或 <see cref="OnExpand"/>（打开自己的界面）。
+    /// </summary>
     void OnLeftClick() { }
 
-    /// <summary>没有 <see cref="DetailPage"/> 时右键气泡的回调（比如打开自己的设置页 / 市场页）。</summary>
+    /// <summary>没有可复用 <see cref="DetailPage"/> 时，左右键点击气泡的回调（比如打开自己的设置页 / 市场页）。</summary>
     void OnExpand() { }
 
     /// <summary>宿主注销这个窗时回调一次（插件卸载 / 主动 Dispose）。之后宿主不再回调本对象的任何方法。</summary>

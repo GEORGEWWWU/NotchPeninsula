@@ -1335,7 +1335,7 @@ namespace NotchPeninsula
                 bool detailOpen = !isToastActive && Renderer.TryGetDetailPageSize(out detailW, out detailH);
 
                 float nativeWidth = currentActive
-                    ? (Renderer.IsMediaExpanded ? 320f : Renderer.MEDIA_WIDTH)
+                    ? (Renderer.IsMediaExpanded ? Renderer.MEDIA_EXPANDED_WIDTH : Renderer.MEDIA_WIDTH)
                     : Renderer.STANDBY_WIDTH;
                 if (currentActive && !Renderer.IsMediaExpanded && !Renderer.CompositeModeEnabled)
                 {
@@ -2148,6 +2148,15 @@ namespace NotchPeninsula
 
                         if ((Renderer.PassthroughModeEnabled && !_isPassthroughAwake) || Renderer.FullHideAlpha < 0.99f) break;
 
+                        // 实况窗展开的详情页是主岛之外的独立浮动面板：双击落在它上面就交给面板页自己处理，
+                        // 并且无论页面用不用都要消费掉 —— 否则会继续落到下面「双击空白切换待机模式」的分支
+                        //（面板画在岛体下方，IsBlankAt 会把它当成岛内空白）。
+                        if (LiveWindowHost.ContainsPanelPoint(dx, dy))
+                        {
+                            LiveWindowHost.DispatchPanelDoubleClick(false, dx, dy);
+                            return (IntPtr)0;
+                        }
+
                         // 它主动声明要双击，语义比宿主的内置手势更明确）。
                         {
                             float dblTopY = 12f * _currentStyleProgress;
@@ -2211,16 +2220,19 @@ namespace NotchPeninsula
                         int cy = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
 
-                        // 实况窗独立层优先：展开面板吃自己的点击，气泡左键交给注册方。
+                        // 实况窗独立层优先：展开面板吃自己的点击。
                         if (LiveWindowHost.HasOpenPanel && LiveWindowHost.HitPanel(cx, cy))
                         {
                             LiveWindowHost.DispatchPanelMouseDown(cx, cy);
                             LiveWindowHost.DispatchPanelClick(cx, cy);
                             return (IntPtr)0;
                         }
+                        // 气泡左键 = 和右键同一个展开入口：展开/收起详情面板由宿主统一处理，
+                        // 插件不用再实现「展开按钮 / OnExpand」这类东西。
                         if (LiveWindowHost.HitBubble(cx, cy, out var liveClickId) && liveClickId != null)
                         {
-                            LiveWindowHost.NotifyBubbleLeftClick(liveClickId);
+                            LiveWindowHost.TogglePanel(liveClickId);
+                            CancelLivePanelCollapse();
                             return (IntPtr)0;
                         }
 

@@ -230,6 +230,43 @@ namespace NotchPeninsula
         // 背板抓的是整个画布框，所以胶囊变大变小时只挪源矩形，不用重抓，避免闪烁
         public static SKRect AcrylicBackdropSrc { get; set; }
 
+        // ---- 画布逻辑坐标 → 背板图像坐标的映射（本帧有效）----
+        // 实况窗的详情页面板画在岛外，但和岛体吃同一张背板 / 同一套材质；
+        // 映射基准就是「岛体 canvas 矩形 ↔ AcrylicBackdropSrc」，唯一真源，面板只是同一个线性换算。
+        private static bool _backdropMapValid;
+        private static float _backdropMapCanvasLeft, _backdropMapCanvasW, _backdropMapCanvasH;
+        private static SKRect _backdropMapSrc;
+
+        internal static void UpdateBackdropCanvasMapping(bool valid, float canvasLeft,
+            float canvasW, float canvasH, SKRect src)
+        {
+            _backdropMapValid = valid && canvasW > 1f && canvasH > 1f
+                                && src.Width > 2f && src.Height > 2f;
+            if (!_backdropMapValid) return;
+            _backdropMapCanvasLeft = canvasLeft;
+            _backdropMapCanvasW = canvasW;
+            _backdropMapCanvasH = canvasH;
+            _backdropMapSrc = src;
+        }
+
+        /// <summary>把画布逻辑矩形换算成当前背板上的源矩形；面板材质 / 玻璃合成用。</summary>
+        internal static bool TryCanvasToBackdrop(SKRect canvasRect, out SKRect src)
+        {
+            src = default;
+            if (!_backdropMapValid) return false;
+            float kx = _backdropMapSrc.Width / _backdropMapCanvasW;
+            float ky = _backdropMapSrc.Height / _backdropMapCanvasH;
+            src = new SKRect(
+                _backdropMapSrc.Left + (canvasRect.Left - _backdropMapCanvasLeft) * kx,
+                _backdropMapSrc.Top + canvasRect.Top * ky,
+                _backdropMapSrc.Left + (canvasRect.Right - _backdropMapCanvasLeft) * kx,
+                _backdropMapSrc.Top + canvasRect.Bottom * ky);
+            return src.Width >= 4f && src.Height >= 2f;
+        }
+
+        /// <summary>当前材质的背景涂层色（亚克力 / 实体那层色调）：实况窗详情页面板直接复用。</summary>
+        internal static SKColor MaterialCoatColor => _bgPaint.Color;
+
         public static int TargetMonitorIndex { get; set; } = 0; // 目标显示器索引
         // 最近一次有效目标显示器的记忆值（注册表键 TargetMonitorIndex_Remembered）。
         // 目标显示器只是暂时不在（KVM 切走输入源、重启后副屏未唤醒）时，用它兜底；
@@ -334,7 +371,9 @@ namespace NotchPeninsula
 
         public static float MAX_WINDOW_HEIGHT => Math.Max(
             Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f),
-            LiveWindowHost.RequiredWindowHeight);
+            // 实况窗详情页：RequiredWindowHeight 已含面板高度，这里再给玻璃合成留出边缘折射 / 模糊的采样余量
+            // （窗口多出来的那块是透明的，不影响显示；抓屏高度靠它才能盖住面板底部）。
+            LiveWindowHost.RequiredWindowHeight > 0f ? LiveWindowHost.RequiredWindowHeight + 72f : 0f);
 
         public const int OUTER_R = 14;
 
@@ -345,6 +384,10 @@ namespace NotchPeninsula
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
             {
+                // 本帧频谱留给 LiveWindowRenderer 用：实况窗详情页复用的就是主岛那块媒体面板，
+                // 右边那组律动条必须和岛内是同一份数据。
+                _lastBars = bars;
+
                 canvas.Clear(SKColors.Transparent);
 
                 SetHitTestHeight(currentHeight);
@@ -428,6 +471,9 @@ namespace NotchPeninsula
                 // 亚克力 / 液态玻璃：胶囊内先铺「真实桌面像素」，再叠自绘涂层当色调。
                 // ⚠️ 顺序不能颠倒 —— 涂层必须画在背板之上，否则会被背板整块盖掉（看起来就只剩"假玻璃"）。
                 var backdrop = AcrylicBackdrop;
+                // 实况窗详情页材质复用同一张背板 / 同一套玻璃合成：把画布→背板的换算登记好。
+                UpdateBackdropCanvasMapping(backdrop != null && (IslandAcrylic || IslandAnyGlass),
+                    islandLeft, currentWidth, currentHeight, AcrylicBackdropSrc);
                 if (backdrop == null && !_backdropNullLogged)
                 {
                     _backdropNullLogged = true;

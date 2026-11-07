@@ -71,12 +71,34 @@ namespace NotchPeninsula
 
         private const float TL_MIN_HEIGHT = 140f; // 高度涨到这条线之前不画，避免与底部按钮叠字
 
+        // ---- 展开态媒体面板的统一尺寸（主岛 / 实况窗详情页必须同一份）----
+        // 宽度固定 350；高度看有没有时间轴（进度条）：有 158，没有 130。
+        // 两边都从这里取，别再各写一套数字 —— 否则浮层和主岛差一条进度条就是「两套东西」。
+        public const float MEDIA_EXPANDED_WIDTH = 350f;
+
+        public const float MEDIA_EXPANDED_HEIGHT_TIMELINE = 158f;
+
+        public const float MEDIA_EXPANDED_HEIGHT_PLAIN = 130f;
+
+        /// <summary>
+        /// 实况窗详情页专用：它本身就是「展开态媒体面板」，页面一打开就该有进度条，
+        /// 不该被主岛的交互方式（直接交互 / 展开交互）决定。绘制与命中期间用这个标记按展开态算。
+        /// </summary>
+        internal static bool ForceMediaPanelExpanded;
+
+        /// <summary>展开态要不要带时间轴（进度条）：主岛展开面板 / 实况窗详情页共用同一判据。</summary>
+        public static bool MediaPanelTimelineVisible(MediaController media, bool forceExpanded = false)
+            => (forceExpanded || MediaInteractionMode == 1) && media.HasTimeline;
+
         // 刻意不再排除组合模式：组合模式现在也能展开媒体面板，
 
         public static bool TimelineVisible(MediaController media)
-            => IsMediaExpanded && MediaInteractionMode == 1 && media.HasTimeline;
+            => IsMediaExpanded && MediaPanelTimelineVisible(media, ForceMediaPanelExpanded);
 
-        public static float GetExpandedHeight(MediaController media) => TimelineVisible(media) ? 158f : 130f;
+        public static float GetExpandedHeight(MediaController media, bool forceExpanded = false)
+            => MediaPanelTimelineVisible(media, forceExpanded)
+                ? MEDIA_EXPANDED_HEIGHT_TIMELINE
+                : MEDIA_EXPANDED_HEIGHT_PLAIN;
 
         public static bool HitTimeline(float x, float y)
             => _tlBarX2 > _tlBarX1 && x >= _tlBarX1 - 8f && x <= _tlBarX2 + 8f && Math.Abs(y - _tlBarY) <= 13f;

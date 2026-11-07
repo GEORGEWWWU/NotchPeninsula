@@ -165,8 +165,6 @@ NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基
 
 <div align="center">
 
-<img src="https://github-readme-stats.vercel.app/api/pin/?username=GEORGEWWWU&repo=NotchPeninsula&theme=github_dark&show_owner=true" alt="NotchPeninsula 仓库概览" />
-
 </div>
 
 ## 项目结构

@@ -257,6 +257,21 @@ namespace NotchPeninsula
         //    Expire + 重建缓冲才跳出来。换算放到 Capture 里用本次的原点与缩放比做，那里没有"上一帧"。
         private static volatile float _maskSx0, _maskSy0, _maskSx1, _maskSy1;
 
+        // ---- 额外遮罩：实况窗详情页面板 + 左侧实况窗本体 ----
+        // 这些都是宿主自己画的像素，抓屏时必须一起擦掉，否则它们（尤其是现在也吃玻璃材质的
+        // 气泡 / 面板）会采到自己的上一帧，形成残影 / 反馈。
+        // 岛体那份仍走上面的 union（有动画历史、只有一个）；这些数量不定（面板 1 + 气泡最多 8），
+        // 用固定上限数组 + 锁发布，不需要动画并集。
+        public const int MaxExtraMaskRects = 10;   // 详情页面板 1 + 气泡 8 + 余量 1
+
+        private static readonly object _extraMaskLock = new();
+        private static readonly float[] _extraMaskRects = new float[MaxExtraMaskRects * 4];
+        private static int _extraMaskCount;
+        private static long _lastExtraMaskWakeMs;
+
+        // 抓屏线程独占的拷贝，避免擦除期间一直持锁（会把渲染线程的发布卡住）。
+        private static readonly float[] _extraMaskCapture = new float[MaxExtraMaskRects * 4];
+
         // ---- 擦除矩形 = 「当前岛体」∪「最近 400ms 内岛体待过的地方」----
         // 为什么需要历史：DXGI 给的是**已经合成好的桌面**，这一帧里的岛体是 100~250ms 前的位置和尺寸；
         // 而擦除用的是"此刻"的矩形。展开/收起（以及启动时的入场动画）过程中岛体尺寸一直在变，
@@ -320,6 +335,43 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 渲染线程：发布本帧「额外要擦掉的宿主矩形」（屏幕物理像素，flat 的 x0,y0,x1,y1，长度是 4 的倍数）。
+        /// 实况窗详情页面板 / 左侧气泡都走这里。和岛体遮罩分开：数量不定，且不需要动画并集。
+        /// </summary>
+        public static void SetExtraMasks(ReadOnlySpan<float> rects)
+        {
+            int count = Math.Min(rects.Length / 4, MaxExtraMaskRects);
+            bool changed = false;
+            lock (_extraMaskLock)
+            {
+                if (count != _extraMaskCount) changed = true;
+                if (!changed)
+                {
+                    for (int i = 0; i < count * 4; i++)
+                    {
+                        float a = _extraMaskRects[i], b = rects[i];
+                        // 动画里每帧只差零点几像素：不重抓（否则会催成每帧一次抓屏）。
+                        if (MathF.Abs(a - b) > 0.5f) { changed = true; break; }
+                    }
+                }
+                for (int i = 0; i < count * 4; i++) _extraMaskRects[i] = rects[i];
+                _extraMaskCount = count;
+            }
+
+            // 面板展开 / 气泡分裂 / 滑动时矩形在变 → 催一次重抓（与岛体同款 150ms 节流）。
+            if (changed)
+            {
+                long now = Environment.TickCount64;
+                if (now - _lastExtraMaskWakeMs >= 150)
+                {
+                    _lastExtraMaskWakeMs = now;
+                    _dirty = true;
+                    _work.Set();
+                }
+            }
+        }
+
         private static long _lastMaskWakeMs;
 
         private static float _maskLastX0, _maskLastX1;
@@ -328,6 +380,7 @@ namespace NotchPeninsula
         {
             _maskSx0 = _maskSy0 = _maskSx1 = _maskSy1 = 0f;
             _maskLastX0 = _maskLastX1 = 0f;   // 下次 SetMask 一定会被判成"移动了"，把抓屏线程叫醒
+            lock (_extraMaskLock) _extraMaskCount = 0;
             _eraseUx0 = _eraseUy0 = _eraseUx1 = _eraseUy1 = 0f;   // 并集也一起作废，别拿上一轮的矩形继续擦
             _eraseUnionMs = 0;
         }
@@ -787,6 +840,14 @@ namespace NotchPeninsula
             int ex1 = (int)MathF.Ceiling((eSx1 - x) * inv);
             int ey1 = (int)MathF.Ceiling((eSy1 - y) * inv);
 
+            // 额外遮罩（详情页面板 / 实况窗气泡）：本帧矩形拷到抓屏线程自己的缓冲里再慢慢擦。
+            int extraCount;
+            lock (_extraMaskLock)
+            {
+                extraCount = _extraMaskCount;
+                for (int i = 0; i < extraCount * 4; i++) _extraMaskCapture[i] = _extraMaskRects[i];
+            }
+
             // 抓屏后端：玻璃优先 DXGI（GPU 采集），其余走 GDI StretchBlt。
             // gdiOnly：跳过 DXGI 直接读屏幕。隐身后的第二次抓取要用它兜底 ——
             // GDI 读的是"当前这一刻"的屏幕，岛体已隐身就一定拿得到干净桌面；
@@ -1004,7 +1065,20 @@ namespace NotchPeninsula
                 // 擦不掉就别发这张图：发出去的那一刻玻璃里就是"岛体自己"，也就是错位重影 / 双灵动岛。
                 // 宁可这一轮不产出（沿用上一张），也不能把带岛体的背板交出去。
                 if (!EraseIsland(sw, sh, ex0, ey0, ex1, ey1))
-                return Fail(CapFailErase, $"erase=({ex0},{ey0})-({ex1},{ey1})");
+                    return Fail(CapFailErase, $"erase=({ex0},{ey0})-({ex1},{ey1})");
+                // 详情页面板 / 实况窗气泡也擦：它们同样是宿主自己画的像素，留在背板里会被玻璃
+                // 采样成残影。（完全落在抓取矩形外时跳过 —— 已不可见，没必要因此丢一张好背板。）
+                for (int i = 0; i < extraCount; i++)
+                {
+                    int ex = i * 4;
+                    int rx0 = (int)MathF.Floor((_extraMaskCapture[ex] - x) * inv);
+                    int ry0 = (int)MathF.Floor((_extraMaskCapture[ex + 1] - y) * inv);
+                    int rx1 = (int)MathF.Ceiling((_extraMaskCapture[ex + 2] - x) * inv);
+                    int ry1 = (int)MathF.Ceiling((_extraMaskCapture[ex + 3] - y) * inv);
+                    if (rx1 <= 0 || ry1 <= 0 || rx0 >= sw || ry0 >= sh) continue;
+                    if (!EraseIsland(sw, sh, rx0, ry0, rx1, ry1))
+                        return Fail(CapFailErase, $"erase extra#{i}=({rx0},{ry0})-({rx1},{ry1})");
+                }
                 lumAfter = SampleLuminance((byte*)_pBits, sw * 4, sw, sh, mx0, my0, mx1, my1, out rangeAfter);
             }
 

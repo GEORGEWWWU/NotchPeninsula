@@ -82,15 +82,14 @@ internal sealed class MediaLiveWindow : ILiveWindow
 
         public MediaPanelDetailPage(MediaController media) => _media = media;
 
-        // 浮层宽度按当前歌词 / 译文 / 歌名自适应：长歌词不再被右边裁掉（原先固定 320 会切字）。
-        public float MeasureWidth()
-        {
-            float textW = Renderer.MeasureMediaPanelTextWidth(_media);
-            // 布局：左边距 20 + 封面 50 + 12；右侧留给频谱 / 留白 55 + 12。
-            return Math.Clamp(82f + textW + 67f, 320f, 620f);
-        }
+        // 和主岛展开媒体面板同一份尺寸，宽度固定（统一 350）、高度看有没有时间轴：
+        // 直接复用 Renderer 里那两个口径，不在这里再写一套数字。
+        public bool ResizeWithContent => true;   // 时间轴可能晚到 / 消失：高度跟着主岛面板实时变
 
-        public float MeasureHeight() => _media.HasTimeline && Renderer.MediaInteractionMode == 1 ? 158f : 130f;
+        public float MeasureWidth() => Renderer.MEDIA_EXPANDED_WIDTH;
+
+        // 力按展开态算：详情页就是展开态媒体面板，交互方式设成「直接交互」也照样要进度条。
+        public float MeasureHeight() => Renderer.GetExpandedHeight(_media, forceExpanded: true);
 
         // 和岛内媒体面板同一口径：3 秒没有鼠标动作就自动收起（宿主鼠标停在面板上会取消计时）。
         public TimeSpan AutoCollapseDelay => TimeSpan.FromSeconds(3);
@@ -109,7 +108,7 @@ internal sealed class MediaLiveWindow : ILiveWindow
             }
             // _tlBar* 是上一帧浮层绘制时登记的局部坐标（桥里已把 left/right 设成面板坐标）。
             // 这里不能调 TimelineVisible()：桥画完就把 IsMediaExpanded 复原了，命中侧读到的是复原后的值。
-            if (_media.HasTimeline && Renderer.MediaInteractionMode == 1 && Renderer.HitTimeline(x, y))
+            if (Renderer.MediaPanelTimelineVisible(_media, forceExpanded: true) && Renderer.HitTimeline(x, y))
                 return new WidgetHit("seek");
             return WidgetHit.None;
         }
