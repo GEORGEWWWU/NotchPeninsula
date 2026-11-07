@@ -162,6 +162,7 @@ public static class LiveWindowHost
         public bool Completed;
         public bool Hovered;
         public bool Hidden;
+        public bool Suppressed;   // 插件级开关关闭：暂时挂起（不绘制 / 不命中 / 不回调插件）
         public bool Broken;
 
         public float Alpha = 255f;
@@ -235,13 +236,49 @@ public static class LiveWindowHost
     {
         if (string.IsNullOrEmpty(ownerId) || ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase)) return;
         EnsureOwnerSettingsLoaded();
+
+        bool changed;
         lock (_ownerGate)
         {
-            if (enabled) _disabledOwners.Remove(ownerId);
-            else _disabledOwners.Add(ownerId);
-            SaveOwnerSettingsLocked();
+            changed = enabled ? _disabledOwners.Remove(ownerId) : _disabledOwners.Add(ownerId);
+            if (changed) SaveOwnerSettingsLocked();
         }
+        if (!changed) return;
+
+        // 先把新状态挂到该插件的每一个活窗上（本帧起不再绘制 / 命中），再逐个通知插件：
+        // 禁用 → 插件把内容挪回主岛组件行；恢复 → 内容可以重新交给实况窗。
+        // 通知放在所有锁之外：插件回调里可能拿自己的锁，甚至重新注册。
+        var windows = SetOwnerSuppressed(ownerId, suppressed: !enabled);
+        foreach (var window in windows)
+        {
+            try { window.OnHostEnabledChanged(enabled); }
+            catch (Exception ex) { Logger.Error($"[实况窗] 插件 {ownerId} 处理实况窗开关通知异常", ex); }
+        }
+
         Logger.Info($"[实况窗] 插件 {ownerId} 的实况窗已{(enabled ? "启用" : "禁用")}（禁用时内容只允许留在主岛）");
+    }
+
+    /// <summary>
+    /// 挂起 / 恢复某插件的全部实况窗，返回需要通知的窗口对象。
+    /// 退出动画中的窗已经没有插件对象，只标记不通知；已在目标状态的不重复处理。
+    /// </summary>
+    private static List<ILiveWindow> SetOwnerSuppressed(string ownerId, bool suppressed)
+    {
+        var windows = new List<ILiveWindow>(2);
+        lock (_lock)
+        {
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                var e = _entries[i];
+                if (e.Suppressed == suppressed) continue;
+                if (!string.Equals(e.Owner, ownerId, StringComparison.OrdinalIgnoreCase)) continue;
+                e.Suppressed = suppressed;
+                if (suppressed) e.Hovered = false;
+                if (e.Window != null && !e.Exiting) windows.Add(e.Window);
+            }
+            UpdateSizingLocked();
+        }
+        return windows;
     }
 
     private static void EnsureOwnerSettingsLoaded()
@@ -388,6 +425,7 @@ public static class LiveWindowHost
                 existing.Window = window;
                 existing.Broken = false;
                 existing.Completed = false;
+                existing.Suppressed = false;   // 重新启用后插件重注册：解除挂起
                 existing.DisplayProgress = 0f;
                 existing.LastPercentKey = "";
                 return new Handle(existing, window);
@@ -751,7 +789,8 @@ public static class LiveWindowHost
                 var e = _entries[i];
 
                 // 未退出、未断开的窗取一帧视觉快照。插件抛异常 = 熔断该窗（走退出动画）。
-                if (e.Window != null && !e.Exiting)
+                // 插件级开关关闭时整窗挂起：连 GetVisual 都不再回调，插件完全退回主岛。
+                if (e.Window != null && !e.Exiting && !e.Suppressed)
                 {
                     try
                     {
@@ -925,7 +964,7 @@ public static class LiveWindowHost
         for (int i = 0; i < _entries.Count; i++)
         {
             var e = _entries[i];
-            if (e.Hidden) continue;
+            if (e.Hidden || e.Suppressed) continue;
             if (frame.Count >= MaxItems) break;
 
             ref var item = ref frame.Items[frame.Count];
@@ -1052,7 +1091,7 @@ public static class LiveWindowHost
     {
         int n = 0;
         for (int i = 0; i < _entries.Count; i++)
-            if (_entries[i].Window != null && !_entries[i].Exiting) n++;
+            if (_entries[i].Window != null && !_entries[i].Exiting && !_entries[i].Suppressed) n++;
         return n;
     }
 
@@ -1061,7 +1100,8 @@ public static class LiveWindowHost
         for (int i = 0; i < _entries.Count; i++)
         {
             var e = _entries[i];
-            if (e.Window != null && !e.Exiting && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
+            if (e.Window != null && !e.Exiting && !e.Suppressed
+                && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
         }
         return null;
     }

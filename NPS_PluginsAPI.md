@@ -944,7 +944,13 @@ _liveReg?.Dispose();   // 注销：气泡分裂回收到岛体左缘并消失（
 - 句柄 `Dispose()` 幂等；插件卸载 / 重载时宿主会自动注销该插件的全部实况窗并回调一次 `OnRemoved()`，**之后不再回调这个对象的任何方法**（包括 `GetVisual` / `DrawInner`）。
 - 位置、排序、进出动画、窗口尺寸都由宿主管，别自己算；也别把实况窗内容再塞进主岛组件行。同屏最多画 8 个气泡。
 - 气泡直径**跟随折叠岛高度**（默认约 40px，极端自定义高度下夹在 28..84），所以内圈很小，`DrawInner` 拿到的矩形按实际尺寸排（别写死 39×39）。
-- **插件级开关（默认启用）**：用户在「设置 → 实况窗管理」里可以关掉某个插件的实况窗。关掉后 `RegisterLiveWindow` 返回的是**空句柄**（不会创建气泡），插件的内容应当按既有方式留在主岛组件行；不要因为拿到空句柄就反复重试注册（宿主不回传原因，重试也没用）。插件第一次注册后会自动出现在该管理页里，无需额外声明。
+- **插件级开关（默认启用）**：用户在「设置 → 实况窗管理」里可以关掉某个插件的实况窗。关掉后：
+  - 该插件**已经显示的气泡**会被立刻挂起（不再绘制 / 不再命中，宿主也不再调用 `GetVisual` / `DrawInner`）；
+  - 宿主对每个被挂起的窗口回调一次 `OnHostEnabledChanged(false)`，插件应把内容按既有方式放回主岛组件行；
+  - 之后再调 `RegisterLiveWindow` 返回的是**空句柄**（不会创建气泡），别因为拿到空句柄就反复重试注册（宿主不回传原因，重试也没用）。
+  
+  重新打开开关时，被挂起的窗口会恢复显示，并回调一次 `OnHostEnabledChanged(true)`，插件可以继续更新视觉；插件也可以在回调里重新注册同 Id 的窗口（宿主会解除挂起并原地替换）。
+  插件第一次注册后会自动出现在该管理页里，无需额外声明。
 
 **实现 `ILiveWindow`**
 
@@ -957,6 +963,7 @@ _liveReg?.Dispose();   // 注销：气泡分裂回收到岛体左缘并消失（
 | `void OnLeftClick()` | **保留兼容，宿主不再调用**：左右键展开已由宿主统一接管 |
 | `void OnExpand()` | 没有可复用 `DetailPage` 时，左右键点气泡的回调（打开自己的市场页 / 设置页之类） |
 | `void OnRemoved()` | 宿主注销时回调一次；之后宿主不再回调本对象 |
+| `void OnHostEnabledChanged(bool enabled)` | 插件级开关变化：`false` = 已被禁用（气泡挂起，内容回到主岛组件行）；`true` = 重新启用。窗口对象仍有效，别在这里注销 / 重注册 |
 
 ```csharp
 public sealed class MyLiveWindow : ILiveWindow
@@ -985,6 +992,9 @@ public sealed class MyLiveWindow : ILiveWindow
     public void OnLeftClick() { }
     public void OnExpand() { }
     public void OnRemoved() { }
+
+    // 插件级开关变化：禁用时把内容挪回主岛组件行，重新启用时可以再交给实况窗。
+    public void OnHostEnabledChanged(bool enabled) { /* 更新自己的显示来源即可 */ }
 }
 ```
 
@@ -1406,6 +1416,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 展开 | `IDetailPage? DetailPage` | `null`（右键改走 `OnExpand()`） |
 | 交互 | `OnLeftClick()` / `OnExpand()` | 空 |
 | 生命周期 | `OnRemoved()` | 空 |
+| 开关 | `OnHostEnabledChanged(bool enabled)` | 空 |
 
 `LiveWindowVisual` 字段：`Progress`（`<0` = 不确定）、`Status` / `Title` / `PercentText`、`ProgressColor`、`SpinInner`、`Completed` —— 语义见 [8.7](#87-实况窗live-window)。
 

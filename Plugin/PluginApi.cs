@@ -212,6 +212,11 @@ public interface IPluginHost
     /// 插件卸载时宿主也会自动注销该插件的全部实况窗并回调一次 <see cref="ILiveWindow.OnRemoved"/>。
     /// 同一插件内 <see cref="ILiveWindow.Id"/> 重复注册视为原地替换，不会重播生成动画。
     /// </para>
+    /// <para>
+    /// 用户在「设置 → 实况窗管理」里关掉本插件时，已显示的气泡会被挂起并回调
+    /// <see cref="ILiveWindow.OnHostEnabledChanged"/>(false)，插件应把内容放回主岛组件行；
+    /// 此时再注册返回的是空句柄。重新打开后挂起的窗口恢复并回调 (true)。
+    /// </para>
     /// </summary>
     IDisposable RegisterLiveWindow(ILiveWindow window);
 

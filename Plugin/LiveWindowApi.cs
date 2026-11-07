@@ -79,6 +79,17 @@ public interface ILiveWindow
 
     /// <summary>宿主注销这个窗时回调一次（插件卸载 / 主动 Dispose）。之后宿主不再回调本对象的任何方法。</summary>
     void OnRemoved() { }
+
+    /// <summary>
+    /// 「设置 → 实况窗管理」里的插件级开关变化：<c>true</c> = 重新启用，<c>false</c> = 已被禁用。
+    /// <para>
+    /// 禁用时宿主立刻挂起该插件的全部气泡：不再绘制、不再命中，也不再调用 <see cref="GetVisual"/> /
+    /// <see cref="DrawInner"/>；插件应把内容按既有方式放回主岛组件行（重新启用时气泡恢复，内容可以再交给实况窗）。
+    /// 窗口对象仍然有效，只是被暂时挂起 —— 不要在这个回调里注销或重新注册。
+    /// 由 UI 线程调用，回调里别做耗时操作。
+    /// </para>
+    /// </summary>
+    void OnHostEnabledChanged(bool enabled) { }
 }
 
 /// <summary>
