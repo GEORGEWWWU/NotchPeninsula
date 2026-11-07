@@ -136,7 +136,7 @@ namespace NotchPeninsula
                 }
                 else if (string.Equals(scene, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (media.IsActive)
+                    if (media.IsActive && !SuppressMediaInIsland)
                     {
                         currentX = CenteredContentX(MeasureMediaBlockWidth(media));
                         DrawMediaModule();
@@ -172,7 +172,7 @@ namespace NotchPeninsula
                 else if (string.Equals(item, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase))
                 {
                     mediaHandled = true;
-                    if (CompShowMedia && media.IsActive) DrawMediaModule();
+                    if (CompShowMedia && media.IsActive && !SuppressMediaInIsland) DrawMediaModule();
                 }
                 else
                 {
@@ -183,7 +183,7 @@ namespace NotchPeninsula
 
             if (!clockHandled && CompShowDateTime) DrawClockModule();
             if (!hardwareHandled && CompShowHardware) DrawHardwareModule();
-            if (!mediaHandled && CompShowMedia && media.IsActive) DrawMediaModule();
+            if (!mediaHandled && CompShowMedia && media.IsActive && !SuppressMediaInIsland) DrawMediaModule();
             DrawPluginWidgets(canvas, null, currentX, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
         }
 
@@ -191,7 +191,7 @@ namespace NotchPeninsula
             float left, float right, float currentHeight, float textOffsetY, byte alpha)
         {
             // 拆分绘制逻辑
-            if (media.IsActive)
+            if (media.IsActive && !SuppressMediaInIsland)
             {
                 DrawMediaControl(canvas, media, isHovered, bars,
                     new MediaBlockGeometry(left, left + 16f, right),

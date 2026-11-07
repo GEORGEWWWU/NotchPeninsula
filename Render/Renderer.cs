@@ -290,6 +290,12 @@ namespace NotchPeninsula
 
         public static bool PassthroughModeEnabled = false; // 穿透模式总开关
 
+        /// <summary>
+        /// 媒体内容已交给左侧实况窗显示：岛体不再画媒体（避免「左边显示、右边重复」）。
+        /// 由内置的 <c>MediaLiveWindowController</c> 在切换时置位，媒体结束 / 开关关闭时复位。
+        /// </summary>
+        public static volatile bool SuppressMediaInIsland = false;
+
         public static float PassthroughAlpha = 1.0f; // 穿透动画平滑插值
 
         public static volatile bool FileDragInProgress = false;
@@ -326,7 +332,9 @@ namespace NotchPeninsula
             Math.Max(MAX_ISLAND_WIDTH,
                 Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))))) + 80f;
 
-        public static float MAX_WINDOW_HEIGHT => Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f);
+        public static float MAX_WINDOW_HEIGHT => Math.Max(
+            Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f),
+            LiveWindowHost.RequiredWindowHeight);
 
         public const int OUTER_R = 14;
 
@@ -357,7 +365,7 @@ namespace NotchPeninsula
                 //     不单独占用预留区；
                 //     都不会影响原生功能本身。
                 float pluginReserve = toast == null && !CompositeModeEnabled ? GetPluginRowReserve() : 0f;
-                string? nativeBuiltinId = CompositeModeEnabled ? null : GetNativeBuiltinId(media.IsActive);
+                string? nativeBuiltinId = CompositeModeEnabled ? null : GetNativeBuiltinId(media.IsActive && !SuppressMediaInIsland);
                 int nativeOrderIndex = OrderIndexOf(nativeBuiltinId);
                 float leftGroupW = 0f, rightGroupW = 0f;
                 float leftPluginBlock = 0f;
@@ -385,6 +393,9 @@ namespace NotchPeninsula
                 _compositeMediaRight = CompositeModeEnabled || pluginReserve > 0f ? right : -1f;
 
                 float topY = 12f * styleProgress;
+
+                // 实况窗：独立于主岛、画在岛体左侧，每帧先算布局与动画（插件 GetVisual 也在这里被调）。
+                LiveWindowHost.Tick(topY, islandLeft, currentWidth, currentHeight);
 
                 canvas.Save();
                 // 整个画布向下平移，让内部所有元素自动完美适应居中
@@ -551,7 +562,7 @@ namespace NotchPeninsula
                 float textOffsetY = 0f;
 
                 // 仅恢复原版代码中软件刚启动时的位移，不影响状态切换
-                if (!media.IsActive && startupProgress < 1f)
+                if ((!media.IsActive || SuppressMediaInIsland) && startupProgress < 1f)
                 {
                     textOffsetY = (1f - startupProgress) * 15f;
                 }
@@ -575,6 +586,7 @@ namespace NotchPeninsula
                     canvas.Restore();
                     canvas.Restore();
                     canvas.Restore();
+                    LiveWindowRenderer.Draw(canvas);
                     return;
                 }
 
@@ -587,6 +599,7 @@ namespace NotchPeninsula
                     canvas.Restore(); // 1. 恢复 ClipPath 裁切
                     canvas.Restore(); // 2. 闭合 SaveLayer 透明层
                     canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
+                    LiveWindowRenderer.Draw(canvas);
                     return;
                 }
 
@@ -596,7 +609,7 @@ namespace NotchPeninsula
                 UpdateClockCache();
 
                 // 自定义组合模式 / 原生布局
-                if (IsMediaPanelShowing(media, currentHeight))
+                if (!SuppressMediaInIsland && IsMediaPanelShowing(media, currentHeight))
                     DrawMediaControl(canvas, media, isHovered, bars,
                         new MediaBlockGeometry(left, left, right), currentHeight, textOffsetY, alpha);
                 else if (CompositeModeEnabled)
@@ -645,6 +658,9 @@ namespace NotchPeninsula
                     DrawWakeButton(canvas, currentHeight);
 
                 canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
+
+                // 实况窗画在主岛之上（画布已回基线）：气泡在岛体左侧，右键展开的面板也由它接管。
+                LiveWindowRenderer.Draw(canvas);
             }
             finally
             {

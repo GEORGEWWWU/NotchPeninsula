@@ -197,6 +197,18 @@ public interface IPluginHost
     void RegisterSecondaryWidget(ISecondaryWidget widget);
     void RegisterSettingsPage(ISettingsPage page);
 
+    /// <summary>
+    /// 注册一个实况窗（主岛左侧漂浮的圆形气泡）。
+    ///
+    /// <para>
+    /// 实况窗独立于主岛：只在主岛左边显示，不会重复出现在岛内组件行；由插件或宿主内置注册，
+    /// 不提供 HTTP / MSP 注册入口。返回的句柄 Dispose 即注销（气泡向右退出消失）；
+    /// 插件卸载时宿主也会自动注销该插件的全部实况窗并回调一次 <see cref="ILiveWindow.OnRemoved"/>。
+    /// 同一插件内 <see cref="ILiveWindow.Id"/> 重复注册视为原地替换，不会重播生成动画。
+    /// </para>
+    /// </summary>
+    IDisposable RegisterLiveWindow(ILiveWindow window);
+
     // 主题（当前帧快照）
     RenderTheme CurrentTheme { get; }
 

@@ -179,6 +179,92 @@ namespace NotchPeninsula
             _dynamicStrokePaint.StrokeJoin = oldJoin;
         }
 
+        // 页签 8：实况窗管理（侧边栏「显示设置」下面一项）
+        // 媒体只做提示（开关在「媒体设置」）；插件逐个开关，默认全部启用；关掉后插件内容只留在主岛。
+        private void RenderTabLiveWindows(SKCanvas canvas)
+        {
+            var owners = LiveWindowHost.KnownPluginOwners;
+
+            float introTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
+            var introRect = new SKRect(CONTENT_L, introTop, WIDTH - CONTENT_RM, introTop + LW_INTRO_CARD_H);
+            canvas.DrawRoundRect(introRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(introRect, 6, 6, _cardBorder);
+            canvas.DrawText("实况窗管理", CONTENT_TEXT_X, introTop + 26, _uiTextPaint);
+            canvas.DrawText("控制哪些插件可以使用左侧实况窗；关闭后内容只留在主岛。",
+                CONTENT_TEXT_X, introTop + 48, _subTextPaint);
+
+            // ── 媒体：状态跟随「媒体设置」，这里只给蓝字入口 ──
+            float mediaTop = LiveWindowMediaCardTop;
+            var mediaRect = new SKRect(CONTENT_L, mediaTop, WIDTH - CONTENT_RM, mediaTop + LW_MEDIA_CARD_H);
+            canvas.DrawRoundRect(mediaRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(mediaRect, 6, 6, _cardBorder);
+            if (_liveWindowMediaHovered)
+            {
+                _dynamicFillPaint.Color = Overlay(12);
+                canvas.DrawRoundRect(mediaRect, 6, 6, _dynamicFillPaint);
+            }
+            canvas.DrawText("媒体", CONTENT_TEXT_X, mediaTop + 25, _uiTextPaint);
+            canvas.DrawText(MediaLiveWindowController.IsEnabled ? "已启用（跟随「媒体设置」）" : "默认关闭（在「媒体设置」里开启）",
+                CONTENT_TEXT_X, mediaTop + 44, _subTextPaint);
+
+            string hint = "去「媒体设置」修改";
+            float hintW = _subTextPaint.MeasureText(hint);
+            _subTextPaint.Color = new SKColor(0, 140, 240);
+            canvas.DrawText(hint, WIDTH - CONTENT_TEXT_RM - hintW, mediaTop + 25, _subTextPaint);
+            _subTextPaint.Color = Neutral(170);
+
+            // ── 插件：逐个开关 ──
+            int rowCount = Math.Max(1, owners.Count);
+            float cardTop = LiveWindowPluginCardTop;
+            float cardH = LW_CARD_HEADER_H + rowCount * LW_ROW_H + 10f;
+            var cardRect = new SKRect(CONTENT_L, cardTop, WIDTH - CONTENT_RM, cardTop + cardH);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+            canvas.DrawText("插件", CONTENT_TEXT_X, cardTop + 23, _uiTextPaint);
+
+            if (owners.Count == 0)
+            {
+                canvas.DrawText("暂无插件上报实况窗", CONTENT_TEXT_X, LiveWindowPluginRowTop + 25, _subTextPaint);
+                return;
+            }
+
+            float tW = 42f, tH = TOGGLE_TRACK_H;
+            for (int i = 0; i < owners.Count; i++)
+            {
+                float rowY = LiveWindowPluginRowTop + i * LW_ROW_H;
+                bool hovered = _liveWindowHoverRow == i;
+                if (hovered)
+                {
+                    _dynamicFillPaint.Color = Overlay(12);
+                    canvas.DrawRoundRect(new SKRect(CONTENT_L + 4f, rowY + 2f, WIDTH - CONTENT_RM - 4f, rowY + LW_ROW_H - 2f),
+                        5f, 5f, _dynamicFillPaint);
+                }
+                float baseline = rowY + LW_ROW_H / 2f + 4.5f;
+                string name = PluginManager.Instance.Host.GetPluginDisplayName(owners[i]);
+                float maxNameW = WIDTH - CONTENT_RM - 16f - tW - 14f - CONTENT_TEXT_X;
+                canvas.DrawText(TruncateText(name, _uiTextPaint, maxNameW), CONTENT_TEXT_X, baseline, _uiTextPaint);
+
+                bool on = LiveWindowHost.IsOwnerEnabled(owners[i]);
+                float tX = WIDTH - CONTENT_RM - 16f - tW;
+                float tY = rowY + (LW_ROW_H - tH) / 2f;
+                var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+                if (on)
+                {
+                    _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                    canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, _dynamicFillPaint);
+                    canvas.DrawCircle(tX + tW - tH / 2f, tY + tH / 2f, tH / 2f - 4f, _toggleCirclePaint);
+                }
+                else
+                {
+                    _dynamicStrokePaint.Color = hovered ? Neutral(150) : Neutral(100);
+                    canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, _dynamicStrokePaint);
+                    _toggleCirclePaint.Color = hovered ? Neutral(200) : Neutral(150);
+                    canvas.DrawCircle(tX + tH / 2f, tY + tH / 2f, tH / 2f - 4f, _toggleCirclePaint);
+                    _toggleCirclePaint.Color = SKColors.White;
+                }
+            }
+        }
+
         private void DrawToggleRow(SKCanvas canvas, float yOffset, string title, string sub, bool state, bool hovered, bool disabled = false)
         {
             float titleBaseline = TITLE_BAR_HEIGHT + yOffset
@@ -545,6 +631,7 @@ namespace NotchPeninsula
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, _separatorPaint);
             DrawTab(canvas, 0, "通用设置", TabRowY(0));
             DrawTab(canvas, 1, "显示设置", TabRowY(1));
+            DrawTab(canvas, 8, "实况窗管理", TabRowY(8));
             DrawTab(canvas, 2, "媒体设置", TabRowY(2));
             DrawTab(canvas, 3, "交互设置", TabRowY(3));
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, _separatorPaint);
@@ -911,23 +998,33 @@ namespace NotchPeninsula
         // 页签：媒体设置
         private void RenderTabMedia(SKCanvas canvas)
         {
-            DrawToggleCard(canvas, 12, "媒体控制", "允许在刘海中显示和控制系统媒体播放", MediaController.IsMediaControlEnabled, _mediaToggleHovered);
+            // 首卡单行变双行：媒体总开关 + 「使用实况窗展示媒体」。
+            var mediaCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + CARD_TOP_Y,
+                WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + CARD_TOP_Y + TOGGLE_CARD_H + MEDIA_LIVE_ROW_DY);
+            canvas.DrawRoundRect(mediaCardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(mediaCardRect, 6, 6, _cardBorder);
+
+            DrawToggleRow(canvas, CARD_TOP_Y, "媒体控制", "允许在刘海中显示和控制系统媒体播放",
+                MediaController.IsMediaControlEnabled, _mediaToggleHovered);
+            DrawToggleRow(canvas, CARD_TOP_Y + MEDIA_LIVE_ROW_DY, "使用实况窗展示媒体",
+                "检测到媒体先显示 3 秒，再收进左侧实况窗（封面旋转）",
+                MediaLiveWindowController.IsEnabled, _mediaLiveToggleHovered);
 
             var platformCardRect = new SKRect(CONTENT_L, PLATFORM_CARD_Y, WIDTH - CONTENT_RM, PLATFORM_CARD_Y + PLATFORM_CARD_H);
             canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(platformCardRect, 6, 6, _cardBorder);
 
             // ── 第 1 行：目标媒体平台 ──
-            canvas.DrawText("目标媒体平台", CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 110, _uiTextPaint);
+            canvas.DrawText("目标媒体平台", CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 110 + MEDIA_LIVE_ROW_DY, _uiTextPaint);
             canvas.DrawText(MediaController.TargetPlatform == "browser" ? "仅接管浏览器内的播放会话" : "多平台共存时，优先截获并接管的平台",
-                CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 130, _subTextPaint);
+                CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY, _subTextPaint);
 
-            float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 96; float dH = 32;
+            float dW = 110; float dX = WIDTH - 140; float dY = TITLE_BAR_HEIGHT + 96 + MEDIA_LIVE_ROW_DY; float dH = 32;
             DrawDropdownBox(canvas, dX, dY, dW, dH, _platforms[_selectedPlatformIndex].Name,
                 _dropdownHovered, enabled: true, open: _dropdownOpen);
 
             // 两行之间的分隔线
-            canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 142, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + 142, _separatorPaint);
+            canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 142 + MEDIA_LIVE_ROW_DY, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + 142 + MEDIA_LIVE_ROW_DY, _separatorPaint);
 
             bool matchEnabled = MediaController.TargetPlatform == "other";
             bool appBoxEnabled = matchEnabled && MediaController.IsManualSessionMatch;
@@ -957,10 +1054,10 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
             canvas.DrawText("歌词设置", CONTENT_TEXT_X, lyricY + 26, _uiTextPaint);
 
-            // 歌词开关
-            canvas.DrawText("在刘海中显示歌词", CONTENT_TEXT_X, lyricY + 52, _subTextPaint);
+            // 歌词开关（四行统一 34px 行距：原 40px 在 692 高窗口里显得太空）
+            canvas.DrawText("在刘海中显示歌词", CONTENT_TEXT_X, lyricY + 48, _subTextPaint);
             float tW = 42, tH = 20;
-            float tX = WIDTH - CONTENT_RM - 16 - tW, tY = lyricY + 37;
+            float tX = WIDTH - CONTENT_RM - 16 - tW, tY = lyricY + 33;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
             if (MediaController.IsLyricsEnabled)
             {
@@ -977,8 +1074,8 @@ namespace NotchPeninsula
                 _toggleCirclePaint.Color = SKColors.White;
             }
 
-            canvas.DrawText("显示翻译歌词（上下两行）", CONTENT_TEXT_X, lyricY + 92, _subTextPaint);
-            float trY = lyricY + 77;
+            canvas.DrawText("显示翻译歌词（上下两行）", CONTENT_TEXT_X, lyricY + 82, _subTextPaint);
+            float trY = lyricY + 67;
             var trRect = new SKRect(tX, trY, tX + tW, trY + tH);
             if (MediaController.IsTranslationEnabled)
             {
@@ -995,8 +1092,8 @@ namespace NotchPeninsula
                 _toggleCirclePaint.Color = SKColors.White;
             }
 
-            canvas.DrawText("逐字歌词（不可用时自动回退卡拉OK）", CONTENT_TEXT_X, lyricY + 132, _subTextPaint);
-            float kY = lyricY + 117;
+            canvas.DrawText("逐字歌词（不可用时自动回退卡拉OK）", CONTENT_TEXT_X, lyricY + 116, _subTextPaint);
+            float kY = lyricY + 101;
             var kRect = new SKRect(tX, kY, tX + tW, kY + tH);
             if (MediaController.IsLyricScanEnabled)
             {
@@ -1014,9 +1111,9 @@ namespace NotchPeninsula
             }
 
             // 延迟调整
-            canvas.DrawText("歌词延迟补偿", CONTENT_TEXT_X, lyricY + 164, _subTextPaint);
+            canvas.DrawText("歌词延迟补偿", CONTENT_TEXT_X, lyricY + 150, _subTextPaint);
             float cardRightX = WIDTH - CONTENT_TEXT_RM;
-            float btnY = lyricY + 147;
+            float btnY = lyricY + 133;
 
             _dynamicFillPaint.Color = _lyricMinusHovered ? Overlay(30) : Overlay(15);
             canvas.DrawRoundRect(new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), 4, 4, _dynamicFillPaint);
@@ -2517,7 +2614,7 @@ namespace NotchPeninsula
         {
             if (_selectedTab == 2 && _dropdownOpen)
             {
-                RenderDropdownList(canvas, WIDTH - 140, TITLE_BAR_HEIGHT + 130, 110,
+                RenderDropdownList(canvas, WIDTH - 140, TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY, 110,
                     _platformNames, _selectedPlatformIndex, _hoveredDropdownIndex, dimmedIndex: -1);
             }
 

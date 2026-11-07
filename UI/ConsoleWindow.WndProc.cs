@@ -227,6 +227,7 @@ namespace NotchPeninsula
             bool newToastToggleHovered = false;
             bool newTopmostToggleHovered = false;
             bool newMediaToggleHovered = false;
+            bool newMediaLiveToggleHovered = false;   // 「使用实况窗展示媒体」
             bool newAutoHideToggleHovered = false;
             bool newFocusHideToggleHovered = false; // 「当焦点离开时自动隐藏岛」
             bool newPauseHideToggleHovered = false; // 「暂停播放后自动隐藏」
@@ -256,6 +257,8 @@ namespace NotchPeninsula
             bool newSoundPreviewHovered = false;
             bool newSoundResetHovered = false;
             int newHoveredPluginAction = -1;
+            bool newLiveWindowMediaHovered = false;   // 实况窗管理页：媒体行
+            int newLiveWindowHoverRow = -1;           // 实况窗管理页：插件行
             int newHoveredMarketSortIndex = -1;   // 市场排序：菜单内悬停项；-2 = 框本体
             bool newHoveredMarketSortBox = false;
             int newHoveredPluginToggle = -1;
@@ -468,13 +471,20 @@ namespace NotchPeninsula
                 if (!anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newMediaToggleHovered = true;
 
-                if (!anyPopupOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
+                // 「使用实况窗展示媒体」（首卡第二行，槽位与 DrawToggleRow 同源）
+                if (!anyPopupOpen
+                    && x >= WIDTH - 80 && x <= WIDTH - 30
+                    && y >= TITLE_BAR_HEIGHT + CARD_TOP_Y + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
+                    && y <= TITLE_BAR_HEIGHT + CARD_TOP_Y + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
+                    newMediaLiveToggleHovered = true;
+
+                if (!anyPopupOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 + MEDIA_LIVE_ROW_DY && y <= TITLE_BAR_HEIGHT + 128 + MEDIA_LIVE_ROW_DY)
                     newDropdownHovered = true;
 
                 if (_dropdownOpen)
                 {
-                    if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 130 && y < TITLE_BAR_HEIGHT + 130 + _platforms.Length * 26)
-                        newHoveredDropdownIndex = (y - (TITLE_BAR_HEIGHT + 130)) / 26;
+                    if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY && y < TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY + _platforms.Length * 26)
+                        newHoveredDropdownIndex = (int)((y - (TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY)) / 26);
                 }
 
                 bool matchRowEnabled = MediaController.TargetPlatform == "other";
@@ -496,14 +506,14 @@ namespace NotchPeninsula
                         newHoveredAppIndex = (int)((y - MATCH_MENU_Y) / 26);
                 }
 
-                // 歌词设置卡片（坐标常量与 Render() 同源）
+                // 歌词设置卡片（坐标常量与 Render() 同源；四行统一 34px 行距）
                 float lyricY = LYRIC_CARD_Y;
-                bool newLyricToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 37 && y <= lyricY + 57);
-                bool newTransToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 77 && y <= lyricY + 97);
-                bool newScanToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 117 && y <= lyricY + 137);
+                bool newLyricToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 33 && y <= lyricY + 53);
+                bool newTransToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 67 && y <= lyricY + 87);
+                bool newScanToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 101 && y <= lyricY + 121);
 
                 // 延迟补偿按钮整行排在最后（歌词卡片里第四行）
-                float btnY = lyricY + 147;
+                float btnY = lyricY + 133;
                 float cardRightX = WIDTH - CONTENT_TEXT_RM;
                 bool newLyricMinusHovered = !anyPopupOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
                 bool newLyricPlusHovered = !anyPopupOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
@@ -688,8 +698,7 @@ namespace NotchPeninsula
                 }
             }
             else if (_selectedTab == 6) // 我的插件
-            {
-                if (IsConfirmDialogOpen)
+            {                if (IsConfirmDialogOpen)
                 {
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
@@ -736,6 +745,23 @@ namespace NotchPeninsula
                     }
                 }
             }
+            else if (_selectedTab == 8) // 实况窗管理
+            {
+                float mediaTop = LiveWindowMediaCardTop;
+                if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM && y >= mediaTop && y <= mediaTop + LW_MEDIA_CARD_H)
+                    newLiveWindowMediaHovered = true;
+
+                var owners = LiveWindowHost.KnownPluginOwners;
+                if (owners.Count > 0 && x >= CONTENT_L && x <= WIDTH - CONTENT_RM)
+                {
+                    float rowTop = LiveWindowPluginRowTop;
+                    if (y >= rowTop)
+                    {
+                        int idx = (int)((y - rowTop) / LW_ROW_H);
+                        if (idx >= 0 && idx < owners.Count) newLiveWindowHoverRow = idx;
+                    }
+                }
+            }
 
             int newHoveredLinkIndex = -1;
             if (_selectedTab == 4) // 关于页
@@ -775,7 +801,7 @@ namespace NotchPeninsula
             if (newMinHovered != _minHovered || newCloseHovered != _closeHovered ||
                 newHoveredTab != _hoveredTab || newToggleHovered != _toggleHovered ||
                 newToastToggleHovered != _toastToggleHovered || newTopmostToggleHovered != _topmostToggleHovered ||
-                newMediaToggleHovered != _mediaToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
+                newMediaToggleHovered != _mediaToggleHovered || newMediaLiveToggleHovered != _mediaLiveToggleHovered || newAutoHideToggleHovered != _autoHideToggleHovered ||
                 newFocusHideToggleHovered != _focusHideToggleHovered ||
                 newPauseHideToggleHovered != _pauseHideToggleHovered ||
                 newFsHideToggleHovered != _fsHideToggleHovered ||
@@ -829,6 +855,8 @@ namespace NotchPeninsula
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
                 newHoveredPluginRemove != _hoveredPluginRemove ||
+                newLiveWindowMediaHovered != _liveWindowMediaHovered ||
+                newLiveWindowHoverRow != _liveWindowHoverRow ||
                 newHoveredMarketInstall != _hoveredMarketInstall ||
                 newHoveredMarketUninstall != _hoveredMarketUninstall ||
                 newHoveredMarketDetail != _hoveredMarketDetail ||
@@ -853,7 +881,7 @@ namespace NotchPeninsula
                 _hoveredBlurModeIndex = newHoveredBlurMode;
                 _hoveredCaptureIndex = newHoveredCapture;
                 _toastToggleHovered = newToastToggleHovered;
-                _mediaToggleHovered = newMediaToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
+                _mediaToggleHovered = newMediaToggleHovered; _mediaLiveToggleHovered = newMediaLiveToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
                 _focusHideToggleHovered = newFocusHideToggleHovered;
                 _pauseHideToggleHovered = newPauseHideToggleHovered;
                 _fsHideToggleHovered = newFsHideToggleHovered;
@@ -909,6 +937,8 @@ namespace NotchPeninsula
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;
                 _hoveredPluginRemove = newHoveredPluginRemove;
+                _liveWindowMediaHovered = newLiveWindowMediaHovered;
+                _liveWindowHoverRow = newLiveWindowHoverRow;
                 _hoveredMarketInstall = newHoveredMarketInstall;
                 _hoveredMarketUninstall = newHoveredMarketUninstall;
                 _hoveredMarketDetail = newHoveredMarketDetail;

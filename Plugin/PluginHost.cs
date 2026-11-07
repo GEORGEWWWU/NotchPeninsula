@@ -39,6 +39,10 @@ public sealed class PluginHost
 
     private readonly Dictionary<string, List<IPluginWindow>> _windows = new();
 
+    // 实况窗按插件记账：卸载时要整批交给 LiveWindowHost.RemoveOwner，不能只靠插件自己 Dispose。
+    // 句柄的 Dispose 负责把自己从账本里摘掉 —— 插件主动注销时账本不留脏条目。
+    private readonly Dictionary<string, List<(ILiveWindow Window, IDisposable Handle)>> _liveWindows = new();
+
     // 插件登记的「卸载时可由宿主帮忙删除的数据目录」：每个插件最多一个。
     // 只存路径，删不删由用户在卸载弹窗里决定 —— 宿主从不自作主张。
     private readonly Dictionary<string, string> _uninstallDirs = new(StringComparer.OrdinalIgnoreCase);
@@ -186,6 +190,57 @@ public sealed class PluginHost
         lock (_lock) return _widgetPluginMap.TryGetValue(widgetId, out var p) ? p : null;
     }
 
+    /// <summary>
+    /// 实况窗右键展开时用：插件一般不再单独为实况窗注册详情页，直接复用该插件组件原有的详情页。
+    /// 取该插件第一个「有详情页」的组件；没有就返回 null（右键改走 OnExpand）。
+    /// </summary>
+    public IDetailPage? FindPrimaryDetailPage(string pluginId)
+    {
+        if (string.IsNullOrEmpty(pluginId)) return null;
+
+        List<IWidget>? candidates = null;
+        lock (_lock)
+        {
+            foreach (var w in _widgets)
+            {
+                if (_widgetPluginMap.TryGetValue(w.Id, out var p)
+                    && string.Equals(p, pluginId, StringComparison.OrdinalIgnoreCase))
+                    (candidates ??= new List<IWidget>(1)).Add(w);
+            }
+        }
+        if (candidates == null) return null;
+
+        // 锁外读插件属性（DetailPage 是插件代码，不能占着宿主锁调）。
+        foreach (var w in candidates)
+        {
+            try
+            {
+                var page = w.DetailPage;
+                if (page != null) return page;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[PluginHost] 读取组件详情页失败（实况窗复用）: {w.Id}", ex);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>设置页「实况窗」一栏用的插件显示名；取不到就退回 Id。</summary>
+    public string GetPluginDisplayName(string pluginId)
+    {
+        if (string.IsNullOrEmpty(pluginId)) return "";
+        lock (_lock)
+        {
+            foreach (var p in _plugins)
+            {
+                if (!string.Equals(p.Id, pluginId, StringComparison.OrdinalIgnoreCase)) continue;
+                return string.IsNullOrWhiteSpace(p.DisplayName) ? p.Id : p.DisplayName;
+            }
+        }
+        return pluginId;
+    }
+
     public void RegisterSecondaryWidget(ISecondaryWidget widget)
     {
         lock (_lock) { _secondaryWidgets.Add(widget); _widgetsVersion++; }
@@ -198,6 +253,67 @@ public sealed class PluginHost
             _secondaryWidgets.Add(widget);
             _secondaryWidgetPluginMap[widget.Id] = pluginId;
             _widgetsVersion++;
+        }
+    }
+
+    // ---- 实况窗（主岛左侧气泡）----
+    //
+    // 插件不直接碰 LiveWindowHost：一来要按插件记账、卸载时整批回收；二来 LiveWindowHost.Register
+    // 会读 window.Id（插件代码），不能持着 _lock 调插件。
+
+    public IDisposable RegisterLiveWindow(string pluginId, ILiveWindow window)
+    {
+        if (window == null) return NullDisposable.Instance;
+        if (string.IsNullOrEmpty(pluginId)) pluginId = "builtin";
+
+        lock (_lock)
+        {
+            if (_unregistering.Contains(pluginId))
+            {
+                Logger.Debug($"[PluginHost] 插件 {pluginId} 正在卸载，已拒绝其新的实况窗登记");
+                return NullDisposable.Instance;
+            }
+        }
+
+        // 别持着宿主锁进插件代码（Register 内部会读 window.Id）。
+        var inner = LiveWindowHost.Register(pluginId, window);
+        if (inner == null) return NullDisposable.Instance;
+
+        var handle = new LiveWindowHandle(this, pluginId, inner);
+        bool unloading;
+        lock (_lock)
+        {
+            // 上面那次检查与本段之间可能已经开始卸载：卸载流程已经扫过账本，得自己补注销。
+            unloading = _unregistering.Contains(pluginId);
+            if (!unloading)
+            {
+                if (!_liveWindows.TryGetValue(pluginId, out var list))
+                    _liveWindows[pluginId] = list = new List<(ILiveWindow, IDisposable)>(1);
+                list.Add((window, handle));
+            }
+        }
+
+        if (unloading)
+        {
+            handle.Dispose();
+            Logger.Debug($"[PluginHost] 插件 {pluginId} 开始卸载后仍登记了实况窗，已立即撤销");
+            return NullDisposable.Instance;
+        }
+        return handle;
+    }
+
+    private void ForgetLiveWindow(string pluginId, IDisposable handle)
+    {
+        lock (_lock)
+        {
+            if (!_liveWindows.TryGetValue(pluginId, out var list)) return;
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (!ReferenceEquals(list[i].Handle, handle)) continue;
+                list.RemoveAt(i);
+                break;
+            }
+            if (list.Count == 0) _liveWindows.Remove(pluginId);
         }
     }
 
@@ -430,6 +546,7 @@ public sealed class PluginHost
         List<IDisposable>? refreshes = null;
         List<IPluginWindow>? windows = null;
         List<IWidget>? removedWidgets = null;
+        List<(ILiveWindow Window, IDisposable Handle)>? liveWindows = null;
         bool detailInvalidated = false;
         lock (_lock)
         {
@@ -468,6 +585,11 @@ public sealed class PluginHost
             }
             if (_windows.TryGetValue(pluginId, out var winList))
                 windows = winList;
+            if (_liveWindows.TryGetValue(pluginId, out var liveList))
+            {
+                liveWindows = liveList;
+                _liveWindows.Remove(pluginId);
+            }
         }
 
         // 渲染线程此后一帧都画不到这些组件，回调怎么释放都安全。
@@ -490,6 +612,15 @@ public sealed class PluginHost
         // 放在锁外：它会推清单（可能触发对端 I/O），不该占着 _lock。
         try { MspPluginRegistry.RemovePlugin(pluginId); }
         catch (Exception ex) { Logger.Warn($"[PluginHost] 摘除 {pluginId} 的 MSP 接口失败: {ex.Message}"); }
+
+        // 实况窗：先让宿主把窗与插件对象断开（之后渲染线程再不会回调插件），
+        // 再清账本。RemoveOwner 会同步回调一次 OnRemoved，所以必须留在锁外。
+        try { LiveWindowHost.RemoveOwner(pluginId); }
+        catch (Exception ex) { Logger.Error($"[PluginHost] 注销 {pluginId} 的实况窗失败", ex); }
+
+        if (liveWindows != null)
+            foreach (var (_, handle) in liveWindows)
+                try { handle.Dispose(); } catch { }
 
         if (windows != null)
         {
@@ -701,6 +832,38 @@ public sealed class PluginHost
         }
     }
 
+    private sealed class LiveWindowHandle : IDisposable
+    {
+        private readonly PluginHost _host;
+        private readonly string _pluginId;
+        private readonly IDisposable _inner;
+        private int _disposed;
+
+        public LiveWindowHandle(PluginHost host, string pluginId, IDisposable inner)
+        {
+            _host = host;
+            _pluginId = pluginId;
+            _inner = inner;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+            _host.ForgetLiveWindow(_pluginId, this);
+            // 注销会触发插件 OnRemoved 回调，异常只记日志，别让插件的 Dispose 把调用方带崩。
+            try { _inner.Dispose(); }
+            catch (Exception ex) { Logger.Error($"[PluginHost] 注销实况窗失败: {_pluginId}", ex); }
+        }
+    }
+
+    // 登记被拒（卸载中 / 窗口无效）时给插件一个空句柄：插件照常 Dispose，不必写 null 判断。
+    private sealed class NullDisposable : IDisposable
+    {
+        public static readonly NullDisposable Instance = new();
+        public void Dispose() { }
+    }
+
     private sealed class RefreshHandle : IDisposable
     {
         private readonly System.Timers.Timer _timer;
@@ -750,6 +913,7 @@ public sealed class ScopedPluginHost : IPluginHost
     public void RegisterWidget(IWidget widget) => _host.RegisterWidget(_pluginId, widget);
     public void RegisterSecondaryWidget(ISecondaryWidget widget) => _host.RegisterSecondaryWidget(_pluginId, widget);
     public void RegisterSettingsPage(ISettingsPage page) => _host.RegisterSettingsPage(_pluginId, page);
+    public IDisposable RegisterLiveWindow(ILiveWindow window) => _host.RegisterLiveWindow(_pluginId, window);
 
     public RenderTheme CurrentTheme => _host.CurrentTheme;
     public void PostReminder(ReminderData reminder) => _host.PostReminder(reminder);

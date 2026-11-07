@@ -77,6 +77,18 @@ namespace NotchPeninsula
             DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H,
             HEIGHT - 6f - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y));
 
+        // ---- 页签 8：实况窗管理（侧边栏「显示设置」下面一项）----
+        private const float LW_INTRO_CARD_H = 62f;
+        private const float LW_MEDIA_CARD_H = 56f;
+        private const float LW_CARD_HEADER_H = 34f;
+        private const float LW_ROW_H = 40f;
+
+        private static float LiveWindowMediaCardTop => TITLE_BAR_HEIGHT + CARD_TOP_Y + LW_INTRO_CARD_H + CARD_GAP;
+
+        private static float LiveWindowPluginCardTop => LiveWindowMediaCardTop + LW_MEDIA_CARD_H + CARD_GAP;
+
+        private static float LiveWindowPluginRowTop => LiveWindowPluginCardTop + LW_CARD_HEADER_H;
+
         private const float DISPLAY_ITEM_L = CONTENT_L;
 
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
@@ -89,6 +101,11 @@ namespace NotchPeninsula
         private const float CARD_TOP_Y = 12f;      // 每页首张卡的顶部偏移
 
         private const float TOGGLE_CARD_H = 62f;   // 单行开关卡（DrawToggleCard / 字体卡）高度
+
+        // 媒体页首卡是双行（媒体控制 + 使用实况窗展示媒体）：多出来的一行高度。
+        // 媒体页后续卡片全部按 CARD_GAP 往下推，这里只写一次，避免几处硬编码跟着漂。
+        // 50 而不是 38：首行有副标题，行距太小两行会挤在一起（实测 38 时副标题贴着下一行标题）。
+        private const float MEDIA_LIVE_ROW_DY = 50f;
 
         private const float STYLE_CARD_Y = CARD_TOP_Y;
 
@@ -185,7 +202,7 @@ namespace NotchPeninsula
 
         /// <summary>页签行首（相对标题栏），**按页签号索引**——顺序与侧边栏视觉顺序不同，
         ///    绘制顺序见 RenderSidebar。绘制 / 命中 / 滑动动画三处都从这里取，别再写死数字。</summary>
-        private static readonly float[] SidebarTabY = { 60f, 100f, 140f, 180f, 320f, 10f, 230f, 270f };
+        private static readonly float[] SidebarTabY = { 60f, 100f, 180f, 220f, 360f, 10f, 270f, 310f, 140f };
 
         private const float TAB_ROW_H = 36f;          // 页签行高
 
@@ -439,15 +456,15 @@ namespace NotchPeninsula
 
         // 媒体设置页卡片顺序（合并后）：
 
-        private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;   // 84 合并卡片顶部
+        private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + CARD_TOP_Y + TOGGLE_CARD_H + MEDIA_LIVE_ROW_DY + CARD_GAP;   // 合并卡片顶部
 
         private const float PLATFORM_CARD_H = 124f;
 
-        private const float PLATFORM_ROW2_Y = TITLE_BAR_HEIGHT + 146f;   // 第 2 行「匹配方式」行首
+        private const float PLATFORM_ROW2_Y = TITLE_BAR_HEIGHT + 146f + MEDIA_LIVE_ROW_DY;   // 第 2 行「匹配方式」行首
 
         private const float LYRIC_CARD_Y = PLATFORM_CARD_Y + PLATFORM_CARD_H + CARD_GAP;   // 218 歌词设置卡片顶部
 
-        private const float LYRIC_CARD_H = 176f;
+        private const float LYRIC_CARD_H = 160f;
 
         private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
 
@@ -457,9 +474,9 @@ namespace NotchPeninsula
 
         private const float MATCH_APP_X = 460f;        // 右框：手动模式下的目标软件
 
-        private const float MATCH_ROW_Y = TITLE_BAR_HEIGHT + 158f;   // 选项框顶部（= 第 2 行行首 +12）
+        private const float MATCH_ROW_Y = TITLE_BAR_HEIGHT + 158f + MEDIA_LIVE_ROW_DY;   // 选项框顶部（= 第 2 行行首 +12）
 
-        private const float MATCH_MENU_Y = TITLE_BAR_HEIGHT + 192f;  // 下拉菜单顶部（= 选项框底 +2）
+        private const float MATCH_MENU_Y = TITLE_BAR_HEIGHT + 192f + MEDIA_LIVE_ROW_DY;  // 下拉菜单顶部（= 选项框底 +2）
 
         private const float MATCH_MENU_RIGHT = 570f;   // 软件菜单右边界
 
@@ -539,6 +556,11 @@ namespace NotchPeninsula
         // 媒体设置状态
 
         private bool _mediaToggleHovered = false;
+
+        private bool _mediaLiveToggleHovered = false;   // 「使用实况窗展示媒体」开关
+
+        private int _liveWindowHoverRow = -1;   // 实况窗管理页：插件行悬停
+        private bool _liveWindowMediaHovered = false;   // 实况窗管理页：媒体行悬停
 
         private bool _dropdownOpen = false;
 
@@ -945,7 +967,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 2)
             {
                 if (x >= WIDTH - 140 && x <= WIDTH - 30
-                    && y >= TITLE_BAR_HEIGHT + 98 && y <= TITLE_BAR_HEIGHT + 128)
+                    && y >= TITLE_BAR_HEIGHT + 98 + MEDIA_LIVE_ROW_DY && y <= TITLE_BAR_HEIGHT + 128 + MEDIA_LIVE_ROW_DY)
                     return DropdownKind.Platform;
                 bool matchEnabled = MediaController.TargetPlatform == "other";
                 if (matchEnabled
@@ -1771,6 +1793,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 5) RenderTabPersonalize(canvas);
             else if (_selectedTab == 6) RenderTabPlugins(canvas);
             else if (_selectedTab == 7) RenderTabMarket(canvas);
+            else if (_selectedTab == 8) RenderTabLiveWindows(canvas);
 
             // 弹窗统一画在页内容之上，不分页签：只画在 6、7 会变成
             // 「模态已经拦下所有点击、画面上却什么都没有」的假死。

@@ -166,7 +166,7 @@ namespace NotchPeninsula
         // 提示是「这一次操作的结论」，离开这一页再回来还挂着，会让人以为刚才又失败了一次。
         private void SwitchTab(int tab)
         {
-            if (tab < 0 || tab > 7 || tab == _selectedTab) return;
+            if (tab < 0 || tab > 8 || tab == _selectedTab) return;
 
             _selectedTab = tab;
             _dropdownOpen = false;
@@ -363,7 +363,7 @@ namespace NotchPeninsula
                 SyncHoverFromCursor();
                 Render();
             }
-            else if (_hoveredTab >= 0 && _hoveredTab <= 7 && _selectedTab != _hoveredTab)
+            else if (_hoveredTab >= 0 && _hoveredTab <= 8 && _selectedTab != _hoveredTab)
             {
                 SwitchTab(_hoveredTab);
             }
@@ -679,6 +679,14 @@ namespace NotchPeninsula
                 _ = MediaController.Instance?.ForceRefresh();
                 Render();
             }
+            else if (_selectedTab == 2 && _mediaLiveToggleHovered)
+            {
+                bool enabled = !MediaLiveWindowController.IsEnabled;
+                // 控制器自己负责收回 / 恢复：关掉时立即注销气泡并把媒体还给岛内。
+                MediaLiveWindowController.SetEnabled(enabled);
+                Program.SaveSetting("MediaLiveWindow", enabled ? 1 : 0);
+                Render();
+            }
             else if (_selectedTab == 2 && _lyricToggleHovered)
             {
                 MediaController.IsLyricsEnabled = !MediaController.IsLyricsEnabled;
@@ -854,6 +862,25 @@ namespace NotchPeninsula
                 }
 
                 Render();
+            }
+            // ---- 实况窗管理（tab 8）----
+            else if (_selectedTab == 8)
+            {
+                if (_liveWindowMediaHovered)
+                {
+                    // 媒体开关在「媒体设置」，这里只做入口，不重复一份状态。
+                    SwitchTab(2);
+                }
+                else if (_liveWindowHoverRow >= 0)
+                {
+                    var owners = LiveWindowHost.KnownPluginOwners;
+                    if (_liveWindowHoverRow < owners.Count)
+                    {
+                        string owner = owners[_liveWindowHoverRow];
+                        LiveWindowHost.SetOwnerEnabled(owner, !LiveWindowHost.IsOwnerEnabled(owner));
+                        Render();
+                    }
+                }
             }
             // ---- 我的插件交互（tab 6）----
             else if (_selectedTab == 6)

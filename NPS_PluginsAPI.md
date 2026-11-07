@@ -7,6 +7,7 @@
 > | 文件 | 内容 |
 > |---|---|
 > | `Plugin/PluginApi.cs` | 全部插件接口与数据模型（唯一的接口契约） |
+> | `Plugin/LiveWindowApi.cs` | 实况窗接口 `ILiveWindow` / `LiveWindowVisual`（见 [8.7](#87-实况窗live-window)） |
 > | `Plugin/WidgetKit.cs` | AutoWidth 协议与布局盒子 |
 > | `Plugin/PluginLoader.cs` | 插件目录发现与入口 DLL 挑选 |
 > | `Plugin/PluginManager.cs` | 加载 / 启用 / 禁用 / 重载 / 导入 / 移除 / 失败归类 |
@@ -51,6 +52,7 @@ NotchPeninsula 在屏幕顶部显示一条「灵动岛」。岛上的原生内�
 | 记住用户的设置 | `host.GetSetting / SetSetting` |
 | 开一个自己的小窗口 | `host.CreateWindow(...)` |
 | 展开 / 收起详情页 | `host.OpenDetailPage / CloseDetailPage` |
+| 在岛左侧加一个实况窗 | `host.RegisterLiveWindow(...)`（见 [8.7](#87-实况窗live-window)） |
 
 ### 1.2 最小可运行插件
 
@@ -920,6 +922,112 @@ host.RegisterUninstallAction(() => { /* 清理 */ });
 - 目录：**最多登记一个**，重复调用只认第一次。宿主**绝不擅自删除** —— 卸载时弹窗把路径摆给用户看，点「删除」才递归删，点「保留」就只卸载。路径要是绝对路径、且是插件独占的子目录（`%USERPROFILE%`、桌面、系统目录、盘符根、宿主程序目录会被拒绝）。
 - 动作：只在**真正卸载**时执行，禁用 / 重载 / 退出都不执行，也不弹窗；执行时机是「实例还活着、文件还没删」；抛异常只记日志、不会挡住卸载；重复注册以最后一次为准；在 UI 线程同步执行，别长时间阻塞。
 
+### 8.7 实况窗（Live Window）
+
+实况窗是主岛**左侧**漂浮的一排圆形气泡：外圈 + 进度弧 + 内圈自绘内容。它独立于主岛 —— 左边显示时岛内组件行**不会**重复出现同一内容；新的在右、旧的在左，屏幕放不下时最老的几个**不绘制**（注册不丢，只是看不到）。生成（细胞分裂）、退出（往右滑回岛体）、右键展开这些动画全由宿主做，插件只管「当前是什么状态」和「内圈画什么」。
+
+> 实况窗**只能由插件 / 宿主内置注册**：不提供 HTTP 注册入口，也不挂 MSP。别的程序不能远程往用户屏幕上弹气泡。
+
+**注册与注销**
+
+```csharp
+private IDisposable? _liveReg;
+
+public void Initialize(IPluginHost host)
+    => _liveReg = host.RegisterLiveWindow(new MyLiveWindow());
+
+// 下载完成 / 不再需要时（入口类可选实现 IDisposable，卸载 / 重载 / 退出时宿主会调）：
+_liveReg?.Dispose();   // 注销：气泡分裂回收到岛体左缘并消失（约 0.4s）
+```
+
+- 同一插件内 `ILiveWindow.Id` 唯一；重复注册同 Id = **原地替换**（不重播生成动画），所以更新内容也可以反复注册。
+- 句柄 `Dispose()` 幂等；插件卸载 / 重载时宿主会自动注销该插件的全部实况窗并回调一次 `OnRemoved()`，**之后不再回调这个对象的任何方法**（包括 `GetVisual` / `DrawInner`）。
+- 位置、排序、进出动画、窗口尺寸都由宿主管，别自己算；也别把实况窗内容再塞进主岛组件行。同屏最多画 8 个气泡。
+- 气泡直径**跟随折叠岛高度**（默认约 40px，极端自定义高度下夹在 28..84），所以内圈很小，`DrawInner` 拿到的矩形按实际尺寸排（别写死 39×39）。
+- **插件级开关（默认启用）**：用户在「设置 → 实况窗管理」里可以关掉某个插件的实况窗。关掉后 `RegisterLiveWindow` 返回的是**空句柄**（不会创建气泡），插件的内容应当按既有方式留在主岛组件行；不要因为拿到空句柄就反复重试注册（宿主不回传原因，重试也没用）。插件第一次注册后会自动出现在该管理页里，无需额外声明。
+
+**实现 `ILiveWindow`**
+
+| 成员 | 说明 |
+|---|---|
+| `string Id` | 同一插件内唯一 |
+| `LiveWindowVisual GetVisual()` | 渲染线程每帧取一次状态快照（线程要求见下） |
+| `void DrawInner(SKCanvas, SKRect, WidgetFrame)` | 内圈全量自绘；矩形按气泡实际尺寸（直径≈折叠岛高，内圈约 24×24），画布已裁剪到内圈圆内、并按 `SpinInner` 旋转过 |
+| `IDetailPage? DetailPage` | **一般不用实现**（`null` 即可）：宿主会自动复用该插件组件原有的详情页。只有内置消费者 / 想给实况窗单独做一套页面的特殊场景才返回自定义页 |
+| `void OnLeftClick()` | 左键点气泡 |
+| `void OnExpand()` | 没有 `DetailPage` 时的右键回调（打开自己的市场页 / 设置页之类） |
+| `void OnRemoved()` | 宿主注销时回调一次；之后宿主不再回调本对象 |
+
+```csharp
+public sealed class MyLiveWindow : ILiveWindow
+{
+    private volatile float _progress;      // 0..1；小于 0 = 不确定进度
+
+    public string Id => "download";        // 同一插件内唯一
+
+    public LiveWindowVisual GetVisual() => new()
+    {
+        Progress = _progress,
+        Status = "downloading",
+        Title = "Rayburst",
+        PercentText = null,                // null = 宿主按 Progress 生成 "40%"
+        ProgressColor = null,              // null = 默认绿；要自定义给 new SKColor(...)
+        SpinInner = false,                 // true = 宿主让内圈一直转，你只画静态内容
+        SpinSpeed = 0.12f,                 // 圈/秒；默认 0.12（约 8 秒一圈），想快就自己传
+        Completed = _progress >= 1f,       // 满圈亮一下；完成态通常停留约 0.8s 再 Dispose
+    };
+
+    // 内圈（按实际矩形排，已裁剪到圆内、已旋转）。不想自己排文字就直接复用宿主那套自适应文字。
+    public void DrawInner(SKCanvas canvas, SKRect rect, WidgetFrame frame)
+        => LiveWindowDefaults.DrawInnerText(canvas, rect, frame, GetVisual());
+
+    public IDetailPage? DetailPage => null;   // 一般不用写：null = 自动复用本插件组件原有的详情页
+    public void OnLeftClick() { }
+    public void OnExpand() { }
+    public void OnRemoved() { }
+}
+```
+
+`LiveWindowVisual` 的字段：
+
+| 字段 | 说明 |
+|---|---|
+| `Progress` | `0..1`；小于 0 = 不确定态（进度弧变成持续旋转的扫掠段） |
+| `Status` / `Title` / `PercentText` | 内圈三行文字（状态行 / 标题 / 百分比）；`PercentText` 为 `null` 时宿主生成 `NN%`，不确定态且不给 `PercentText` 就不画百分比 |
+| `ProgressColor` | `SKColor?`，进度弧颜色；`null` = 默认绿 `#32D74B` |
+| `SpinInner` | `true` = 宿主控制内圈旋转，插件只画静态内容 |
+| `SpinSpeed` | 内圈旋转速度（圈/秒），默认 `0.12`（约 8 秒一圈）；传更大的值就转更快 |
+| `Completed` | `true` = 满圈并亮一下；建议置满后停留约 0.8 秒再 `Dispose`（= 手稿「回到右边」） |
+
+**线程：`GetVisual` / `DrawInner` 在渲染线程**
+
+- 两者都在**渲染线程**、每帧调用（约 60 次/秒）。
+- 后台线程只负责更新字段：`volatile` / `Interlocked` / `lock`；**不要在 `GetVisual` 里等锁、做 I/O、刷新数据**。
+- 别每帧 `new` 字符串或画笔（稳态零 GC 的规矩同 [6.6](#66-draw-的三条规矩)）；百分比这类文字在数据变化时才重建。
+- 插件绘制抛异常只熔断该窗（宿主 try/catch + Error 日志），不会带崩渲染线程 —— 但别依赖这个兜底。
+
+**右键 = 原有的展开态（自动复用插件已有详情页）**
+
+- **插件不需要为实况窗再注册一套新详情页**：`DetailPage` 返回 `null` 时，宿主自动取该插件第一个「有详情页」的组件（`IWidget.DetailPage`）来展开；只有内置消费者 / 特殊场景才需要返回自定义 `IDetailPage`。
+- 右键气泡 = 把**这个插件原有的详情页**从气泡位置动画展开成浮动面板：宽高取 `MeasureWidth()` / `MeasureHeight()`（夹到 `120..1000 × 48..480`），内容按**目标矩形**排版，随裁剪窗长出来；展开是细胞分裂式的收口桥 + ease-out 连续减速，不是硬放大。
+- **主岛尺寸、形状、布局完全不变** —— 不走主岛详情页那套变形路径；鼠标事件、拖放、自动收起照 [7.4](#74-鼠标事件) 的 `IDetailPage` 实现即可，不用学新接口。
+- 没有 `DetailPage`（`null`）时右键改走 `OnExpand()`，用来打开你「原有的」界面（如市场页 / 设置页）。
+- 再次右键气泡、或点击面板外，面板缩回气泡收起。
+
+```csharp
+// 只有内置消费者 / 想让实况窗用一套独立页面的特殊场景才需要写这个类；
+// 普通插件保持 DetailPage => null，宿主会自动复用组件原有的详情页。
+internal sealed class DownloadDetailPage : IDetailPage
+{
+    public float MeasureWidth() => 260f;
+    public float MeasureHeight() => 96f;
+
+    public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame) { /* 按 rect 画，见 §7 */ }
+    public WidgetHit HitTest(float x, float y, SKRect rect) => WidgetHit.None;
+    public void OnAction(string? action, float x, float y) { }
+}
+```
+
 ---
 
 ## 9. 把插件暴露成 MSP 工具
@@ -1215,6 +1323,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 注册 | `RegisterWidget(IWidget)` | 开放 |
 | 注册 | `RegisterSecondaryWidget(ISecondaryWidget)` | **未开放** |
 | 注册 | `RegisterSettingsPage(ISettingsPage)` | **未开放** |
+| 注册 | `IDisposable RegisterLiveWindow(ILiveWindow)` | 开放（见 [8.7](#87-实况窗live-window)） |
 | 主题 | `RenderTheme CurrentTheme` | 开放 |
 | 提醒 | `PostReminder(ReminderData)` | 开放 |
 | 设置 | `GetSetting(key, fallback)` / `SetSetting(key, value)` / `event SettingsChanged` | 开放 |
@@ -1286,6 +1395,19 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | `SetDragHover(onEnter, onOver, onLeave)` | 拖入过程 |
 | `StartDragFiles(paths, allowMove = false)` | 拖出，阻塞到松手，返回是否被接受 |
 | `RequestRedraw()` / `Close()` | 请求重绘 / 关闭 |
+
+### `ILiveWindow`（实况窗，见 [8.7](#87-实况窗live-window)）
+
+| 分类 | 成员 | 默认 |
+|---|---|---|
+| 标识 | `Id` | — |
+| 状态 | `GetVisual()` → `LiveWindowVisual` | — |
+| 绘制 | `DrawInner(canvas, rect, frame)` | — |
+| 展开 | `IDetailPage? DetailPage` | `null`（右键改走 `OnExpand()`） |
+| 交互 | `OnLeftClick()` / `OnExpand()` | 空 |
+| 生命周期 | `OnRemoved()` | 空 |
+
+`LiveWindowVisual` 字段：`Progress`（`<0` = 不确定）、`Status` / `Title` / `PercentText`、`ProgressColor`、`SpinInner`、`Completed` —— 语义见 [8.7](#87-实况窗live-window)。
 
 ### 数据模型
 
@@ -1374,6 +1496,8 @@ public sealed class MyPlugin : INotchPlugin, IMediaSessionSource
 | 宿主 | `IPluginHost`（实际注入的是按插件隔离的 `ScopedPluginHost`） |
 | 组件 | `IWidget` |
 | 详情页 | `IDetailPage` |
+| 实况窗 | 主岛左侧的圆形气泡，`ILiveWindow`（注册入口 `IPluginHost.RegisterLiveWindow`） |
+| 实况窗面板 | 右键实况窗展开的浮动 `IDetailPage`，主岛不参与变形 |
 | 槽位 | 组件在插件行里占的那一格（`WidgetLayout.Slot`） |
 | 插件行预算 | `Renderer.GetPluginRowBudget()`，见 [6.4](#64-预算与取舍) |
 | 熔断 | 组件 / 详情页抛异常后被停用，不再绘制 |
