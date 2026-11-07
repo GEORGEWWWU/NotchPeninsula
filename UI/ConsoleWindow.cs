@@ -1019,6 +1019,8 @@ namespace NotchPeninsula
 
         private bool _standbyToggleHovered;
 
+        private bool _standbyRowHovered;   // 「双击空白切换待机模式」整行悬停：只用于显示右侧蓝字提示
+
         private bool _monitorDropdownOpen = false;
 
         private bool _monitorDropdownHovered = false;
