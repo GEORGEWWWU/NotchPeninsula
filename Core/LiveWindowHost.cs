@@ -162,7 +162,8 @@ public static class LiveWindowHost
         public bool Completed;
         public bool Hovered;
         public bool Hidden;
-        public bool Suppressed;   // 插件级开关关闭：暂时挂起（不绘制 / 不命中 / 不回调插件）
+        public bool Suppressed;   // 插件级开关关闭：先播收起动画，播完后留在列表里但不再绘制
+        public double SuppressElapsed;   // 挂起收起的动画进度（0..ExitSeconds）
         public bool Broken;
 
         public float Alpha = 255f;
@@ -275,11 +276,34 @@ public static class LiveWindowHost
                 e.Suppressed = suppressed;
                 if (suppressed)
                 {
+                    // 和主动注销一模一样的「往右滑回岛体」收起动画；播完由 Tick 留在列表里不绘制，
+                    // 重新启用时再播一遍生成动画 —— 开关的手感和插件自己注销 / 注册完全一致。
+                    e.SuppressElapsed = 0d;
                     e.Hovered = false;
                     // 正在显示这个气泡的详情面板要跟着收起（走正常收起动画，而不是下一帧被 Drop）。
                     if (_panel != null && !_panel.Closing
                         && string.Equals(_panel.EntryId, e.Id, StringComparison.OrdinalIgnoreCase))
                         ClosePanel();
+                }
+                else
+                {
+                    // 重新启用：与「插件重新注册」完全同一套细胞分裂生成动画 ——
+                    // 从岛体左缘长出，旁边已有气泡时母圆也一起缩一次。
+                    e.SuppressElapsed = 0d;
+                    e.SpawnElapsed = 0d;
+                    e.DisplayProgress = e.TargetProgress;
+                    e.X = e.SpawnFromX = _lastIslandLeft - IslandGap - BubbleDiameter / 2f;
+
+                    Entry? parent = null;
+                    for (int j = _entries.Count - 1; j >= 0; j--)
+                    {
+                        var p = _entries[j];
+                        if (p == e || p.Window == null || p.Exiting || p.Suppressed) continue;
+                        parent = p;
+                        break;
+                    }
+                    e.SplitElapsed = parent != null ? 0d : SplitSeconds;
+                    if (parent != null) parent.SplitElapsed = 0d;   // 母圆也重播一次分裂
                 }
                 if (e.Window != null && !e.Exiting) windows.Add(e.Window);
             }
@@ -795,10 +819,24 @@ public static class LiveWindowHost
             {
                 var e = _entries[i];
 
-                // 插件级开关挂起的窗：不占槽位、不更新位置、不回调插件。
-                // X 冻结在最后位置，供正在收起的面板动画当锚点；
-                // 退出动画中的窗已经没有插件对象，仍按原节奏收尾并从列表里移除。
-                if (e.Suppressed && !e.Exiting) continue;
+                if (e.Suppressed && !e.Exiting)
+                {
+                    // 插件级开关关闭：播一遍和主动注销相同的「滑回岛体」收起动画，
+                    // 播完后窗口对象继续留在列表里（不绘制、不命中、不回调插件），
+                    // 重新启用时直接重生，插件不必重新注册。
+                    if (e.Window != null)
+                    {
+                        e.SuppressElapsed = Math.Min(ExitSeconds + 1d, e.SuppressElapsed + dt);
+                        float ep = (float)Math.Clamp(e.SuppressElapsed / ExitSeconds, 0.0, 1.0);
+                        e.TargetX = islandLeft + diameter * 0.02f;
+                        float fade = Math.Clamp((ep - 0.55f) / 0.45f, 0f, 1f);
+                        e.Alpha = 255f * (1f - fade * fade);
+                    }
+                    e.Hovered = false;
+                    float kSup = 1f - MathF.Exp(-12f * dt);
+                    e.X += (e.TargetX - e.X) * kSup;
+                    continue;
+                }
 
                 // 未退出、未断开的窗取一帧视觉快照。插件抛异常 = 熔断该窗（走退出动画）。
                 if (e.Window != null && !e.Exiting)
@@ -981,7 +1019,9 @@ public static class LiveWindowHost
         for (int i = 0; i < _entries.Count; i++)
         {
             var e = _entries[i];
-            if (e.Hidden || e.Suppressed) continue;
+            if (e.Hidden) continue;
+            // 挂起收起的动画要照常画完；播完之后才彻底不绘制。
+            if (e.Suppressed && !e.Exiting && e.SuppressElapsed >= ExitSeconds) continue;
             if (frame.Count >= MaxItems) break;
 
             ref var item = ref frame.Items[frame.Count];
@@ -1002,9 +1042,14 @@ public static class LiveWindowHost
             item.SplitProgress = (float)Math.Clamp(e.SplitElapsed / SplitSeconds, 0.0, 1.0);
             item.SpawnFromX = e.SpawnFromX;
             item.MergeTargetX = islandLeft + diameter * 0.02f;   // 「移回宿主」的终点：岛体左缘
-            item.ExitProgress = e.Exiting ? (float)Math.Clamp(e.ExitElapsed / ExitSeconds, 0.0, 1.0) : 0f;
+            // 挂起收起也走同一套「被宿主吞进去」的动画：渲染器只认 Exiting / ExitProgress，
+            // 所以这里把挂起前段也当成退出态发布。
+            bool swallowing = e.Exiting || (e.Suppressed && e.SuppressElapsed < ExitSeconds);
+            item.ExitProgress = swallowing
+                ? (float)Math.Clamp((e.Exiting ? e.ExitElapsed : e.SuppressElapsed) / ExitSeconds, 0.0, 1.0)
+                : 0f;
             item.Scale = e.Scale;
-            item.Exiting = e.Exiting;
+            item.Exiting = swallowing;
             frame.Count++;
         }
 
