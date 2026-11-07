@@ -147,8 +147,15 @@ namespace NotchPeninsula
             }
         }
 
+        // ⚠️ IDXGIOutputDuplication 的 vtable 顺序（dxgi1_2.h）：
+        //    IUnknown 0-2 → IDXGIObject 3-6 → GetDesc 7 → AcquireNextFrame 8 →
+        //    GetFrameDirtyRects 9 → GetFrameMoveRects 10 → GetFramePointerShape 11 →
+        //    MapDesktopSurface 12 → UnMapDesktopSurface 13 → **ReleaseFrame 14**。
+        //    这里原来写 11（= GetFramePointerShape）：参数全错，轻则返回 E_INVALIDARG、
+        //    帧一直占着（下一次 Acquire 直接 INVALID_CALL，背板再也不更新），
+        //    重则写坏调用方给的"必需大小"指针 —— 原生访问违例 0xc0000005，进程直接消失。
         private static int Dup_ReleaseFrame(IntPtr dup)
-            => dup == IntPtr.Zero ? 0 : ((delegate* unmanaged<IntPtr, int>)Slot(dup, 11))(dup);
+            => dup == IntPtr.Zero ? 0 : ((delegate* unmanaged<IntPtr, int>)Slot(dup, 14))(dup);
 
         private static int Device_CreateTexture2D(IntPtr device, Tex2DDesc* desc, out IntPtr tex)
         {

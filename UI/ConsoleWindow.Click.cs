@@ -13,7 +13,7 @@ namespace NotchPeninsula
         // 点击（落点重算）三处共用，避免任何一处改了 y 值对不上。
         private static bool HitMediaHotkeyToggle(int x, int y, bool anyPopupOpen)
             => !anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30
-               && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
+               && y >= HOTKEY_CARD_Y + 16 && y <= HOTKEY_CARD_Y + 36;
 
         private static int HitMediaHotkeyRow(int x, int y, bool anyPopupOpen)
         {
@@ -28,8 +28,8 @@ namespace NotchPeninsula
 
         private static bool HitIslandHotkeyToggle(int x, int y)
             => x >= WIDTH - 80 && x <= WIDTH - 30
-               && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 12
-               && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 32;
+               && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 16
+               && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 36;
 
         private static bool HitIslandHotkeyBox(int x, int y)
         {

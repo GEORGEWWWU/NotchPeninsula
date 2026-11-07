@@ -231,9 +231,9 @@ namespace NotchPeninsula
         }
 
         // 分段控件的几何唯一来源：绘制与命中都从这里取，别再各算一遍。
-        // fitLabels = true 时每格宽 = 该标签实测宽 + 左右呼吸，余量再均分 ——
-        // 四档材质（实体 / 亚克力 / 液态玻璃 / 液态玻璃2.0）标签长短差一倍，
-        // 等分只能靠缩字号硬塞，长标签会被压成小字；按内容分宽后字号与正文一致。
+        // fitLabels = true 时各格仍然**等宽**（整条平分），只把字号按最长标签缩到放得下的那一档。
+        // 以前按实测文字宽分格，同一排会宽窄不一（「默认 / DXGI / GDI（兼容）」选中块一大一小），
+        // 看着像没对齐；等分 + 缩字号既整齐，也不会把长标签压到邻格。
         private void LayoutSegments(string[] labels, float w, bool fitLabels,
             float[] lefts, float[] widths, out float textScale)
         {
@@ -241,42 +241,24 @@ namespace NotchPeninsula
             textScale = 1f;
             if (n == 0) return;
 
-            if (!fitLabels)
+            float segW = w / n;
+            for (int i = 0; i < n; i++)
             {
-                float segW = w / n;
-                for (int i = 0; i < n; i++)
-                {
-                    lefts[i] = i * segW;
-                    widths[i] = segW;
-                }
-                return;
+                lefts[i] = i * segW;
+                widths[i] = segW;
             }
 
-            float totalLabel = 0f;
-            for (int i = 0; i < n; i++) totalLabel += _uiTextPaint.MeasureText(labels[i]);
-            float available = w - 2f * SEG_TEXT_PAD_X * n;
+            if (!fitLabels) return;
 
-            // 控件实在窄、连呼吸都放不下才缩字号兜底（下限与旧逻辑一致），绝不把字压到邻格
-            if (totalLabel > 0f && available > 0f && totalLabel > available)
+            float maxLabel = 0f;
+            for (int i = 0; i < n; i++) maxLabel = MathF.Max(maxLabel, _uiTextPaint.MeasureText(labels[i]));
+            float usable = segW - 2f * SEG_TEXT_PAD_X;
+
+            // 每格放不下最长标签时才缩字号兜底（下限 9px，与旧逻辑一致）
+            if (maxLabel > 0f && usable > 0f && maxLabel > usable)
             {
                 float baseSize = MathF.Max(_uiTextPaint.TextSize, 1f);
-                textScale = MathF.Max(9f / baseSize, available / totalLabel);
-            }
-
-            float content = 0f;
-            for (int i = 0; i < n; i++)
-            {
-                widths[i] = _uiTextPaint.MeasureText(labels[i]) * textScale + 2f * SEG_TEXT_PAD_X;
-                content += widths[i];
-            }
-
-            float extra = content < w ? (w - content) / n : 0f;
-            float cursor = 0f;
-            for (int i = 0; i < n; i++)
-            {
-                widths[i] += extra;
-                lefts[i] = cursor;
-                cursor += widths[i];
+                textScale = MathF.Max(9f / baseSize, usable / maxLabel);
             }
         }
 
@@ -1063,7 +1045,7 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
 
-            canvas.DrawText("全局快捷键", CONTENT_TEXT_X, cardY + 19, _uiTextPaint);
+            canvas.DrawText("全局快捷键", CONTENT_TEXT_X, cardY + 23, _uiTextPaint);
 
             bool hasHint = _hotkeyHint.Length > 0;
             bool recording = _hotkeyRecordingIndex >= 0;
@@ -1074,12 +1056,12 @@ namespace NotchPeninsula
                              : "在其他窗口也能控制播放 · 点按键框可重录");
             _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
             float subMax = (WIDTH - CONTENT_RM - 16f - 42f) - 12f - CONTENT_TEXT_X;
-            DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 36);
+            DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 40);
             _subTextPaint.Color = Neutral(170);
 
             float tW = 42f, tH = 20f;
             float tX = WIDTH - CONTENT_RM - 16f - tW;
-            float tY = cardY + 12f;
+            float tY = cardY + 16f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
             if (MediaHotkeys.IsEnabled)
             {
@@ -1202,12 +1184,12 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
 
-            canvas.DrawText("唤出灵动岛", CONTENT_TEXT_X, cardY + 19, _uiTextPaint);
+            canvas.DrawText("唤出灵动岛", CONTENT_TEXT_X, cardY + 23, _uiTextPaint);
 
             // 总开关（出厂关，与媒体页那张卡的开关同一套画法）
             float tW = 42f, tH = 20f;
             float tX = WIDTH - CONTENT_RM - 16f - tW;
-            float tY = cardY + 12f;
+            float tY = cardY + 16f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
             if (IslandHotkey.IsEnabled)
             {
@@ -1234,7 +1216,7 @@ namespace NotchPeninsula
                                                : "全局生效 · 点按键框可重录"));
             _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
             float subMax = (WIDTH - CONTENT_RM - 16f - tW) - 12f - CONTENT_TEXT_X;
-            DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 36);
+            DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 40);
             _subTextPaint.Color = Neutral(170);
 
             float rowY = cardY + HOTKEY_HEAD_H;
@@ -1318,7 +1300,7 @@ namespace NotchPeninsula
             // 这三项都是自动调整的，留着只会让人以为要手动设。
             void DrawMultiCard(float yOffset, string[] subLabels, int[] indices)
             {
-                float cardHeight = 12 + subLabels.Length * 34;
+                float cardHeight = 12 + subLabels.Length * 34 + 2;   // 上下各 12（末行按钮底 138，卡高 150）
                 var cardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + yOffset, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + yOffset + cardHeight);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
@@ -1328,9 +1310,11 @@ namespace NotchPeninsula
                     int index = indices[i];
                     float cardBtnY = GetBtnY(index);
 
-                    canvas.DrawText(subLabels[i], CONTENT_TEXT_X, cardBtnY + 17, _subTextPaint);
+                    // 尺寸卡与其它卡一个样式：行标题用正文白，不再是一行灰字
+                    canvas.DrawText(subLabels[i], CONTENT_TEXT_X, cardBtnY + 17, _uiTextPaint);
 
-                    float afterLabelX = CONTENT_TEXT_X + _subTextPaint.MeasureText(subLabels[i]) + 8;
+                    // 标签已是 13px 正文白（见上），这里的量宽必须用同一支画笔，否则「已生效」会压到字上
+                    float afterLabelX = CONTENT_TEXT_X + _uiTextPaint.MeasureText(subLabels[i]) + 10;
                     if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
                     {
                         var tagRect = new SKRect(afterLabelX, cardBtnY + 3, afterLabelX + 38, cardBtnY + 21);
@@ -1363,7 +1347,8 @@ namespace NotchPeninsula
 
                     _dynamicFillPaint.Color = _hoveredMinusIndex == index ? Overlay(30) : Overlay(15);
                     canvas.DrawRoundRect(new SKRect(cardRightX - 175, cardBtnY, cardRightX - 145, cardBtnY + 24), 4, 4, _dynamicFillPaint);
-                    canvas.DrawText("-", cardRightX - 164, cardBtnY + 17, _uiTextPaint);
+                    // 按钮文字一律在按钮矩形里居中（原来减号/加号是写死左边距，看着偏右）
+                    canvas.DrawText("-", cardRightX - 160f - _uiTextPaint.MeasureText("-") / 2f, cardBtnY + 17, _uiTextPaint);
 
                     // 使用静态缓存字符串，零 GC 开销
                     string valStr = _valStrCache[index];
@@ -1372,11 +1357,11 @@ namespace NotchPeninsula
 
                     _dynamicFillPaint.Color = _hoveredPlusIndex == index ? Overlay(30) : Overlay(15);
                     canvas.DrawRoundRect(new SKRect(cardRightX - 80, cardBtnY, cardRightX - 50, cardBtnY + 24), 4, 4, _dynamicFillPaint);
-                    canvas.DrawText("+", cardRightX - 69, cardBtnY + 17, _uiTextPaint);
+                    canvas.DrawText("+", cardRightX - 65f - _uiTextPaint.MeasureText("+") / 2f, cardBtnY + 17, _uiTextPaint);
 
                     _dynamicFillPaint.Color = _hoveredResetIndex == index ? Overlay(30) : Overlay(15);
                     canvas.DrawRoundRect(new SKRect(cardRightX - 40, cardBtnY, cardRightX, cardBtnY + 24), 4, 4, _dynamicFillPaint);
-                    canvas.DrawText("重置", cardRightX - 33, cardBtnY + 17, _subTextPaint);
+                    canvas.DrawText("重置", cardRightX - 20f - _subTextPaint.MeasureText("重置") / 2f, cardBtnY + 17, _subTextPaint);
                 }
             }
 
@@ -1386,17 +1371,18 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(new SKRect(CONTENT_L, themeY, WIDTH - CONTENT_RM, themeY + THEME_CARD_H), 6, 6, _cardBorder);
 
             canvas.DrawText("刘海 / 灵动岛主题", CONTENT_TEXT_X, themeY + 26, _uiTextPaint);
+            // 「副标题」专指主标题下面这一行，统一灰色；它不属于状态说明。
             canvas.DrawText("背景与文本颜色自适应反转", CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
-            // 液态玻璃下明暗由桌面背景决定，黑/白/系统摆着只会误导（悬停/点击已一并屏蔽）：
-            // 换成一句明说，告诉用户文字颜色正在自适应。
+            // 液态玻璃下明暗由桌面背景决定，黑/白/系统摆着只会误导（悬停/点击已一并屏蔽）。
+            // 这句状态说明保留原位（右上、与隐藏掉的主题分段同一基线），仍然是主题蓝，不算副标题。
             if (Renderer.IslandAnyGlass)
             {
                 const string glassThemeHint = "液态玻璃材质下文字自适应颜色";
                 var prevColor = _subTextPaint.Color;
                 float prevSize = _subTextPaint.TextSize;
-                _subTextPaint.Color = new SKColor(0, 140, 240);   // 主题蓝：这是状态说明，压在灰色副标题旁容易看漏
-                _subTextPaint.TextSize = _uiTextPaint.TextSize;    // 与正文同字号，不再是一行小灰字
+                _subTextPaint.Color = new SKColor(0, 140, 240);
+                _subTextPaint.TextSize = _uiTextPaint.TextSize;
                 canvas.DrawText(glassThemeHint,
                     THEME_SEG_X + THEME_SEG_W - _subTextPaint.MeasureText(glassThemeHint),
                     TITLE_BAR_HEIGHT + THEME_SEG_Y + SEG_H / 2f + 4.5f, _subTextPaint);
@@ -1421,29 +1407,33 @@ namespace NotchPeninsula
             // 第三行：只有液态玻璃才有这回事。
             // 两档的背板都是真实桌面（岛体在捕获里隐身），区别只在糊多厚：
             // 原模糊 = 档位半径那层，高斯模糊 = 再叠一层固定厚度。
+            // 整行结构与「背景材质」完全一致：主标题基线 = 分段顶 +10，灰色副标题 = 分段顶 +30。
             if (Renderer.IslandAnyGlass)
             {
-                canvas.DrawText("背景模糊", CONTENT_TEXT_X, BlurModeSegY + 20f, _uiTextPaint);
+                canvas.DrawText("背景模糊", CONTENT_TEXT_X, BlurModeSegY + 16f, _uiTextPaint);
+
+                // 说明只留前半句（「真实桌面 + 档位半径…」），后半句「岛体只在抓屏瞬间隐身，
+                // 截图照常」用户点名去掉。主标题 +16 / 副标题 +32 —— 四组之间公共间距 16px。
                 _subTextPaint.Color = Neutral(170);
                 canvas.DrawText(Renderer.GlassGaussBackdrop
-                        ? "真实桌面 + 档位半径再加一层高斯 · 岛体只在抓屏瞬间隐身，截图照常"
-                        : "真实桌面 + 档位半径的原版模糊 · 岛体只在抓屏瞬间隐身，截图照常",
-                    CONTENT_TEXT_X, BlurModeSegY + 40f, _subTextPaint);
+                        ? "真实桌面 + 档位半径再加一层高斯"
+                        : "真实桌面 + 档位半径的原版模糊",
+                    CONTENT_TEXT_X, BlurModeSegY + 32f, _subTextPaint);
 
                 // 等分两档（fitLabels 保持 false）：命中侧 SegmentIndexAt 也必须用同一套分宽，
                 // 否则"点左边却选中右边"。
                 DrawSegmented(canvas, BlurModeSegX, BlurModeSegY, BLUR_MODE_SEG_W, SEG_H,
                     BlurModeLabels, Renderer.GlassGaussBackdrop ? 1 : 0, _hoveredBlurModeIndex);
 
-                // 第四行：抓屏方式。玻璃的背景来自抓屏，换后端直接决定「背景跟不跟手 / 会不会崩」。
-                // 说明行放在分段下方，随选中的档位换文案。
-                canvas.DrawText("抓屏方式", CONTENT_TEXT_X, CaptureSegY + 20f, _uiTextPaint);
+                // 第四行：抓屏方式。说明文案比左列宽得多，按「太长了就换下一行」放在分段下方，
+                // 占满整行；主标题 +22，比上面两行再低一点，视觉上与分段内容居中。
+                canvas.DrawText("抓屏方式", CONTENT_TEXT_X, CaptureSegY + 22f, _uiTextPaint);
                 DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("抓屏方式") + BADGE_GAP_X,
-                    CaptureSegY + 20f - TEXT_INK_MID_OFFSET, "实验性");
+                    CaptureSegY + 22f - TEXT_INK_MID_OFFSET, "实验性");
                 _subTextPaint.Color = Neutral(170);
-                canvas.DrawText(CaptureBackendHint, CONTENT_TEXT_X, CaptureSegY + 40f, _subTextPaint);
+                canvas.DrawText(CaptureBackendHint, CONTENT_TEXT_X, CaptureSegY + 45f, _subTextPaint);
                 // fitLabels：三档文字宽度差得多（「默认」两字 vs「GDI（兼容）」五字），
-                // 等分会让最长那档顶到邻格，交给 LayoutSegments 按实测宽度分格。
+                // 等分 + 自动缩字号，保证每格等宽且字都居中。
                 DrawSegmented(canvas, CaptureSegX, CaptureSegY, CAPTURE_SEG_W, SEG_H,
                     CaptureBackendLabels, IslandBackdrop.CaptureBackend, _hoveredCaptureIndex,
                     fitLabels: true);
@@ -1612,7 +1602,9 @@ namespace NotchPeninsula
             }
 
             _subTextPaint.TextSize = 12f;   // 恢复基准字号：同一支画笔后面还要用
-            _subTextPaint.Color = _fgColor;
+            _subTextPaint.Color = Neutral(170);   // ⚠️ 必须恢复灰色：玻璃卡的档位值画成了白字，
+                                                  //    这里留 _fgColor 会让下一帧的副标题（主标题下面那行、
+                                                  //    「胶囊内背景材质」）全变成白色。
         }
 
         private void RenderTabPlugins(SKCanvas canvas)
