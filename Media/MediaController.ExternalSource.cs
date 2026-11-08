@@ -76,16 +76,22 @@ namespace NotchPeninsula
         /// <summary>
         /// 挑一个可以接管的外部源；不该接管时返回 null，调用方照旧用 SMTC。
         ///
-        /// 两个前提缺一不可：① SMTC 没给出时间轴；② 当前会话是网易云或酷狗。
-        /// 多路同时可用时按 <see cref="IMediaSessionSource.Priority"/> 取最高。
+        /// <para>
+        /// 两个前提：① SMTC 没给出时间轴；② 当前会话是<b>某个已登记插件上报的播放器</b>。
+        /// 白名单在插件侧（<see cref="IMediaSessionSource.AppIdKeywords"/>），宿主不再写死播放器名字 ——
+        /// 新播放器只要写个插件，宿主不用跟着改。
+        /// </para>
+        ///
+        /// <para>
+        /// 多路同时可用时按 <see cref="IMediaSessionSource.Priority"/> 取最高；
+        /// 每个源各自判断「当前这个 appId 归不归我管」。
+        /// </para>
         /// </summary>
         private static IMediaSessionSource? PickExternalSource(string? appId, TimeSpan smtcDuration)
         {
             // ① SMTC 有时长 → 它说得清，就不夺权
             if (smtcDuration > TimeSpan.Zero) return null;
-
-            // ② 当前会话不是这两家 → 不接管
-            if (!IsNeteaseOrKugou(appId)) return null;
+            if (string.IsNullOrEmpty(appId)) return null;
 
             IMediaSessionSource? best = null;
             lock (_externalSources)
@@ -95,13 +101,41 @@ namespace NotchPeninsula
                     var s = _externalSources[i];
                     if (!s.IsActive) continue;
                     if (s.Duration <= TimeSpan.Zero) continue;   // 连时长都没有，接管也画不出时间轴
+                    if (!SourceDrivesApp(s, appId)) continue;     // 当前放的软件不归这个源管
                     if (best == null || s.Priority > best.Priority) best = s;
                 }
             }
             return best;
         }
 
-        /// <summary>网易云（cloudmusic.exe / netease cloud music）与酷狗（KuGou.exe）。</summary>
+        /// <summary>
+        /// 这个外部源是否负责当前会话的软件：只认插件上报的
+        /// <see cref="IMediaSessionSource.AppIdKeywords"/>。没上报（空数组）的源不参与接管 ——
+        /// 宿主不再按播放器名字猜，白名单的唯一来源是插件。
+        /// </summary>
+        private static bool SourceDrivesApp(IMediaSessionSource source, string appId)
+        {
+            IReadOnlyList<string> keywords;
+            try { keywords = source.AppIdKeywords; }
+            catch { keywords = Array.Empty<string>(); }   // 旧插件没实现时按「没上报」处理，不接管
+
+            if (keywords is not { Count: > 0 }) return false;
+
+            for (int i = 0; i < keywords.Count; i++)
+            {
+                string keyword = keywords[i];
+                if (!string.IsNullOrEmpty(keyword)
+                    && appId.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 旧插件的推荐提示文案用：网易云（cloudmusic.exe / netease cloud music）与酷狗（KuGou.exe）。
+        /// 只服务于 <c>NotchWindow.TickTimelinePluginTip()</c>；<b>不再</b>参与外部源接管判定
+        /// （接管白名单由插件通过 <see cref="IMediaSessionSource.AppIdKeywords"/> 上报）。
+        /// </summary>
         internal static bool IsNeteaseOrKugou(string? appId)
         {
             if (string.IsNullOrEmpty(appId)) return false;
@@ -111,7 +145,19 @@ namespace NotchPeninsula
                 || appId.Contains("kugou", StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>给用户看的播放器名；不是这两家时返回空串。推荐提示的文案用它。</summary>
+        /// <summary>
+        /// 哔哩哔哩 PC 客户端判定（实测 SMTC appId 为 <c>com.bilibili.bilibiliPC</c>）。
+        /// <b>只给插件推荐提示用</b>：外部源接管已改成读插件上报的
+        /// <see cref="IMediaSessionSource.AppIdKeywords"/>，这里不参与接管判定。
+        /// 浏览器里的网页版 appId 是 Edge / Chrome，不会命中。
+        /// </summary>
+        internal static bool IsBilibiliAppId(string? appId)
+        {
+            if (string.IsNullOrEmpty(appId)) return false;
+            return appId.Contains("bilibili", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>给用户看的播放器名；不是网易云 / 酷狗时返回空串。推荐提示的文案用它。</summary>
         internal static string NeteaseKugouDisplayName(string? appId)
         {
             if (string.IsNullOrEmpty(appId) || !IsNeteaseOrKugou(appId)) return "";

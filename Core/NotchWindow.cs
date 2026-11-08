@@ -27,9 +27,10 @@ namespace NotchPeninsula
         public static bool IsToastEnabled = true;
         public static bool IsTopmostEnabled = true; // 默认开启置顶
 
-        // 网易云 / 酷狗时间轴插件的推荐提示：用户点过「拒收」后落注册表，之后不再弹。
+        // 时间轴插件的推荐提示（网易云 / 酷狗 / 哔哩哔哩）：用户点过「拒收」后落注册表，之后不再弹。
         public static bool IsTimelinePluginTipDismissed = false;
-        private const string TimelinePluginMarketId = "mediacdp";   // 市场里「网易酷狗时间轴获取」的插件 id
+        private const string TimelinePluginMarketId = "mediacdp";          // 市场里「网易酷狗时间轴获取」的插件 id
+        private const string BilibiliPluginMarketId = "bilibilicdp";       // 市场里「哔哩哔哩时间轴获取」的插件 id
         private const string TimelinePluginTipDismissedKey = "TimelinePluginTipDismissed";
 
         // 当前这次「正在播放」已经提示过的播放器：暂停 / 停止后再播放会重新提示；
@@ -907,8 +908,8 @@ namespace NotchPeninsula
             PlayToastSound();
         }
 
-        // ---- 网易云 / 酷狗时间轴插件推荐 ----
-        // 这两家的 SMTC 进度经常是 0，时间轴只能靠插件从页面里读。
+        // ---- 时间轴插件推荐（网易云 / 酷狗 / 哔哩哔哩）----
+        // 这三家的 SMTC 进度经常是 0，时间轴只能靠插件从页面里读。
         // 每次进入「正在播放」提示一次；暂停 / 停止后再播放会再次提示。只有点「拒收」才永久静默。
 
         private void TickTimelinePluginTip()
@@ -916,11 +917,12 @@ namespace NotchPeninsula
             if (!IsToastEnabled || IsTimelinePluginTipDismissed) return;
 
             string appId = _media.CurrentAppId;
-            bool neteaseKugouPlaying = _media.IsActive && _media.IsPlaying
-                && MediaController.IsNeteaseOrKugou(appId);
+            bool bilibili = MediaController.IsBilibiliAppId(appId);
+            bool neteaseKugou = MediaController.IsNeteaseOrKugou(appId);
+            bool playing = _media.IsActive && _media.IsPlaying && (bilibili || neteaseKugou);
 
             // 暂停 / 停止 / 切走：清掉本次播放的记账，下一次再播还能提示。
-            if (!neteaseKugouPlaying)
+            if (!playing)
             {
                 _timelineTipPlayingAppId = "";
                 return;
@@ -930,21 +932,24 @@ namespace NotchPeninsula
             if (string.Equals(_timelineTipPlayingAppId, appId, StringComparison.OrdinalIgnoreCase)) return;
 
             _timelineTipPlayingAppId = appId;    // 本次播放已处理，避免每帧重复弹
-            if (IsTimelinePluginInstalled()) return;
+            if (IsTimelinePluginInstalled(bilibili)) return;
 
-            string appName = MediaController.NeteaseKugouDisplayName(appId);
+            string appName = bilibili ? "哔哩哔哩" : MediaController.NeteaseKugouDisplayName(appId);
             if (appName.Length == 0) return;
+
+            string pluginName = bilibili ? "哔哩哔哩时间轴获取插件" : "网易酷狗时间轴获取插件";
+            string marketId = bilibili ? BilibiliPluginMarketId : TimelinePluginMarketId;
 
             var toast = new ToastData
             {
                 AppName = "插件推荐",
                 Title = $"检测到使用了{appName}",
-                Body = "为了更好的播放进度匹配，推荐安装「网易酷狗时间轴获取插件」，点击查看详情",
+                Body = $"为了更好的播放进度匹配，推荐安装「{pluginName}」，点击查看详情",
                 ProcessName = "TimelinePluginTip",
                 NotificationId = (uint)Environment.TickCount,
                 Duration = TimeSpan.FromSeconds(10),
-                // 点正文 → 打开插件市场并定位到 mediacdp 的详情弹窗
-                OnClick = () => ConsoleWindow.ShowMarketPluginDetail(TimelinePluginMarketId),
+                // 点正文 → 打开插件市场并定位到对应插件的详情弹窗
+                OnClick = () => ConsoleWindow.ShowMarketPluginDetail(marketId),
                 // 点右侧「拒收」→ 只记偏好，不触发上面的跳转
                 ActionLabel = "拒收",
                 OnAction = () =>
@@ -957,16 +962,29 @@ namespace NotchPeninsula
             ShowLocalToast(toast);
         }
 
-        /// <summary>本机是否已有「网易酷狗时间轴获取」插件（按插件 id / 名称 / 文件名任一匹配）。</summary>
-        private static bool IsTimelinePluginInstalled()
+        /// <summary>
+        /// 本机是否已有对应的时间轴插件（按插件 id / 名称 / 文件名任一匹配）。
+        /// <paramref name="bilibili"/> 区分推荐对象：B 站看 bilibilicdp，网易云 / 酷狗看 mediacdp。
+        /// </summary>
+        private static bool IsTimelinePluginInstalled(bool bilibili)
         {
             foreach (var e in PluginManager.Instance.Entries)
             {
+                string dll = System.IO.Path.GetFileNameWithoutExtension(e.DllPath);
+
+                if (bilibili)
+                {
+                    if (e.Id.Contains("bilibilicdp", StringComparison.OrdinalIgnoreCase)) return true;
+                    if (e.Key.Contains("bilibilicdp", StringComparison.OrdinalIgnoreCase)) return true;
+                    if (e.FriendlyName.Contains("哔哩哔哩时间轴", StringComparison.Ordinal)) return true;
+                    if (dll.Contains("bilibilicdp", StringComparison.OrdinalIgnoreCase)) return true;
+                    continue;
+                }
+
                 if (e.Id.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)) return true;
                 if (e.Key.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)) return true;
                 if (e.FriendlyName.Contains("时间轴获取", StringComparison.Ordinal)) return true;
 
-                string dll = System.IO.Path.GetFileNameWithoutExtension(e.DllPath);
                 if (dll.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)
                     || dll.Contains("media-cdp", StringComparison.OrdinalIgnoreCase)) return true;
             }

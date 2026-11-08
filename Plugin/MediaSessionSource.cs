@@ -1,5 +1,7 @@
 namespace NotchPeninsula.Plugins;
 
+using System.Collections.Generic;
+
 /// <summary>
 /// 外部媒体会话源：<b>插件实现、宿主读取</b>。
 ///
@@ -38,6 +40,22 @@ public interface IMediaSessionSource
 
     /// <summary>多路外部源同时可用时谁优先（大的赢）。只用一路时可以给任意固定值。</summary>
     int Priority { get; }
+
+    /// <summary>
+    /// 本源能接管的播放器标识（SMTC AppUserModelId 里包含的关键字，大小写不敏感）。
+    ///
+    /// <para>
+    /// <b>白名单由插件自己上报，宿主不内置任何播放器名字。</b>宿主拿它与当前会话的 appId 比对：
+    /// 当前放的不是本插件报的软件时，即使本源 <see cref="IsActive"/> 也不接管 —— 否则两个播放器
+    /// 同时开着时，A 插件可能把 B 播放器的进度写进自己的时间轴。
+    /// </para>
+    ///
+    /// <para>
+    /// 没上报（空数组）的源<b>不参与接管</b>：宿主不再按播放器名字猜。给默认实现只是为了让
+    /// 漏实现的老插件还能被加载（否则加载期就会失败），而不是回到旧的写死白名单。
+    /// </para>
+    /// </summary>
+    IReadOnlyList<string> AppIdKeywords => Array.Empty<string>();
 
     /// <summary>当前是否有会话（暂停也算有）。false 时宿主应当忽略本源的其余字段。</summary>
     bool IsActive { get; }

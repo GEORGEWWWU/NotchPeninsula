@@ -99,6 +99,19 @@ public sealed class PluginManager
     private readonly List<string> _order = new();
     private readonly List<string> _rawOrder = new();
     private bool _orderMigrated;
+
+    /// <summary>
+    /// 更新安装（同一个 Id 换新文件）时，旧版在「显示顺序」里的位置先记在这里，等新版加载成功后原样插回去。
+    ///
+    /// <para>
+    /// 为什么需要它：市场 / 拖入 zip 的更新路径是「先 Remove 旧版（Remove 会把旧 Key 从顺序表里删掉）→
+    /// Refresh 发现新目录 → LoadAfterInstall」。等到加载成功时，旧版的位置信息已经没了，
+    /// 新 Key 只能被 EnsureOrder 追加到末尾 —— 用户看到的就是「更新一次，插件跑到最后」。
+    /// 这里按插件 Id 记账（Key 会随目录 / dll 名变化，Id 才稳定），新版加载成功时恢复。
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<string, (int Index, bool Hidden)> _pendingOrderSlots =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
     private readonly Dictionary<string, string> _nameCache = new(StringComparer.OrdinalIgnoreCase);
@@ -498,6 +511,60 @@ public sealed class PluginManager
         if (changed) SaveOrderList();
     }
 
+    /// <summary>
+    /// 更新安装前调用：把旧版在显示顺序里的位置按插件 Id 记下（旧 Key 马上会被 Remove 删掉，必须先记）。
+    /// 同一个 Id 已经记过就保留第一份 —— 多个旧副本并存时，通常只有一个真的在顺序表里。
+    /// </summary>
+    private void RememberDisplaySlotForUpdate(PluginEntry e)
+    {
+        if (e == null || string.IsNullOrEmpty(e.Id) || string.IsNullOrEmpty(e.Key)) return;
+
+        lock (_lock)
+        {
+            if (_pendingOrderSlots.ContainsKey(e.Id)) return;
+
+            int index = IndexOfOrder(e.Key);
+            bool hidden = _hidden.Contains(e.Key);
+            if (index < 0 && !hidden) return;   // 本来就不在顺序里：加载成功时追加到末尾即可
+            _pendingOrderSlots[e.Id] = (index, hidden);
+        }
+    }
+
+    /// <summary>
+    /// 新版加载成功后调用：把旧版占的显示位置 / 隐藏状态原样还给新版（按 Id 记账，见 <see cref="_pendingOrderSlots"/>）。
+    /// 没有记账时什么都不做，交给 <see cref="EnsureOrder"/> 追加。
+    /// </summary>
+    private void RestoreDisplaySlotFromUpdate(PluginEntry loaded)
+    {
+        if (loaded == null || string.IsNullOrEmpty(loaded.Id) || string.IsNullOrEmpty(loaded.Key)) return;
+
+        (int Index, bool Hidden) slot;
+        lock (_lock)
+        {
+            if (!_pendingOrderSlots.TryGetValue(loaded.Id, out slot)) return;
+            _pendingOrderSlots.Remove(loaded.Id);
+        }
+
+        bool orderChanged = false;
+        bool hiddenChanged = false;
+
+        lock (_lock)
+        {
+            if (!ContainsOrder(loaded.Key))
+            {
+                int index = slot.Index < 0 ? _order.Count : Math.Clamp(slot.Index, 0, _order.Count);
+                _order.Insert(index, loaded.Key);
+                orderChanged = true;
+            }
+
+            if (slot.Hidden && _hidden.Add(loaded.Key))
+                hiddenChanged = true;
+        }
+
+        if (orderChanged) SaveOrderList();
+        if (hiddenChanged) SaveHiddenList();
+    }
+
     private PluginEntry? FindEntryByKeyOrId(string value)
     {
         foreach (var e in _entries)
@@ -673,6 +740,9 @@ public sealed class PluginManager
             // 不摘掉 _disabled 会同时坏两件事：市场页按 _disabled 判「已禁用」与实际运行状态自相矛盾；
             // 下次启动 Initialize 又按 _disabled 把它跳过 —— 重装完看着好好的，重启就没了。
             ClearDisabled(e.Key);
+            // 更新安装：旧版占的显示顺序位置 / 隐藏状态在这里还给新版（按 Id 记账），
+            // 没有记账时再由 EnsureOrder 追加到末尾。
+            RestoreDisplaySlotFromUpdate(e);
             // 新加载的插件若还没有顺序位置，追加到末尾并同步给宿主
             EnsureOrder();
             PushOrderToHost();
@@ -1088,6 +1158,10 @@ public sealed class PluginManager
         // 插件登记的卸载前操作先跑：这一刻实例还活着、它自己的资源都拿得到，Unload 之后就没机会了。
         // 禁用 / 重载 / 退出都不走这里，所以「只在真正卸载时执行一次」是成立的。
         _host.RunUninstallAction(e.Id);
+
+        // 先把旧版占的显示顺序位置按 Id 记下来：下面会把旧 Key 从顺序表里删掉，
+        // 等新版加载成功再原样插回去（更新后不该跑到列表末尾）。
+        RememberDisplaySlotForUpdate(e);
 
         Unload(e);
 
