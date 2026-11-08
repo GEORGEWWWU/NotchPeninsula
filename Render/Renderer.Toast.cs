@@ -11,6 +11,9 @@ namespace NotchPeninsula
 
         private const float TOAST_FULL_MODE_RIGHT_RESERVE = 36f;
 
+        // 四档字号的可调接口与默认值在 Renderer.ToastFont.cs；
+        // 下面所有行高 / 块高都由那几个属性推导，运行时改字号无需重编译。
+
         // 头像与图标是两个尺寸档：头像大 5px，且圆角取自身的 50%（正方形头像 → 正圆）。
         private const float TOAST_ICON_SIZE = 28f;
 
@@ -96,6 +99,19 @@ namespace NotchPeninsula
 
         private static void DrawToastLayer(SKCanvas canvas, ToastData toast, float left, float right, float currentHeight)
         {
+            // 整帧用一份字号快照：改字号的那一帧也不会出现「行高按新值、字形按旧值」。
+            float senderSize = ToastSenderSize;
+            float bodySize = ToastBodySize;
+            float appSize = ToastAppSize;
+            float metaSize = ToastMetaSize;
+
+            // 字号每帧显式落定：Toast 与媒体组件共用这几支画笔，
+            // 不显式赋值就会沿用别处（如媒体歌词 14.5 / 12.5）留下的字号。
+            _titlePaint.TextSize = senderSize;
+            _bodyPaint.TextSize = bodySize;
+            _compactTimePaint.TextSize = metaSize;
+            _compactAppPaint.TextSize = metaSize;
+
             if (_lastToastId != toast.NotificationId)
             {
                 _lastToastId = toast.NotificationId;
@@ -106,7 +122,10 @@ namespace NotchPeninsula
                 // 只在接收到新消息时分配一次内存
                 BuildTextRuns(_cachedToastSender, _titlePaint, _boldTypeface, _cachedToastSenderRuns, out _cachedToastTitleWidth);
                 BuildTextRuns(_cachedToastBody, _bodyPaint, _normalTypeface, _cachedToastBodyRuns, out _cachedToastBodyWidth);
+                // 应用名是「小字」档，量宽度时临时切到 appSize，量完复原
+                _bodyPaint.TextSize = appSize;
                 BuildTextRuns(_cachedToastAppName, _bodyPaint, _normalTypeface, _cachedToastAppNameRuns, out _cachedToastAppNameWidth);
+                _bodyPaint.TextSize = bodySize;
 
                 _cachedToastCompactRightWidth = Math.Max(
                     _compactTimePaint.MeasureText("现在"),
@@ -178,24 +197,29 @@ namespace NotchPeninsula
                 compactRightLeft = rightTextEdge - Math.Max(compactNowWidth, compactAppW);
             }
 
-            float textSpacing = 5f;
+            // 应用名 → 标题用固定行距；标题 → 正文的行距随字号放大而增加，
+            // 这样正文调大时不会被标题压住（算法见 Renderer.ToastFont.cs）。
+            float baseSpacing = ToastBaseLineSpacing;
+            float bodyGap = ToastBodyLineGap(senderSize, bodySize, appSize, IsToastFullMode, TOAST_HEIGHT);
+            // 新增的行距不要全靠居中平分：留一部分给正文单独下移，符合「字大了往下让一点」的观感。
+            float gapBias = (bodyGap - ToastBaseLineSpacing) * ToastLineGapBodyBias;
 
             // 三行文本参数（完整模式）或两行文本参数（缩略模式）
             float totalTextHeight, line1Y, line2Y, line3Y;
             if (IsToastFullMode)
             {
-                totalTextHeight = 12f + 13.5f + 11.5f + textSpacing * 2;
-                float toastTextY = (currentHeight - totalTextHeight) / 2f;
-                line1Y = toastTextY + 10f;            // 应用名（小字灰度）
-                line2Y = line1Y + 12f + textSpacing;  // 发送者（粗体）
-                line3Y = line2Y + 13.5f + textSpacing;// 消息主体
+                totalTextHeight = (appSize + 0.5f) + senderSize + bodySize + baseSpacing + bodyGap;
+                float toastTextY = (currentHeight - totalTextHeight) / 2f + gapBias;
+                line1Y = toastTextY + appSize - 1.5f;                        // 应用名（小字灰度）
+                line2Y = line1Y + appSize + 0.5f + baseSpacing;              // 发送者（粗体）
+                line3Y = line2Y + senderSize + bodyGap;                      // 消息主体
             }
             else
             {
-                totalTextHeight = 13.5f + 11.5f + textSpacing;
-                float toastTextY = (currentHeight - totalTextHeight) / 2f;
-                line1Y = toastTextY + 11.5f;
-                line2Y = line1Y + 13.5f + textSpacing;
+                totalTextHeight = senderSize + bodySize + bodyGap;
+                float toastTextY = (currentHeight - totalTextHeight) / 2f + gapBias;
+                line1Y = toastTextY + senderSize - 2f;
+                line2Y = line1Y + senderSize + bodyGap;
                 line3Y = 0f;
             }
 
@@ -205,6 +229,7 @@ namespace NotchPeninsula
                 // 应用名用【真裁切】收口（不再盖遮罩层）
                 canvas.Save();
                 canvas.ClipRect(new SKRect(0, 0, toastMaxTextRight, currentHeight), SKClipOperation.Intersect, true);
+                _bodyPaint.TextSize = appSize;
                 // 元素级明暗：整行按自己那一块底色的黑白走
                 _bodyPaint.Color = ToneText(_cachedToastAppName, toastTextX, line1Y, _bodyPaint, 255, false);
                 foreach (var run in _cachedToastAppNameRuns)
@@ -215,8 +240,11 @@ namespace NotchPeninsula
                 canvas.Restore();
                 _bodyPaint.Typeface = _normalTypeface; // 重置
 
+                // 「现在」跟正文同色但字号走小字档，量宽/绘制都按 metaSize
+                _bodyPaint.TextSize = metaSize;
                 float nowWidth = _bodyPaint.MeasureText("现在");
                 DrawToneText(canvas, "现在", rightTextEdge - nowWidth, line1Y, _bodyPaint, 255);
+                _bodyPaint.TextSize = bodySize; // 复原
             }
 
             // 发送者 / 正文同样用真裁切收口 —— 不再叠渐变或纯色层（那层在亚克力 / 低透明度下会露出来）
