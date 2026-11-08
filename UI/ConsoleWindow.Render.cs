@@ -897,29 +897,38 @@ namespace NotchPeninsula
                 // 绘制纯血 Skia 伪 PNG 视觉特效图
                 float cx = x + 75; float cy = y + 35;
 
-                _dynamicFillPaint.Color = IsLightPreviewCapsule() ? SKColors.White : SKColors.Black;
-
+                // 两种形态先收进同一条路径：填色 / 玻璃预览共用，免得两处各画一遍。
+                using var shape = new SKPath();
                 if (index == 0) // 调整经典刘海的矢量绘图比例，使其视觉高度和灵动岛保持一致
                 {
-                    // 漏掉 it 就是"每次重绘泄漏一个原生路径"。
-                    using var path = new SKPath();
-                    path.MoveTo(cx - 35, cy - 10);
-                    path.QuadTo(cx - 25, cy - 10, cx - 25, cy - 5);
-                    path.LineTo(cx - 25, cy + 5);
-                    path.QuadTo(cx - 25, cy + 10, cx - 15, cy + 10);
-                    path.LineTo(cx + 15, cy + 10);
-                    path.QuadTo(cx + 25, cy + 10, cx + 25, cy + 5);
-                    path.LineTo(cx + 25, cy - 5);
-                    path.QuadTo(cx + 25, cy - 10, cx + 35, cy - 10);
-                    canvas.DrawPath(path, _dynamicFillPaint);
+                    shape.MoveTo(cx - 35, cy - 10);
+                    shape.QuadTo(cx - 25, cy - 10, cx - 25, cy - 5);
+                    shape.LineTo(cx - 25, cy + 5);
+                    shape.QuadTo(cx - 25, cy + 10, cx - 15, cy + 10);
+                    shape.LineTo(cx + 15, cy + 10);
+                    shape.QuadTo(cx + 25, cy + 10, cx + 25, cy + 5);
+                    shape.LineTo(cx + 25, cy - 5);
+                    shape.QuadTo(cx + 25, cy - 10, cx + 35, cy - 10);
                 }
-                else // 模拟灵动岛
+                else // 模拟灵动岛：统一高度 20px，圆角 10px 形成胶囊
                 {
-                    // 统一高度 20px，圆角 10px 形成胶囊
-                    canvas.DrawRoundRect(new SKRect(cx - 25, cy - 10, cx + 25, cy + 10), 10, 10, _dynamicFillPaint);
+                    shape.AddRoundRect(new SKRect(cx - 25, cy - 10, cx + 25, cy + 10), 10, 10);
+                }
+
+                // 预览里的岛体跟着当前背景材质走：选了液态玻璃就画成玻璃（真机上岛就是一块玻璃），
+                // 实体 / 亚克力仍画纯色剪影 —— 这张卡是形态示意，材质信息不能在预览里丢。
+                if (Renderer.IslandAnyGlass)
+                {
+                    DrawLiquidGlassPreview(canvas, shape);
+                }
+                else
+                {
+                    _dynamicFillPaint.Color = IsLightPreviewCapsule() ? SKColors.White : SKColors.Black;
+                    canvas.DrawPath(shape, _dynamicFillPaint);
                 }
 
                 // 单选 Radio 按钮与文本：作为整体在框内居中（文字宽度随名字变，钉死偏移会歪）。
+                // 包围框的画笔颜色已经在上面按选中 / 未选中设好，这里直接用。
                 float radioY = y + 72;
                 const float radioDiameter = 12f, radioTextGap = 9f;
                 float radioGroupW = radioDiameter + radioTextGap + _dynamicTextPaint.MeasureText(name);
