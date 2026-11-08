@@ -54,6 +54,10 @@ namespace NotchPeninsula
                     Renderer.IsToastFullMode = toastContentMode == 2;
                     Renderer.IsToastCompactMode = toastContentMode == 1;
 
+                    // 通知字号由宿主自己恢复：调节入口（设置页 / 插件）只负责把值写进来，
+                    // 数据源就是注册表这一份，入口不在也不影响已保存的字号。
+                    Renderer.RestoreToastFontSizes(key);
+
                     // 不会带着坏配置启动。
                     ToastSoundConfig.RefreshBuiltins();
                     ToastSoundConfig.Restore(
