@@ -266,7 +266,8 @@ namespace NotchPeninsula
             PluginFailureKind.BadImage =>
                 "这个 DLL 无法作为 .NET 程序集加载：可能是 32 / 64 位不匹配，或文件本身已损坏。",
             PluginFailureKind.MissingDependency =>
-                "插件缺少依赖文件：请确认整个插件包（不只是那个 dll）都放进来了。",
+                "插件缺少依赖文件：请确认整个插件包（不只是那个 dll）都放进来了；"
+                + "也可以尝试最新 NPS 测试版 —— 如果它依赖的是更新版宿主接口，升级即可解决。",
             PluginFailureKind.HostMismatch =>
                 "插件引用了当前 NPS 里不存在的接口，多半是按旧版 API 编译的。",
             PluginFailureKind.InitFailed =>
@@ -1657,7 +1658,8 @@ namespace NotchPeninsula
             if (e == null) { Render(); return; }
 
             // 先卸载再动目录：插件 Dispose、影子目录与文件句柄都放开了，目录才可能删得掉。
-            PluginManager.Instance.Remove(e);
+            // Uninstall 会顺手清掉它在「实况窗管理」里的开关记录（更新安装走的是另一条替换路径，不走这里）。
+            PluginManager.Instance.Uninstall(e);
 
             if (deleteDir && dir.Length > 0)
             {

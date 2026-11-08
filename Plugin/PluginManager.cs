@@ -221,6 +221,7 @@ public sealed class PluginManager
 
             EnsureOrder();
             PushOrderToHost();
+            PruneLiveWindowOwners();
         }
         catch (Exception ex) { Logger.Error("[PluginManager] 加载收尾失败", ex); }
 
@@ -228,6 +229,21 @@ public sealed class PluginManager
             + $"{Entries.Count(x => x.State == PluginState.Loaded)} 个"
             + (totalMs > 0 ? $"（{_loadBatchTotal} 个插件分批加载共 {totalMs}ms）" : ""));
         RaiseChanged();
+    }
+
+    /// <summary>
+    /// 实况窗管理页按插件 Id 记账：这次没加载起来的插件（已卸载 / 加载失败）从名单里清掉，
+    /// 别让管理页永远挂着一行已经没有气泡的插件。只清显示名单，禁用选择保留（见 LiveWindowHost）。
+    /// </summary>
+    private void PruneLiveWindowOwners()
+    {
+        try
+        {
+            var liveOwnerIds = new List<string>(_host.Plugins.Count);
+            foreach (var p in _host.Plugins) liveOwnerIds.Add(p.Id);
+            LiveWindowHost.PruneKnownOwners(liveOwnerIds);
+        }
+        catch (Exception ex) { Logger.Warn($"[PluginManager] 清理实况窗开关名单失败：{ex.Message}"); }
     }
 
     public void Refresh()
@@ -1151,6 +1167,22 @@ public sealed class PluginManager
             Logger.Error("[PluginManager] 导入插件失败", ex);
             return (false, $"导入失败：{ex.Message}", PluginFailureKind.Other);
         }
+    }
+
+    /// <summary>
+    /// 用户真正卸载插件（不是更新安装的「移除旧副本」）：连它在「实况窗管理」里的开关记录一起删掉，
+    /// 管理页那一行才会随卸载消失。必须在 <see cref="Remove"/> 之前调用 —— Remove 之后实例与 Id 都没了，
+    /// 宿主就不知道该删哪一行。
+    /// <para>
+    /// 更新安装走的是 <see cref="Remove"/> 的替换路径，那里同一 Id 的新版马上会重新加载、重新登记，
+    /// 开关记录必须保留，所以不能把清理塞进 Remove 里。
+    /// </para>
+    /// </summary>
+    public void Uninstall(PluginEntry e)
+    {
+        if (e == null) return;
+        if (!string.IsNullOrEmpty(e.Id)) LiveWindowHost.ForgetOwner(e.Id);
+        Remove(e);
     }
 
     public void Remove(PluginEntry e)
