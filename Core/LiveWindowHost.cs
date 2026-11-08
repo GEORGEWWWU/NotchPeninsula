@@ -260,6 +260,62 @@ public static class LiveWindowHost
     }
 
     /// <summary>
+    /// 插件被真正卸载时调用：把它的开关记录从「实况窗管理」名单里删掉，那一行才会跟着消失。
+    /// <para>
+    /// **只在真卸载时调**：更新安装走的是「移除旧副本 → 加载同 Id 新版」的替换路径，
+    /// 记录必须保留，否则用户关掉的开关会被一次更新悄悄打开。气泡本身的注销由 PluginHost 的
+    /// 卸载流程统一做（先 <see cref="RemoveOwner"/>，之后渲染线程再也不会回调插件对象）。
+    /// </para>
+    /// </summary>
+    public static void ForgetOwner(string ownerId)
+    {
+        if (string.IsNullOrEmpty(ownerId) || ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase)) return;
+
+        EnsureOwnerSettingsLoaded();
+        bool changed;
+        lock (_ownerGate)
+        {
+            changed = _knownOwners.Remove(ownerId);
+            changed |= _disabledOwners.Remove(ownerId);
+            if (changed) SaveOwnerSettingsLocked();
+        }
+        if (changed) Logger.Info($"[实况窗] 插件 {ownerId} 已卸载，它的开关记录已删除");
+    }
+
+    /// <summary>
+    /// 启动加载收尾：名单里只保留这次真正装起来的插件。
+    /// 以前卸载不掉的历史记录（旧版本没清 / 用户直接删了 plugins 目录）会永远在「实况窗管理」
+    /// 里挂一行没有气泡的插件，这里一次性收敛掉。
+    /// <para>
+    /// 只清显示名单、**不清禁用名单**：禁用中的插件这次没加载，行会暂时消失，
+    /// 但用户当初关掉它的选择还在 —— 重新启用插件、它再注册时会重新出现且保持关闭。
+    /// </para>
+    /// </summary>
+    /// <param name="liveOwnerIds">本次加载成功的插件 Id（owner 就是插件 Id）。</param>
+    public static void PruneKnownOwners(IEnumerable<string> liveOwnerIds)
+    {
+        EnsureOwnerSettingsLoaded();
+
+        var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (liveOwnerIds != null)
+            foreach (var id in liveOwnerIds)
+                if (!string.IsNullOrEmpty(id)) live.Add(id);
+
+        List<string>? stale = null;
+        lock (_ownerGate)
+        {
+            foreach (var id in _knownOwners)
+                if (!live.Contains(id)) (stale ??= new List<string>(1)).Add(id);
+
+            if (stale == null) return;
+            foreach (var id in stale) _knownOwners.Remove(id);
+            SaveOwnerSettingsLocked();
+        }
+
+        Logger.Info($"[实况窗] 已清理 {stale.Count} 条失效的插件开关记录：{string.Join(", ", stale)}");
+    }
+
+    /// <summary>
     /// 挂起 / 恢复某插件的全部实况窗，返回需要通知的窗口对象。
     /// 退出动画中的窗已经没有插件对象，只标记不通知；已在目标状态的不重复处理。
     /// </summary>
