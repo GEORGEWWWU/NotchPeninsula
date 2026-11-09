@@ -52,6 +52,11 @@ public sealed class PluginHost
 
     private readonly HashSet<string> _unregistering = new(StringComparer.OrdinalIgnoreCase);
 
+    // 系统通知订阅按插件记账：插件停用 / 卸载时宿主统一置为失效，
+    // 避免回调打到已经 Dispose 掉的插件对象上。
+    private readonly Dictionary<string, List<SystemNotificationSubscription>> _notificationSubs =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private readonly List<IPluginWindow> _pendingWindowClose = new();
 
     private int _windowCloseAttempts;
@@ -457,6 +462,60 @@ public sealed class PluginHost
         }
     }
 
+    // ---- 系统通知订阅（接现有 WinRT Toast 流，见 NotchWindow.OnToastDetected） ----
+
+    /// <summary>由 ScopedPluginHost 转发，pluginId 由宿主绑定，插件侧看不到也传不进来。</summary>
+    public IDisposable SubscribeSystemNotifications(string pluginId, Action<SystemNotification> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        var sub = new SystemNotificationSubscription(this, pluginId, handler);
+        lock (_lock)
+        {
+            if (!_notificationSubs.TryGetValue(pluginId, out var list))
+                _notificationSubs[pluginId] = list = new List<SystemNotificationSubscription>(1);
+            list.Add(sub);
+        }
+        return sub;
+    }
+
+    internal void RemoveSubscription(SystemNotificationSubscription sub)
+    {
+        lock (_lock)
+        {
+            if (!_notificationSubs.TryGetValue(sub.PluginId, out var list)) return;
+            list.Remove(sub);
+            if (list.Count == 0) _notificationSubs.Remove(sub.PluginId);
+        }
+    }
+
+    /// <summary>
+    /// 把一条系统通知派发给所有订阅者。宿主 UI 线程只做一次快照拷贝，
+    /// 真正的插件回调在线程池上跑，插件做 IO 也不会拖慢通知弹出那一帧。
+    /// </summary>
+    public void PublishSystemNotification(SystemNotification notification)
+    {
+        SystemNotificationSubscription[] subs;
+        lock (_lock)
+        {
+            if (_notificationSubs.Count == 0) return;
+            subs = _notificationSubs.Values.SelectMany(x => x).ToArray();
+        }
+        if (subs.Length == 0) return;
+
+        _ = Task.Run(() =>
+        {
+            foreach (var sub in subs)
+            {
+                try { sub.Invoke(notification); }
+                catch (Exception ex)
+                {
+                    try { NotchPeninsula.Logger.Warn("[PluginHost] 系统通知订阅回调异常: " + ex.Message); }
+                    catch { /* 日志不能反过来拖垮派发 */ }
+                }
+            }
+        });
+    }
+
     // ---- 提醒（接现有 Toast 流） ----
     public event Action<ToastData>? ReminderPosted;
 
@@ -577,6 +636,11 @@ public sealed class PluginHost
             _settingsPages.RemoveAll(p => p.PluginId == pluginId);
             _plugins.RemoveAll(p => p.Id == pluginId);
             _settingsHandlers.Remove(pluginId);
+            if (_notificationSubs.TryGetValue(pluginId, out var subs))
+            {
+                foreach (var sub in subs) sub.Deactivate();
+                _notificationSubs.Remove(pluginId);
+            }
             _widgetsVersion++;
             if (_refreshes.TryGetValue(pluginId, out var list))
             {
@@ -899,6 +963,43 @@ public sealed class PluginHost
     }
 }
 
+/// <summary>
+/// 一条系统通知订阅的句柄。用 Interlocked 位标记做幂等退订，并在派发前复核：
+/// 插件在通知派发途中被卸载时，已经拷贝出去的订阅也不会再回调到已释放的对象。
+/// </summary>
+internal sealed class SystemNotificationSubscription : IDisposable
+{
+    private readonly PluginHost _host;
+    private readonly Action<SystemNotification> _handler;
+    private int _active = 1;
+
+    internal SystemNotificationSubscription(PluginHost host, string pluginId, Action<SystemNotification> handler)
+    {
+        _host = host;
+        PluginId = pluginId;
+        _handler = handler;
+    }
+
+    internal string PluginId { get; }
+
+    internal bool IsActive => Volatile.Read(ref _active) != 0;
+
+    internal void Invoke(SystemNotification notification)
+    {
+        if (!IsActive) return;
+        _handler(notification);
+    }
+
+    /// <summary>只置失效、不回改字典：供宿主在持锁的卸载路径里调用。</summary>
+    internal void Deactivate() => Interlocked.Exchange(ref _active, 0);
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _active, 0) == 0) return;
+        _host.RemoveSubscription(this);
+    }
+}
+
 public sealed class ScopedPluginHost : IPluginHost
 {
     private readonly PluginHost _host;
@@ -946,4 +1047,9 @@ public sealed class ScopedPluginHost : IPluginHost
     public IDisposable DeclareMspSignal(string action, string description)
         => _host.DeclareMspSignal(_pluginId, action, description);
     public void PublishMspSignal(string path, object? payload) => _host.PublishMspSignal(path, payload);
+
+    // 系统通知订阅：pluginId 由这里绑定，与 MSP / 刷新调度同款隔离。
+    public bool CanSubscribeSystemNotifications => true;
+    public IDisposable SubscribeSystemNotifications(Action<SystemNotification> handler)
+        => _host.SubscribeSystemNotifications(_pluginId, handler);
 }

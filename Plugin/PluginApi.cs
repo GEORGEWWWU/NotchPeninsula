@@ -195,6 +195,45 @@ public sealed class ReminderData
     public Action? OnClick { get; init; }
 }
 
+// ---- 系统通知（宿主把既有 WinRT Toast 流转换成纯数据快照交给插件） ----
+
+/// <summary>
+/// 一条系统通知的只读快照。刻意只带标量：宿主内部的 <c>ToastData</c> 还持有 WinRT 对象、
+/// <c>SKBitmap</c> 和点击回调，这些不能跨插件边界传出去（线程归属、位图生命周期、
+/// 插件卸载后的悬空引用都会出问题），插件也不该反过来改宿主正在绘制的那条 Toast。
+///
+/// <para>字符串字段可能为空串，但不会是 null。<see cref="Id"/> 是宿主本轮轮询里的通知编号，
+/// 只适合配合 <see cref="ReceivedAt"/> 做短期去重，不保证全局唯一或跨重启稳定。</para>
+///
+/// <para><see cref="ConversationName"/> 是「这条消息属于哪个会话」：手机连接转发的微信通知里，
+/// 它精确等于联系人 / 群名（ToastGeneric 的第 2 段文本原文，没有被拼进 <see cref="Body"/>）。
+/// 插件把它连同 <see cref="Aumid"/> / <see cref="LaunchUri"/> 一起交回
+/// <c>AppActivator.active_app</c>，就能落到具体会话，而不是只把应用叫到前台。</para>
+///
+/// <para><see cref="IconPng"/> 是宿主已经解码并编码好的图标 PNG，优先级与岛上 Toast 一致
+/// （头像 → 应用 logo → 进程图标），通常几 KB、多为 64×64，没有图标时为 null。
+/// 用 <c>byte[]</c> 而不是 <c>SKBitmap</c>：位图的原生内存归宿主，插件重载 / 卸载时无法安全回收；
+/// 字节数组可以自由转存、落盘、跨会话保留。</para>
+/// </summary>
+public sealed record SystemNotification(
+    uint Id,
+    string AppName,
+    string Title,
+    string Body,
+    string Aumid,
+    string LaunchUri,
+    string ConversationName,
+    byte[]? IconPng,
+    DateTimeOffset ReceivedAt);
+
+/// <summary>接口默认实现用的空句柄，让「宿主不支持订阅」走正常返回值而不是抛异常。</summary>
+internal sealed class NullNotificationSubscription : IDisposable
+{
+    public static readonly NullNotificationSubscription Instance = new();
+    private NullNotificationSubscription() { }
+    public void Dispose() { }
+}
+
 // ---- 主机（插件反向拿服务与注册页） ----
 
 public interface IPluginHost
@@ -337,4 +376,28 @@ public interface IPluginHost
     /// MSP 未启动时静默丢弃并记 debug 日志 —— 插件不必自己判断开关状态。
     /// </summary>
     void PublishMspSignal(string path, object? payload);
+
+    // ---- 系统通知订阅（见文档 13 章） ----
+
+    /// <summary>
+    /// 宿主是否支持把系统通知转发给插件。默认 <c>false</c>：旧版宿主或第三方
+    /// <c>IPluginHost</c> 实现没接线时返回 false，插件据此回落到自己的收件通道。
+    /// </summary>
+    bool CanSubscribeSystemNotifications => false;
+
+    /// <summary>
+    /// 订阅系统通知。宿主的「系统消息通知」开关打开、且轮询取到一条新 Toast 时，
+    /// 向每个订阅者投递一份 <see cref="SystemNotification"/> 快照。
+    ///
+    /// <para><b>默认实现返回空句柄</b>，是给旧宿主 / 自定义宿主实现留的降级路径：
+    /// 新增这两个成员既不破坏现有插件的源码兼容，也不破坏二进制兼容。</para>
+    ///
+    /// <para>回调在线程池上串行投递并逐个隔离异常：一个插件抛异常不影响其他插件，
+    /// 也不会卡住通知弹出的那一帧。回调里请只做轻量入队，不要做耗时 IO。</para>
+    ///
+    /// <para>返回的句柄 Dispose 即退订（幂等）；插件停用 / 卸载 / 重载时宿主也会自动退订。
+    /// 通知正文可能含隐私信息，只在确实需要时订阅，别默认转存或外发。</para>
+    /// </summary>
+    IDisposable SubscribeSystemNotifications(Action<SystemNotification> handler)
+        => NullNotificationSubscription.Instance;
 }

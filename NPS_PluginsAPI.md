@@ -28,7 +28,8 @@
 - [10. 字体、主题与渲染上下文](#10-字体主题与渲染上下文)
 - [11. 常见坑速查](#11-常见坑速查)
 - [12. API 速查](#12-api-速查)
-- [13. 排错](#13-排错)
+- [13. 系统通知订阅](#13-系统通知订阅)
+- [14. 排错](#14-排错)
 - [附录 A：接入自己的媒体来源](#附录-a接入自己的媒体来源)
 - [附录 B：术语对照](#附录-b术语对照)
 
@@ -1336,6 +1337,8 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 注册 | `IDisposable RegisterLiveWindow(ILiveWindow)` | 开放（见 [8.7](#87-实况窗live-window)） |
 | 主题 | `RenderTheme CurrentTheme` | 开放 |
 | 提醒 | `PostReminder(ReminderData)` | 开放 |
+| 系统通知 | `bool CanSubscribeSystemNotifications` | 开放（旧宿主默认 `false`） |
+| 系统通知 | `IDisposable SubscribeSystemNotifications(Action<SystemNotification>)` | 开放（见 [13](#13-系统通知订阅)） |
 | 设置 | `GetSetting(key, fallback)` / `SetSetting(key, value)` / `event SettingsChanged` | 开放 |
 | 刷新 | `IDisposable ScheduleRefresh(TimeSpan, Action)` | 开放 |
 | 交互 | `RequestRedraw()` | 空操作 |
@@ -1443,7 +1446,129 @@ class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClic
 
 ---
 
-## 13. 排错
+## 13. 系统通知订阅
+
+宿主本来就会通过 WinRT `UserNotificationListener` 轮询系统 Toast，但那条流只进岛上的通知面板和
+MSP 数据桥，插件拿不到。现在多一个**显式订阅**入口：插件主动声明要收，宿主才把同一条通知的
+纯数据快照投递过去。
+
+### 13.1 数据模型
+
+```csharp
+public sealed record SystemNotification(
+    uint Id,            // 本轮轮询里的通知编号，只够短期去重用
+    string AppName,     // 应用显示名
+    string Title,
+    string Body,
+    string Aumid,            // 应用 UserModelId
+    string LaunchUri,        // 可能为空串；异步解析完成后会补发一帧，见 13.6
+    string ConversationName, // 会话名：手机连接转发的微信通知里就是联系人 / 群名，可能为空串
+    byte[]? IconPng,         // 图标 PNG（头像 → 应用 logo → 进程图标），可能为 null
+    DateTimeOffset ReceivedAt);
+```
+
+刻意不带 `SKBitmap` / `UserNotification` / `OnClick`：那些对象的生命周期和线程归属都在宿主这边，
+传出去会在插件重载时变成悬空引用。字符串可能是空串，但不会是 null。
+
+`IconPng` 是宿主已经解码并编码好的图标，优先级与岛上 Toast 的绘制一致：**头像**（QQ / 微信联系人）
+→ **应用 logo**（AUMID 解析）→ **进程 / 通用图标**兜底，通常几 KB、多为 64×64。之所以给
+`byte[]` 而不是 `SKBitmap`：位图的原生内存归宿主，插件重载 / 卸载时没法安全回收；字节数组可以
+自由转存、按内容哈希落盘、跨会话保留。插件想省内存就自己缓存解码结果，别每次重绘都解码一遍。
+
+`ConversationName` 是 ToastGeneric 的**第 2 段文本原文**（没有被拼进 `Body`）。它存在的意义是
+「点这条消息要跳到哪个会话」：`Aumid` + `Title` + `ConversationName` 一起交给
+`AppActivator.active_app(...)`，行为和点岛上那条 Toast 完全一致 —— 手机连接转发的微信消息会打开
+PC 微信并定位到对应联系人；只传 `Aumid` 时只能把应用叫到前台。
+
+### 13.2 订阅与退订
+
+```csharp
+private readonly List<IDisposable> _regs = new();
+
+public void Initialize(IPluginHost host)
+{
+    if (host.CanSubscribeSystemNotifications)
+        _regs.Add(host.SubscribeSystemNotifications(OnSystemNotification));
+}
+
+private void OnSystemNotification(SystemNotification n)
+{
+    // 只做轻量入队；别在这里写盘 / 发 HTTP，宿主要等所有订阅者跑完才发下一条
+    _queue.Enqueue(n);
+}
+
+public void Dispose()
+{
+    foreach (var r in _regs) r.Dispose();
+}
+```
+
+- `Dispose()` 句柄即退订，幂等。插件停用 / 卸载 / 重载时宿主**也会自动退订**，自己记账只是双保险。
+- 回调在**线程池**上串行投递，逐个 `try/catch` 隔离：一个插件抛异常只记一条日志，不影响其他插件，
+  也不卡通知弹出。
+- 宿主的「系统消息通知」总开关关掉时轮询不工作，插件自然也收不到；刻意与宿主现有行为保持一致。
+- 通知正文可能含隐私信息：只在确实需要时订阅，别默认转存或外发，卸载时按自己的数据策略清理。
+
+### 13.3 兼容旧版宿主
+
+`IPluginHost` 的这两个成员都带**默认接口实现**（`CanSubscribeSystemNotifications => false`，
+`SubscribeSystemNotifications` 返回空句柄），所以：
+
+- 现有插件不重新编译也能在新宿主上加载；
+- 第三方自己实现 `IPluginHost` 的代码不必补齐成员；
+- 想让**同一个 DLL 同时跑在旧宿主和新宿主**上，用反射探测能力再退化到自己的收件通道：
+
+```csharp
+var method = host.GetType().GetMethod("SubscribeSystemNotifications");
+if (method != null) { /* 构造 Action<T> 后 Invoke，用 IDisposable 接住 */ }
+```
+
+注意：如果插件是**针对新宿主编译并直接强类型调用**，`SubscribeSystemNotifications`
+在旧宿主上会抛 `MissingMethodException`。
+
+### 13.4 宿主侧接线位置
+
+| 环节 | 位置 |
+|---|---|
+| 接口与数据模型 | `Plugin/PluginApi.cs` |
+| 订阅账本 / 派发 / 自动退订 | `Plugin/PluginHost.cs`（`PublishSystemNotification`、`UnregisterPlugin`） |
+| 按插件绑定 pluginId | `Plugin/PluginHost.cs` 的 `ScopedPluginHost` |
+| `ToastData` → 快照并触发 | `Core/NotchWindow.cs` 的 `OnToastDetected` |
+| 启动协议异步到达后的补全帧 | `Core/NotchWindow.cs` 的 `OnToastDetected`（见 13.6） |
+
+派发发生在通知已确定要上岛之后，插件是旁路订阅者，不会改变原生 Toast 的显示、点击或清除行为。
+
+### 13.6 启动协议异步到达：同一条通知的补全帧
+
+`ToastData.LaunchUri` 不是通知到达时就有的。`ToastAvatarProbe` 在后台扫描
+`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db[-wal]`，从原始 Toast XML 的
+`launch` 属性里挖出来再写回 `toast`；而 `OnToastDetected` 在 UI 线程上**第一帧就派发**，
+那时 `LaunchUri` 通常是空串。
+
+这个字段不是可有可无的装饰。QQ 等 Electron 应用关到托盘后主面板是隐藏窗口，外部 `ShowWindow`
+只能让它「显示」，应用自己的状态机仍认为面板是关的 —— 窗口出来了却不接收输入。
+`AppActivator.active_app(...)` 只有拿到 `ntqq-notification://…` 这类应用自有协议才能正确唤醒。
+宿主自己点岛上 Toast 时会在点击瞬间用 `TryResolveLaunchNow` 现查兜底；但插件订阅拿到的是**快照**，
+快照里缺了协议就再也补不回来（让插件自己去读系统通知库不合适，也没必要）。
+
+因此宿主在第一帧之后，对**确实解析出协议**的通知补发一次**同一 `Id` 的补全帧**：
+
+- 只在第一帧 `LaunchUri` 为空时挂一个后台等待，最多 `8 × 50ms = 400ms`；始终没解析出来就不补发。
+  绝大多数通知没有 `launch` 属性，因此不会产生第二帧、也不会有额外延迟。
+- 补全帧的 `Id` / `ReceivedAt` / `Title` / `Body` / `Aumid` 与第一帧一致，只更新 `LaunchUri`
+  （顺带 `ConversationName`）；`IconPng = null`，避免重复编码几十 KB 的 PNG。
+- **插件按 `Id` 或「应用名 + 标题 + 正文」内容指纹合并，补字段而不是新增一条通知。**
+  通知中心类插件通常本来就有 2 秒内的相同内容去重窗口，正好覆盖这个时延；
+  「只有原值为空才补写」的合并逻辑也能保证已有协议不被后来的值覆盖。
+- 补全帧是**同一条通知的字段修订**，不是新通知。语义上 `SystemNotification` 仍是
+  「一条通知一份快照」，只是这份快照的少数字段可能在 400ms 内被修订一次。
+
+宿主 2.2.1 的 MSP 数据桥 `PluginDataBridge.PublishNotification` 有完全相同的时序问题
+（它的第二帧还被 `if (logo == null) return` 限制，QQ 的 logo 常解析失败所以补不上）；
+本地构建用一条不依赖图标解析的 `Version = 1` 补帧解决。本 PR 只负责 `IPluginHost`
+订阅这条路径，两者互不影响。
+
+## 14. 排错
 
 1. **看日志**：`%LocalAppData%\NotchPeninsula\app.log`（1MB 轮转，连当前共 3 个文件）。加载、失败原因、你的 `Logger.Warn` 都在里面。
 2. **看「我的插件」的状态**：`运行中 · vX · 作者` = 正常；失败会带归类与错误原文。

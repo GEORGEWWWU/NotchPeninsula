@@ -372,6 +372,31 @@ public static class PluginDataBridge
         }
     }
 
+    /// <summary>
+    /// 把一条 Toast 的图标编成 PNG，供插件订阅通道随通知一起带走。
+    ///
+    /// <para>优先级与岛上 Toast 的绘制一致：头像（QQ / 微信联系人）→ 应用 logo（CustomIcon，
+    /// ToastAppIconFallback 已同步快解）→ 进程 / 通用图标兜底。插件拿到的是编码后的纯字节，
+    /// 不需要认识 <c>SKBitmap</c>、AUMID 解析规则或图标缓存的生命周期 ——
+    /// 那些都留在宿主侧，插件只负责画。</para>
+    ///
+    /// <para>返回 null 表示这条通知没有可用图标（极少见），插件会退化成首字徽标。</para>
+    /// </summary>
+    internal static byte[]? EncodeToastIcon(ToastData toast)
+    {
+        if (toast == null) return null;
+        try
+        {
+            return EncodePng(Safe(() => toast.Avatar))
+                ?? EncodePng(Safe(() => toast.CustomIcon))
+                ?? EncodePng(ResolveFallbackIcon(toast));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     // ---- 工具 ----
 
     private static byte[]? EncodePng(SKBitmap? bitmap)

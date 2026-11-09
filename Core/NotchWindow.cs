@@ -883,6 +883,53 @@ namespace NotchPeninsula
 
             try { Plugins.PluginDataBridge.PublishNotification(toast); } catch { }
 
+            // 同一条系统通知也转发给订阅了 IPluginHost.SubscribeSystemNotifications 的插件。
+            // 只传纯数据快照：ToastData 里的位图 / WinRT 对象 / 点击回调都留在宿主这一侧。
+            // 尊重「系统消息通知」总开关；关掉时轮询本身也不会产出新 Toast。
+            if (IsToastEnabled)
+            {
+                try
+                {
+                    // 图标在宿主侧就编成 PNG 再交出去：插件既拿不到 SKBitmap，
+                    // 也不用自己按 AUMID 去 shell:AppsFolder 找一遍 logo。
+                    var note = new SystemNotification(
+                        toast.NotificationId, toast.AppName, toast.Title, toast.Body,
+                        toast.Aumid, toast.LaunchUri, toast.ConversationName,
+                        Plugins.PluginDataBridge.EncodeToastIcon(toast), DateTimeOffset.Now);
+                    Plugins.PluginManager.Instance.Host.PublishSystemNotification(note);
+
+                    // LaunchUri 是 ToastAvatarProbe 在后台从 wpndatabase 里挖出来再写回 toast 的，
+                    // OnToastDetected 这一帧它通常还是空串。QQ 这类 Electron 应用缺了它，插件点消息
+                    // 就只能退到窗口路径：ShowWindow 一个被应用藏在托盘里的隐藏窗 —— 窗口出来了
+                    // 却不接收输入（AppActivator 里对这条路径已有明确告警）。
+                    // 等协议就位后用同一个 Id 补发一帧；插件按内容指纹合并，不会多出一条通知。
+                    // 契约说明见 NPS_PluginsAPI.md 13.6。
+                    if (string.IsNullOrEmpty(note.LaunchUri) && !string.IsNullOrEmpty(toast.Title))
+                    {
+                        _ = System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                for (int i = 0; i < 8 && string.IsNullOrEmpty(toast.LaunchUri); i++)
+                                    System.Threading.Thread.Sleep(50);   // 最多等 400ms
+                                string uri = toast.LaunchUri;
+                                if (string.IsNullOrEmpty(uri)) return;
+
+                                Plugins.PluginManager.Instance.Host.PublishSystemNotification(note with
+                                {
+                                    LaunchUri = uri,
+                                    ConversationName = toast.ConversationName,
+                                    // 图标第一帧已经给过，补帧不重复编码几十 KB 的 PNG。
+                                    IconPng = null,
+                                });
+                            }
+                            catch { /* 补帧失败只影响跳转精度，不影响通知本身 */ }
+                        });
+                    }
+                }
+                catch { /* 插件系统还没起来 / 派发失败都不影响岛上的 Toast */ }
+            }
+
             // 上一条还没展示完就被顶掉：它的私有图标在这里回收，否则要等 GC 兜底
             if (_currentToast != null) ReleaseToastIcons(_currentToast);
 
