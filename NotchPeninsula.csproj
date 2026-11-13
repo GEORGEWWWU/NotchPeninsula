@@ -21,6 +21,10 @@
 	<RetainVMGarbageCollection>false</RetainVMGarbageCollection>
 	</PropertyGroup>
 
+	<PropertyGroup Condition="'$(NativeAcrylicPreview)' == 'true'">
+		<DefineConstants>$(DefineConstants);NATIVE_ACRYLIC_PREVIEW</DefineConstants>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<!-- 让 GC 主动收紧堆（越大越省内存，代价是回收更频繁）。5 = 官方建议的起步档 -->
 		<RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
