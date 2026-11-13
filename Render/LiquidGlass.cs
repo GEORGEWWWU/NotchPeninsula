@@ -371,6 +371,12 @@ namespace NotchPeninsula
 
         public static void ResetStats() { _statCache = _statHash = _statBuild = 0; }
 
+        // 几何微动复用：上一张玻璃多久之前算的，以及允许拉伸贴合的最大尺寸差。
+        // 判据见 Compose 里那段说明 —— 只在缓动尾巴这种"每帧差几像素"的场景生效。
+        private static long _lastComposeMs;
+        private const int ComposeReuseMs = 30;
+        private const float ComposeReuseMaxDeltaPx = 10f;
+
         private static float[] _weights = new float[7];
 
         // 权重表是否真的算过（详见 SetRadius 的注释）。
@@ -521,7 +527,26 @@ namespace NotchPeninsula
                 //   原模糊 = 档位半径本身（就是原版那层糊）；
                 //   高斯模糊 = 档位半径 + GaussExtraPx，桌面细节再压平一档。
                 int blurLogical = _levelRadius + (Renderer.GlassGaussBackdrop ? GaussExtraPx : 0);
-                SetRadius(Math.Max(0, (int)MathF.Round(blurLogical * MathF.Max(imgPerX, imgPerY))));
+                int radiusNow = Math.Max(0, (int)MathF.Round(blurLogical * MathF.Max(imgPerX, imgPerY)));
+
+                // ── 几何微动时的复用（缓动尾巴 / 插件测宽抖动）──
+                // 宽度与高度都走弹簧缓动，收敛前每一帧 logicalW/H 与裁切窗口都在变，缓存键全不命中，
+                // 于是每帧整层重算（极致档还是 2× 超采样）—— 一次几十毫秒，观感就是"动画一开就掉帧"。
+                // 这里的判据刻意很窄：背板没换、模糊半径没变、尺寸差 ≤10px、距上次重算 ≤30ms。
+                // 满足时把上一张玻璃交给调用方拉伸贴合当前矩形：偏差被运动本身掩盖，
+                // 超过 10px 或 30ms 立刻回到全量重算，不会累积漂移。
+                long nowMs = Environment.TickCount64;
+                if (!transient && _glass != null && _keyVersion == version && _radius == radiusNow
+                    && _lastComposeMs > 0 && nowMs - _lastComposeMs <= ComposeReuseMs
+                    && MathF.Abs(_keyLw - logicalW) <= ComposeReuseMaxDeltaPx
+                    && MathF.Abs(_keyLh - logicalH) <= ComposeReuseMaxDeltaPx
+                    && MathF.Abs(_keyRt - rTop) <= ComposeReuseMaxDeltaPx)
+                {
+                    _statCache++;
+                    return _glass;
+                }
+
+                SetRadius(radiusNow);
 
                 float maxShift = RefractionAmount * (1f + Dispersion) + 4f;
                 int margin = (int)MathF.Ceiling(maxShift * MathF.Max(imgPerX, imgPerY)) + _radius + 2;
@@ -821,6 +846,7 @@ namespace NotchPeninsula
                 _keyVersion = version;
                 _keyW = gw;
                 _keyH = gh;
+                _lastComposeMs = nowMs;
 
                 // 玻璃中心区平均亮度：每帧重算（很便宜），供「玻璃下文字自适应黑白」用，
                 // 下面那条诊断日志复用同一组值。命中缓存的帧不进这里，亮度停在旧值 —— 内容没变，亮度也不会变。
@@ -954,8 +980,10 @@ namespace NotchPeninsula
         private static void DiagBlur(int bs, int cw, int ch, bool skip)
         {
             long now = Environment.TickCount64;
-            string key = $"{_radius}|{bs}|{skip}|{cw}x{ch}";
-            if (key == _diagBlurKey && now - _diagBlurMs < 1500) return;
+            // 键里刻意不含裁切尺寸：宽度/高度动画期间几何每帧都在变，带上它等于每帧打一行，
+            // 而这条日志会走磁盘 —— 反过来把渲染线程拖慢。几何仍然照常写进正文里。
+            string key = $"{_levelRadius}|{_radius}|{bs}|{skip}|{(Renderer.GlassGaussBackdrop ? 1 : 0)}";
+            if (key == _diagBlurKey && now - _diagBlurMs < 5000) return;
             _diagBlurKey = key;
             _diagBlurMs = now;
             Logger.Debug($"[玻璃] 模糊体检：档位半径={_levelRadius} 高斯档={(Renderer.GlassGaussBackdrop ? 1 : 0)}"

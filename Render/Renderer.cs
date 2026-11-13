@@ -444,8 +444,17 @@ namespace NotchPeninsula
                 // 整个画布向下平移，让内部所有元素自动完美适应居中
                 canvas.Translate(0, topY);
 
-                _layerPaint.Color = SKColors.White.WithAlpha((byte)(255 * PassthroughAlpha * FullHideAlpha));
-                canvas.SaveLayer(_layerPaint);
+                // 图层只在「整块岛要淡出」时才需要：透明组的作用就是给内部所有像素乘一个 alpha。
+                // 稳态 alpha=255 时这层是个恒等变换，但它仍然要为整张画布（2000×265，150% 缩放后
+                // 3000×398 ≈ 4.8MB）开一层离屏、清空、再合成一遍 —— 每帧一次纯属白做。
+                // 淡入淡出 / 穿透 / 隐藏动画期间照旧开层，观感完全不变。
+                byte layerAlpha = (byte)(255 * PassthroughAlpha * FullHideAlpha);
+                bool useLayer = layerAlpha < 255;
+                if (useLayer)
+                {
+                    _layerPaint.Color = SKColors.White.WithAlpha(layerAlpha);
+                    canvas.SaveLayer(_layerPaint);
+                }
 
                 _bgPath.Rewind();
 
@@ -630,9 +639,8 @@ namespace NotchPeninsula
                 {
                     InvalidateDetailHitArea();
                     DrawToastLayer(canvas, toast, left, right, currentHeight);
-                    canvas.Restore();
-                    canvas.Restore();
-                    canvas.Restore();
+                    EndContents(canvas, useLayer);   // 裁切 + 透明层
+                    canvas.Restore();                // Translate
                     LiveWindowRenderer.Draw(canvas);
                     return;
                 }
@@ -643,9 +651,8 @@ namespace NotchPeninsula
                 {
                     DrawDetailPage(canvas, detailPage, left, currentHeight, currentWidth, alpha, textOffsetY, bars,
                         _pluginMouseX, _pluginMouseY - topY);
-                    canvas.Restore(); // 1. 恢复 ClipPath 裁切
-                    canvas.Restore(); // 2. 闭合 SaveLayer 透明层
-                    canvas.Restore(); // 3. 恢复最外层的 Translate 画布平移
+                    EndContents(canvas, useLayer);   // 1. 裁切 2. 透明层
+                    canvas.Restore();                // 3. 恢复最外层的 Translate 画布平移
                     LiveWindowRenderer.Draw(canvas);
                     return;
                 }
@@ -695,8 +702,7 @@ namespace NotchPeninsula
 
                 // 下方旧版残留的 _wakePath 绘制代码已彻底删除
 
-                canvas.Restore(); // 1. 恢复 ClipPath 裁切
-                canvas.Restore(); // 2. 闭合 SaveLayer 透明层，本体内部渲染彻底完结！任何阴影、遮罩全部随之消失。
+                EndContents(canvas, useLayer);   // 1. 裁切 2. 透明层：本体内部渲染到此彻底完结，任何阴影/遮罩随之消失
                 // 独立于本体之外，绘制隐形物理热区与极速渐变唤醒按钮。
                 // 手动隐藏时连唤醒按钮一起收掉：此时「唤回」只认全局快捷键与托盘菜单，
                 // 屏幕上不该再留一颗亮着的小圆（那就不叫隐藏了）。
@@ -713,6 +719,16 @@ namespace NotchPeninsula
             {
                 Monitor.Exit(_renderLock);
             }
+        }
+
+        /// <summary>
+        /// 收尾岛体内部的「裁切层 + 透明层」。两个 Restore 是否成对取决于本帧有没有开透明层
+        /// （见 Draw 里 useLayer 的说明）—— 稳态 alpha=255 时那层是恒等的，直接跳过。
+        /// </summary>
+        private static void EndContents(SKCanvas canvas, bool layered)
+        {
+            canvas.Restore();          // ClipPath 裁切
+            if (layered) canvas.Restore();   // 透明层
         }
 
     }

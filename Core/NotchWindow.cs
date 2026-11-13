@@ -563,6 +563,11 @@ namespace NotchPeninsula
             var clock = Stopwatch.StartNew();
             long nextTick = 0;
 
+            // 帧节拍等待用高精度定时器（不占 CPU）。建不出来就退回 Sleep/Yield，功能不受影响。
+            IntPtr frameTimer = Win32.CreateHighResTimer();
+            if (frameTimer == IntPtr.Zero)
+                Warn("[渲染] 高精度定时器创建失败，帧节拍退回 Sleep/自旋（后台占用会偏高）");
+
             while (!_shuttingDown)
             {
                 long frameStart = clock.ElapsedMilliseconds;
@@ -602,13 +607,25 @@ namespace NotchPeninsula
                 long remainTicks;
                 while (!_shuttingDown && (remainTicks = nextTick - clock.ElapsedTicks) > 0)
                 {
-                    // 富余多就让出 CPU；最后几毫秒改成忙等 ——
-                    // 全交给它对齐 16ms 网格会把帧率压到 30 上下。
-                    if (remainTicks > Stopwatch.Frequency / 1000 * 4) Thread.Sleep(1);
+                    double remainMs = remainTicks * 1000.0 / Stopwatch.Frequency;
+
+                    // 主路径：高精度可等待定时器。内核按 ~0.5ms 唤醒，睡眠期间不占 CPU。
+                    // 旧版在最后几毫秒 Thread.Yield() 忙等（为对齐 144fps 的 6.9ms 网格），
+                    // 代价是一个核持续跑满 —— 空闲时这一项就占了可观的后台占用。
+                    if (frameTimer != IntPtr.Zero)
+                    {
+                        int waitMs = (int)Math.Ceiling(remainMs);
+                        if (waitMs > 0 && Win32.WaitTimer(frameTimer, waitMs)) continue;
+                    }
+
+                    // 回退（定时器建不出来时）：富余多就让出 CPU，尾段才自旋
+                    if (remainMs > 4) Thread.Sleep(1);
                     else Thread.Yield();
                 }
                 if (nextTick < clock.ElapsedTicks) nextTick = clock.ElapsedTicks;
             }
+
+            Win32.CloseTimer(frameTimer);
         }
 
         private const int TOPMOST_KEEPALIVE_MS = 2000;
@@ -628,6 +645,10 @@ namespace NotchPeninsula
                     _ = Win32.GetWindowThreadProcessId(foreground, out uint pid);
                     if (pid == (uint)Environment.ProcessId) return;
                 }
+
+                // 已经压在 Z 序最顶就别再 SetWindowPos：每次调用都会让 DWM 重新合成一遍，
+                // 而前台是别的程序时这个检查每 2 秒就会跑一次。
+                if (Win32.IsTopOfZOrder(_hwnd)) return;
 
                 Win32.SetWindowPos(_hwnd, Win32.HWND_TOPMOST, 0, 0, 0, 0,
                     Win32.SWP_NOMOVE_NOSIZE | Win32.SWP_NOACTIVATE);
@@ -649,6 +670,11 @@ namespace NotchPeninsula
         }
 
         private const long IdleReclaimIntervalTicks = TimeSpan.TicksPerMinute * 10;
+
+        // 低于这个私有字节数就不做「压缩 GC」：它会把所有托管线程停住几十到上百毫秒，
+        // 而空闲时的定期全量压缩，用户看到的就是「每隔十分钟卡一下」。
+        private const long IdleReclaimMinPrivateBytes = 180L * 1024 * 1024;
+
         private long _lastIdleReclaimTicks;
 
         private void ReclaimIdleMemory()
@@ -658,6 +684,13 @@ namespace NotchPeninsula
             if (_shuttingDown || _currentToast != null || _isHovered || _media.IsPlaying) return;
 
             _lastIdleReclaimTicks = now;
+
+            long privateBytes;
+            try { using var proc = Process.GetCurrentProcess(); privateBytes = proc.PrivateMemorySize64; }
+            catch { return; }
+
+            if (privateBytes < IdleReclaimMinPrivateBytes) return;
+
             GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: true);
         }
 
@@ -1551,7 +1584,8 @@ namespace NotchPeninsula
                 RetryInitRenderBuffer();
                 return;
             }
-            canvas.Clear(SKColors.Transparent); // 清空上一帧的残留
+            // 不再在这里清画布：Renderer.Draw 进入后第一件事就是 Clear。
+            // 同一帧清两遍等于对 2000×265（150% 下 3000×398）的画布多抹 2~4MB 内存。
 
             // 亚克力背板：与胶囊同口径抓一次（几何没变就什么都不做），本帧绘制直接用
             SyncIslandBackdrop();
@@ -1599,7 +1633,13 @@ namespace NotchPeninsula
             // UpdateLayeredWindow 还要往 DWM 传一整张画布（540×450 约 1MB，60fps 就是 58MB/s）。
             // ⚠️ 只在 FullHideAlpha 落到 0 且滑出动画结束时才跳过：这两个条件都意味着
             //    「这一帧和上一帧一样、且屏幕上什么都看不见」，恢复时它会重新 >0，上屏自然继续。
-            if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow();
+            // 这几类帧的像素必然在变（动画 / 叠化 / 启动淡入 / 悬停展开），
+            // 拿过去比一整张画布（1.8~4MB 逐字节）纯属白读 —— 直接提交，
+            // 把「像素没变就别传」那项优化留给真正可能静止的帧。
+            bool visiblyMoving = _isAnimating || _isYAnimating || _isStyleAnimating
+                                 || _isHovered || startupProgress < 1f || transitionAlpha < 1f;
+
+            if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow(visiblyMoving);
             else _nativeAcrylic?.Hide();
             // 不可见帧只需要这一帧全透明底；之后整帧跳过（见 3.5）。
             _invisibleFrameUploaded = frameInvisible;
@@ -1636,7 +1676,11 @@ namespace NotchPeninsula
             return _spectrumBars;
         }
 
-        private void UpdateWindow()
+        /// <param name="likelyChanged">
+        /// 本帧画面确定在变（动画 / 叠化 / 悬停）时为 true：跳过整画布逐字节比较直接提交。
+        /// 传错只会多传一次，不会少传 —— 静态帧仍然走比较，行为与原来一致。
+        /// </param>
+        private void UpdateWindow(bool likelyChanged = false)
         {
             if (_hwnd == IntPtr.Zero || _memDc == IntPtr.Zero || _pBits == IntPtr.Zero) return;
 
@@ -1653,7 +1697,7 @@ namespace NotchPeninsula
 
             // 像素与窗口位置都没变就不提交：UpdateLayeredWindow 每次都会整张上传（没有脏矩形），
             // 静止画面下这是纯浪费。2s 强制重推一次，DWM 被重置/切换后能自愈。
-            if (CanSkipUpload(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight)) return;
+            if (!likelyChanged && CanSkipUpload(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight)) return;
 
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
             if (screenDc == IntPtr.Zero) return;

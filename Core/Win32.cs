@@ -530,12 +530,28 @@ namespace NotchPeninsula
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
         private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
-
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
         private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
 
         public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex)
             => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : (IntPtr)GetWindowLong32(hWnd, nIndex);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+        public const uint GW_HWNDPREV = 2;
+
+        /// <summary>
+        /// 窗口是否已经处在 Z 序最顶（上面没有别的窗口）。
+        /// 置顶保活用它做前提：已经压在所有人上面时再 SetWindowPos 一次，
+        /// 只会让 DWM 白做一次重新合成。
+        /// </summary>
+        public static bool IsTopOfZOrder(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero) return false;
+            try { return GetWindow(hWnd, GW_HWNDPREV) == IntPtr.Zero; }
+            catch { return false; }
+        }
 
         public const int GWL_EXSTYLE = -20;
 
@@ -558,6 +574,64 @@ namespace NotchPeninsula
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr hObject);
+
+        // ---- 高精度可等待定时器（帧节拍用）----
+        // 普通 Sleep 的精度受系统定时器分辨率限制（默认 15.6ms），所以旧版只能靠
+        // 最后几毫秒 Thread.Yield() 忙等去对齐 144fps 的 6.9ms 网格 —— 那是实打实的
+        // 一个核跑满。CREATE_WAITABLE_TIMER_HIGH_RESOLUTION（Win10 1803+）让内核按
+        // ~0.5ms 唤醒，且**不改系统全局定时器分辨率**，比 timeBeginPeriod(1) 干净。
+        public const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x00000002;
+        private const uint TIMER_ALL_ACCESS = 0x001F0003;
+        private const uint WAIT_OBJECT_0 = 0x00000000;
+        private const uint INFINITE = 0xFFFFFFFF;
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr CreateWaitableTimerExW(IntPtr lpTimerAttributes, string? lpTimerName,
+                                                            uint dwFlags, uint dwDesiredAccess);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetWaitableTimer(IntPtr hTimer, ref long lpDueTime, int lPeriod,
+                                                    IntPtr pfnCompletionRoutine, IntPtr lpArgToCompletionRoutine,
+                                                    bool fResume);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        /// <summary>
+        /// 建一个高精度可等待定时器；系统不支持该标志时退回普通定时器，
+        /// 完全失败返回 IntPtr.Zero（调用方据此回退到 Sleep/Yield）。
+        /// </summary>
+        public static IntPtr CreateHighResTimer()
+        {
+            IntPtr h = IntPtr.Zero;
+            try
+            {
+                h = CreateWaitableTimerExW(IntPtr.Zero, null, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+                if (h == IntPtr.Zero)
+                    h = CreateWaitableTimerExW(IntPtr.Zero, null, 0, TIMER_ALL_ACCESS);
+            }
+            catch { }
+            return h;
+        }
+
+        /// <summary>等待一次相对时长（毫秒）。返回 false 表示设置或等待失败。</summary>
+        public static bool WaitTimer(IntPtr hTimer, int ms)
+        {
+            if (hTimer == IntPtr.Zero || ms <= 0) return false;
+            try
+            {
+                long due = -(long)ms * 10000L;   // 负数 = 相对时间，单位 100ns
+                if (!SetWaitableTimer(hTimer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false)) return false;
+                return WaitForSingleObject(hTimer, INFINITE) == WAIT_OBJECT_0;
+            }
+            catch { return false; }
+        }
+
+        public static void CloseTimer(IntPtr hTimer)
+        {
+            if (hTimer == IntPtr.Zero) return;
+            try { CloseHandle(hTimer); } catch { }
+        }
 
         public static string TryGetProcessImagePath(int pid)
         {
