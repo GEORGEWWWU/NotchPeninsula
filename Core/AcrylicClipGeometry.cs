@@ -8,10 +8,11 @@ using WinRT.Interop;
 namespace NotchPeninsula
 {
     // The compositor consumes a D2D geometry. No D2D render target or bitmap is needed.
+    [WinRTExposedType(typeof(AcrylicClipGeometry.InterfaceDetails))]
     internal sealed class AcrylicClipGeometry(float left, float top, float width, float height, IslandOutline outline)
-        : IGeometrySource2D, IGeometrySource2DInterop
+        : IGeometrySource2D
     {
-        public int GetGeometry(out nint geometry)
+        internal int GetGeometry(out nint geometry)
         {
             var iid = new Guid("06152247-6F50-465A-9245-118BFD3B6007");
             int hr = D2D1CreateFactory(1, in iid, 0, out nint factory); // multithreaded
@@ -21,7 +22,7 @@ namespace NotchPeninsula
             finally { Marshal.Release(factory); }
         }
 
-        public unsafe int TryGetGeometryUsingFactory(nint factory, out nint geometry)
+        internal unsafe int TryGetGeometryUsingFactory(nint factory, out nint geometry)
         {
             geometry = 0;
             if (factory == 0) return unchecked((int)0x80070057); // E_INVALIDARG
@@ -91,48 +92,42 @@ namespace NotchPeninsula
 
         [DllImport("d2d1.dll")]
         private static extern int D2D1CreateFactory(int type, in Guid iid, nint options, out nint factory);
-    }
 
-    [Guid("0657AF73-53FD-47CF-84FF-C8492D2A80A3")]
-    [WindowsRuntimeType]
-    public interface IGeometrySource2DInterop
-    {
-        int GetGeometry(out nint geometry);
-        int TryGetGeometryUsingFactory(nint factory, out nint geometry);
-    }
-}
-
-namespace ABI.NotchPeninsula
-{
-    // C#/WinRT discovers this ABI table by interface name.
-    public static unsafe class IGeometrySource2DInteropMethods
-    {
-        public static Guid IID { get; } = typeof(global::NotchPeninsula.IGeometrySource2DInterop).GUID;
-        public static nint AbiToProjectionVftablePtr { get; } = CreateVtable();
-
-        private static nint CreateVtable()
+        public sealed unsafe class InterfaceDetails : IWinRTExposedTypeDetails
         {
-            var table = (nint*)ComWrappersSupport.AllocateVtableMemory(typeof(IGeometrySource2DInteropMethods), 5 * sizeof(nint));
-            *(IUnknownVftbl*)table = IUnknownVftbl.AbiToProjectionVftbl;
-            table[3] = (nint)(delegate* unmanaged[MemberFunction]<nint, nint*, int>)&GetGeometry;
-            table[4] = (nint)(delegate* unmanaged[MemberFunction]<nint, nint, nint*, int>)&GetGeometryUsingFactory;
-            return (nint)table;
-        }
+            private static readonly ComWrappers.ComInterfaceEntry[] Interfaces =
+            [
+                // IGeometrySource2D is an IInspectable marker interface with no methods of its own.
+                new() { IID = new("CAFF7902-670C-4181-A624-DA977203B845"), Vtable = IInspectable.Vftbl.AbiToProjectionVftablePtr },
+                new() { IID = new("0657AF73-53FD-47CF-84FF-C8492D2A80A3"), Vtable = CreateVtable() }
+            ];
 
-        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvMemberFunction)])]
-        private static int GetGeometry(nint self, nint* geometry)
-        {
-            *geometry = 0;
-            try { return ComWrappersSupport.FindObject<global::NotchPeninsula.IGeometrySource2DInterop>(self).GetGeometry(out *geometry); }
-            catch (Exception ex) { return ex.HResult; }
-        }
+            public ComWrappers.ComInterfaceEntry[] GetExposedInterfaces() => Interfaces;
 
-        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvMemberFunction)])]
-        private static int GetGeometryUsingFactory(nint self, nint factory, nint* geometry)
-        {
-            *geometry = 0;
-            try { return ComWrappersSupport.FindObject<global::NotchPeninsula.IGeometrySource2DInterop>(self).TryGetGeometryUsingFactory(factory, out *geometry); }
-            catch (Exception ex) { return ex.HResult; }
+            private static nint CreateVtable()
+            {
+                var table = (nint*)ComWrappersSupport.AllocateVtableMemory(typeof(InterfaceDetails), 5 * sizeof(nint));
+                *(IUnknownVftbl*)table = IUnknownVftbl.AbiToProjectionVftbl;
+                table[3] = (nint)(delegate* unmanaged[MemberFunction]<nint, nint*, int>)&GetGeometry;
+                table[4] = (nint)(delegate* unmanaged[MemberFunction]<nint, nint, nint*, int>)&GetGeometryUsingFactory;
+                return (nint)table;
+            }
+
+            [UnmanagedCallersOnly(CallConvs = [typeof(CallConvMemberFunction)])]
+            private static int GetGeometry(nint self, nint* geometry)
+            {
+                *geometry = 0;
+                try { return ComWrappersSupport.FindObject<AcrylicClipGeometry>(self).GetGeometry(out *geometry); }
+                catch (Exception ex) { return ex.HResult; }
+            }
+
+            [UnmanagedCallersOnly(CallConvs = [typeof(CallConvMemberFunction)])]
+            private static int GetGeometryUsingFactory(nint self, nint factory, nint* geometry)
+            {
+                *geometry = 0;
+                try { return ComWrappersSupport.FindObject<AcrylicClipGeometry>(self).TryGetGeometryUsingFactory(factory, out *geometry); }
+                catch (Exception ex) { return ex.HResult; }
+            }
         }
     }
 }

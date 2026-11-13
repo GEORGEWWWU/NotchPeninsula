@@ -12,13 +12,13 @@ namespace NotchPeninsula
         private DispatcherQueueController? _acrylicDispatcher;
         private bool _nativeAcrylicFailed;
 
-        private bool WantsNativeAcrylic => NativeAcrylic.Enabled && !_nativeAcrylicFailed
+        private bool WantsNativeAcrylic => NativeAcrylic.Enabled
             && Renderer.IslandAcrylic && !Renderer.IslandAnyGlass;
 
         private void PresentNativeAcrylic(int x, int y)
         {
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
-            if (!WantsNativeAcrylic || opacity <= 0.001f
+            if (!WantsNativeAcrylic || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
                 _nativeAcrylic?.Hide();
@@ -54,7 +54,7 @@ namespace NotchPeninsula
                 _nativeAcrylicFailed = true;
                 _nativeAcrylic?.Dispose();
                 _nativeAcrylic = null;
-                Logger.Error("[亚克力] Windows Composition 宿主失败，恢复原有背板", ex);
+                Logger.Error("[亚克力] Windows Composition 宿主失败，使用亚克力色调兜底", ex);
             }
         }
         private int _acrFrames;
