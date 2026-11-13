@@ -1,4 +1,5 @@
 using SkiaSharp;
+using Windows.System;
 
 namespace NotchPeninsula
 {
@@ -6,6 +7,49 @@ namespace NotchPeninsula
     {
         // 渲染线程独占的一份背板引用：只有它能释放，避免和后台线程抢着析构
         private SKImage? _acrylicOwned;
+        private NativeAcrylic? _nativeAcrylic;
+        private DispatcherQueueController? _acrylicDispatcher;
+        private bool _nativeAcrylicFailed;
+
+        private bool WantsNativeAcrylic => NativeAcrylic.Enabled && !_nativeAcrylicFailed
+            && Renderer.IslandAcrylic && !Renderer.IslandAnyGlass && Renderer.NotchStyle == 1;
+
+        private void PresentNativeAcrylic(int x, int y)
+        {
+            float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
+            if (!WantsNativeAcrylic || _currentStyleProgress < 1f || opacity <= 0.001f
+                || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
+            {
+                _nativeAcrylic?.Hide();
+                return;
+            }
+
+            try
+            {
+                if (_nativeAcrylic == null)
+                {
+                    _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
+                    _nativeAcrylic = new NativeAcrylic();
+                    Logger.Info("[亚克力] 已建立 Windows Composition 胶囊宿主");
+                }
+
+                // 与 Renderer.Draw 的胶囊使用同一帧尺寸和逻辑坐标。
+                float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
+                int leftPx = (int)MathF.Round(left * _dpiScale);
+                int topPx = (int)MathF.Round(12f * _dpiScale);
+                int width = (int)MathF.Round((left + _currentWidth) * _dpiScale) - leftPx;
+                int height = (int)MathF.Round((12f + _currentHeight) * _dpiScale) - topPx;
+                float radius = Math.Min(Math.Min(_currentHeight / 2f, 20f) * _dpiScale, Math.Min(width, height) / 2f);
+                _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, width, height, radius, opacity);
+            }
+            catch (Exception ex)
+            {
+                _nativeAcrylicFailed = true;
+                _nativeAcrylic?.Dispose();
+                _nativeAcrylic = null;
+                Logger.Error("[亚克力] Windows Composition 宿主失败，恢复原有背板", ex);
+            }
+        }
         private int _acrFrames;
         private bool _acrLogged;
         private bool _acrBootRefresh; // 启动后是否已做过一次「等价于点质量档」的刷新
@@ -48,9 +92,10 @@ namespace NotchPeninsula
             // 亚克力与两种液态玻璃共用同一条抓屏管线，只是降采样倍数不同
             int kind = Renderer.IslandLiquidGlass2 ? 2 : (Renderer.IslandLiquidGlass ? 1 : 0);
             bool glass = kind != 0;
-            if ((!Renderer.IslandAcrylic && !glass) || Renderer.FullHideAlpha < 0.5f)
+            bool nativeAcrylic = WantsNativeAcrylic;
+            if (nativeAcrylic || (!Renderer.IslandAcrylic && !glass) || Renderer.FullHideAlpha < 0.5f)
             {
-                if (Renderer.IslandAcrylic || glass)
+                if (!nativeAcrylic && (Renderer.IslandAcrylic || glass))
                     LogBackdropSkip($"材质已切走或岛体处于隐藏态 FullHideAlpha={Renderer.FullHideAlpha:F2}");
                 IslandBackdrop.SetTarget(0, 0, 0, 0);
                 IslandBackdrop.ClearMask();

@@ -474,7 +474,7 @@ namespace NotchPeninsula
                 // 实况窗详情页材质复用同一张背板 / 同一套玻璃合成：把画布→背板的换算登记好。
                 UpdateBackdropCanvasMapping(backdrop != null && (IslandAcrylic || IslandAnyGlass),
                     islandLeft, currentWidth, currentHeight, AcrylicBackdropSrc);
-                if (backdrop == null && !_backdropNullLogged)
+                if (backdrop == null && IslandAnyGlass && !_backdropNullLogged)
                 {
                     _backdropNullLogged = true;
                     Logger.Warn("[玻璃] 背板为空，玻璃层未绘制（抓屏线程无产出或已被停用）");

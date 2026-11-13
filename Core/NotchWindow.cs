@@ -489,6 +489,7 @@ namespace NotchPeninsula
                 Name = "NPS-Render",
                 Priority = ThreadPriority.AboveNormal
             };
+            if (NativeAcrylic.Enabled) _renderThread.SetApartmentState(ApartmentState.STA);
             _renderThread.Start();
             _topmostTimer = new System.Threading.Timer(
                 _ => EnsureTopmostAlive(), null, TOPMOST_KEEPALIVE_MS, TOPMOST_KEEPALIVE_MS);
@@ -553,6 +554,12 @@ namespace NotchPeninsula
 
         private void RenderThreadLoop()
         {
+            try { RunRenderThread(); }
+            finally { _nativeAcrylic?.Dispose(); }
+        }
+
+        private void RunRenderThread()
+        {
             var clock = Stopwatch.StartNew();
             long nextTick = 0;
 
@@ -572,6 +579,7 @@ namespace NotchPeninsula
 
                 try
                 {
+                    if (_acrylicDispatcher != null) NativeAcrylic.PumpMessages();
                     RenderLoop();   // 内部自带帧内分段计时，超阈值写 [渲染卡顿]
                 }
                 catch (Exception ex)
@@ -1592,6 +1600,7 @@ namespace NotchPeninsula
             // ⚠️ 只在 FullHideAlpha 落到 0 且滑出动画结束时才跳过：这两个条件都意味着
             //    「这一帧和上一帧一样、且屏幕上什么都看不见」，恢复时它会重新 >0，上屏自然继续。
             if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow();
+            else _nativeAcrylic?.Hide();
             // 不可见帧只需要这一帧全透明底；之后整帧跳过（见 3.5）。
             _invisibleFrameUploaded = frameInvisible;
 
@@ -1639,6 +1648,8 @@ namespace NotchPeninsula
             ptDst.y = _cachedMonitorY + (int)(Renderer.IslandBaseY * _dpiScale) + (int)_currentY;
 
             var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
+
+            PresentNativeAcrylic(ptDst.x, ptDst.y);
 
             // 像素与窗口位置都没变就不提交：UpdateLayeredWindow 每次都会整张上传（没有脏矩形），
             // 静止画面下这是纯浪费。2s 强制重推一次，DWM 被重置/切换后能自愈。
