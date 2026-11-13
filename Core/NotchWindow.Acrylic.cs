@@ -1,4 +1,5 @@
 using SkiaSharp;
+using System.Numerics;
 using Windows.System;
 
 namespace NotchPeninsula
@@ -12,12 +13,12 @@ namespace NotchPeninsula
         private bool _nativeAcrylicFailed;
 
         private bool WantsNativeAcrylic => NativeAcrylic.Enabled && !_nativeAcrylicFailed
-            && Renderer.IslandAcrylic && !Renderer.IslandAnyGlass && Renderer.NotchStyle == 1;
+            && Renderer.IslandAcrylic && !Renderer.IslandAnyGlass;
 
         private void PresentNativeAcrylic(int x, int y)
         {
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
-            if (!WantsNativeAcrylic || _currentStyleProgress < 1f || opacity <= 0.001f
+            if (!WantsNativeAcrylic || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
                 _nativeAcrylic?.Hide();
@@ -30,17 +31,23 @@ namespace NotchPeninsula
                 {
                     _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
                     _nativeAcrylic = new NativeAcrylic();
-                    Logger.Info("[亚克力] 已建立 Windows Composition 胶囊宿主");
+                    Logger.Info("[亚克力] 已建立 Windows Composition 背板宿主");
                 }
 
                 // 与 Renderer.Draw 的胶囊使用同一帧尺寸和逻辑坐标。
-                float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-                int leftPx = (int)MathF.Round(left * _dpiScale);
-                int topPx = (int)MathF.Round(12f * _dpiScale);
-                int width = (int)MathF.Round((left + _currentWidth) * _dpiScale) - leftPx;
-                int height = (int)MathF.Round((12f + _currentHeight) * _dpiScale) - topPx;
-                float radius = Math.Min(Math.Min(_currentHeight / 2f, 20f) * _dpiScale, Math.Min(width, height) / 2f);
-                _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, width, height, radius, opacity);
+                var outline = IslandOutline.Create(_currentHeight, _currentStyleProgress);
+                float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f * _dpiScale;
+                float top = IslandOutline.CapsuleOffset * _currentStyleProgress * _dpiScale;
+                var size = new Vector2(_currentWidth, _currentHeight) * _dpiScale;
+                float flare = outline.Flare * _dpiScale;
+                int leftPx = (int)MathF.Floor(left - flare);
+                int topPx = (int)MathF.Floor(top);
+                int width = (int)MathF.Ceiling(left + size.X + flare) - leftPx;
+                int height = (int)MathF.Ceiling(top + size.Y) - topPx;
+                var offset = new Vector2(left - leftPx, top - topPx);
+                var scaledOutline = new IslandOutline(outline.TopX * _dpiScale, outline.TopY * _dpiScale, outline.Bottom * _dpiScale);
+                _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, width, height,
+                    offset, size, scaledOutline, _currentStyleProgress == 1f, opacity);
             }
             catch (Exception ex)
             {

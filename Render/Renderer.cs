@@ -435,7 +435,7 @@ namespace NotchPeninsula
                 float right = islandRight - rightPluginBlock;
                 _compositeMediaRight = CompositeModeEnabled || pluginReserve > 0f ? right : -1f;
 
-                float topY = 12f * styleProgress;
+                float topY = IslandOutline.CapsuleOffset * styleProgress;
 
                 // 实况窗：独立于主岛、画在岛体左侧，每帧先算布局与动画（插件 GetVisual 也在这里被调）。
                 LiveWindowHost.Tick(topY, islandLeft, currentWidth, currentHeight);
@@ -451,10 +451,7 @@ namespace NotchPeninsula
 
                 // 自动把四个圆角调到最大，动态计算插值半径
                 // 限制灵动岛展开后的最大圆角为 20f，防止变成大圆球
-                float islandRadius = Math.Min(currentHeight / 2f, 20f);
-                float rBottom = NOTCH_BOTTOM_RADIUS * (1 - styleProgress) + islandRadius * styleProgress;
-                float rTopY = OUTER_R * (1 - styleProgress) + islandRadius * styleProgress;
-                float rTopX = -OUTER_R * (1 - styleProgress) + islandRadius * styleProgress;
+                var (rTopX, rTopY, rBottom) = IslandOutline.Create(currentHeight, styleProgress);
 
                 float w = 0.70710678f;
 
@@ -548,8 +545,12 @@ namespace NotchPeninsula
                     }
                     else
                     {
-                        canvas.DrawImage(backdrop, AcrylicBackdropSrc,
-                            new SKRect(islandLeft, 0f, islandRight, currentHeight), _acrylicPaint);
+                        float flare = Math.Max(0f, -rTopX);
+                        float sourceFlare = flare * AcrylicBackdropSrc.Width / Math.Max(1f, currentWidth);
+                        var source = AcrylicBackdropSrc;
+                        source.Inflate(sourceFlare, 0f);
+                        canvas.DrawImage(backdrop, source,
+                            new SKRect(islandLeft - flare, 0f, islandRight + flare, currentHeight), _acrylicPaint);
                     }
                     canvas.Restore();
                 }

@@ -26,10 +26,12 @@ internal sealed class NativeAcrylic : IDisposable
     private DesktopWindowTarget? _target;
     private SpriteVisual? _visual;
     private CompositionRoundedRectangleGeometry? _geometry;
+    private CompositionPathGeometry? _pathGeometry;
     private CompositionGeometricClip? _clip;
     private CompositionBackdropBrush? _brush;
     private (int X, int Y, int Width, int Height) _bounds;
     private float _radius = -1f;
+    private (Vector2 Offset, Vector2 Size, IslandOutline Outline)? _path;
     private float _opacity = 1f;
     private bool _visible;
 
@@ -72,20 +74,36 @@ internal sealed class NativeAcrylic : IDisposable
         }
     }
 
-    internal void Present(IntPtr foreground, int x, int y, int width, int height, float radius, float opacity)
+    internal void Present(IntPtr foreground, int x, int y, int width, int height,
+        Vector2 offset, Vector2 size, IslandOutline outline, bool capsule, float opacity)
     {
         var bounds = (x, y, width, height);
         bool resized = width != _bounds.Width || height != _bounds.Height;
         if (resized)
         {
-            var size = new Vector2(width, height);
-            _visual!.Size = size;
-            _geometry!.Size = size;
+            _visual!.Size = new Vector2(width, height);
         }
-        if (radius != _radius)
+        if (capsule)
         {
-            _geometry!.CornerRadius = new Vector2(radius);
-            _radius = radius;
+            if (_geometry!.Size != size) _geometry.Size = size;
+            if (_geometry.Offset != offset) _geometry.Offset = offset;
+            if (outline.Bottom != _radius)
+            {
+                _geometry.CornerRadius = new Vector2(outline.Bottom);
+                _radius = outline.Bottom;
+            }
+            if (_path != null)
+            {
+                _clip!.Geometry = _geometry;
+                _path = null;
+            }
+        }
+        else if (_path != (offset, size, outline))
+        {
+            _pathGeometry ??= _compositor!.CreatePathGeometry();
+            _pathGeometry.Path = new CompositionPath(new AcrylicClipGeometry(offset.X, offset.Y, size.X, size.Y, outline));
+            if (_path == null) _clip!.Geometry = _pathGeometry;
+            _path = (offset, size, outline);
         }
         if (opacity != _opacity)
         {
@@ -122,6 +140,8 @@ internal sealed class NativeAcrylic : IDisposable
         _brush = null;
         _clip?.Dispose();
         _clip = null;
+        _pathGeometry?.Dispose();
+        _pathGeometry = null;
         _geometry?.Dispose();
         _geometry = null;
         _compositor?.Dispose();

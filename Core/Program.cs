@@ -375,13 +375,12 @@ namespace NotchPeninsula
                 // 写完就直接进软件。跳过 / 关闭 / 按 ESC 都算过，失败也绝不拦着启动。
                 OnboardingWindow.ShowIfNeeded(args);
 
-                // 原型启动时直接进入胶囊亚克力，保持保存的偏好可供正常启动使用。
+                // 试验版开启亚克力，保留用户选择的刘海或灵动岛形态。
                 if (NativeAcrylic.Enabled)
                 {
                     Renderer.IslandAcrylic = true;
                     Renderer.IslandLiquidGlass = false;
                     Renderer.IslandLiquidGlass2 = false;
-                    Renderer.NotchStyle = 1;
                     Renderer.ApplyThemeColors();
                 }
 
