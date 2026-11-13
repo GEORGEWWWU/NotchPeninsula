@@ -1633,7 +1633,13 @@ namespace NotchPeninsula
             // UpdateLayeredWindow 还要往 DWM 传一整张画布（540×450 约 1MB，60fps 就是 58MB/s）。
             // ⚠️ 只在 FullHideAlpha 落到 0 且滑出动画结束时才跳过：这两个条件都意味着
             //    「这一帧和上一帧一样、且屏幕上什么都看不见」，恢复时它会重新 >0，上屏自然继续。
-            if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow();
+            // 这几类帧的像素必然在变（动画 / 叠化 / 启动淡入 / 悬停展开），
+            // 拿过去比一整张画布（1.8~4MB 逐字节）纯属白读 —— 直接提交，
+            // 把「像素没变就别传」那项优化留给真正可能静止的帧。
+            bool visiblyMoving = _isAnimating || _isYAnimating || _isStyleAnimating
+                                 || _isHovered || startupProgress < 1f || transitionAlpha < 1f;
+
+            if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow(visiblyMoving);
             else _nativeAcrylic?.Hide();
             // 不可见帧只需要这一帧全透明底；之后整帧跳过（见 3.5）。
             _invisibleFrameUploaded = frameInvisible;
@@ -1670,7 +1676,11 @@ namespace NotchPeninsula
             return _spectrumBars;
         }
 
-        private void UpdateWindow()
+        /// <param name="likelyChanged">
+        /// 本帧画面确定在变（动画 / 叠化 / 悬停）时为 true：跳过整画布逐字节比较直接提交。
+        /// 传错只会多传一次，不会少传 —— 静态帧仍然走比较，行为与原来一致。
+        /// </param>
+        private void UpdateWindow(bool likelyChanged = false)
         {
             if (_hwnd == IntPtr.Zero || _memDc == IntPtr.Zero || _pBits == IntPtr.Zero) return;
 
@@ -1687,7 +1697,7 @@ namespace NotchPeninsula
 
             // 像素与窗口位置都没变就不提交：UpdateLayeredWindow 每次都会整张上传（没有脏矩形），
             // 静止画面下这是纯浪费。2s 强制重推一次，DWM 被重置/切换后能自愈。
-            if (CanSkipUpload(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight)) return;
+            if (!likelyChanged && CanSkipUpload(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight)) return;
 
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
             if (screenDc == IntPtr.Zero) return;
