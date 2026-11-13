@@ -187,7 +187,9 @@ namespace NotchPeninsula
 
         // 后台会话 1 秒一采。
         private System.Threading.Timer? _smtcSampler;
-        private const int SmtcSamplerTickMs = 50;   // 采样节拍：50ms 一跳，真正的采样仍按上面两条节流
+        private const int SmtcSamplerTickMs = 100;   // 采样节拍：100ms 一跳，真正的采样仍按上面两条节流（200ms / 1s / 250ms）
+                                                     // 这个值只决定「强制重同步」与残留判定的响应下限：50ms 是每秒 20 次线程池唤醒，
+                                                     // 而真正的采样本来就是 200ms 一次 —— 100ms 把空转唤醒减半，观感差不出人眼能分辨的量级。
         private int _smtcSampleVersion;             // 后台写 / 渲染线程读 → 一律 Volatile / Interlocked
         private int _consumedSampleVersion;         // 渲染线程上次消费到的版本号
         private int _sampling;                      // 采样重入闸（见 SampleSmtcTick）
@@ -1069,6 +1071,9 @@ namespace NotchPeninsula
         // 诊断：只在「本世代迟迟没有封面」时每秒打一行，说明卡在哪一环。
         private void DiagCoverIfStuck(DateTime now)
         {
+            // 没有会话时本来就不该有封面：这条诊断只在"正在放东西却拿不到封面"时才有意义，
+            // 否则空闲状态下每秒一行，纯属拿磁盘换噪音。
+            if (_currentSession == null) return;
             if (Thumbnail != null || !_coverPending) return;
             if (now - _lastCoverDiagAt < TimeSpan.FromSeconds(1)) return;
             _lastCoverDiagAt = now;

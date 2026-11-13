@@ -140,7 +140,7 @@ namespace NotchPeninsula
         //   · 产出 0 次     → 线程没在抓（target / mask 不对，或有异常）
         //   · 产出有、version 不动 → 抓到了却没换图（DXGI 卡死）
         //   · 产出有、version 在涨 → 抓屏没问题，问题在玻璃合成/缓存
-        private static int _statOk, _statFail;
+        private static int _statOk, _statFail, _statSkipOnly;
         private static long _diagMs;
         private static int _diagVersion;
         private static long _diagVersionMs;
@@ -630,8 +630,11 @@ namespace NotchPeninsula
                     else
                     {
                         _lastMs = now;     // 失败也别每 250ms 重试同一帧
-                        _statFail++;
-                        NoteCaptureFail(); // 静默失败会变成黑盒：记下卡在哪一步，连续失败才打日志
+                        // 桌面没变 / 隐身节流推迟，都只是「这轮不抓」，不是故障：
+                        // Capture() 只在真正出错时才写失败阶段，靠它区分，别把正常跳过也算进连续失败
+                        // （算进去会每隔几秒打一对「连续失败 / 抓屏恢复」，把日志淹掉）。
+                        if (_capFailStage == CapOk) _statSkipOnly++;
+                        else { _statFail++; NoteCaptureFail(); }
                     }
                 }
                 catch (Exception ex)
@@ -670,7 +673,7 @@ namespace NotchPeninsula
                 : "";
 
             long stuckMs = now - _diagVersionMs;
-            string head = $"[背板] 近 10s 抓屏 {_statOk} 次 / 空转 {_statFail} 次 · version={v}（{stuckMs}ms 未变）"
+            string head = $"[背板] 近 10s 抓屏 {_statOk} 次 / 跳过 {_statSkipOnly} 次 / 失败 {_statFail} 次 · version={v}（{stuckMs}ms 未变）"
                 + $" · {(_dxgiUsed ? "DXGI" : "GDI")} · target={_tw}x{_th}@{_tx},{_ty}"
                 + $" · mask=({_maskSx0:F0},{_maskSy0:F0})-({_maskSx1:F0},{_maskSy1:F0})"
                 + $" · scale={_scale:F2} alive={_contentAlive}"
@@ -683,7 +686,7 @@ namespace NotchPeninsula
             else
                 Info(head);
 
-            _statOk = 0; _statFail = 0; _statHiddenGrab = 0; _statRingSkip = 0;
+            _statOk = 0; _statFail = 0; _statSkipOnly = 0; _statHiddenGrab = 0; _statRingSkip = 0;
             _statHideThrottled = 0; _statHideMiss = 0; _diagMs = now;
         }
 

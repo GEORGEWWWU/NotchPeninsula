@@ -325,6 +325,7 @@ namespace NotchPeninsula
                         : e.ExceptionObject?.ToString() ?? "(null)";
 
                     Logger.Error($"[崩溃] 未处理异常，进程即将退出（IsTerminating={e.IsTerminating}）{Environment.NewLine}{detail}");
+                    Logger.Flush(500);   // 日志是异步写的：先冲干净，崩溃文件里才有最后几行
 
                     // app.log 会被轮转冲掉，崩溃另存一份独立的、带完整异常链与末尾日志的文件
                     Diagnostics.WriteCrash("未处理异常", ex, e.IsTerminating);
@@ -338,6 +339,7 @@ namespace NotchPeninsula
             TaskScheduler.UnobservedTaskException += (_, e) =>
             {
                 Logger.Error("[崩溃] 未观察的 Task 异常", e.Exception);
+                Logger.Flush(500);
                 Diagnostics.WriteCrash("未观察的 Task 异常", e.Exception, terminating: false);
             };
         }
@@ -445,6 +447,9 @@ namespace NotchPeninsula
 
                 // 消息循环自己结束（注销 / 关机，或托盘「退出」投来的 WM_CLOSE）时补一次下线。
                 try { MspNotchBridge.Stop(); } catch (Exception ex) { Logger.Error("[MSP] 节点停止失败", ex); }
+
+                // 日志走异步写盘：进程结束前必须收尾，否则最后几行会留在队列里丢掉。
+                Logger.Shutdown();
             }; // 离开作用域时，Mutex 的 Dispose() 被自动调用，绝无句柄泄露
         }
     }
