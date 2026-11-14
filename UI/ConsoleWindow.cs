@@ -181,6 +181,14 @@ namespace NotchPeninsula
 
         private const float DISPLAY_MOVE_UP_X = DISPLAY_MOVE_DOWN_X - SORT_TRI_W - 8f;                      // 536（槽 536..554）
 
+        /// <summary>长按拖动把手：在上下箭头左边再让一格（槽 510..528），与箭头同宽、同高。</summary>
+        private const float DISPLAY_DRAG_X = DISPLAY_MOVE_UP_X - SORT_TRI_W - 8f;                           // 510
+
+        /// <summary>长按多久才进入拖动（毫秒）。短按只当作普通点击，不会误触排序。</summary>
+        private const int DISPLAY_DRAG_HOLD_MS = 180;
+
+        private static readonly IntPtr DISPLAY_DRAG_TIMER_ID = new IntPtr(0x4E44); // "ND"
+
         private const float SORT_TRI_W = 18f;             // 上下箭头槽的点击宽度（箭头本身只占槽中心 11×8）
 
         // 动画一拍的间隔。15 而不是 16：系统默认 tick 是 15.625ms，16ms 会被向上取整成 2 个 tick
@@ -697,6 +705,12 @@ namespace NotchPeninsula
 
         private int _hoveredLinkIndex = -1;
 
+        // 关于页四个链接的命中边界：RenderTabAbout 每帧按实际字宽量好后写这里，
+        // 悬停判定直接用同一份布局（整体居中；不写死 x 坐标）。
+        private readonly float[] _aboutLinkLeft = new float[4];
+        private readonly float[] _aboutLinkRight = new float[4];
+        private float _aboutLinkTop, _aboutLinkBottom;
+
         // 「导出诊断包」按钮：常驻在侧边栏左下角（页签最底一行到 388，下面整片空白）。
         // 绘制 / 悬停 / 点击三处共用这套几何。
         // 左下两个方向的留白取同一个值 —— 底部写死数字会和左边一点点对不上，所以由 X 和按钮高推出来。
@@ -730,6 +744,23 @@ namespace NotchPeninsula
         private int _hoveredDisplayMoveUp = -1;
 
         private int _hoveredDisplayMoveDown = -1;
+
+        /// <summary>悬停/按住的是哪一行的拖动把手（-1 = 没有）。</summary>
+        private int _hoveredDisplayDrag = -1;
+
+        /// <summary>长按把手后正在拖动的行；-1 = 没在拖。</summary>
+        private int _displayDragRow = -1;
+
+        /// <summary>已经按下把手、还在等长按判定的行；-1 = 没有。</summary>
+        private int _displayDragPendingRow = -1;
+
+        /// <summary>拖动中的插入目标行（只在跨行时重排，避免每个像素都写一次设置）。</summary>
+        private int _displayDragTargetRow = -1;
+
+        /// <summary>正在拖动的条目 key（重排按 key 找，避免滚动/重排后下标漂移）。</summary>
+        private string? _displayDragKey;
+
+        private bool _displayDragActive;
 
         private int _displayScroll = 0;
 
@@ -1430,6 +1461,12 @@ namespace NotchPeninsula
                         RepairBackdropAfterActivate();
                         return IntPtr.Zero;
                     }
+                    if (wParam == DISPLAY_DRAG_TIMER_ID)
+                    {
+                        Win32.KillTimer(hwnd, DISPLAY_DRAG_TIMER_ID);
+                        ActivateDisplayDrag();
+                        return IntPtr.Zero;
+                    }
                     if (wParam == SCROLLBAR_TIMER_ID)
                     {
                         if (!TickScrollBarFade())
@@ -1494,6 +1531,11 @@ namespace NotchPeninsula
                         (int)((short)((lp >> 16) & 0xFFFF) / _dpiScale));
                     break;
                 }
+
+                case Win32.WM_LBUTTONUP:
+                    // 长按拖动排序的收尾（没在拖时 EndDisplayDrag 什么都不做）。
+                    EndDisplayDrag();
+                    break;
 
                 case Win32.WM_MOUSEWHEEL:
                     // 弹窗是模态的：滚轮也不该滚到下面的列表 / 页面

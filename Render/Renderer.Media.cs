@@ -253,11 +253,12 @@ namespace NotchPeninsula
             if (x2 - x1 < 20f) return;                 // 岛体太窄：宁可不画，也不画一条糊掉的条
 
             float h = 3.5f, top = barY - h / 2f, radius = h / 2f;
-            _barBgPaint.Color = _currentTextColor.WithAlpha((byte)(alpha * 0.22f));
-            canvas.DrawRoundRect(new SKRect(x1, top, x2, top + h), radius, radius, _barBgPaint);
+            var barArea = new SKRect(x1, top, x2, top + h);
+            _barBgPaint.Color = ToneColor(barArea, (byte)(alpha * 0.22f), sub: true);
+            canvas.DrawRoundRect(barArea, radius, radius, _barBgPaint);
 
             float head = x1 + (x2 - x1) * media.TimelineProgress;
-            _barPaint.Color = _currentTextColor.WithAlpha(alpha);
+            _barPaint.Color = ToneColor(barArea, alpha);
             if (head > x1) canvas.DrawRoundRect(new SKRect(x1, top, head, top + h), radius, radius, _barPaint);
             if (media.IsDragging) canvas.DrawCircle(head, barY, 4.5f, _barPaint); // 拖动时才亮出圆点：常态极简，操作时给足抓取反馈
 
@@ -308,11 +309,12 @@ namespace NotchPeninsula
                 return;
             }
 
-            // 1. 先画完整的半透明底板 (40% 亮度)
+            // 1. 先画完整的半透明底板（未唱到的部分）。40% 在浅底上几乎看不见，
+            //    提到 55%：仍明显暗于已唱段，但浅底也能读出歌词。
             foreach (var run in runs)
             {
                 paint.Typeface = run.Type;
-                paint.Color = paint.Color.WithAlpha((byte)(targetAlpha * 0.4f));
+                paint.Color = paint.Color.WithAlpha((byte)(targetAlpha * 0.55f));
                 canvas.DrawText(run.Text, x + run.X, y, paint);
             }
 

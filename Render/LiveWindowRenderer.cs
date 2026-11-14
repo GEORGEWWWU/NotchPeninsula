@@ -404,13 +404,20 @@ public static class LiveWindowRenderer
                     canvas.SaveLayer(_alphaLayerPaint);
                 }
 
-                // 面板在岛外、背后是另一块桌面：文字黑白用面板自己那块玻璃的亮度判（和主岛同款逐元素）。
+                // 面板在岛外、背后是另一块桌面：文字黑白用面板自己那块底的亮度判（和主岛同款逐元素）。
                 // ⚠️ 网格 dst 必须用**面板局部坐标** (0,0,w,h)：详情页绘制时会先 translate 到面板左上角，
                 //    文字在局部坐标里排版；用画布绝对坐标取网格会全部落在网格外 → 永远回落到主题色（截图里那种白字压亮底）。
                 var toneDst = new SKRect(0f, 0f, frame.PanelRect.Width, frame.PanelRect.Height);
-                if (Renderer.AcrylicBackdrop != null
-                    && Renderer.TryCanvasToBackdrop(frame.PanelRect, out SKRect toneSrc))
-                    Renderer.BeginPanelToneGrid(Renderer.AcrylicBackdrop, toneDst, toneSrc);
+                SKRect toneSrc = default;
+                bool hasBackdrop = Renderer.AcrylicBackdrop != null
+                    && Renderer.TryCanvasToBackdrop(frame.PanelRect, out toneSrc);
+                // 所有玻璃面板都优先采样合成后的玻璃位图：背板映射在面板跨出抓屏条带 /
+                // 上下半区明暗差很大时会失效，插件只能回落到主题色（浅灰字压浅底）。
+                // 采样位图不改变任何插件逻辑，只是把网格建准。
+                if (_panelGlass != null && Renderer.IslandMaterialIndex >= 2)
+                    Renderer.BeginPanelToneGridBitmap(canvas, _panelGlass, toneDst);
+                else
+                    Renderer.BeginPanelToneGrid(canvas, hasBackdrop ? Renderer.AcrylicBackdrop : null, toneDst, toneSrc);
 
                 try
                 {

@@ -225,6 +225,9 @@ namespace NotchPeninsula
             SyncHotkeyHoverFromPoint(clickX, clickY);
             SyncExportHoverFromPoint(clickX, clickY);
 
+            // 「显示内容」列表的 ≡ 把手：长按拖动排序。短按吃掉这次点击，不触发行的显隐切换。
+            if (TryStartDisplayDrag(clickX, clickY)) return;
+
             if (_hotkeyRecordingIndex >= 0 && _hoveredHotkeyRow != _hotkeyRecordingIndex)
                 CancelHotkeyRecording();
 
@@ -627,7 +630,8 @@ namespace NotchPeninsula
                 string[] urls = [
                     "https://github.com/GEORGEWWWU/NotchPeninsula/releases", // 0: 检测更新
                     "https://github.com/GEORGEWWWU/NotchPeninsula",          // 1: 仓库地址
-                    "https://georgewu.top/"                                  // 2: Ryen主页
+                    "https://georgewu.top/",                                 // 2: Ryen主页
+                    "https://nps.georgewu.top"                               // 3: 项目主页
                 ];
                 try
                 {

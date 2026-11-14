@@ -286,7 +286,7 @@ namespace NotchPeninsula
             {
                 var actionRect = GetToastActionRect(right, currentHeight);
                 var originalBg = _tagBgPaint.Color;
-                _tagBgPaint.Color = _currentTextColor.WithAlpha(ToastActionHovered ? (byte)70 : (byte)28);
+                _tagBgPaint.Color = ToneColor(actionRect, ToastActionHovered ? (byte)70 : (byte)28, sub: true);
                 canvas.DrawRoundRect(actionRect, actionRect.Height / 2f, actionRect.Height / 2f, _tagBgPaint);
                 _tagBgPaint.Color = originalBg;
 

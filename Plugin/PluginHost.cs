@@ -766,6 +766,13 @@ public sealed class PluginHost
         DetailPageChanged?.Invoke();
     }
 
+    /// <summary>收起实况窗气泡展开的浮动详情页（没有展开时什么也不做）。</summary>
+    public void CloseLiveWindowDetailPage()
+    {
+        try { LiveWindowHost.ClosePanel(); }
+        catch (Exception ex) { Logger.Error("[PluginHost] 收起实况窗详情页异常", ex); }
+    }
+
     public bool ToggleDetailPage(string widgetId)
     {
         if (string.IsNullOrEmpty(widgetId)) return false;
@@ -933,6 +940,8 @@ public sealed class ScopedPluginHost : IPluginHost
     public void OpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public bool TryOpenDetailPage(string widgetId) => _host.OpenDetailPage(widgetId);
     public void CloseDetailPage() => _host.CloseDetailPage();
+
+    public void CloseLiveWindowDetailPage() => _host.CloseLiveWindowDetailPage();
     public bool ToggleDetailPage(string widgetId) => _host.ToggleDetailPage(widgetId);
     public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(_pluginId, title, width, height);
     public bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false) => _host.StartFileDrag(paths, allowMove);
