@@ -30,6 +30,9 @@ public struct LiveWindowDrawItem
     /// <summary>内圈旋转角（弧度，宿主累加）。</summary>
     public float SpinAngle;
 
+    /// <summary>没有可用进度时是否继续转（内容撑满气泡时用）。</summary>
+    public bool SpinWhenNoProgress;
+
     public bool Completed;
 
     public SKColor ProgressColor;
@@ -111,11 +114,8 @@ public static class LiveWindowHost
     public const float ScreenMargin = 10f;
     public const int MaxItems = 8;
 
-    /// <summary>气泡直径跟随折叠岛高度；极端自定义高度下夹在可读范围内。</summary>
+    /// <summary>气泡直径跟随折叠岛高度（用户要求：直径 = 岛体高度，上下沿对齐）。</summary>
     public static float BubbleDiameter { get; private set; } = 40f;
-
-    private const float MinBubbleDiameter = 28f;
-    private const float MaxBubbleDiameter = 84f;
 
     /// <summary>没显式传 SpinSpeed 时的默认转速（圈/秒）：约 8 秒一圈，慢速不抢视线。</summary>
     private const float DefaultSpinRevPerSecond = 0.12f;
@@ -152,6 +152,9 @@ public static class LiveWindowHost
         public float TargetProgress;
         public float DisplayProgress;
         public float SpinAngle;
+
+        /// <summary>没有可用进度时是否继续转（内容撑满气泡的形态下用）。</summary>
+        public bool SpinWhenNoProgress;
 
         public string Status = "";
         public string Title = "";
@@ -441,6 +444,25 @@ public static class LiveWindowHost
     public static bool HasOpenPanel
     {
         get { lock (_lock) return _panel != null; }
+    }
+
+    /// <summary>
+    /// 该 owner 是否还有气泡在播退场动画（已注销、窗口对象已断开，但「滑回岛体」还没播完）。
+    /// 媒体侧用它排队：气泡收完之前，岛体不要展开 —— 用户要求「气泡退场后岛体再展开」。
+    /// </summary>
+    public static bool HasExiting(string ownerId)
+    {
+        if (string.IsNullOrEmpty(ownerId)) return false;
+        lock (_lock)
+        {
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                var e = _entries[i];
+                if (e.Exiting && string.Equals(e.Owner, ownerId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>-1 = 永不自动收起；否则建议的自动收起毫秒数。</summary>
@@ -856,11 +878,14 @@ public static class LiveWindowHost
             dt = (float)Math.Clamp((nowTs - _lastTickTimestamp) / (double)Stopwatch.Frequency, 0.001, 0.1);
         _lastTickTimestamp = nowTs;
 
-        float islandCenterY = topY + MathF.Max(0f, MathF.Min(currentHeight, Renderer.MEDIA_HEIGHT)) / 2f;
-        // 用户要求：气泡直径和宿主（折叠岛）高度一致；极端自定义高度下夹住，别撑爆或小到看不见。
-        float diameter = Math.Clamp(Renderer.MEDIA_HEIGHT, MinBubbleDiameter, MaxBubbleDiameter);
+        // 用户要求：实况窗直径 = 岛体高度，而且上下沿都要和岛体对齐。
+        // 展开态 / 通知弹高时岛体更高，气泡仍按「折叠态高度」对齐（否则气泡会被这两个临时状态撑大）。
+        float islandBodyH = MathF.Max(0f, MathF.Min(currentHeight, Renderer.MEDIA_HEIGHT));
+        float islandCenterY = topY + islandBodyH / 2f;
+        // 不夹在 28..84：自定义「全局折叠态高度」可能超出这个范围，夹了就会出现「气泡比岛体高/矮」。
+        float diameter = MathF.Max(4f, islandBodyH);
         BubbleDiameter = diameter;
-        float bubbleTop = MathF.Max(2f, islandCenterY - diameter / 2f);
+        float bubbleTop = topY + (islandBodyH - diameter) * 0.5f;   // 正常情况就 = topY：上下都贴岛体边
 
         lock (_lock)
         {
@@ -941,7 +966,7 @@ public static class LiveWindowHost
 
                     e.SpawnElapsed = Math.Min(SpawnSeconds, e.SpawnElapsed + dt);
                     e.SpawnProgress = (float)Math.Clamp(e.SpawnElapsed / SpawnSeconds, 0, 1);
-                    e.Scale = 1f;   // 不再做「弹一下」的缩放，改由两圆分裂的半径曲线负责手感
+                    e.Scale = 1f;   // 缩放交给渲染器的细胞分裂半径曲线（R/√2 → R），这里只做淡入
                     float fade = (float)Math.Clamp(e.SpawnElapsed / SpawnFadeSeconds, 0, 1);
                     e.Alpha = 255f * fade;
 
@@ -1088,6 +1113,7 @@ public static class LiveWindowHost
             item.Progress = e.DisplayProgress;
             item.Indeterminate = e.DisplayProgress < 0f;
             item.SpinAngle = e.SpinAngle;
+            item.SpinWhenNoProgress = e.SpinWhenNoProgress;
             item.Completed = e.Completed;
             item.ProgressColor = e.ProgressColor;
             item.Status = e.Status;
@@ -1178,7 +1204,18 @@ public static class LiveWindowHost
 
         e.ProgressColor = visual.ProgressColor ?? DefaultProgressColor;
 
-        if (visual.SpinInner)
+        // 「没有进度时要不要转」走带默认实现的接口成员（旧插件不实现也有兜底），
+        // 单独 try/catch：插件这个覆盖写崩了只当 false，不能连累整个窗。
+        try { e.SpinWhenNoProgress = e.Window?.SpinWhenNoProgress ?? false; }
+        catch (Exception ex)
+        {
+            e.SpinWhenNoProgress = false;
+            Logger.Warn($"[实况窗] {e.Id} 读取 SpinWhenNoProgress 异常，按 false 处理: {ex.Message}");
+        }
+
+        // 没有可用进度时内容会撑满整个气泡；这时默认不转，只有注册方显式打开才继续转。
+        bool noProgress = e.TargetProgress < 0f;
+        if (visual.SpinInner && (!noProgress || e.SpinWhenNoProgress))
         {
             // 转速由注册方传入（圈/秒），没传就走默认慢速；别再写死 0.5 圈/秒那种抢视线的速度。
             float speed = visual.SpinSpeed > 0.001f ? visual.SpinSpeed : DefaultSpinRevPerSecond;

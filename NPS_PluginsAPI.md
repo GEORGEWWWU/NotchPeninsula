@@ -924,7 +924,7 @@ host.RegisterUninstallAction(() => { /* 清理 */ });
 
 ### 8.7 实况窗（Live Window）
 
-实况窗是主岛**左侧**漂浮的一排圆形气泡：外圈 + 进度弧 + 内圈自绘内容。它独立于主岛 —— 左边显示时岛内组件行**不会**重复出现同一内容；新的在右、旧的在左，屏幕放不下时最老的几个**不绘制**（注册不丢，只是看不到）。生成（细胞分裂）、退出（往右滑回岛体）、右键展开这些动画全由宿主做，插件只管「当前是什么状态」和「内圈画什么」。
+实况窗是主岛**左侧**漂浮的一排圆形气泡：一圈进度弧 + 里面的自绘内容（没有可用进度时不画进度弧、内容直接撑满整颗气泡，气泡总尺寸不变）。它独立于主岛 —— 左边显示时岛内组件行**不会**重复出现同一内容；新的在右、旧的在左，屏幕放不下时最老的几个**不绘制**（注册不丢，只是看不到）。生成 / 退出都是同一段「细胞分裂」动画（生成正向：半径 R/√2 → R 从岛体边缘分裂出来；退出反向：半径 R → R/√2 两圆合并滑回岛体）、右键展开这些动画全由宿主做，插件只管「当前是什么状态」和「内圈画什么」。
 
 > 实况窗**只能由插件 / 宿主内置注册**：不提供 HTTP 注册入口，也不挂 MSP。别的程序不能远程往用户屏幕上弹气泡。
 
@@ -964,11 +964,12 @@ _liveReg?.Dispose();   // 注销：气泡分裂回收到岛体左缘并消失（
 | `void OnExpand()` | 没有可复用 `DetailPage` 时，左右键点气泡的回调（打开自己的市场页 / 设置页之类） |
 | `void OnRemoved()` | 宿主注销时回调一次；之后宿主不再回调本对象 |
 | `void OnHostEnabledChanged(bool enabled)` | 插件级开关变化：`false` = 已被禁用（气泡挂起，内容回到主岛组件行）；`true` = 重新启用。窗口对象仍有效，别在这里注销 / 重注册 |
+| `bool SpinWhenNoProgress` | **带默认实现（不实现 = `false`，旧插件二进制无需重编译）**：没有可用进度（`Progress < 0`）时内圈是否继续转；`true` = 照 `SpinInner` / `SpinSpeed` 转（用来代替原来的「转圈扫描段」）。**不要挪进 `LiveWindowVisual`**（会改结构体布局、破坏插件二进制兼容） |
 
 ```csharp
 public sealed class MyLiveWindow : ILiveWindow
 {
-    private volatile float _progress;      // 0..1；小于 0 = 不确定进度
+    private volatile float _progress;      // 0..1；小于 0 = 没有可用进度（内容撑满整颗气泡）
 
     public string Id => "download";        // 同一插件内唯一
 
@@ -1002,12 +1003,14 @@ public sealed class MyLiveWindow : ILiveWindow
 
 | 字段 | 说明 |
 |---|---|
-| `Progress` | `0..1`；小于 0 = 不确定态（进度弧变成持续旋转的扫掠段） |
-| `Status` / `Title` / `PercentText` | 内圈三行文字（状态行 / 标题 / 百分比）；`PercentText` 为 `null` 时宿主生成 `NN%`，不确定态且不给 `PercentText` 就不画百分比 |
+| `Progress` | `0..1`；小于 0 = 没有可用进度（不画进度弧，内圈内容直接撑满整颗气泡，气泡总尺寸不变） |
+| `Status` / `Title` / `PercentText` | 内圈三行文字（状态行 / 标题 / 百分比）；`PercentText` 为 `null` 时宿主生成 `NN%`，没有进度且不给 `PercentText` 就不画百分比 |
 | `ProgressColor` | `SKColor?`，进度弧颜色；`null` = 默认绿 `#32D74B` |
 | `SpinInner` | `true` = 宿主控制内圈旋转，插件只画静态内容 |
 | `SpinSpeed` | 内圈旋转速度（圈/秒），默认 `0.12`（约 8 秒一圈）；传更大的值就转更快 |
 | `Completed` | `true` = 满圈并亮一下；建议置满后停留约 0.8 秒再 `Dispose`（= 手稿「回到右边」） |
+
+> 没有可用进度（`Progress < 0`）时气泡不画进度弧、内容直接撑满整颗气泡（总尺寸不变）；要不要继续转由 `ILiveWindow.SpinWhenNoProgress` 决定（默认 `false`）。
 
 **线程：`GetVisual` / `DrawInner` 在渲染线程**
 
@@ -1417,8 +1420,9 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 交互 | `OnLeftClick()` / `OnExpand()` | 空 |
 | 生命周期 | `OnRemoved()` | 空 |
 | 开关 | `OnHostEnabledChanged(bool enabled)` | 空 |
+| 外观 | `SpinWhenNoProgress` | `false`（没有可用进度时内圈是否继续转） |
 
-`LiveWindowVisual` 字段：`Progress`（`<0` = 不确定）、`Status` / `Title` / `PercentText`、`ProgressColor`、`SpinInner`、`Completed` —— 语义见 [8.7](#87-实况窗live-window)。
+`LiveWindowVisual` 字段：`Progress`（`<0` = 没有可用进度）、`Status` / `Title` / `PercentText`、`ProgressColor`、`SpinInner`、`SpinSpeed`、`Completed` —— 语义见 [8.7](#87-实况窗live-window)。
 
 ### 数据模型
 

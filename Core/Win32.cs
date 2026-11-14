@@ -622,7 +622,9 @@ namespace NotchPeninsula
             {
                 long due = -(long)ms * 10000L;   // 负数 = 相对时间，单位 100ns
                 if (!SetWaitableTimer(hTimer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false)) return false;
-                return WaitForSingleObject(hTimer, INFINITE) == WAIT_OBJECT_0;
+                // 留一点余量后仍不返回就放弃：定时器若被异常重置 / 句柄失效，INFINITE 会把渲染线程永久挂住。
+                // 超时返回 false，调用方回退到 Sleep/Yield，不会卡死。
+                return WaitForSingleObject(hTimer, (uint)(ms + 100)) == WAIT_OBJECT_0;
             }
             catch { return false; }
         }
