@@ -53,6 +53,13 @@ namespace NotchPeninsula
 
         // 动画引擎核心状态
         private bool _isAnimating = false;
+
+        /// <summary>
+        /// 岛体宽高弹簧是否还在跑。媒体收进实况窗时用它排队：用户要求岛主动画优先，
+        /// 先把岛体收短、弹簧跑完，再让左侧气泡出现，两个动画不叠在一起。
+        /// 只在渲染线程写；读侧（<see cref="MediaLiveWindowController"/>）每帧读上一帧的值即可。
+        /// </summary>
+        internal static bool IslandResizeAnimating { get; private set; }
         private float _currentWidth = Renderer.STANDBY_WIDTH;
         private float _startWidth = Renderer.STANDBY_WIDTH;
         private float _targetWidth = Renderer.STANDBY_WIDTH;
@@ -1514,6 +1521,9 @@ namespace NotchPeninsula
                     _currentHeight = (float)(_startHeight + (_targetHeight - _startHeight) * spring);
                 }
             }
+
+            // 供 MediaLiveWindowController 判断「岛体是不是已经收完」：实况窗气泡要等这一步。
+            IslandResizeAnimating = _isAnimating;
 
             // ---- 3. 其它效果 (淡入/音频柱) ----
             double uptime = (DateTime.Now - _appStartTime).TotalSeconds;

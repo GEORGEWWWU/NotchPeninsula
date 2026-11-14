@@ -45,6 +45,13 @@ internal sealed class MediaLiveWindow : ILiveWindow
         };
     }
 
+    /// <summary>
+    /// 直播 / 部分网页没有时间轴 = 没有进度条：这时封面会撑满整颗气泡，
+    /// 播放中照旧让它转，用来代替原来那圈「转圈扫描段」。
+    /// 走带默认实现的接口成员（不是 LiveWindowVisual 字段），旧插件二进制不受影响。
+    /// </summary>
+    public bool SpinWhenNoProgress => _media.IsPlaying;
+
     public void DrawInner(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
         // 用户要求封面大一点：直接铺满内圈（宿主已裁到内圈圆内），不再缩成圆角小方块。
@@ -153,6 +160,12 @@ internal static class MediaLiveWindowController
 {
     private const string Owner = "builtin.media";
     private const long IslandPreviewMs = 3000;
+    // 岛体宽高弹簧固定 0.450s；这里留一帧余量让弹簧真正启动起来（否则第一帧读到的还是「没在动」）。
+    private const long IslandShrinkGuardMs = 50;
+    // 弹簧状态异常时不至于让气泡永远出不来（正常情况下 0.45s 就收完了）。
+    private const long IslandShrinkTimeoutMs = 900;
+    // 气泡退场动画 0.5s；超时兜底，别让岛体永远不展开。
+    private const long BubbleExitTimeoutMs = 900;
 
     private static readonly object _gate = new();
 
@@ -160,6 +173,10 @@ internal static class MediaLiveWindowController
     private static bool _active;         // 气泡当前已注册
     private static IDisposable? _handle;
     private static long _mediaDetectedAt;   // 首次检测到媒体的时刻；0 = 还没检测到
+    private static bool _islandShrinking;   // 已请求岛体收缩，正在等弹簧跑完
+    private static long _islandShrinkAtMs;
+    private static volatile bool _bubbleExiting;   // 气泡已注销，正在等「滑回岛体」退场动画
+    private static long _bubbleExitAtMs;
 
     public static bool IsEnabled
     {
@@ -183,8 +200,8 @@ internal static class MediaLiveWindowController
 
         if (!enabled)
         {
-            Deactivate();
-            Renderer.SuppressMediaInIsland = false;
+            _islandShrinking = false;
+            Deactivate();   // 有气泡时进入退场等待，岛体展开交给 Tick 排队
         }
     }
 
@@ -196,10 +213,26 @@ internal static class MediaLiveWindowController
 
         // 待机时岛体只显示待机内容：媒体先留在岛内，退出待机后再重新走一遍 3 秒预览。
         bool wantLive = enabled && media.IsActive && !Renderer.StandbyActive;
+        long now = Environment.TickCount64;
+
+        // 气泡退场阶段：动画本身一点没改（还是原来那条「滑回岛体」），只是把它播完之前岛体先不展开。
+        if (_bubbleExiting)
+        {
+            bool stillExiting = LiveWindowHost.HasExiting(Owner);
+            if (stillExiting && now - _bubbleExitAtMs < BubbleExitTimeoutMs)
+            {
+                Renderer.SuppressMediaInIsland = true;   // 岛体维持收短态，等气泡完全收回
+                return;
+            }
+            _bubbleExiting = false;
+            Renderer.SuppressMediaInIsland = false;      // 气泡退场播完 → 岛体再展开
+        }
+
         if (!wantLive)
         {
+            _islandShrinking = false;
             Deactivate();
-            Renderer.SuppressMediaInIsland = false;
+            if (!_bubbleExiting) Renderer.SuppressMediaInIsland = false;
             lock (_gate) _mediaDetectedAt = 0;
             return;
         }
@@ -210,7 +243,6 @@ internal static class MediaLiveWindowController
             return;
         }
 
-        long now = Environment.TickCount64;
         long detected;
         lock (_gate)
         {
@@ -220,10 +252,27 @@ internal static class MediaLiveWindowController
 
         if (now - detected < IslandPreviewMs)
         {
+            _islandShrinking = false;
             Renderer.SuppressMediaInIsland = false;   // 这 3 秒里主岛照常显示媒体
             return;
         }
 
+        // 用户要求「岛主动画优先」：先让主岛把媒体收回去、宽高弹簧收短，等这次形变彻底跑完，
+        // 再让气泡从**收短之后**的岛体左缘分裂出来 —— 两个动画不再叠在一起，气泡也不会
+        // 骑着还在移动的岛体边跑。气泡自己的生成 / 分裂动画参数一个都没动。
+        if (!_islandShrinking)
+        {
+            _islandShrinking = true;
+            _islandShrinkAtMs = now;
+        }
+        Renderer.SuppressMediaInIsland = true;   // 从这一刻起主岛按「没有媒体」处理，开始收短
+
+        long shrinkElapsed = now - _islandShrinkAtMs;
+        bool islandSettled = shrinkElapsed >= IslandShrinkGuardMs
+                             && (!NotchWindow.IslandResizeAnimating || shrinkElapsed >= IslandShrinkTimeoutMs);
+        if (!islandSettled) return;
+
+        _islandShrinking = false;
         Activate(media);
         // 注册可能被宿主拒绝（极少）：此时媒体还在岛内，绝不能把岛内内容藏掉。
         Renderer.SuppressMediaInIsland = IsActive;
@@ -241,6 +290,7 @@ internal static class MediaLiveWindowController
 
             _handle = handle;
             _active = true;
+            _bubbleExiting = false;
         }
 
         // 用户可能在这 3 秒里点开过主岛的媒体面板：媒体已经挪到左边，主岛不该继续展开。
@@ -259,6 +309,11 @@ internal static class MediaLiveWindowController
             _active = false;
             _mediaDetectedAt = 0;
         }
+
+        // 注销只是让气泡开始播它原来那条退场动画；岛体要等它播完再展开（见 Tick 的退场阶段）。
+        // 先写时间戳再置 volatile 标志：渲染线程看到 true 时时间戳一定已经就位。
+        _bubbleExitAtMs = Environment.TickCount64;
+        _bubbleExiting = true;
 
         try { handle?.Dispose(); }
         catch (Exception ex) { Logger.Error("[实况窗] 注销媒体实况窗失败", ex); }

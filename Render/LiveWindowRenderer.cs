@@ -10,9 +10,6 @@ namespace NotchPeninsula;
 /// </summary>
 public static class LiveWindowRenderer
 {
-    private const float SpawnSeconds = 0.5f;      // 与宿主的生成时长同口径，用来把 SpawnProgress 换算成秒
-    private const float BridgeSeconds = 0.32f;
-    private const float IndeterminatePeriodMs = 1100f;
     // 与主岛展开面板同一圆角（岛体展开态 = min(高/2, 20)），两边看起来才是同一块面板。
     private const float PanelRadius = 20f;
 
@@ -64,6 +61,8 @@ public static class LiveWindowRenderer
     private static readonly SKPaint _bridgePaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
     private static readonly SKPaint _alphaLayerPaint = new();
     private static readonly SKPath _clipPath = new();
+    // 气泡进度环带（外圆 - 内圆，EvenOdd）：材质只铺在这一圈，环内内容区保持透明。
+    private static readonly SKPath _ringPath = new();
     private static readonly SKPath _mouthPath = new();
     private static readonly SKPath _lipPath = new();
 
@@ -83,14 +82,7 @@ public static class LiveWindowRenderer
         // 只按 ThemeMode 会出现「玻璃上是黑字、旁边却立着深色气泡」的割裂。
         bool lightBubble = !IsLightColor(theme.TextColor);
 
-        // 分裂桥先画：后画的气泡要能盖住桥，否则接缝处会出现一条硬边。
-        for (int i = 0; i < frame.Count; i++)
-        {
-            var item = frame.Items[i];
-            if (item.Exiting || item.SpawnProgress >= 1f) continue;
-            DrawBridge(canvas, in item, in theme, global);
-        }
-
+        // 气泡本体。
         for (int i = 0; i < frame.Count; i++)
         {
             var item = frame.Items[i];
@@ -102,15 +94,25 @@ public static class LiveWindowRenderer
             finally { RestoreTo(canvas, depth); }
         }
 
-        // 「消失 = 两个圆合并」：气泡滑向岛体左缘，与宿主侧的同色圆合并成一个，再一起缩进岛体。
-        // 画在气泡之后：融合时宿主圆会盖住气泡的环和封面，看起来就是被吞进去。
+        // 「宿主吞噬」膜动画：这就是实况窗的出入场动画本体（用户定义）。
+        // 退出正向播：岛主张嘴把气泡吞进去；生成把它反放：岛体把气泡吐出来。
         for (int i = 0; i < frame.Count; i++)
         {
             var item = frame.Items[i];
-            if (!item.Exiting || item.ExitProgress >= 1f) continue;
+            float t;
+            if (item.Exiting)
+            {
+                if (item.ExitProgress >= 1f) continue;
+                t = item.ExitProgress;
+            }
+            else
+            {
+                if (item.SpawnProgress >= 1f) continue;
+                t = 1f - item.SpawnProgress;   // 反放
+            }
 
             int depth = canvas.SaveCount;
-            try { DrawHostMouth(canvas, in item, in theme, lightBubble, global); }
+            try { DrawHostMouth(canvas, in item, in theme, lightBubble, global, t); }
             catch (Exception ex) { Logger.Error("[实况窗] 宿主吞噬动画绘制异常", ex); }
             finally { RestoreTo(canvas, depth); }
         }
@@ -124,29 +126,19 @@ public static class LiveWindowRenderer
         }
     }
 
-    /// <summary>细胞分裂的桥：只在生成头 0.32s 存在，α 从 45 线性衰到 0。</summary>
-    private static void DrawBridge(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme, float global)
-    {
-        float t = item.SpawnProgress * (SpawnSeconds / BridgeSeconds);
-        if (t >= 1f) return;
-
-        // 不乘 item.Alpha：气泡自己的淡入在头 0.12s 才 0→1，乘进来桥等于看不见。
-        float alpha = (45f / 255f) * (1f - t) * global;
-        if (alpha <= 0.002f) return;
-
-        _bridgePaint.StrokeWidth = item.Rect.Width * 0.55f;
-        _bridgePaint.Color = WithOpacity(theme.TextColor, alpha);
-        canvas.DrawLine(item.SpawnFromX, item.Rect.MidY, item.Rect.MidX, item.Rect.MidY, _bridgePaint);
-    }
-
     /// <summary>
-    /// 「消失 = 宿主张嘴把气泡吞进去」：根扎在岛体左缘的上下两点，两条对称曲线向左伸出，
-    /// 围住气泡后合拢（手稿里那种「一个圆 + 两条膜曲线」的吞噬动画），最后整只口缩回岛体。
-    /// 画在气泡之后，膜内填岛体底色，合拢时正好盖住气泡 = 被吞掉。
+    /// 「宿主吞噬」膜动画（实况窗出入场动画定义）：根扎在岛体左缘的上下两点，两条对称曲线向左伸出，
+    /// 围住气泡后合拢（手稿里那种「一个圆 + 两条膜曲线」），最后整只口缩回岛体。
+    /// 画在气泡之后，膜内填岛体底色，合拢时正好盖住气泡。
+    /// <para>
+    /// <paramref name="t"/> = 出场进度 0→1（吞进去）；入场时调用方传 1 - 生成进度，
+    /// 同一段动画反放（岛体把气泡吐出来）。不用另做淡入淡出。
+    /// </para>
     /// </summary>
-    private static void DrawHostMouth(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme, bool lightBubble, float global)
+    private static void DrawHostMouth(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme,
+        bool lightBubble, float global, float t)
     {
-        float t = Math.Clamp(item.ExitProgress, 0f, 1f);
+        t = Math.Clamp(t, 0f, 1f);
         if (t <= 0.02f) return;
 
         float R = item.Rect.Width * 0.5f;
@@ -216,13 +208,18 @@ public static class LiveWindowRenderer
         float cy = rect.MidY;
 
         // 半径全部按气泡尺寸成比例：气泡直径现在跟宿主高度走（默认约 40），
-        // 之前写死的 -4.5 / -8.5 会把这颗小气泡的环和内容挤没；进度条半径也顺势收到 0.80r。
-        float outerR = r - 0.5f;
+        // 之前写死的 -4.5 / -8.5 会把这颗小气泡的环和内容挤没。
         float bandW = Math.Clamp(r * 0.15f, 2.5f, 4.5f);
-        float trackR = r * 0.80f;
-        float innerR = r * 0.69f;
-        float contentClipR = r * 0.66f;
-        float ringW = Math.Clamp(r * 0.037f, 1f, 1.3f);
+        // 圆环只保留「进度条 + 内容区」，不再有整个圆盘的底色：
+        //   进度条那一圈（contentClipR..r 的环带）就是气泡唯一的实体，材质直接铺在这圈上；
+        //   环带以内是内容区，完全透明 —— 文字类内容直接浮在桌面上，不再垫一层背景。
+        // 进度环外缘直接贴到气泡边（= 岛体高度，上下沿和岛体对齐），不再留 1.5px 的内缩。
+        float trackR = r - bandW * 0.5f;
+        float contentClipR = r - bandW;                                  // 内容圆直接贴住进度环内缘，不留空隙
+        // 没有可用进度：进度条整个占位让给内容 —— 内容撑满整颗气泡，气泡总尺寸不变。
+        bool noProgress = item.Indeterminate;
+        if (noProgress) contentClipR = r;
+        float innerHalf = contentClipR * 0.94f;                          // 与去掉边框前 0.62 / 0.66 的比例一致
 
         canvas.Save();
         // 围绕气泡中心缩放：生成弹入 / 退出缩小都走这一条，位置仍由宿主给的 Rect 决定。
@@ -233,32 +230,36 @@ public static class LiveWindowRenderer
             canvas.Translate(-cx, -cy);
         }
 
-        // 本体外圈（进度条那一圈）的底：实体材质用原来的纯色圆；亚克力 / 玻璃换成真实背景材质，
-        // 内圈封面照旧盖在上面 —— 玻璃只在「外圈」露出来。
-        if (!DrawBubbleMaterial(canvas, in item, rect, cx, cy, r, alpha))
+        if (!noProgress)
         {
-            SKColor baseColor = lightBubble ? SKColors.White : DarkBubbleColor;
-            _fillPaint.Color = WithOpacity(baseColor, alpha * (lightBubble ? BubbleLightAlpha : BubbleDarkAlpha));
-            canvas.DrawCircle(cx, cy, r, _fillPaint);
+            // 材质只铺在「进度条那一圈」的环带上（外圆 r，内圆 contentClipR）：气泡不再有整块底。
+            // 实体材质 = 原来的纯色环；亚克力 / 玻璃 = 真实背景材质直接接进这道进度环。
+            _ringPath.Rewind();
+            _ringPath.FillType = SKPathFillType.EvenOdd;
+            _ringPath.AddCircle(cx, cy, r);
+            _ringPath.AddCircle(cx, cy, contentClipR);
+            int ringDepth = canvas.SaveCount;
+            try
+            {
+                canvas.Save();
+                canvas.ClipPath(_ringPath, SKClipOperation.Intersect, true);
+                if (!DrawBubbleMaterial(canvas, in item, rect, cx, cy, r, alpha))
+                {
+                    SKColor baseColor = lightBubble ? SKColors.White : DarkBubbleColor;
+                    _fillPaint.Color = WithOpacity(baseColor, alpha * (lightBubble ? BubbleLightAlpha : BubbleDarkAlpha));
+                    canvas.DrawCircle(cx, cy, r, _fillPaint);
+                }
+            }
+            finally
+            {
+                RestoreTo(canvas, ringDepth);
+            }
+
+            // 进度条：只画进度弧本身，不再有整圈淡轨道（那是进度条的「底」，用户要求去掉背景）。
+            DrawProgressArc(canvas, in item, cx, cy, trackR, bandW, alpha);
         }
 
-        // 外圈：hover 提亮到 1.0，平时 0.85。
-        _strokePaint.StrokeWidth = ringW;
-        _strokePaint.Color = WithOpacity(theme.TextColor, alpha * (item.Hovered ? 1f : 0.85f));
-        canvas.DrawCircle(cx, cy, outerR, _strokePaint);
-
-        _strokePaint.StrokeWidth = bandW;
-        _strokePaint.Color = WithOpacity(theme.TextColor, alpha * 0.14f);
-        canvas.DrawCircle(cx, cy, trackR, _strokePaint);
-
-        DrawProgressArc(canvas, in item, cx, cy, trackR, bandW, alpha);
-
-        _strokePaint.StrokeWidth = ringW;
-        _strokePaint.Color = WithOpacity(theme.TextColor, alpha * 0.85f);
-        canvas.DrawCircle(cx, cy, innerR, _strokePaint);
-
-        // 内圈内容矩形 = 0.62r 见方；先裁剪、再旋转，注册方怎么画都不会溢出圆环。
-        float innerHalf = r * 0.62f;
+        // 内容矩形跟着裁剪圆走：先裁剪、再旋转，注册方怎么画都不会溢出。
         var innerRect = new SKRect(cx - innerHalf, cy - innerHalf, cx + innerHalf, cy + innerHalf);
 
         canvas.Save();
@@ -266,8 +267,8 @@ public static class LiveWindowRenderer
         _clipPath.AddCircle(cx, cy, contentClipR);
         canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
 
-        // 宿主只在 SpinInner 时累加角度，所以「角度非 0」本身就等价于「该转」。
-        if (item.SpinAngle != 0f)
+        // 宿主只在「该转」时累加角度；没有进度时默认静止，除非注册方开了 SpinWhenNoProgress。
+        if (item.SpinAngle != 0f && (!noProgress || item.SpinWhenNoProgress))
         {
             canvas.Translate(cx, cy);
             canvas.RotateRadians(item.SpinAngle);
@@ -296,14 +297,7 @@ public static class LiveWindowRenderer
         _arcPaint.StrokeWidth = width;
         var oval = new SKRect(cx - radius, cy - radius, cx + radius, cy + radius);
 
-        if (item.Indeterminate)
-        {
-            // 没有每项时间戳：用系统时钟取模，所有不确定态气泡同相旋转，反而更像一个整体。
-            float start = (Environment.TickCount64 % (long)IndeterminatePeriodMs) * (360f / IndeterminatePeriodMs);
-            canvas.DrawArc(oval, start, 80f, false, _arcPaint);
-            return;
-        }
-
+        // 没有可用进度时不再画「转圈扫描段」：那种状态下气泡根本不走这条路径（内容会撑满整颗气泡）。
         float sweep = 360f * Math.Clamp(item.Progress, 0f, 1f);
         if (sweep < 0.5f) return;
         if (sweep >= 359.5f) canvas.DrawCircle(cx, cy, radius, _arcPaint);

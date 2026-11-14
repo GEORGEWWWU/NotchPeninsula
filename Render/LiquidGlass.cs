@@ -535,15 +535,19 @@ namespace NotchPeninsula
                 // 这里的判据刻意很窄：背板没换、模糊半径没变、尺寸差 ≤10px、距上次重算 ≤30ms。
                 // 满足时把上一张玻璃交给调用方拉伸贴合当前矩形：偏差被运动本身掩盖，
                 // 超过 10px 或 30ms 立刻回到全量重算，不会累积漂移。
-                long nowMs = Environment.TickCount64;
-                if (!transient && _glass != null && _keyVersion == version && _radius == radiusNow
-                    && _lastComposeMs > 0 && nowMs - _lastComposeMs <= ComposeReuseMs
-                    && MathF.Abs(_keyLw - logicalW) <= ComposeReuseMaxDeltaPx
-                    && MathF.Abs(_keyLh - logicalH) <= ComposeReuseMaxDeltaPx
-                    && MathF.Abs(_keyRt - rTop) <= ComposeReuseMaxDeltaPx)
+                long nowMs = 0;
+                if (!transient)
                 {
-                    _statCache++;
-                    return _glass;
+                    nowMs = Environment.TickCount64;
+                    if (_glass != null && _keyVersion == version && _radius == radiusNow
+                        && _lastComposeMs > 0 && nowMs - _lastComposeMs <= ComposeReuseMs
+                        && MathF.Abs(_keyLw - logicalW) <= ComposeReuseMaxDeltaPx
+                        && MathF.Abs(_keyLh - logicalH) <= ComposeReuseMaxDeltaPx
+                        && MathF.Abs(_keyRt - rTop) <= ComposeReuseMaxDeltaPx)
+                    {
+                        _statCache++;
+                        return _glass;
+                    }
                 }
 
                 SetRadius(radiusNow);

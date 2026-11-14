@@ -8,7 +8,10 @@ namespace NotchPeninsula.Plugins;
 /// </summary>
 public readonly record struct LiveWindowVisual
 {
-    /// <summary>0..1 的确定进度；小于 0 表示不确定进度（进度弧改为持续旋转的扫掠段）。</summary>
+    /// <summary>
+    /// 0..1 的确定进度；小于 0 表示没有可用进度（不画进度弧：内圈内容直接撑满整个气泡，
+    /// 想让它继续转就在 <see cref="ILiveWindow.SpinWhenNoProgress"/> 里返回 true）。
+    /// </summary>
     public float Progress { get; init; }
 
     /// <summary>内圈状态行（如 "downloading"）。</summary>
@@ -23,7 +26,9 @@ public readonly record struct LiveWindowVisual
     /// <summary>进度弧颜色；null 表示宿主默认绿。</summary>
     public SKColor? ProgressColor { get; init; }
 
-    /// <summary>内圈内容是否由宿主持续旋转（手稿里的「可选：一直旋转（宿主控制）」）。</summary>
+    /// <summary>
+    /// 内圈内容是否由宿主持续旋转（手稿里的「可选：一直旋转（宿主控制）」）。
+    /// </summary>
     public bool SpinInner { get; init; }
 
     /// <summary>
@@ -79,6 +84,16 @@ public interface ILiveWindow
 
     /// <summary>宿主注销这个窗时回调一次（插件卸载 / 主动 Dispose）。之后宿主不再回调本对象的任何方法。</summary>
     void OnRemoved() { }
+
+    /// <summary>
+    /// 没有可用进度（<see cref="LiveWindowVisual.Progress"/> &lt; 0）时，内圈内容是否还要继续转。
+    /// 默认 false：没有进度弧时内容静止（封面会撑满整个气泡）；想转圈就覆写成 true。
+    /// <para>
+    /// **带默认实现**（不是 <see cref="LiveWindowVisual"/> 的字段）：旧插件二进制不用重新编译，
+    /// 宿主按 false 处理 —— 别把它挪进 <see cref="LiveWindowVisual"/>，那会改结构体布局，破坏插件二进制兼容。
+    /// </para>
+    /// </summary>
+    bool SpinWhenNoProgress => false;
 
     /// <summary>
     /// 「设置 → 实况窗管理」里的插件级开关变化：<c>true</c> = 重新启用，<c>false</c> = 已被禁用。
