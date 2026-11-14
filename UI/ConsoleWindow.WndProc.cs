@@ -72,8 +72,17 @@ namespace NotchPeninsula
                 }
             }
 
-            int newHoveredTheme = -1;
-            int newHoveredMaterial = -1;
+            // 列表拖动期间不再算任何 hover：行随拖动实时重排，hover 下标会漂，
+            // 而且每帧 Render 应该只服务拖动本身。
+            if (_displayDragActive)
+            {
+                UpdateDisplayDrag(x, y);
+                return;
+            }
+            // 已按下把手、还在等长按判定：保持当前画面，别让底下的 hover 抢先亮。
+            if (_displayDragPendingRow >= 0) return;
+
+            int newHoveredTheme = -1;            int newHoveredMaterial = -1;
             int newHoveredOpacityIndex = -1;
             int newHoveredGlassQuality = -1;      // 液态玻璃卡：质量分段控件
             int newHoveredGlassParam = -1;        // 9 根滑轨里悬停的是哪一根
@@ -224,6 +233,7 @@ namespace NotchPeninsula
             int newHoveredDisplayRow = -1;        // 「显示内容」列表：悬停在行本体上
             int newHoveredDisplayMoveUp = -1;     // 该行 ∧ 的悬停
             int newHoveredDisplayMoveDown = -1;   // 该行 ∨ 的悬停
+            int newHoveredDisplayDrag = -1;       // 该行 ≡ 拖动把手的悬停
             bool newToggleHovered = false;
             bool newToastToggleHovered = false;
             bool newTopmostToggleHovered = false;
@@ -439,7 +449,8 @@ namespace NotchPeninsula
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
                     if (rowIdx < _displayScroll + displayVisibleRows)
                     {
-                        if (x >= DISPLAY_MOVE_UP_X && x <= DISPLAY_MOVE_UP_X + SORT_TRI_W) newHoveredDisplayMoveUp = rowIdx;
+                        if (x >= DISPLAY_DRAG_X && x <= DISPLAY_DRAG_X + SORT_TRI_W) newHoveredDisplayDrag = rowIdx;
+                        else if (x >= DISPLAY_MOVE_UP_X && x <= DISPLAY_MOVE_UP_X + SORT_TRI_W) newHoveredDisplayMoveUp = rowIdx;
                         else if (x >= DISPLAY_MOVE_DOWN_X && x <= DISPLAY_MOVE_DOWN_X + SORT_TRI_W) newHoveredDisplayMoveDown = rowIdx;
                         else newHoveredDisplayRow = rowIdx;
                     }
@@ -774,14 +785,19 @@ namespace NotchPeninsula
             int newHoveredLinkIndex = -1;
             if (_selectedTab == 4) // 关于页
             {
-                int yStart = TITLE_BAR_HEIGHT + 160;
-                int yEnd = TITLE_BAR_HEIGHT + 190;
-
-                if (y >= yStart && y <= yEnd)
+                // 四个链接的左右边界由 RenderTabAbout 每帧按实际字宽量好（整体居中），
+                // 这里直接用同一份布局，避免写死 x 区间和「项目主页」对不上。
+                if (y >= _aboutLinkTop && y <= _aboutLinkBottom)
                 {
-                    if (x >= 305 && x <= 370) newHoveredLinkIndex = 0;      // 检测更新
-                    else if (x >= 375 && x <= 440) newHoveredLinkIndex = 1; // 仓库地址
-                    else if (x >= 445 && x <= 500) newHoveredLinkIndex = 2; // 开发者 (Ryen)
+                    for (int i = 0; i < _aboutLinkRight.Length; i++)
+                    {
+                        if (_aboutLinkRight[i] > _aboutLinkLeft[i]
+                            && x >= _aboutLinkLeft[i] && x <= _aboutLinkRight[i])
+                        {
+                            newHoveredLinkIndex = i;
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -830,6 +846,7 @@ namespace NotchPeninsula
                 newHoveredDisplayRow != _hoveredDisplayRow ||
                 newHoveredDisplayMoveUp != _hoveredDisplayMoveUp ||
                 newHoveredDisplayMoveDown != _hoveredDisplayMoveDown ||
+                newHoveredDisplayDrag != _hoveredDisplayDrag ||
                 newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                 newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
@@ -906,6 +923,7 @@ namespace NotchPeninsula
                 _hoveredDisplayRow = newHoveredDisplayRow;
                 _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
+                _hoveredDisplayDrag = newHoveredDisplayDrag;
                 _hoveredStyleIndex = newHoveredStyleIndex;
                 _hoveredDisplayModeIndex = newHoveredDisplayModeIndex;
                 _hoveredSceneIndex = newHoveredStandbySceneIndex;

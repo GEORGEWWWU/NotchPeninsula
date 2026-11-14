@@ -12,7 +12,8 @@
 > | `Plugin/PluginLoader.cs` | 插件目录发现与入口 DLL 挑选 |
 > | `Plugin/PluginManager.cs` | 加载 / 启用 / 禁用 / 重载 / 导入 / 移除 / 失败归类 |
 > | `Plugin/PluginHost.cs` | 宿主侧实现（注册、刷新、提醒、设置、窗口） |
-> | `Render/Renderer.Paint.cs` | 主题色与「液态玻璃」文字自适应判定（见 [10.3](#103-文字颜色是逐帧自适应的液态玻璃--液态玻璃-20)） |
+> | `Render/Renderer.Paint.cs` | 主题色与「三种材质」逐元素文字自适应判定（见 [10.3](#103-文字颜色是逐元素自适应的实体--亚克力--液态玻璃)） |
+> | `Plugin/PluginTone.cs` | 插件逐元素文字黑白 API（见 10.3） |
 
 ## 目录
 
@@ -52,6 +53,7 @@ NotchPeninsula 在屏幕顶部显示一条「灵动岛」。岛上的原生内�
 | 记住用户的设置 | `host.GetSetting / SetSetting` |
 | 开一个自己的小窗口 | `host.CreateWindow(...)` |
 | 展开 / 收起详情页 | `host.OpenDetailPage / CloseDetailPage` |
+| 收起实况窗浮动面板 | `host.CloseLiveWindowDetailPage()`（见 [8.7](#87-实况窗live-window)） |
 | 在岛左侧加一个实况窗 | `host.RegisterLiveWindow(...)`（见 [8.7](#87-实况窗live-window)） |
 
 ### 1.2 最小可运行插件
@@ -596,7 +598,7 @@ float slot   = host.GetSlotBudget(widgetId); // AutoWidth 专用：再扣掉我�
 2. **透明度一律乘上 `frame.Alpha`**（`颜色.WithAlpha(frame.Alpha)`），否则启动淡入、Toast 叠化时你的内容会「不跟着淡」，看起来像贴上去的。`frame.Alpha == 0` 直接 `return`。
 3. **异常会熔断**：`Draw` / `MeasureWidth` / `Layout` 抛异常，这个组件会被标记为 broken、从此不再绘制（日志里有记录）。别在这里做可能长时间阻塞的事。
 
-> 颜色的两个来源都要**每帧现取**：`frame.Alpha`（启动淡入 / 叠化）与 `frame.Theme.TextColor`（液态玻璃下会跟着桌面亮度反转黑白，见 10.3）。把任何一个存进字段都会在某个状态下出错。
+> 颜色的两个来源都要**每帧现取**：`frame.Alpha`（启动淡入 / 叠化）与 `frame.Theme.TextColor`（液态玻璃下会跟着桌面亮度反转黑白，见 10.3）。把任何一个存进字段都会在某个状态下出错。要按每段文字自己的背景精确判黑白，用 `PluginTone.DrawText`（见 10.3）。
 
 ### 6.7 点击、右键、双击
 
@@ -1026,6 +1028,16 @@ public sealed class MyLiveWindow : ILiveWindow
 - **主岛尺寸、形状、布局完全不变** —— 不走主岛详情页那套变形路径；鼠标事件、拖放、自动收起照 [7.4](#74-鼠标事件) 的 `IDetailPage` 实现即可，不用学新接口。
 - 没有可复用的 `DetailPage`（`null`）时改走 `OnExpand()`，用来打开你「原有的」界面（如市场页 / 设置页）。
 - 再次点击气泡、或点击面板外，面板缩回气泡收起。
+- **插件也可以主动收起**：调 `host.CloseLiveWindowDetailPage()`（没有面板展开时是空操作）。岛内详情页用 `CloseDetailPage()`，实况窗面板走另一个生命周期，所以是两个入口。同一个 `IDetailPage` 实例可能既在岛内展开、又被实况窗复用，插件分不清当前是哪种 —— 关闭动作里把两个都调一遍即可：
+
+```csharp
+// 详情页右上角 ❌ / 右键双击 / 任务完成后自动收起：两个入口都调，没开着的那个自然是空操作。
+void CloseMyPanel(IPluginHost host)
+{
+    try { host.CloseLiveWindowDetailPage(); } catch { /* 旧宿主没有这个成员 */ }
+    try { host.CloseDetailPage(); } catch { }
+}
+```
 
 ```csharp
 // 只有内置消费者 / 想让实况窗用一套独立页面的特殊场景才需要写这个类；
@@ -1203,65 +1215,100 @@ public readonly record struct RenderTheme(
 ```
 
 - 颜色一律 `xxx.WithAlpha(frame.Alpha)`，才能跟着淡入 / 叠化。
-- **颜色要每帧现取，不能缓存**：液态玻璃 / 液态玻璃 2.0 下 `TextColor` / `SubTextColor` 会跟着桌面亮度自动翻转黑白（阈值、滞回与自检方法见 10.3），用户换一张壁纸就变了。
+- **颜色要每帧现取，不能缓存**：液态玻璃 / 液态玻璃 2.0 / 亚克力下 `TextColor` / `SubTextColor` 会跟着实际底色自动翻转黑白（阈值、滞回与自检方法见 10.3），用户换一张壁纸就变了。
+- 这两个色是**整块面板**的全局明暗；要按每段文字自己下方的玻璃分别判黑白，用 `PluginTone.DrawText` / `DrawAccentText` / `ColorFor`（见 10.3）。
 - `GlobalDpi`：宿主把逻辑像素换成物理像素用的系数（设置里可改，默认 1.0）。你自己做坐标换算时必须用同一个，否则高 DPI 下会偏。
 - `NotchBottomRadius`：岛体底部圆角（宿主夹在 0~28），贴边画内容时用。
 - `BackgroundColor`：主题底色。**玻璃材质下没有可用底色**（玻璃自己负责背景，宿主给它的 alpha 是 0），别拿它做对比度判断。
 
-### 10.3 文字颜色是逐帧自适应的（液态玻璃 / 液态玻璃 2.0）
+### 10.3 文字颜色是逐元素自适应的（实体 / 亚克力 / 液态玻璃）
 
-> **2026-10 起的新行为（PR #157 上调了明暗分界）。写插件时必须按这一节的规则理解 `Theme.TextColor` / `Theme.SubTextColor`。**
-
-材质是「液态玻璃」或「液态玻璃 2.0」时，岛上文字的黑白**不再由用户的主题设置（黑 / 白 / 跟随系统）决定**，而是跟着玻璃背后那片桌面的实际亮度走：
+> **2026-11 起：三种材质都按「每段文字自己下方那块底色」判黑白；插件用 `PluginTone` 就能拿到同一套能力。**
+>
+> 只看整块面板的平均亮度是不够的：壁纸横向从深到浅时，同一块面板上左边白字、右边黑字才是对的。宿主每帧把底色降采样成 `24×6` 的亮度网格，查询时按元素矩形取覆盖格的平均值，再做平滑。
 
 | 环节 | 口径 |
 |---|---|
-| 采样 | 玻璃成品**中心区域的平均亮度**（0~255）；只在这一帧真的合成出一张玻璃图时有效 |
-| 平滑 | 每帧 `smooth += (target - smooth) * 0.22`，换壁纸约 **160ms** 渐变到位，不做硬切 |
-| 翻黑 | 平滑亮度 **> 0.78** → 黑字（白 / 近白壁纸；主文字 `SKColors.Black`，副文字 `(80,80,80)`） |
-| 翻白 | 平滑亮度 **< 0.70** → 白字（其余一律白字，**包括中亮的彩色底**；主文字 `SKColors.White`，副文字 `(200,200,200)`） |
-| 滞回 | 0.70 ~ 0.78 之间保持上一状态，挡住壁纸纹理导致的来回抖 |
-| 兜底 | 还没有量到有效亮度（启动首帧、抓屏没出图）时，沿用主题设置的明暗 |
+| 采样 · 实体 | 主题纯色（白 / 黑）→ 整张网格填同一个亮度；逐元素查询仍可用 |
+| 采样 · 亚克力 | 背板（隐身抓到的真实桌面）+ 主岛涂层，按涂层 alpha 混合 |
+| 采样 · 液态玻璃 | 背板 + 玻璃明度补偿 / 雾度掺白（当前只有一档液态玻璃；2.0 已下线） |
+| 平滑 | 每格 `grid = prev + (new - prev) * 0.35`，背板约 250ms 换一张，硬切会看到字色跳 |
+| 判亮 | 元素覆盖格的平均亮度 **> 0.60** → 浅底（黑字 / 深灰副文字） |
+| 判暗 | 否则 → 深底（白字 / 浅灰副文字） |
+| 退化 | 玻璃 / 亚克力背板未就绪、取不到像素、或元素在网格外 → 回落到 `Theme.TextColor` / `SubTextColor` |
 
-> **为什么分界这么高**：PR #157 之前是 0.58 / 0.44（按对比度最优划线），结果「亮蓝 / 彩色壁纸」这类中亮底（采样 0.65~0.70）会被判成浅底、进黑字态，而黑字的退出线 0.44 又永远够不到 —— 观感就是「浅色背景却一直黑字」。现在整体上移：**只有白 / 近白壁纸才用黑字，中亮彩色底也是白字。**
->
-> 「实体」「亚克力」两种材质不走这套判定：它们的文字明暗仍由用户的主题设置决定。
+`Theme.TextColor` / `SubTextColor` 仍保留「整块面板」的全局明暗（由玻璃中心亮度 / 亚克力网格平均亮度 + 0.78/0.70 滞回决定），**继续用它们做兜底和底色派生**；想要逐元素精确，用下面的 `PluginTone`。实体材质跟随主题（白底黑字 / 黑底白字），不参与背板采样。
 
-对插件的四条要求：
+#### 插件怎么用：`PluginTone`
 
-1. **每帧现取 `frame.Theme.TextColor` / `frame.Theme.SubTextColor`，绝不缓存。** 它们是逐帧刷新的：用户换壁纸、切材质、首帧量到亮度，颜色都会变（而且是 160ms 渐变，不是瞬间跳）。缓存进字段 = 壁纸换了字色不换。
-2. **不要用 `ThemeMode` / 系统深浅色去猜文字颜色。** 玻璃下用户的主题设置不参与判定；同一份代码要同时能跑「实体 / 亚克力」（跟随主题）和「玻璃」（跟随壁纸）。
-3. **自定义强调色要能同时活过黑字和白字两种模式。** 推荐从 `Theme.TextColor` 派生（加透明度当描边 / 底槽 / 进度条），不要写死深灰或浅灰 —— 写死的颜色在另一档明暗下不是看不见就是糊成一片。
-4. **`frame.Alpha` 照旧。** 自适应只改 RGB，透明度仍由 `Alpha` 控制，两者都要乘上：`Theme.TextColor.WithAlpha(frame.Alpha)`。
+```csharp
+using NotchPeninsula.Plugins;
+
+// 画文字：内部按这段文字自己的包围盒取亮度并切黑/白（TextAlign 居中/右对齐也算得对）
+PluginTone.DrawText(canvas, frame.Theme, "歌名", x, baseline, paint);
+
+// 次级文字：亮底深灰、暗底浅灰（和宿主内置副标题同口径）
+PluginTone.DrawText(canvas, frame.Theme, "歌手", x, baseline, subPaint, sub: true);
+
+// 语义色文字（错误红 / 成功绿 / 品牌色）：保留色相，只在对比度不够时压暗或提亮
+PluginTone.DrawAccentText(canvas, frame.Theme, "连接失败", x, baseline, errorPaint);
+
+// 非文字元素（图标 / 圆点 / 叉线 / 进度条）按自己的矩形取色
+ink.Color = PluginTone.ColorFor(canvas, iconRect, ink.Color);
+```
+
+| API | 用途 |
+|---|---|
+| `DrawText(canvas, theme, text, x, baseline, paint, sub = false, alpha = 255)` | 普通文字自适应黑白；`alpha` 默认沿用 `paint.Color` 已有的 alpha |
+| `DrawAccentText(canvas, theme, text, x, baseline, paint, alpha = 255)` | 语义色文字，保留色相 |
+| `ColorFor(canvas, area, preferred, sub = false)` | 非文字元素按矩形取黑白 / 灰 |
+| `LuminanceAt(canvas, area)` | 原始亮度 `0..1`；没有数据返回 `-1` |
+| `IsLightAt(canvas, area)` | 该矩形下方是否浅底 |
+| `IsAvailable` | 本帧是否有可用亮度网格 |
+
+**关键点**
+
+1. **可以直接替换 `canvas.DrawText(...)`**：`PluginTone.DrawText` 自己用 `paint.MeasureText` + `FontMetrics` 算包围盒，再用 `canvas.TotalMatrix` 映射回宿主网格 —— 插件自己 `Translate` / `Scale` / `Clip` 过也能对。
+2. **没有玻璃 / 亚克力背板时行为不变**：启动首帧、抓屏没出图、元素跑到网格外时，原样保留调用方已经设好的画笔颜色；实体材质始终有网格。
+3. **文字画在插件自己画的不透明实心按钮上时不要用**：那块背景不是玻璃，采样会取到按钮背后的桌面。按钮文字保留原来算好的对比色。
+4. **`frame.Alpha` 照旧**：自适应只改 RGB，透明度由画笔 alpha 控制；`DrawText` 默认沿用 `paint.Color.Alpha`。
+5. **强调色优先用 `DrawAccentText` / `ColorFor`**，不要把所有状态色都洗成纯黑白，否则「连接成功 / 失败」这类语义会丢。
 
 ```csharp
 void IWidget.Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
 {
     if (frame.Alpha == 0) return;
 
-    // ✅ 每帧现取：玻璃下这两个颜色会跟着壁纸变（白壁纸→黑字，彩色底→白字）
-    var text = frame.Theme.TextColor.WithAlpha(frame.Alpha);
-    var sub  = frame.Theme.SubTextColor.WithAlpha(frame.Alpha);
+    // 兜底色：没有亮度网格时 PluginTone 会原样保留它
+    using var main = new SKPaint { IsAntialias = true, Color = frame.Theme.TextColor.WithAlpha(frame.Alpha) };
+    using var sub  = new SKPaint { IsAntialias = true, Color = frame.Theme.SubTextColor.WithAlpha(frame.Alpha) };
 
-    // ✅ 强调色从主题色派生，自动跟着明暗反转
-    using var chip = new SKPaint { IsAntialias = true, Color = frame.Theme.TextColor.WithAlpha(28) };
-    canvas.DrawRoundRect(rect, 6f, 6f, chip);
-
-    using var main = new SKPaint { IsAntialias = true, Color = text };
-    using var minor = new SKPaint { IsAntialias = true, Color = sub };
-    canvas.DrawText("CPU", 6f, rect.Height / 2f + 4f, main);
-    canvas.DrawText("42%", 44f, rect.Height / 2f + 4f, minor);
+    // ✅ 每段文字自己判黑白
+    PluginTone.DrawText(canvas, frame.Theme, "CPU", 6f, rect.Height / 2f + 4f, main);
+    PluginTone.DrawText(canvas, frame.Theme, "42%", 44f, rect.Height / 2f + 4f, sub, sub: true);
 }
-
-// ❌ 别这么写：白壁纸的玻璃上黑字会消失，近白壁纸上白字会糊成一片
-using var bad = new SKPaint { Color = SKColors.White };
 ```
 
-`host.CurrentTheme`（`IPluginHost.CurrentTheme`）和 `Draw` 里的 `frame.Theme` 是同一份快照、同一套规则 —— 同样只能当前帧用，别存进字段。
+**自检方法**：材质切到液态玻璃 → 找一张**左黑右白**的壁纸。同一块插件面板上，压在黑底的文字应变白、压在白底的文字应变黑；拖动窗口横跨明暗交界，字色应各自跟着自己下方那块变。如果整块面板只有一个颜色，先查是不是还在直接 `canvas.DrawText(...)` 或把颜色缓存进了字段。
 
-**`Theme.BackgroundColor` 在玻璃模式下没有可用的底色**（玻璃自己负责背景，宿主给它的 alpha 是 0）；不要拿它做对比度判断，也不要在玻璃下依赖它的 alpha。
+#### 旧写法（仍可用，但只有整块面板一个明暗）
 
-**自检方法**（不改代码）：材质切到液态玻璃 → 桌面放白壁纸，岛上文字应变黑；换成亮蓝 / 彩色壁纸，约 0.2s 内变白。你的插件文字应该跟着一起变；如果它不跟着变，先查是不是把颜色缓存进了字段，或者自己写死了颜色。
+`Theme.TextColor` / `SubTextColor` 在玻璃下由**中心亮度**统一翻转（>0.78 黑字、<0.70 白字、中间滞回）。只画一两个元素、或对精度要求不高的插件可以继续用；颜色必须每帧现取，不能缓存。`Theme.BackgroundColor` 在玻璃模式下 alpha 为 0，没有可用底色，别拿它做对比度判断。
+
+#### 维护者速查（想直接调参数看这里）
+
+| 想改什么 | 位置 | 说明 |
+|---|---|---|
+| 元素级判亮阈值 | `Render/Renderer.Paint.cs` → `ToneLightAt`（当前 `0.60f`） | 0.55 会把压在深色标题栏上的面板判成浅底；0.62 又会让浅灰面板继续白字，0.60 是分界 |
+| 亮度网格分辨率 | `Render/Renderer.Paint.cs` → `ToneGridX` / `ToneGridY`（当前 `24×6`） | 越大越精细、越吃 CPU；`24×6=144` 个采样点已经够覆盖一段文字 |
+| 网格平滑速度 | `SampleToneGrid` 里的 `0.35f` | 越小越稳、越大越跟手；背板约 250ms 换一张，别调到 1（硬切会闪） |
+| 全局（整块面板）阈值 | 同文件 `GlassLightAt` / `GlassDarkAt`（`0.78` / `0.70`） | 只影响 `Theme.TextColor` 兜底，不影响 `PluginTone` 的逐元素判定 |
+| 背板 → 网格的坐标映射 | `Renderer.PluginToneAt` | 用 `canvas.TotalMatrix` 映射到宿主坐标，再用建网格时的基准矩阵逆映射；插件自己 `Translate/Scale` 不用改 |
+| 面板 / 实况窗详情页的独立网格 | `LiveWindowRenderer.DrawPanel` → `BeginPanelToneGrid` / `EndPanelToneGrid` | 面板背后是另一块桌面，不能借岛体网格 |
+| 新增插件 API | `Plugin/PluginTone.cs` | 所有方法都做了「没有亮度数据就保持原色」的退化，新增入口照这个约定写 |
+
+> `PluginTone` 依赖宿主渲染线程的「当前帧网格」这一静态上下文。**只能在 `Draw` / `DrawInner` 的同步调用里用**；不要把它缓存到后台线程、定时器或 `Task` 里，那时网格已经换了甚至清空了。
+
 
 ### 10.4 频谱
 
@@ -1296,6 +1343,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 10 | 详情页展开动画卡顿、文字每帧跳 | 用 `rect`（动画插值）当排版基准 | 按 `MeasureWidth/Height` 的目标尺寸排版，再整体缩放 |
 | 11 | 鼠标移开面板就没了，拖不进文件 | 自动收起太短 | `AutoCollapseDelay` 调长或返回负数 |
 | 12 | 右键关不掉详情页 | 开了 `AcceptsRightClick` 又没留出口 | 面板里放 × 或自己 `CloseDetailPage()` |
+| 12b | 实况窗面板里点 × 没反应 | 只调了 `CloseDetailPage()`（只管岛内详情页） | 再调一次 `CloseLiveWindowDetailPage()`（见 8.7） |
 | 13 | 拖入高亮永远不消失 | 只靠 `onOver` 复位 | `onEnter` 点亮 + `onLeave` 熄灭 |
 | 14 | 拖出后交互卡在「拖动中」 | 以为 up 回调会来 | `StartDragFiles` 返回后用 `finally` 复位 |
 | 15 | 每次单击都卡一下 | 在 down 回调里发起拖出 | 在 move 里按位移阈值发起 |
@@ -1308,8 +1356,10 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 22 | 工具调用报「参数缺失」 | 把委托又包了一层，SDK 读不到默认值 | 直接传方法组 / 带默认值的 lambda，别包 `DynamicInvoke` |
 | 23 | 插件卸载了还能被调 | MSP 协议层没有「反注册工具」 | 工具实现里判状态，停用后返回明确错误 |
 | 24 | 液态玻璃下文字一直黑 / 一直白，换壁纸不变 | 把 `Theme.TextColor` 缓存进了字段 | 每帧从 `frame.Theme` 现取（见 10.3） |
-| 25 | 玻璃下自己画的文字看不清 | 写死黑 / 白或深灰，没跟着自适应翻色 | 用 `Theme.TextColor` / 由它派生的强调色（见 10.3） |
+| 25 | 玻璃下自己画的文字看不清 | 写死黑 / 白或深灰，没跟着自适应翻色 | 用 `PluginTone.DrawText`；语义色用 `DrawAccentText`（见 10.3） |
 | 26 | 插件底色把岛上文字衬没了 | 拿 `Theme.BackgroundColor` 当对比度依据 | 玻璃下它 alpha 为 0，没有可用底色（见 10.2） |
+| 27 | 同一块面板左半边字清楚、右半边糊 | 整块面板只用一个 `Theme.TextColor`，没按元素判 | 每段文字改用 `PluginTone.DrawText`（见 10.3） |
+| 28 | 插件文字黑白和自己的底不一致 | 文字画在不透明实心按钮上却仍用玻璃网格采样 | 实心按钮上的文字保留原对比色，别用 `PluginTone` |
 
 ---
 
@@ -1343,6 +1393,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 刷新 | `IDisposable ScheduleRefresh(TimeSpan, Action)` | 开放 |
 | 交互 | `RequestRedraw()` | 空操作 |
 | 交互 | `OpenDetailPage(id)` / `TryOpenDetailPage(id)` / `CloseDetailPage()` / `ToggleDetailPage(id)` | 开放 |
+| 交互 | `CloseLiveWindowDetailPage()` | 开放（收起实况窗气泡展开的浮动面板；没有展开时是空操作） |
 | 布局 | `InvalidateWidgetLayout()` | 开放 |
 | 布局 | `GetPluginRowBudget()` / `GetSlotBudget(widgetId)` | 开放 |
 | 窗口 | `CreateWindow(title, w, h)` | 开放 |
@@ -1437,6 +1488,8 @@ class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClic
 ```
 
 > `RenderTheme.TextColor` / `SubTextColor` 在液态玻璃下**逐帧自适应黑白**（白壁纸→黑字，其余→白字，阈值见 10.3），必须每帧现取、不能缓存；`BackgroundColor` 在玻璃材质下 alpha 为 0，没有可用底色。
+>
+> 逐元素（每段文字按自己下方底色分别判）用 `NotchPeninsula.Plugins.PluginTone`：`DrawText` / `DrawAccentText` / `ColorFor` / `LuminanceAt` / `IsLightAt` / `IsAvailable`，用法见 [10.3](#103-文字颜色是逐元素自适应的实体--亚克力--液态玻璃)。
 
 ### 未开放的接口（定义了但没接线）
 

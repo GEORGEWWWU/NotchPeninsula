@@ -244,6 +244,19 @@ public interface IPluginHost
 
     void CloseDetailPage();
 
+    /// <summary>
+    /// 收起「实况窗详情页」—— 实况窗气泡左右键展开的那块浮动面板（没有展开时是空操作）。
+    ///
+    /// <para>岛内详情页用 <see cref="CloseDetailPage"/>；实况窗面板在岛外、走的是另一套
+    /// 面板生命周期，所以单独给一个入口。同一个 <see cref="IDetailPage"/> 实例可能既在岛内
+    /// 展开、又被实况窗复用，插件分不清当前是哪种 —— 关闭动作里把两个都调一遍即可，
+    /// 没开着的那个自然是空操作。</para>
+    ///
+    /// <para>默认实现为空：旧宿主没有这个成员时，插件源码不用改也能编译；
+    /// 运行时若宿主确实不支持，调用会抛 <see cref="MissingMethodException"/>，插件侧按需 try/catch。</para>
+    /// </summary>
+    void CloseLiveWindowDetailPage() { }
+
     bool ToggleDetailPage(string widgetId);
 
     // 布局调度

@@ -545,10 +545,34 @@ namespace NotchPeninsula
             canvas.DrawLine(cx, tipY, cx + 4f, tipY - dir * 4.5f, stroke);
         }
 
-        private void DrawDisplayItem(SKCanvas canvas, float y, string name, bool isBuiltin, bool isShown, float hoverP,
-            bool enabled, bool hoverUp, bool hoverDown, bool canUp, bool canDown)
+        private void DrawDragHandle(SKCanvas canvas, float slotX, float cy, bool hovered, bool enabled)
         {
-            if (enabled && hoverP > 0.01f)
+            var stroke = !enabled ? _sortArrowDisabledStroke
+                : hovered ? _sortArrowHoverStroke
+                : _sortArrowStroke;
+
+            if (hovered && enabled)
+            {
+                _dynamicFillPaint.Color = Overlay(26);
+                canvas.DrawRoundRect(new SKRect(slotX, cy - 11f, slotX + SORT_TRI_W, cy + 11f), 5, 5, _dynamicFillPaint);
+            }
+
+            // 三条横线（≡）：和上下箭头同一套线宽 / 颜色，一眼看出是「抓手」。
+            float cx = slotX + SORT_TRI_W / 2f;
+            for (int i = -1; i <= 1; i++)
+                canvas.DrawLine(cx - 4f, cy + i * 4f, cx + 4f, cy + i * 4f, stroke);
+        }
+
+        private void DrawDisplayItem(SKCanvas canvas, float y, string name, bool isBuiltin, bool isShown, float hoverP,
+            bool enabled, bool hoverUp, bool hoverDown, bool hoverDrag, bool dragging, bool canUp, bool canDown)
+        {
+            if (dragging)
+            {
+                // 拖动中的行：抬升一层底，和普通悬停区分开
+                _dynamicFillPaint.Color = Overlay(48);
+                canvas.DrawRoundRect(new SKRect(DISPLAY_ITEM_L, y, DISPLAY_ITEM_R, y + DISPLAY_ITEM_H), 6, 6, _dynamicFillPaint);
+            }
+            else if (enabled && hoverP > 0.01f)
             {
                 _dynamicFillPaint.Color = Overlay((byte)(28 * hoverP));
                 canvas.DrawRoundRect(new SKRect(DISPLAY_ITEM_L, y, DISPLAY_ITEM_R, y + DISPLAY_ITEM_H), 6, 6, _dynamicFillPaint);
@@ -575,7 +599,7 @@ namespace NotchPeninsula
             const string tag = "内置";
             float tagW = isBuiltin ? _subTextPaint.MeasureText(tag) + 14f : 0f;
             float textX = box.Right + 10f;
-            string shownName = TruncateText(name, _uiTextPaint, DISPLAY_MOVE_UP_X - 12f - textX - tagW);
+            string shownName = TruncateText(name, _uiTextPaint, DISPLAY_DRAG_X - 12f - textX - tagW);
             _uiTextPaint.Color = !enabled ? Neutral(100) : isShown ? _fgColor : Neutral(150);
             canvas.DrawText(shownName, textX, y + 20.5f, _uiTextPaint);
             _uiTextPaint.Color = _fgColor;
@@ -591,6 +615,7 @@ namespace NotchPeninsula
             }
 
             float cy = y + DISPLAY_ITEM_H / 2f;
+            DrawDragHandle(canvas, DISPLAY_DRAG_X, cy, hoverDrag || dragging, enabled);
             DrawMoveArrow(canvas, DISPLAY_MOVE_UP_X, cy, hoverUp, enabled && canUp, true);
             DrawMoveArrow(canvas, DISPLAY_MOVE_DOWN_X, cy, hoverDown, enabled && canDown, false);
         }
@@ -1001,6 +1026,8 @@ namespace NotchPeninsula
                 DrawDisplayItem(canvas, rowY, item.Name, item.IsBuiltin, item.IsShown,
                     listEnabled ? GetDisplayHoverProgress(slot) : 0f, listEnabled,
                     _hoveredDisplayMoveUp == i, _hoveredDisplayMoveDown == i,
+                    _hoveredDisplayDrag == i,
+                    (_displayDragActive && _displayDragRow == i) || _displayDragPendingRow == i,
                     PluginManager.Instance.CanMoveDisplay(item.Key, -1),
                     PluginManager.Instance.CanMoveDisplay(item.Key, 1));
             }
@@ -1380,7 +1407,9 @@ namespace NotchPeninsula
         // 页签：关于软件
         private void RenderTabAbout(SKCanvas canvas)
         {
-            const float centerX = 400f;
+            // 内容区中心（不是窗口中心）：左侧 186 起、右侧留 12，中心 = 387。
+            // 写死 400 会让整块关于页（图标/标题/链接）比卡片中心偏右约 13px。
+            const float centerX = (CONTENT_L + (WIDTH - CONTENT_RM)) / 2f;
             float startY = TITLE_BAR_HEIGHT + 30f;
 
             if (_appIconBitmap != null)
@@ -1402,20 +1431,26 @@ namespace NotchPeninsula
             canvas.DrawText(displayVersion, centerX, startY, _dynamicTextPaint);
             startY += 35f;
 
-            string[] links = ["检测更新", "项目仓库", "开发者"];
+            string[] links = ["检测更新", "项目仓库", "开发者", "项目主页"];
             _dynamicTextPaint.TextAlign = SKTextAlign.Left;
 
-            float spacing = 15f;
-            float totalWidth = _dynamicTextPaint.MeasureText(links[0]) + _dynamicTextPaint.MeasureText(links[1]) + _dynamicTextPaint.MeasureText(links[2]) + (spacing * 2);
+            const float spacing = 15f;
+            float totalWidth = 0f;
+            for (int i = 0; i < links.Length; i++)
+                totalWidth += _dynamicTextPaint.MeasureText(links[i]) + (i > 0 ? spacing : 0f);
             float currentX = centerX - (totalWidth / 2f);
 
             for (int i = 0; i < links.Length; i++)
             {
                 float textWidth = _dynamicTextPaint.MeasureText(links[i]);
+                _aboutLinkLeft[i] = currentX;
+                _aboutLinkRight[i] = currentX + textWidth;
                 _dynamicTextPaint.Color = _hoveredLinkIndex == i ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                 canvas.DrawText(links[i], currentX, startY, _dynamicTextPaint);
                 currentX += textWidth + spacing;
             }
+            _aboutLinkTop = startY - 14f;
+            _aboutLinkBottom = startY + 6f;
         }
 
         // 页签：个性化中心

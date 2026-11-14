@@ -90,14 +90,21 @@ namespace NotchPeninsula
                 int btnNextX = (int)geometry.AnchorRight - 30;
 
                 float prevNextY = (currentHeight - 10f) / 2f; float playPauseY = (currentHeight - 12f) / 2f;
+                _mediaIconPaint.Color = ToneColor(new SKRect(btnPrevX, 0, btnPrevX + 22, currentHeight), alpha);
                 DrawSvgPath(canvas, _mediaIconPaint, btnPrevX + 11, prevNextY, _prevPath);
+                _mediaIconPaint.Color = ToneColor(new SKRect(btnPlayX, 0, btnPlayX + 22, currentHeight), alpha);
                 DrawSvgPath(canvas, _mediaIconPaint, btnPlayX + (media.IsPlaying ? 10 : 11), playPauseY, media.IsPlaying ? _pausePath : _playPath);
+                _mediaIconPaint.Color = ToneColor(new SKRect(btnNextX, 0, btnNextX + 22, currentHeight), alpha);
                 DrawSvgPath(canvas, _mediaIconPaint, btnNextX + 11, prevNextY, _nextPath);
+                // 复原：下面别处还会用全局图标色
+                _mediaIconPaint.Color = _currentTextColor.WithAlpha(alpha);
             }
             else if (bars != null)
             {
                 float barWidth = 2f, spacing = 2.8f, maxH = 16f, totalBarWidth = 21.2f;
                 float spectrumX = geometry.AnchorRight - 16f - totalBarWidth;
+                _barPaint.Color = ToneColor(new SKRect(spectrumX, currentHeight / 2f - maxH / 2f,
+                    spectrumX + totalBarWidth, currentHeight / 2f + maxH / 2f), alpha);
                 for (int i = 0; i < 5; i++)
                 {
                     float h = Math.Max(2f, bars[i] * maxH); float y = (currentHeight - h) / 2f;
@@ -179,6 +186,8 @@ namespace NotchPeninsula
             {
                 float barWidth = 2.5f, spacing = 3.5f, maxH = 18f, totalBarWidth = 26.5f;
                 float startX = right - 20f - totalBarWidth;
+                _barPaint.Color = ToneColor(new SKRect(startX, coverY + 22f - maxH / 2f,
+                    startX + totalBarWidth, coverY + 22f + maxH / 2f), alpha);
                 for (int i = 0; i < 5; i++)
                 {
                     float h = Math.Max(2f, bars[i] * maxH);
@@ -193,13 +202,22 @@ namespace NotchPeninsula
             float scale = 1.6f;
             float playBtnY = btnY - 1.6f;
 
-            if (HoveredExpandedButton == 0) canvas.DrawCircle(centerX - 54f, btnY + 8f, 20f, _hoverCirclePaint);
-            if (HoveredExpandedButton == 1) canvas.DrawCircle(centerX + 1f, playBtnY + 9.6f, 20f, _hoverCirclePaint);
-            if (HoveredExpandedButton == 2) canvas.DrawCircle(centerX + 52f, btnY + 8f, 20f, _hoverCirclePaint);
+            void DrawControl(int index, float cx, float cy, float py, SKPath path)
+            {
+                var hit = new SKRect(cx - 12f, cy - 12f, cx + 12f, cy + 24f);
+                if (HoveredExpandedButton == index)
+                {
+                    _hoverCirclePaint.Color = ToneColor(hit, 25);
+                    canvas.DrawCircle(cx, py, 20f, _hoverCirclePaint);
+                }
+                _mediaIconPaint.Color = ToneColor(hit, alpha);
+                DrawSvgPath(canvas, _mediaIconPaint, cx, cy, path, scale);
+            }
 
-            DrawSvgPath(canvas, _mediaIconPaint, centerX - 60f, btnY, _prevPath, scale);
-            DrawSvgPath(canvas, _mediaIconPaint, centerX - 7f, playBtnY, media.IsPlaying ? _pausePath : _playPath, scale);
-            DrawSvgPath(canvas, _mediaIconPaint, centerX + 45f, btnY, _nextPath, scale);
+            DrawControl(0, centerX - 60f, btnY, btnY + 8f, _prevPath);
+            DrawControl(1, centerX - 7f, playBtnY, playBtnY + 9.6f, media.IsPlaying ? _pausePath : _playPath);
+            DrawControl(2, centerX + 45f, btnY, btnY + 8f, _nextPath);
+            _mediaIconPaint.Color = _currentTextColor.WithAlpha(alpha);
 
             if (TimelineVisible(media) && currentHeight > TL_MIN_HEIGHT)
                 DrawTimeline(canvas, media, left, right, currentHeight, alpha);

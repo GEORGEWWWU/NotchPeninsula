@@ -138,9 +138,16 @@ namespace NotchPeninsula
 
         private static bool _tonePrimed;
 
+        /// <summary>本帧岛体亮度网格的平均值（0..1）。亚克力/实体用它决定整块调色，玻璃仍用中心亮度。</summary>
+        private static float _toneGridAverage;
+
         private static float _toneDstL, _toneDstT, _toneDstW, _toneDstH;
 
         private static float _toneSrcL, _toneSrcT, _toneSrcW, _toneSrcH;
+
+        // 建立网格那一刻的画布矩阵。插件可能自己 Translate/Scale 后再排版，查询时用
+        // 「当前矩阵 → 基准矩阵的逆」把文字矩形换回网格坐标系（见 PluginTone）。
+        private static SKMatrix _toneBase = SKMatrix.Identity;
 
         // 实况窗详情页面板是**岛外**的另一块玻璃（背的是另一块桌面），不能借岛体那张网格判黑白。
         // 面板绘制期间把上下文切到这套字段，文字自动变色的逻辑完全复用同一份采样 / 判定代码。
@@ -156,62 +163,200 @@ namespace NotchPeninsula
 
         private static float _panelToneDstL, _panelToneDstT, _panelToneDstW, _panelToneDstH;
 
+        private static SKMatrix _panelToneBase = SKMatrix.Identity;
+
         // 面板绘制期间临时切到「面板整体明暗」的全局调色，画完原样还回去。
         private static bool _panelPaletteOverridden;
 
         private static SKColor _panelSavedText, _panelSavedSub, _panelSavedIcon, _panelSavedHover;
 
         // 元素级判定阈值：亮过它就用黑字。
-        // 全局那套是 0.78/0.70 的滞回，这里单值就够 —— 网格本身已经平滑过，
-        // 而且同一帧里相邻元素应该看到同一个判断，迟滞的「各自记状态」反而会造成黑白不一致。
-        private const float ToneLightAt = 0.74f;
+        // 全局那套仍是 0.78/0.70 的滞回；元素级单值就够 —— 网格本身已经平滑过。
+        // 0.55 太低：深色面板（压在深色标题栏上的玻璃）亮度常在 0.55~0.60，会被误判成浅底、
+        // 黑字压深底；0.62 又会让浅灰面板（玻璃补偿后 0.60~0.62）继续白字。0.60 是两者的分界。
+        private const float ToneLightAt = 0.60f;
+
+        // ---- 公开给插件的逐元素明暗查询（PluginTone 用） ----
+
+        /// <summary>当前帧是否有可用的亮度网格（三种材质都有：实体填纯色、亚克力/玻璃采样背板）。</summary>
+        internal static bool PluginToneReady => _toneUsePanel ? _panelToneReady : _toneReady;
+
+        /// <summary>本帧岛体网格平均亮度（0..1）；没有网格时 0。</summary>
+        internal static float ToneGridAverage => _toneGridAverage;
+
+        /// <summary>当前是否在实况窗面板绘制期（PluginTone 诊断用）。</summary>
+        internal static bool PluginTonePanel => _toneUsePanel;
+
+        /// <summary>面板网格是否可用（PluginTone 诊断用）。</summary>
+        internal static bool PluginTonePanelReady => _panelToneReady;
+
+        /// <summary>元素级判亮阈值：玻璃亮度高于它按浅底（黑字）处理。</summary>
+        internal const float PluginToneLightAt = ToneLightAt;
 
         /// <summary>
-        /// 本帧重新采样「文字底色亮度网格」。必须在玻璃画完之后、画文字之前调一次。
-        /// 非玻璃材质 / 背板为空 / 取不到像素时置 _toneReady=false，所有元素回落到全局文字色。
+        /// 插件传入的矩形是它自己画布坐标系里的（可能被 Translate/Scale 过）。
+        /// 先用当前画布矩阵映射到宿主坐标，再用建网格时的基准矩阵逆映射回网格坐标。
+        /// 没有网格时返回 -1，调用方回落到主题色。
         /// </summary>
-        private static void BeginToneGrid(SKImage? backdrop, SKRect dst, SKRect src)
+        internal static float PluginToneAt(SKCanvas canvas, SKRect area)
         {
-            _toneReady = SampleToneGrid(backdrop, dst, src, _toneGrid, _toneGridPrev, ref _tonePrimed);
-            if (!_toneReady) return;
-            _toneDstL = dst.Left; _toneDstT = dst.Top; _toneDstW = dst.Width; _toneDstH = dst.Height;
-            _toneSrcL = src.Left; _toneSrcT = src.Top; _toneSrcW = src.Width; _toneSrcH = src.Height;
+            if (!PluginToneReady) return -1f;
+
+            // 实况窗详情页面板的网格本来就是「面板局部坐标」：页面在那里排版用的也是局部坐标，
+            // 直接查即可。再经过画布矩阵映射反而会把局部坐标变成屏幕绝对坐标，落到网格外。
+            if (_toneUsePanel) return ToneAt(area);
+
+            SKRect mapped = canvas.TotalMatrix.MapRect(area);
+            SKMatrix b = _toneBase;
+            if (b.TryInvert(out SKMatrix inv)) mapped = inv.MapRect(mapped);
+            return ToneAt(mapped);
         }
 
         /// <summary>
-        /// 实况窗详情页：面板在岛外、背的是另一块桌面，用自己的玻璃亮度建一张同规格的网格。
+        /// 本帧重新采样「文字底色亮度网格」。三种材质都建：
+        ///   · 实体 —— 主题纯色，整张网格填同一个亮度；
+        ///   · 亚克力 —— 背板 + 主岛涂层（按涂层 alpha 混合）；
+        ///   · 玻璃 —— 背板 + 玻璃明度 / 雾度着色。
+        /// 背板为空（玻璃 / 亚克力）时置 _toneReady=false，所有元素回落到全局文字色。
+        /// </summary>
+        private static void BeginToneGrid(SKCanvas canvas, SKImage? backdrop, SKRect dst, SKRect src)
+        {
+            _toneBase = canvas.TotalMatrix;
+            _toneGridAverage = 0f;
+            _toneReady = SampleToneGrid(backdrop, dst, src, _toneGrid, _toneGridPrev, ref _tonePrimed,
+                IslandMaterialIndex);
+            if (!_toneReady) return;
+            _toneDstL = dst.Left; _toneDstT = dst.Top; _toneDstW = dst.Width; _toneDstH = dst.Height;
+            _toneSrcL = src.Left; _toneSrcT = src.Top; _toneSrcW = src.Width; _toneSrcH = src.Height;
+            _toneGridAverage = Average(_toneGrid);
+        }
+
+        /// <summary>
+        /// 实况窗详情页：面板在岛外、背的是另一块桌面，用自己的亮度建一张同规格的网格。
         /// 采样 / 平滑 / 着色补偿全部复用 <see cref="SampleToneGrid"/>，判定仍走 <see cref="ToneText"/>。
         /// </summary>
-        internal static void BeginPanelToneGrid(SKImage? backdrop, SKRect dst, SKRect src)
+        internal static void BeginPanelToneGrid(SKCanvas canvas, SKImage? backdrop, SKRect dst, SKRect src)
         {
+            _panelToneBase = canvas.TotalMatrix;
             _toneUsePanel = false;
-            _panelToneReady = SampleToneGrid(backdrop, dst, src, _panelToneGrid, _panelToneGridPrev, ref _panelTonePrimed);
-            if (!_panelToneReady) return;
+            _panelToneReady = SampleToneGrid(backdrop, dst, src, _panelToneGrid, _panelToneGridPrev,
+                ref _panelTonePrimed, IslandMaterialIndex);
+            if (!_panelToneReady)
+            {
+                // 面板网格建不起来（背板映射失败 / 没抓到像素）时也必须把「面板作用域」打开：
+                // 否则 PluginTone 会退到主岛网格，把面板局部坐标当岛体坐标查，颜色完全随机。
+                bool hasGlassLum = IslandAnyGlass
+                    && (IslandLiquidGlass2 ? LiquidGlass2.HasLuminance : LiquidGlass.HasLuminance);
+                float lum = hasGlassLum
+                    ? (IslandLiquidGlass2 ? LiquidGlass2.GlassLuminance : LiquidGlass.GlassLuminance) / 255f
+                    : Luminance(_bgPaint.Color);
+                lum = Math.Clamp(lum, 0f, 1f);
+                for (int i = 0; i < _panelToneGrid.Length; i++) _panelToneGrid[i] = lum;
+                Array.Copy(_panelToneGrid, _panelToneGridPrev, _panelToneGrid.Length);
+                _panelTonePrimed = true;
+                _panelToneReady = true;
+            }
 
             _panelToneDstL = dst.Left; _panelToneDstT = dst.Top; _panelToneDstW = dst.Width; _panelToneDstH = dst.Height;
             _toneUsePanel = true;
 
-            // 进度条 / 播放键这些「不逐字判」的元素跟面板整体明暗走：
-            // 否则亮玻璃上白条白图标照样看不见（文字有逐元素网格兜着，它们没有）。
-            float sum = 0f;
-            for (int i = 0; i < _panelToneGrid.Length; i++) sum += _panelToneGrid[i];
-            bool light = sum / _panelToneGrid.Length > ToneLightAt;
+            ApplyPanelPaletteAverage(Average(_panelToneGrid));
+        }
 
+        /// <summary>
+        /// 实况窗面板专用：直接采样**合成后的玻璃位图**，用于内置媒体面板。
+        /// 背板映射只反映桌面原样，玻璃合成（尤其上半压在深色标题栏上）会把实际明暗改掉；
+        /// 位图就是用户看到的那张图，逐格采样最准。
+        /// </summary>
+        internal static void BeginPanelToneGridBitmap(SKCanvas canvas, SKBitmap glass, SKRect dst)
+        {
+            _panelToneBase = canvas.TotalMatrix;
+            _toneUsePanel = false;
+            _panelToneReady = false;
+
+            if (dst.Width < 4f || dst.Height < 4f) return;
+
+            using var pm = glass.PeekPixels();
+            if (pm == null) return;
+            IntPtr basePtr = pm.GetPixels();
+            if (basePtr == IntPtr.Zero) return;
+
+            SKColorType ct = pm.ColorType;
+            if (ct != SKColorType.Bgra8888 && ct != SKColorType.Rgba8888) return;
+            int bOff = ct == SKColorType.Bgra8888 ? 0 : 2;
+            int rOff = ct == SKColorType.Bgra8888 ? 2 : 0;
+            int stride = pm.RowBytes, pw = pm.Width, ph = pm.Height;
+            if (pw < 1 || ph < 1) return;
+
+            bool hadPrev = _panelTonePrimed;
+            for (int gy = 0; gy < ToneGridY; gy++)
+            {
+                int py = Math.Clamp((int)((gy + 0.5f) / ToneGridY * ph), 0, ph - 1);
+                IntPtr row = basePtr + py * stride;
+                for (int gx = 0; gx < ToneGridX; gx++)
+                {
+                    int px = Math.Clamp((int)((gx + 0.5f) / ToneGridX * pw), 0, pw - 1);
+                    int i = px * 4;
+                    float b = Marshal.ReadByte(row, i + bOff);
+                    float g = Marshal.ReadByte(row, i + 1);
+                    float r = Marshal.ReadByte(row, i + rOff);
+                    float lum = (0.213f * r + 0.715f * g + 0.072f * b) * (1f / 255f);
+
+                    int idx = gy * ToneGridX + gx;
+                    _panelToneGrid[idx] = hadPrev
+                        ? _panelToneGridPrev[idx] + (lum - _panelToneGridPrev[idx]) * 0.35f
+                        : lum;
+                }
+            }
+
+            Array.Copy(_panelToneGrid, _panelToneGridPrev, _panelToneGrid.Length);
+            _panelTonePrimed = true;
+            _panelToneReady = true;
+            _panelToneDstL = dst.Left; _panelToneDstT = dst.Top; _panelToneDstW = dst.Width; _panelToneDstH = dst.Height;
+            _toneUsePanel = true;
+
+            ApplyPanelPalette(Average(_panelToneGrid));
+        }
+
+        /// <summary>面板绘制期间，插件文字统一取面板整体明暗（含滞回）。</summary>
+        internal static SKColor PanelToneText(byte alpha, bool sub)
+            => (sub ? _currentSubTextColor : _currentTextColor).WithAlpha(alpha);
+
+        /// <summary>面板调色滞回：只有明确跨过 0.65 / 0.55 才翻转，挡住平均亮度抖动。</summary>
+        private static bool _panelPaletteLight;
+        private static bool _panelPaletteKnown;
+
+        private static void ApplyPanelPaletteAverage(float average)
+        {
+            bool light;
+            if (!_panelPaletteKnown)
+            {
+                light = average > ToneLightAt;
+                _panelPaletteKnown = true;
+            }
+            else if (_panelPaletteLight && average < ToneLightAt - 0.05f) light = false;
+            else if (!_panelPaletteLight && average > ToneLightAt + 0.05f) light = true;
+            else light = _panelPaletteLight;
+
+            _panelPaletteLight = light;
             _panelSavedText = _currentTextColor;
             _panelSavedSub = _currentSubTextColor;
             _panelSavedIcon = _mediaIconPaint.Color;
             _panelSavedHover = _hoverCirclePaint.Color;
-
             _currentTextColor = light ? SKColors.Black : SKColors.White;
-            _currentSubTextColor = light ? new SKColor(80, 80, 80) : new SKColor(200, 200, 200);
+            _currentSubTextColor = light ? new SKColor(55, 55, 55) : new SKColor(180, 180, 180);
             _mediaIconPaint.Color = _currentTextColor;
             _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
             _panelPaletteOverridden = true;
         }
 
+        /// <summary>面板调色（ApplyPanelPalette 的旧入口名，保留给位图采样路径）。</summary>
+        private static void ApplyPanelPalette(float average) => ApplyPanelPaletteAverage(average);
+
         internal static void EndPanelToneGrid()
         {
             _toneUsePanel = false;
+            _panelPaletteKnown = false;
             if (!_panelPaletteOverridden) return;
             _panelPaletteOverridden = false;
             _currentTextColor = _panelSavedText;
@@ -221,15 +366,33 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 把背板上的一块矩形降采样成 24×6 亮度网格（岛体 / 实况窗面板共用同一份采样与平滑）。
-        /// 返回 false = 非玻璃材质 / 背板为空 / 取不到像素，调用方回落到全局文字色。
+        /// 把一块底色降采样成 24×6 亮度网格（岛体 / 实况窗面板共用同一份采样与平滑）。
+        /// 三种材质各有各的「成品亮度」算法：
+        ///   · 实体（material = 0）：主题纯色，整张网格填同一个亮度；
+        ///   · 亚克力（1）：背板像素按涂层 alpha 与主题底色混合；
+        ///   · 玻璃（2 / 3）：背板像素乘明度补偿、再掺玻璃雾度（v1 / v2 各用自己的参数）。
+        /// 返回 false = 玻璃 / 亚克力拿不到背板（或像素格式不支持），调用方回落到全局文字色。
         /// </summary>
         private static bool SampleToneGrid(SKImage? backdrop, SKRect dst, SKRect src,
-            float[] grid, float[] prev, ref bool primed)
+            float[] grid, float[] prev, ref bool primed, int material)
         {
+            // primed 表示「上一帧已经有网格」；先取出来再清，否则下面的插值永远走不到。
+            bool hadPrev = primed;
             primed = false;
-            if (!IslandAnyGlass || backdrop == null) return false;
-            if (dst.Width < 4f || dst.Height < 4f || src.Width < 4f || src.Height < 4f) return false;
+            if (dst.Width < 4f || dst.Height < 4f) return false;
+
+            // 实体：底就是主题纯色，不需要背板。整张网格同亮度，逐元素查询仍然可用。
+            if (material == 0)
+            {
+                float lum = Luminance(_bgPaint.Color);
+                for (int i = 0; i < grid.Length; i++)
+                    grid[i] = hadPrev ? prev[i] + (lum - prev[i]) * 0.35f : lum;
+                Array.Copy(grid, prev, grid.Length);
+                primed = true;
+                return true;
+            }
+
+            if (backdrop == null || src.Width < 4f || src.Height < 4f) return false;
 
             using var pm = backdrop.PeekPixels();
             if (pm == null) return false;
@@ -244,10 +407,23 @@ namespace NotchPeninsula
             int pw = pm.Width, ph = pm.Height;
             if (pw < 1 || ph < 1) return false;
 
-            // 玻璃自己的着色（明度补偿 / 雾度掺白）也要算进来 —— 判的是「玻璃成品」多亮，
-            // 不是桌面原样多亮，否则暗壁纸在明度拉高之后仍会被判成暗底。
-            float dark = LiquidGlass.Darkening;
-            float tint = LiquidGlass.TintAlpha;
+            bool acrylic = material == 1;
+
+            // 亚克力：背板 + 主岛涂层（_bgPaint 的 RGB 与 alpha）。
+            // 玻璃：背板 + 明度补偿 / 雾度掺白。当前只有一档液态玻璃（2.0 已下线，分支保留但不会命中）。
+            float coatAlpha = 0f, coatLum = 0f;
+            float dark = 1f, tint = 0f;
+            if (acrylic)
+            {
+                SKColor coat = _bgPaint.Color;
+                coatAlpha = coat.Alpha * (1f / 255f);
+                coatLum = Luminance(coat);
+            }
+            else
+            {
+                dark = IslandLiquidGlass2 ? LiquidGlass2.Darkening : LiquidGlass.Darkening;
+                tint = IslandLiquidGlass2 ? LiquidGlass2.TintAlpha : LiquidGlass.TintAlpha;
+            }
 
             for (int gy = 0; gy < ToneGridY; gy++)
             {
@@ -263,12 +439,20 @@ namespace NotchPeninsula
                     float g = Marshal.ReadByte(row, i + 1);
                     float r = Marshal.ReadByte(row, i + rOff);
                     float lum = (0.213f * r + 0.715f * g + 0.072f * b) * (1f / 255f);
-                    lum *= dark;
-                    lum += (1f - lum) * tint;
+
+                    if (acrylic)
+                    {
+                        lum = lum * (1f - coatAlpha) + coatLum * coatAlpha;
+                    }
+                    else
+                    {
+                        lum *= dark;
+                        lum += (1f - lum) * tint;
+                    }
                     if (lum < 0f) lum = 0f; else if (lum > 1f) lum = 1f;
 
                     int idx = gy * ToneGridX + gx;
-                    grid[idx] = primed
+                    grid[idx] = hadPrev
                         ? prev[idx] + (lum - prev[idx]) * 0.35f
                         : lum;
                 }
@@ -279,8 +463,20 @@ namespace NotchPeninsula
             return true;
         }
 
+        /// <summary>BT.601 亮度，0..1。</summary>
+        private static float Luminance(SKColor c)
+            => (0.213f * c.Red + 0.715f * c.Green + 0.072f * c.Blue) * (1f / 255f);
+
+        private static float Average(float[] values)
+        {
+            if (values.Length == 0) return 0f;
+            float sum = 0f;
+            for (int i = 0; i < values.Length; i++) sum += values[i];
+            return sum / values.Length;
+        }
+
         /// <summary>取某个矩形覆盖的网格平均亮度；没有网格时返回 -1（调用方回落到全局判定）。</summary>
-        private static float ToneAt(SKRect area)
+        internal static float ToneAt(SKRect area)
         {
             bool panel = _toneUsePanel;
             bool ready = panel ? _panelToneReady : _toneReady;
@@ -316,6 +512,24 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 非文字元素（图标 / 圆点 / 进度条 / 胶囊底）的逐元素明暗：
+        /// 亮底给深色、暗底给浅色；没有网格时回落到当前的全局主 / 副文字色。
+        /// </summary>
+        private static SKColor ToneColor(SKRect area, byte alpha, bool sub = false)
+        {
+            SKColor fallback = sub ? _currentSubTextColor : _currentTextColor;
+            bool ready = _toneUsePanel ? _panelToneReady : _toneReady;
+            if (!ready || area.Width <= 0f || area.Height <= 0f) return fallback.WithAlpha(alpha);
+
+            float t = ToneAt(area);
+            if (t < 0f) return fallback.WithAlpha(alpha);
+
+            return t > ToneLightAt
+                ? (sub ? new SKColor(55, 55, 55) : SKColors.Black).WithAlpha(alpha)
+                : (sub ? new SKColor(180, 180, 180) : SKColors.White).WithAlpha(alpha);
+        }
+
+        /// <summary>
         /// 某个文字元素该用什么颜色：亮底黑字、暗底白字，逐个元素独立判定。
         /// 拿不到网格（实体/亚克力、背板为空）时回落到全局主题色。
         /// </summary>
@@ -324,20 +538,30 @@ namespace NotchPeninsula
             // 次级文字的画笔（副标题/时间轴/日期/紧凑模式应用名）自动走灰色档，调用方不用逐个标注
             if (!sub && IsSecondaryPaint(paint)) sub = true;
             SKColor fallback = sub ? _currentSubTextColor : _currentTextColor;
+
+            // 实况窗详情面板：面板上下可能一半深一半浅，仍按每段文字自己的矩形判；
+            // 整块面板的平均调色只用于图标 / 进度条这些「不逐字判」的元素。
             bool ready = _toneUsePanel ? _panelToneReady : _toneReady;
             if (!ready || string.IsNullOrEmpty(text)) return fallback.WithAlpha(alpha);
 
             float w = paint.MeasureText(text);
             if (w <= 0f) return fallback.WithAlpha(alpha);
             SKFontMetrics fm = paint.FontMetrics;
-            var area = new SKRect(x, baseline + fm.Ascent, x + w, baseline + fm.Descent);
+
+            // 只取字形实际高度的窄带（基线 -0.80×字号 ~ 基线 +0.20×字号），不要用完整
+            // ascent/descent：11.5px 的「下载 / 上传」紧贴深色标题栏下沿，完整字体框会把
+            // 上方那格深色一起平均进来，于是被误判成深底、这几个字一直不变色。
+            float size = paint.TextSize;
+            float top = baseline + Math.Max(fm.Ascent, -size * 0.80f);
+            float bottom = baseline + Math.Min(fm.Descent, size * 0.20f);
+            var area = new SKRect(x, top, x + w, bottom);
 
             float t = ToneAt(area);
             if (t < 0f) return fallback.WithAlpha(alpha);
 
             if (t > ToneLightAt)
-                return sub ? new SKColor(70, 70, 70).WithAlpha(alpha) : SKColors.Black.WithAlpha(alpha);
-            return sub ? new SKColor(205, 205, 205).WithAlpha(alpha) : SKColors.White.WithAlpha(alpha);
+                return sub ? new SKColor(55, 55, 55).WithAlpha(alpha) : SKColors.Black.WithAlpha(alpha);
+            return sub ? new SKColor(180, 180, 180).WithAlpha(alpha) : SKColors.White.WithAlpha(alpha);
         }
 
         /// <summary>根据元素自己的底色选黑白再画 —— 内置文字全部走这里，别直接 canvas.DrawText。</summary>
@@ -359,12 +583,12 @@ namespace NotchPeninsula
             {
                 isLight = SystemIsLightTheme;
             }
-            // 液态玻璃：明暗不再由 ThemeMode 决定 —— 玻璃的底是桌面，文字黑白跟着玻璃实际亮度走
-            // （Renderer.Draw 里逐帧按玻璃亮度判，翻转时回调本方法）。
+            // 液态玻璃 / 亚克力：明暗不再由 ThemeMode 决定 —— 玻璃的底是桌面，亚克力的底是
+            // 模糊背板 + 涂层，文字黑白跟着实际底色走（Renderer.Draw 里逐帧判，翻转时回调本方法）。
             // 判定还没出来（首帧抓屏之前）时沿用 ThemeMode 兜底，避免启动头一瞬文字色跳变。
             // ⚠️ 这里不能再看 AcrylicBackdrop 是否为 null：背板在隐藏 / 停顿抓屏时也会是 null，
             //    那样文字会在玻璃文字色与主题色之间来回闪。
-            if (IslandAnyGlass && _glassTextKnown)
+            if ((IslandAnyGlass || IslandAcrylic) && _glassTextKnown)
                 isLight = _glassTextIsLight;
 
             // 预计算颜色，避免在渲染树中生成新对象

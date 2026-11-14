@@ -585,7 +585,7 @@ namespace NotchPeninsula
                     UpdateGlassTextTone(gl, glValid);
 
                     // 元素级明暗网格：本帧把背板采样成 24×6 的亮度表，下面每个文字元素按自己的矩形查
-                    BeginToneGrid(backdrop, toneDst, toneSrc);
+                    BeginToneGrid(canvas, backdrop, toneDst, toneSrc);
 
                     _coatPaint.Color = backdrop == null
                         ? SKColors.Black.WithAlpha(45)
@@ -594,7 +594,14 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    BeginToneGrid(null, default, default);   // 非玻璃：清掉上一帧的网格，文字回落主题色
+                    // 亚克力 / 实体也要建网格：实体填主题纯色，亚克力采样背板 + 涂层。
+                    BeginToneGrid(canvas, backdrop, toneDst, toneSrc);
+
+                    // 亚克力没有玻璃那套「玻璃成品中心亮度」，用网格平均值决定整块调色：
+                    // 图标 / 进度条这些不逐字判的元素也要跟着背板深浅走。
+                    if (IslandAcrylic && PluginToneReady)
+                        UpdateGlassTextTone((int)MathF.Round(ToneGridAverage * 255f), true);
+
                     canvas.DrawPath(_bgPath, _bgPaint);
                 }
 
