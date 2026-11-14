@@ -121,7 +121,6 @@ public static class LiveWindowHost
     private const float DefaultSpinRevPerSecond = 0.12f;
 
     private const float SpawnSeconds = 0.5f;
-    private const float SpawnFadeSeconds = 0.12f;
     private const float SplitSeconds = 0.55f;
     private const float ExitSeconds = 0.5f;
     private const float PanelOpenSeconds = 0.34f;
@@ -541,9 +540,11 @@ public static class LiveWindowHost
             }
 
             int attached = AttachedCountLocked();
+            // 入场把出场动画反放：起点就是出场动画的终点（岛体左缘），再平滑滑到自己的槽位，
+            // 这样「吐出来」的轨迹和「吞进去」的轨迹是同一段，只是方向相反。
             float spawnFrom = attached > 0
                 ? _lastIslandLeft - IslandGap - BubbleDiameter / 2f
-                : _lastIslandLeft - IslandGap;
+                : _lastIslandLeft + BubbleDiameter * 0.02f;
 
             // 母气泡：分裂动画要让「原有那个圆」一起参与（两个圆同时缩到 R/√2 再分开长大）。
             Entry? parent = null;
@@ -966,9 +967,11 @@ public static class LiveWindowHost
 
                     e.SpawnElapsed = Math.Min(SpawnSeconds, e.SpawnElapsed + dt);
                     e.SpawnProgress = (float)Math.Clamp(e.SpawnElapsed / SpawnSeconds, 0, 1);
-                    e.Scale = 1f;   // 缩放交给渲染器的细胞分裂半径曲线（R/√2 → R），这里只做淡入
-                    float fade = (float)Math.Clamp(e.SpawnElapsed / SpawnFadeSeconds, 0, 1);
-                    e.Alpha = 255f * fade;
+                    e.Scale = 1f;   // 缩放交给渲染器的分裂半径曲线，这里只做淡入
+                    // 入场 = 出场「吞噬」膜动画的反放：前半段气泡藏在膜里（透明度按出场的 α 曲线倒着走），
+                    // 膜收回时才露出来 —— 没有单独的淡入动画。
+                    double reversedFade = Math.Clamp((1.0 - e.SpawnProgress - 0.55) / 0.45, 0.0, 1.0);
+                    e.Alpha = (float)(255.0 * (1.0 - reversedFade * reversedFade));
 
                     e.Hovered = mouseX >= 0f && MathF.Abs(mouseX - e.X) <= diameter / 2f
                                 && mouseY >= bubbleTop && mouseY <= bubbleTop + diameter;

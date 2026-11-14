@@ -63,6 +63,8 @@ public static class LiveWindowRenderer
     private static readonly SKPath _clipPath = new();
     // 气泡进度环带（外圆 - 内圆，EvenOdd）：材质只铺在这一圈，环内内容区保持透明。
     private static readonly SKPath _ringPath = new();
+    private static readonly SKPath _mouthPath = new();
+    private static readonly SKPath _lipPath = new();
 
     public static void Draw(SKCanvas canvas)
     {
@@ -92,8 +94,29 @@ public static class LiveWindowRenderer
             finally { RestoreTo(canvas, depth); }
         }
 
-        // 出入都是同一段「细胞分裂」动画：生成 = 半径 R/√2 → R（从岛体边缘分裂出来），
-        // 退出 = 反向 R → R/√2（两圆合并缩回岛体）。半径曲线在 DrawBubble 里，竖向位移由宿主给。
+        // 「宿主吞噬」膜动画：这就是实况窗的出入场动画本体（用户定义）。
+        // 退出正向播：岛主张嘴把气泡吞进去；生成把它反放：岛体把气泡吐出来。
+        for (int i = 0; i < frame.Count; i++)
+        {
+            var item = frame.Items[i];
+            float t;
+            if (item.Exiting)
+            {
+                if (item.ExitProgress >= 1f) continue;
+                t = item.ExitProgress;
+            }
+            else
+            {
+                if (item.SpawnProgress >= 1f) continue;
+                t = 1f - item.SpawnProgress;   // 反放
+            }
+
+            int depth = canvas.SaveCount;
+            try { DrawHostMouth(canvas, in item, in theme, lightBubble, global, t); }
+            catch (Exception ex) { Logger.Error("[实况窗] 宿主吞噬动画绘制异常", ex); }
+            finally { RestoreTo(canvas, depth); }
+        }
+
         if (frame.PanelVisible && frame.PanelAlpha > 0)
         {
             int depth = canvas.SaveCount;
@@ -101,6 +124,64 @@ public static class LiveWindowRenderer
             catch (Exception ex) { Logger.Error("[实况窗] 展开面板绘制异常", ex); }
             finally { RestoreTo(canvas, depth); }
         }
+    }
+
+    /// <summary>
+    /// 「宿主吞噬」膜动画（实况窗出入场动画定义）：根扎在岛体左缘的上下两点，两条对称曲线向左伸出，
+    /// 围住气泡后合拢（手稿里那种「一个圆 + 两条膜曲线」），最后整只口缩回岛体。
+    /// 画在气泡之后，膜内填岛体底色，合拢时正好盖住气泡。
+    /// <para>
+    /// <paramref name="t"/> = 出场进度 0→1（吞进去）；入场时调用方传 1 - 生成进度，
+    /// 同一段动画反放（岛体把气泡吐出来）。不用另做淡入淡出。
+    /// </para>
+    /// </summary>
+    private static void DrawHostMouth(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme,
+        bool lightBubble, float global, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        if (t <= 0.02f) return;
+
+        float R = item.Rect.Width * 0.5f;
+        float edgeX = item.MergeTargetX;
+        float cy = item.Rect.MidY;
+        float bubbleCx = item.Rect.MidX;
+
+        float reach = SmoothStep01(Math.Clamp(t / 0.58f, 0f, 1f));     // 膜向左伸出的比例
+        float close = SmoothStep01(Math.Clamp((t - 0.5f) / 0.34f, 0f, 1f)); // 合拢比例
+        float retract = Math.Clamp((t - 0.82f) / 0.18f, 0f, 1f);       // 整口缩回岛体
+
+        float tipX = edgeX - R * 0.15f + (bubbleCx - R * 0.95f - (edgeX - R * 0.15f)) * reach + retract * R * 1.5f;
+        float tipY = R * (1.02f - 0.74f * close);   // 口径：先张大，再合拢
+        float edgeY = R * 1.05f;
+        float alpha = global * (1f - retract * 0.92f);
+        if (alpha <= 0.01f || tipY < 0.5f) return;
+
+        SKColor membrane = theme.BackgroundColor.Alpha > 8
+            ? theme.BackgroundColor
+            : (lightBubble ? SKColors.White : DarkBubbleColor);
+
+        // 膜内（吞下去的部分）：岛体底色，盖住气泡。
+        _mouthPath.Rewind();
+        _mouthPath.MoveTo(edgeX, cy - edgeY);
+        _mouthPath.CubicTo(edgeX - R * 1.35f, cy - R * 1.5f, tipX + R * 0.9f, cy - tipY, tipX, cy - tipY);
+        _mouthPath.CubicTo(tipX - R * 0.62f, cy - tipY * 0.58f, tipX - R * 0.62f, cy + tipY * 0.58f, tipX, cy + tipY);
+        _mouthPath.CubicTo(tipX + R * 0.9f, cy + tipY, edgeX - R * 1.35f, cy + R * 1.5f, edgeX, cy + edgeY);
+        _mouthPath.Close();
+        _fillPaint.Color = WithOpacity(membrane, alpha * 0.97f);
+        canvas.DrawPath(_mouthPath, _fillPaint);
+
+        // 两条膜曲线（手稿里的那两条线），只描边、不画收口线。
+        _lipPath.Rewind();
+        _lipPath.MoveTo(edgeX, cy - edgeY);
+        _lipPath.CubicTo(edgeX - R * 1.35f, cy - R * 1.5f, tipX + R * 0.9f, cy - tipY, tipX, cy - tipY);
+        _lipPath.CubicTo(tipX - R * 0.62f, cy - tipY * 0.58f, tipX - R * 0.62f, cy + tipY * 0.58f, tipX, cy + tipY);
+        _lipPath.CubicTo(tipX + R * 0.9f, cy + tipY, edgeX - R * 1.35f, cy + R * 1.5f, edgeX, cy + edgeY);
+
+        _strokePaint.StrokeWidth = MathF.Max(1.2f, R * 0.14f);
+        _strokePaint.StrokeCap = SKStrokeCap.Round;
+        _strokePaint.Color = WithOpacity(theme.TextColor, alpha * 0.72f);
+        canvas.DrawPath(_lipPath, _strokePaint);
+        _strokePaint.StrokeCap = SKStrokeCap.Butt;
     }
 
     private static void DrawBubble(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme, bool lightBubble, float global)
@@ -116,28 +197,11 @@ public static class LiveWindowRenderer
         if (item.Hovered) scale *= 1.03f;
         if (scale <= 0.01f) return;
 
-        // 细胞分裂的核心数学：半径从 R 缩到 R/√2 再长回来（面积守恒的观感），圆心距由宿主的位置动画负责。
-        // 生成 / 退出统一用这一段（用户要求出入都是「细胞分裂」）：
-        //   生成 = R/√2 → R（从岛体边缘分裂出来），退出 = R → R/√2（两圆合并回岛体）。
-        float radiusFactor = 1f;
-        if (!item.Exiting && item.SplitProgress < 1f)
-        {
-            // 旁边已有气泡时：母圆 / 新圆同步「缩一下再长回」，这是分裂动画的原始手感。
-            float p = Math.Clamp(item.SplitProgress, 0f, 1f);
-            radiusFactor = 1f - 0.293f * MathF.Sin(MathF.PI * p);
-        }
-        else if (!item.Exiting && item.SpawnProgress < 1f)
-        {
-            // 没有母圆可分裂：直接走「从 R/√2 长到 R」，等于分裂动画的后半段。
-            float p = 0.5f + 0.5f * Math.Clamp(item.SpawnProgress, 0f, 1f);
-            radiusFactor = 1f - 0.293f * MathF.Sin(MathF.PI * p);
-        }
-        else if (item.Exiting && item.ExitProgress < 1f)
-        {
-            // 退出 = 分裂的反向：R → R/√2，配合宿主给的「滑回岛体」位移与末段淡出。
-            float p = 1f - 0.5f * Math.Clamp(item.ExitProgress, 0f, 1f);
-            radiusFactor = 1f - 0.293f * MathF.Sin(MathF.PI * p);
-        }
+        // 两圆分裂的核心数学：半径从 R 缩到 R/√2 再长回来（面积守恒的观感），
+        // 圆心距由宿主的位置动画负责（新气泡从母圆中心滑出）。
+        // 退出走「宿主张嘴吞入」的膜动画，不再缩半径。
+        float pinching = !item.Exiting && item.SplitProgress < 1f ? Math.Clamp(item.SplitProgress, 0f, 1f) : 0f;
+        float radiusFactor = 1f - 0.293f * MathF.Sin(MathF.PI * pinching);
         float r = rBase * radiusFactor;
 
         float cx = rect.MidX;
@@ -574,6 +638,12 @@ public static class LiveWindowRenderer
 
     private static bool IsLightColor(SKColor color)
         => color.Red + color.Green + color.Blue > 382;
+
+    private static float SmoothStep01(float x)
+    {
+        x = Math.Clamp(x, 0f, 1f);
+        return x * x * (3f - 2f * x);
+    }
 
     private static SKColor BlendTowardWhite(SKColor color, float amount)
         => new(
