@@ -9,6 +9,10 @@ namespace NotchPeninsula
         // 文字区右界都改用【真裁切】（见下），不再需要「渐隐幕布 + 纯色片」那套常量
         private const float BUTTON_BLOCK_LEFT = 79f;    // 组件右端 − 79 = 第一个图标左缘
 
+        // 播放三角的光学补偿（逻辑像素，scale=1.6 下量出来的）：三角面积重心在包围盒左侧
+        // 1/6 宽处，几何居中看着偏左，右移这一档才「看着」居中。暂停的两根竖条对称，不需要。
+        private const float PlayOpticalDx = 2f;
+
         private readonly record struct MediaBlockGeometry(float ZoneLeft, float ContentLeft, float AnchorRight);
 
         private static bool IsMediaPanelShowing(MediaController media, float currentHeight)
@@ -197,26 +201,34 @@ namespace NotchPeninsula
             }
 
             // 3. 底部放大媒体控件
-            float btnY = currentHeight - 34f;
             float centerX = (left + right) / 2f;
             float scale = 1.6f;
-            float playBtnY = btnY - 1.6f;
+            // 底圆中心 / 图标中心 / 命中中心必须是同一个点，统一取自「播放控件命中几何」那条真源
+            //（Renderer.Media.cs 的 MediaButtonCenterY + MediaButtonSpacing）。
+            // 之前图标按左上角画、底圆却拿同一个 x 当圆心 → 底圆比图标偏左半个图标宽（约 8px），
+            // 悬停时还会再比光标偏左 6~9px（画的位置是 centerX-60/-7/+45，命中是 centerX±54）。
+            float centerY = MediaButtonCenterY(currentHeight);
 
-            void DrawControl(int index, float cx, float cy, float py, SKPath path)
+            void DrawControl(int index, SKPath path, float opticalDx = 0f)
             {
-                var hit = new SKRect(cx - 12f, cy - 12f, cx + 12f, cy + 24f);
+                float cx = centerX + (index - 1) * MediaButtonSpacing;
+                var hit = new SKRect(cx - MediaButtonRadius, centerY - MediaButtonRadius,
+                    cx + MediaButtonRadius, centerY + MediaButtonRadius);
                 if (HoveredExpandedButton == index)
                 {
                     _hoverCirclePaint.Color = ToneColor(hit, 25);
-                    canvas.DrawCircle(cx, py, 20f, _hoverCirclePaint);
+                    canvas.DrawCircle(cx, centerY, MediaButtonRadius, _hoverCirclePaint);
                 }
                 _mediaIconPaint.Color = ToneColor(hit, alpha);
-                DrawSvgPath(canvas, _mediaIconPaint, cx, cy, path, scale);
+                DrawSvgPathCentered(canvas, _mediaIconPaint, cx + opticalDx, centerY, path, scale);
             }
 
-            DrawControl(0, centerX - 60f, btnY, btnY + 8f, _prevPath);
-            DrawControl(1, centerX - 7f, playBtnY, playBtnY + 9.6f, media.IsPlaying ? _pausePath : _playPath);
-            DrawControl(2, centerX + 45f, btnY, btnY + 8f, _nextPath);
+            DrawControl(0, _prevPath);
+            // 播放三角的包围盒中心在底圆正中，但它的面积重心在包围盒左侧 1/6 处（重心 x=w/3，盒心 w/2），
+            // 所以几何居中看着仍然「偏左」；暂停的两根竖条左右对称，才显得居中。
+            // 右移一点做光学补偿 —— 只挪图标，底圆和命中区仍压在中心上。
+            DrawControl(1, media.IsPlaying ? _pausePath : _playPath, media.IsPlaying ? 0f : PlayOpticalDx);
+            DrawControl(2, _nextPath);
             _mediaIconPaint.Color = _currentTextColor.WithAlpha(alpha);
 
             if (TimelineVisible(media) && currentHeight > TL_MIN_HEIGHT)

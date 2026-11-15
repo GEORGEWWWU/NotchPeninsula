@@ -828,6 +828,20 @@ namespace NotchPeninsula
             canvas.Restore();
         }
 
+        /// <summary>
+        /// 以 (cx, cy) 为**中心**画矢量图标（按路径包围盒居中）。
+        /// <para>
+        /// 媒体展开面板的播放控件是「悬停底圆 + 图标」两个独立图形，必须共用同一个中心：
+        /// <see cref="DrawSvgPath"/> 把 x 当左上角、圆却把 x 当圆心，底圆就会整整偏左半个图标宽
+        ///（播放键约 8px）—— 就是截图里「按钮底圆偏左」的那个错位。
+        /// </para>
+        /// </summary>
+        private static void DrawSvgPathCentered(SKCanvas canvas, SKPaint paint, float cx, float cy, SKPath path, float scale = 1f)
+        {
+            var bounds = path.Bounds;
+            DrawSvgPath(canvas, paint, cx - bounds.MidX * scale, cy - bounds.MidY * scale, path, scale);
+        }
+
         private static SKPath CreatePlayPath() { var path = new SKPath(); path.MoveTo(0, 0); path.LineTo(10, 6); path.LineTo(0, 12); path.Close(); return path; }
 
         private static SKPath CreatePausePath() { var path = new SKPath(); path.AddRect(new SKRect(0, 0, 3, 12)); path.AddRect(new SKRect(6, 0, 9, 12)); return path; }
