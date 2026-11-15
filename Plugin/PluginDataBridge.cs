@@ -6,6 +6,56 @@ namespace NotchPeninsula.Plugins;
 // 插件只读数据桥（宿主 → 插件，单向）
 // 设计取舍（写给以后的维护者）：
 
+/// <summary>
+/// 一行歌词的逐字时间轴（宿主 yrc 表的只读视图）。
+///
+/// 每行一个实例、**行变了才换引用**，插件可以放心缓存；<see cref="EndMs"/> / <see cref="CumChars"/>
+/// 直接指向宿主的数组（构建后不再改动），插件不要写它。
+/// </summary>
+public sealed class LyricWordTimeline
+{
+    /// <summary>每一段的结束时刻（毫秒，相对本行起点，单调递增）。</summary>
+    public int[] EndMs { get; init; } = System.Array.Empty<int>();
+
+    /// <summary>到这一段结束为止累计唱到的字数（与 <see cref="EndMs"/> 一一对应）。</summary>
+    public int[] CumChars { get; init; } = System.Array.Empty<int>();
+
+    /// <summary>本行有效字数（不含空白）。</summary>
+    public int TotalChars { get; init; }
+
+    /// <summary>
+    /// 按「本行已播放毫秒」算逐字扫光进度 0~1。
+    ///
+    /// 与宿主灵动岛用的是**同一套算法**（MediaController.ComputeWordAlignedProgress）：
+    /// 逐字边界精确对齐、字内线性插值。插件在 60fps 上反复调用它，扫光就与岛上完全同步，
+    /// 不用再靠 250ms 一次的 <see cref="MediaSnapshot.LyricProgress"/> 猜速率。
+    /// </summary>
+    public float ProgressAt(double elapsedMs)
+    {
+        int n = EndMs.Length;
+        if (n == 0 || TotalChars <= 0 || CumChars.Length != n) return 0f;
+        if (elapsedMs >= EndMs[n - 1]) return 1f;   // 唱完这一句；换行交给宿主
+        if (elapsedMs <= 0) return 0f;
+
+        int lo = 0, hi = n - 1, done = 0;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (EndMs[mid] <= elapsedMs) { done = mid + 1; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        if (done >= n) return 1f;
+
+        int doneChars = done > 0 ? CumChars[done - 1] : 0;
+        int spanStart = done > 0 ? EndMs[done - 1] : 0;
+        int spanEnd = EndMs[done];
+        float frac = spanEnd > spanStart ? (float)((elapsedMs - spanStart) / (spanEnd - spanStart)) : 0f;
+        int spanChars = CumChars[done] - doneChars;
+
+        return System.Math.Clamp((doneChars + frac * spanChars) / TotalChars, 0f, 1f);
+    }
+}
+
 public sealed class MediaSnapshot
 {
     public bool IsActive { get; init; }
@@ -18,6 +68,12 @@ public sealed class MediaSnapshot
     public string LyricTranslation { get; init; } = "";
     public bool HasLyricTranslation { get; init; }
     public float LyricProgress { get; init; }
+
+    /// <summary>本行逐字时间轴；没有 yrc 或这一行没有逐字时间戳时为 null。</summary>
+    public LyricWordTimeline? LyricTimeline { get; init; }
+
+    /// <summary>宿主报的「本行已播放毫秒」（含歌词延迟，暂停不涨）。配 <see cref="LyricTimeline"/> 用。</summary>
+    public double LyricLineElapsedMs { get; init; }
 
     public bool HasTimeline { get; init; }
     public TimeSpan Duration { get; init; }
@@ -72,6 +128,12 @@ public static class PluginDataBridge
     private static long _coverVersion;
     private static long _mediaVersion;
     private static long _noticeIdCounter;
+    private static int _ticking;            // Tick 重入闸（见 Tick 注释）
+
+    // 逐字时间轴缓存：宿主每行只构建一份 EndMs 数组，引用变了才重建（见 Tick）
+    private static LyricWordTimeline? _wordTimeline;
+    private static int[]? _wordTimelineEnds;
+    private static int _wordTimelineChars;
 
     private static readonly TimeSpan SampleInterval = TimeSpan.FromMilliseconds(250);
 
@@ -134,10 +196,16 @@ public static class PluginDataBridge
         _signature = "";
         _lastThumb = null;
         _coverPng = null;
+        _wordTimeline = null;
+        _wordTimelineEnds = null;
+        _wordTimelineChars = 0;
     }
 
     private static void Tick()
     {
+        // 定时器回调允许重入（250ms 一拍，编码封面偶尔超时就会重叠）：重叠会让两份快照
+        // 乱序投递，插件按版本号缓存的封面就可能被旧的那份盖回去。跳过这一拍，下一拍补上。
+        if (System.Threading.Interlocked.Exchange(ref _ticking, 1) == 1) return;
         try
         {
             var media = MediaController.Instance;
@@ -156,30 +224,57 @@ public static class PluginDataBridge
             string total = SafeStr(() => media.TimelineTotal, "0:00");
             string appId = SafeStr(() => media.CurrentAppId);
 
+            // 逐字时间轴（新传输内容）：本行的段结束时刻 / 累计字数 / 总字数 + 本行已播放毫秒。
+            // 数组直接引用宿主的 yrc 表（只读共享），这里只负责「行变了就重建一个时间轴对象」。
+            int[] wordEnds = SafeArr(() => media.CurrentLyricWordEndMs);
+            int[] wordCums = SafeArr(() => media.CurrentLyricWordCumChars);
+            int totalChars = SafeInt(() => media.CurrentLyricTotalChars);
+            double lineElapsed = SafeDouble(() => media.CurrentLyricLineElapsedMs);
+
             string signature = string.Concat(
                 isActive ? "1" : "0", isPlaying ? "1" : "0",
                 "|", title, "|", artist, "|", appId,
                 "|", lyric, "|", (int)(lyricProgress * 200f),
                 "|", hasTimeline ? "1" : "0", "|", (int)(timelineProgress * 1000f),
-                "|", elapsed, "|", total);
+                "|", elapsed, "|", total,
+                "|", (int)(lineElapsed / 40.0));   // 逐字扫光在走 → 40ms 粒度就够，别把 250ms 采样顶爆
 
             bool changed = false;
             MediaSnapshot? snapshot = null;
+
+            // 封面：引用没换就复用上次编码出来的字节，换了才重新编码。
+            // 必须在锁外先读一次引用 —— 下面要用它判断「这一拍是不是只有封面变了」。
+            SKBitmap? thumb = null;
+            try { thumb = media.Thumbnail; } catch { }
 
             lock (_gate)
             {
                 if (!_samplerStarted) return;
 
-                if (signature == _signature) return;
+                // ⚠ 封面变化必须单独算一种「要发快照」的信号。
+                //   封面是异步解析的（先贴应用图标兜底，真封面后到），往往正好落在
+                //   歌名 / 进度都没变的那一拍。只比 signature 会把这一拍整条丢掉 ——
+                //   宿主自己每帧直接读 Thumbnail 所以看着正常，插件却永远停在兜底图标上。
+                bool coverChanged = !ReferenceEquals(thumb, _lastThumb);
 
-                // 封面：引用没换就复用上次编码出来的字节，换了才重新编码
-                SKBitmap? thumb = null;
-                try { thumb = media.Thumbnail; } catch { }
-                if (!ReferenceEquals(thumb, _lastThumb))
+                if (signature == _signature && !coverChanged) return;
+
+                if (coverChanged)
                 {
                     _lastThumb = thumb;
                     _coverPng = EncodePng(thumb);
                     _coverVersion++;
+                }
+
+                // 逐字时间轴：宿主每行只构建一份 EndMs 数组，引用变了才重建对象 ——
+                // 250ms 一拍不会重复分配，插件拿到的引用也是稳定的，能安心缓存。
+                if (!ReferenceEquals(wordEnds, _wordTimelineEnds) || totalChars != _wordTimelineChars)
+                {
+                    _wordTimelineEnds = wordEnds;
+                    _wordTimelineChars = totalChars;
+                    _wordTimeline = wordEnds.Length > 0 && wordCums.Length == wordEnds.Length && totalChars > 0
+                        ? new LyricWordTimeline { EndMs = wordEnds, CumChars = wordCums, TotalChars = totalChars }
+                        : null;
                 }
 
                 _signature = signature;
@@ -200,6 +295,8 @@ public static class PluginDataBridge
                     LyricTranslation = SafeStr(() => media.CurrentLyricTranslation),
                     HasLyricTranslation = SafeBool(() => media.HasLyricTranslation),
                     LyricProgress = lyricProgress,
+                    LyricTimeline = _wordTimeline,
+                    LyricLineElapsedMs = lineElapsed,
                     HasTimeline = hasTimeline,
                     Duration = duration,
                     Position = position,
@@ -221,6 +318,10 @@ public static class PluginDataBridge
         {
             _ = ex;
             try { Logger.DebugThrottled("[PluginDataBridge] 媒体采样异常（10s 内只记一次）"); } catch { }
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _ticking, 0);
         }
     }
 
@@ -404,6 +505,21 @@ public static class PluginDataBridge
     private static float SafeFloat(Func<float> read)
     {
         try { return read(); } catch { return 0f; }
+    }
+
+    private static int SafeInt(Func<int> read)
+    {
+        try { return read(); } catch { return 0; }
+    }
+
+    private static double SafeDouble(Func<double> read)
+    {
+        try { return read(); } catch { return 0d; }
+    }
+
+    private static int[] SafeArr(Func<int[]> read)
+    {
+        try { return read() ?? System.Array.Empty<int>(); } catch { return System.Array.Empty<int>(); }
     }
 
     private static TimeSpan SafeTime(Func<TimeSpan> read)

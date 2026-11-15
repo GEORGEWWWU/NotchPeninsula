@@ -660,6 +660,14 @@ public static class LiveWindowHost
 
     public static bool HitAny(float x, float y) => HitBubble(x, y, out _) || HitPanel(x, y);
 
+    /// <summary>点击余量（逻辑像素）：贴在圆边上点也能算命中，别让用户「点到了却差半个像素」。</summary>
+    private const float BubbleHitSlop = 2f;
+
+    /// <summary>
+    /// 点是否落在某颗气泡上。命中区 = **整颗气泡圆**（半径再放 2px），不是气泡里的某个元素：
+    /// 气泡现在只有「进度环 + 内容」、没有整块底，用户点在透明的内容区、进度环、甚至封面外的空白
+    /// 都必须算「点这颗气泡」，宿主据此统一展开 / 收起详情面板。
+    /// </summary>
     public static bool HitBubble(float x, float y, out string? id)
     {
         id = null;
@@ -667,7 +675,10 @@ public static class LiveWindowHost
         {
             for (int i = 0; i < _hitCount; i++)
             {
-                if (!HitRects[i].Contains(x, y)) continue;
+                var rect = HitRects[i];
+                float radius = rect.Width * 0.5f + BubbleHitSlop;
+                float dx = x - rect.MidX, dy = y - rect.MidY;
+                if (dx * dx + dy * dy > radius * radius) continue;
                 id = HitIds[i];
                 return true;
             }
@@ -1163,7 +1174,9 @@ public static class LiveWindowHost
         for (int i = 0; i < frame.Count && _hitCount < MaxItems; i++)
         {
             ref var item = ref frame.Items[i];
-            if (item.Alpha < 16 || item.Id == null) continue;
+            // 淡入 / 退场的过程里也要能点：以前按 Alpha>=16 过滤，气泡刚出来或快收完的那几帧
+            // 「看得见却点不动」，观感就是「只有点到中间的文字才展开」。
+            if (item.Id == null) continue;
             HitIds[_hitCount] = item.Id;
             HitRects[_hitCount] = item.Rect;
             _hitCount++;

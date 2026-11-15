@@ -60,6 +60,8 @@ public static class LiveWindowRenderer
     private static readonly SKPaint _arcPaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
     private static readonly SKPaint _bridgePaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
     private static readonly SKPaint _alphaLayerPaint = new();
+    /// <summary>气泡的隐形命中底（alpha≈2，肉眼看不见但吃鼠标），见 DrawBubble 里的说明。</summary>
+    private static readonly SKPaint _hitFillPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
     private static readonly SKPath _clipPath = new();
     // 气泡进度环带（外圆 - 内圆，EvenOdd）：材质只铺在这一圈，环内内容区保持透明。
     private static readonly SKPath _ringPath = new();
@@ -228,6 +230,21 @@ public static class LiveWindowRenderer
             canvas.Translate(cx, cy);
             canvas.Scale(scale);
             canvas.Translate(-cx, -cy);
+        }
+
+        // ---- 「吃鼠标」的隐形底 ----
+        // 气泡现在只有「进度环 + 内容」、环带以内完全透明（文字直接浮在桌面上）。
+        // 分层窗口的命中判定是**逐像素 alpha**：alpha == 0 的像素对鼠标完全透明，
+        // 于是点在圆里没有元素的位置（内圈空白、文字之间的缝）会直接透传到下面的窗口 ——
+        // 用户就会觉得「明明点在这颗气泡上，却没反应 / 点到别的程序去了」。
+        // 这里铺一层 alpha 极低的圆把整颗气泡圈进命中区：肉眼看不见（0.8%），
+        // 但 alpha > 0 就吃鼠标，宿主随后用 HitBubble（整圆 + 2px 余量）统一分发。
+        // 取 2 而不是 1：个别 DWM 路径 / 放大镜会把 alpha == 1 当成全透明，多留一格。
+        // alpha < 0.5 时气泡正在淡出 / 吞入，别让一颗快看不见的气泡还拦鼠标。
+        if (r >= 2f && alpha >= 0.5f)
+        {
+            _hitFillPaint.Color = SKColors.White.WithAlpha(2);
+            canvas.DrawCircle(cx, cy, r, _hitFillPaint);
         }
 
         if (!noProgress)

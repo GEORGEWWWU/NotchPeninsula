@@ -47,6 +47,17 @@ namespace NotchPeninsula
         public string CurrentLyricTranslation { get; private set; } = "";
         public bool HasLyricTranslation { get; private set; }
         public float CurrentLyricProgress { get; private set; } = 0f;
+
+        // ---- 逐字时间轴（给插件用的只读副本）----
+        //
+        // 插件（任务栏组件）要按 60fps 画逐字扫光，但数据桥 250ms 才推一次 —— 光看
+        // CurrentLyricProgress 只能猜。这里把「本行的段结束时刻 / 累计字数 / 总字数」以及
+        // 「本行已播放毫秒」一并公开，插件用 ProgressAt() 在本地外推，扫光与灵动岛一致。
+        // EndMs / CumChars 直接指向 yrc 表里的数组：构建后不再改动，只读共享，不复制。
+        public int[] CurrentLyricWordEndMs { get; private set; } = Array.Empty<int>();
+        public int[] CurrentLyricWordCumChars { get; private set; } = Array.Empty<int>();
+        public int CurrentLyricTotalChars { get; private set; }
+        public double CurrentLyricLineElapsedMs { get; private set; }
         private DateTime _seekSettleUntil = DateTime.MinValue;
         private const double SeekSettleSeconds = 1.5;
 
@@ -2985,6 +2996,7 @@ namespace NotchPeninsula
             string found = "";
             string foundTrans = "";
             float progress = 0f;
+            int foundLine = -1;
             TimeSpan rawPosition = MonotonicLyricPosition(_recentSongs[_lyricSlot].Position);
             for (int i = _lyrics.Length - 1; i >= 0; i--)
             {
@@ -2993,12 +3005,42 @@ namespace NotchPeninsula
                     found = _lyrics[i].Text;
                     foundTrans = _lyrics[i].Translation;
                     progress = ComputeScanProgress(i, rawPosition);
+                    foundLine = i;
                     break;
                 }
             }
 
+            // 本行的逐字时间轴一并公开（插件拿它在本地按同一套算法外推扫光）
+            PublishWordTiming(foundLine, rawPosition);
+
             // 输出结果，供渲染层使用
             SetLyric(found, foundTrans, progress, _lyricsHasTranslation);
+        }
+
+        /// <summary>
+        /// 把 <paramref name="lineIndex"/> 这一行的逐字时间轴公开给插件；这一行没有 yrc 时清空。
+        /// 只在歌词推进这一处写，读的是采样线程 —— 与 CurrentLyric / CurrentLyricProgress 同一条口径。
+        /// </summary>
+        private void PublishWordTiming(int lineIndex, TimeSpan position)
+        {
+            var timings = _lyricWordTimings;
+            if (lineIndex < 0 || timings == null || lineIndex >= timings.Length
+                || timings[lineIndex] is not { } timing)
+            {
+                CurrentLyricWordEndMs = Array.Empty<int>();
+                CurrentLyricWordCumChars = Array.Empty<int>();
+                CurrentLyricTotalChars = 0;
+                CurrentLyricLineElapsedMs = 0;
+                return;
+            }
+
+            CurrentLyricWordEndMs = timing.EndMs;
+            CurrentLyricWordCumChars = timing.CumChars;
+            CurrentLyricTotalChars = timing.TotalChars;
+            // 与 ComputeScanProgress 里逐字那一档的口径完全相同（含歌词延迟补偿），
+            // 否则插件算出来的扫光会和岛上差一个延迟量。
+            CurrentLyricLineElapsedMs =
+                position.TotalMilliseconds + LyricDelayOffset * 1000.0 - timing.LineStartMs;
         }
 
         private void SetLyric(string text, string translation, float progress, bool hasTranslation)
@@ -3009,7 +3051,20 @@ namespace NotchPeninsula
                 CurrentLyricTranslation = "";
                 CurrentLyricProgress = 0f;
                 HasLyricTranslation = false;
+                CurrentLyricWordEndMs = Array.Empty<int>();
+                CurrentLyricWordCumChars = Array.Empty<int>();
+                CurrentLyricTotalChars = 0;
+                CurrentLyricLineElapsedMs = 0;
                 return;
+            }
+
+            // 没有歌词行：逐字时间轴一起作废，别让插件拿上一行的表继续扫
+            if (string.IsNullOrEmpty(text))
+            {
+                CurrentLyricWordEndMs = Array.Empty<int>();
+                CurrentLyricWordCumChars = Array.Empty<int>();
+                CurrentLyricTotalChars = 0;
+                CurrentLyricLineElapsedMs = 0;
             }
 
             CurrentLyric = text;
