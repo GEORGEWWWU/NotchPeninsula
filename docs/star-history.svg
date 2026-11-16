@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="370" viewBox="0 0 960 370" role="img" aria-labelledby="title desc">
+  <title id="title">NotchPeninsula Star History</title>
+  <desc id="desc">Cumulative currently active GitHub stars through 2026-11-16. Total: 273.</desc>
+  <rect width="960" height="370" rx="18" fill="#f4f8fc"/>
+  <g font-family="system-ui, sans-serif">
+    <text x="32" y="46" fill="#142b46" font-weight="700" font-size="24">Star History</text>
+    <text x="32" y="73" fill="#4a617a" font-size="15">NotchPeninsula · Cumulative stars (UTC+8)</text>
+    <text x="916" y="51" text-anchor="end" fill="#1556a0" font-weight="700" font-size="21">273 stars</text>
+    <g fill="#4a617a" font-size="13">
+    <path d="M 78 323 H 916" stroke="#dbe5ef"/>
+    <text x="64" y="328" text-anchor="end">0</text>
+    <path d="M 78 268 H 916" stroke="#dbe5ef"/>
+    <text x="64" y="273" text-anchor="end">69</text>
+    <path d="M 78 213 H 916" stroke="#dbe5ef"/>
+    <text x="64" y="218" text-anchor="end">138</text>
+    <path d="M 78 158 H 916" stroke="#dbe5ef"/>
+    <text x="64" y="163" text-anchor="end">207</text>
+    <path d="M 78 103 H 916" stroke="#dbe5ef"/>
+    <text x="64" y="108" text-anchor="end">276</text>
+    <text x="78.00" y="349" text-anchor="middle">2026-08-24</text>
+    <text x="287.50" y="349" text-anchor="middle">2026-09-14</text>
+    <text x="497.00" y="349" text-anchor="middle">2026-10-05</text>
+    <text x="706.50" y="349" text-anchor="middle">2026-10-26</text>
+    <text x="916.00" y="349" text-anchor="middle">2026-11-16</text>
+    </g>
+  </g>
+  <path d="M 78 323 H 87.98 V 322.20 H 97.95 V 321.41 H 157.81 V 320.61 H 167.79 V 315.83 H 177.76 V 313.43 H 187.74 V 310.25 H 197.71 V 303.07 H 207.69 V 297.49 H 217.67 V 295.90 H 227.64 V 291.91 H 237.62 V 290.32 H 257.57 V 287.13 H 267.55 V 284.74 H 277.52 V 283.94 H 287.50 V 281.55 H 297.48 V 275.17 H 307.45 V 272.78 H 317.43 V 271.19 H 327.40 V 269.59 H 337.38 V 266.41 H 347.36 V 263.22 H 357.33 V 261.62 H 367.31 V 259.23 H 377.29 V 257.64 H 387.26 V 256.84 H 397.24 V 252.06 H 407.21 V 245.68 H 417.19 V 242.49 H 427.17 V 241.70 H 437.14 V 236.12 H 447.12 V 232.93 H 457.10 V 224.96 H 467.07 V 220.97 H 477.05 V 219.38 H 487.02 V 214.59 H 497.00 V 211.41 H 506.98 V 207.42 H 526.93 V 205.03 H 536.90 V 201.84 H 546.88 V 200.25 H 556.86 V 197.06 H 566.83 V 192.28 H 576.81 V 191.48 H 586.79 V 188.29 H 596.76 V 185.10 H 606.74 V 181.91 H 616.71 V 179.52 H 626.69 V 177.13 H 636.67 V 175.54 H 646.64 V 174.74 H 656.62 V 173.14 H 666.60 V 169.96 H 676.57 V 165.17 H 686.55 V 163.58 H 696.52 V 161.99 H 706.50 V 159.59 H 716.48 V 158.00 H 726.45 V 155.61 H 736.43 V 152.42 H 746.40 V 151.62 H 756.38 V 150.03 H 786.31 V 149.23 H 796.29 V 145.25 H 806.26 V 142.06 H 816.24 V 141.26 H 826.21 V 138.87 H 846.17 V 134.09 H 856.14 V 126.12 H 866.12 V 123.72 H 876.10 V 119.74 H 886.07 V 117.35 H 896.05 V 112.57 H 906.02 V 110.97 H 916.00 V 105.39 H 916 V 323 H 78 Z" fill="#d9eafb"/>
+  <path d="M 78 323 H 87.98 V 322.20 H 97.95 V 321.41 H 157.81 V 320.61 H 167.79 V 315.83 H 177.76 V 313.43 H 187.74 V 310.25 H 197.71 V 303.07 H 207.69 V 297.49 H 217.67 V 295.90 H 227.64 V 291.91 H 237.62 V 290.32 H 257.57 V 287.13 H 267.55 V 284.74 H 277.52 V 283.94 H 287.50 V 281.55 H 297.48 V 275.17 H 307.45 V 272.78 H 317.43 V 271.19 H 327.40 V 269.59 H 337.38 V 266.41 H 347.36 V 263.22 H 357.33 V 261.62 H 367.31 V 259.23 H 377.29 V 257.64 H 387.26 V 256.84 H 397.24 V 252.06 H 407.21 V 245.68 H 417.19 V 242.49 H 427.17 V 241.70 H 437.14 V 236.12 H 447.12 V 232.93 H 457.10 V 224.96 H 467.07 V 220.97 H 477.05 V 219.38 H 487.02 V 214.59 H 497.00 V 211.41 H 506.98 V 207.42 H 526.93 V 205.03 H 536.90 V 201.84 H 546.88 V 200.25 H 556.86 V 197.06 H 566.83 V 192.28 H 576.81 V 191.48 H 586.79 V 188.29 H 596.76 V 185.10 H 606.74 V 181.91 H 616.71 V 179.52 H 626.69 V 177.13 H 636.67 V 175.54 H 646.64 V 174.74 H 656.62 V 173.14 H 666.60 V 169.96 H 676.57 V 165.17 H 686.55 V 163.58 H 696.52 V 161.99 H 706.50 V 159.59 H 716.48 V 158.00 H 726.45 V 155.61 H 736.43 V 152.42 H 746.40 V 151.62 H 756.38 V 150.03 H 786.31 V 149.23 H 796.29 V 145.25 H 806.26 V 142.06 H 816.24 V 141.26 H 826.21 V 138.87 H 846.17 V 134.09 H 856.14 V 126.12 H 866.12 V 123.72 H 876.10 V 119.74 H 886.07 V 117.35 H 896.05 V 112.57 H 906.02 V 110.97 H 916.00 V 105.39 H 916" fill="none" stroke="#2368b5" stroke-width="2.5" stroke-linejoin="round"/>
+  <circle cx="916" cy="105.39" r="4" fill="#2368b5"/>
+</svg>

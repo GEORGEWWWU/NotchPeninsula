@@ -168,6 +168,12 @@ NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基
 
 </div>
 
+### Star 趋势
+
+![NotchPeninsula 的 GitHub Star 累计趋势](./docs/star-history.svg)
+
+图表每天更新，按当前仍保留的 Star 的标星日期累计。已取消的 Star 不计入历史曲线。
+
 ## 项目结构
 
 ```text

@@ -1,0 +1,41 @@
+name: 更新 Star 趋势图
+
+on:
+  schedule:
+    - cron: '23 1 * * *' # 北京时间 09:23
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/star-history.yml
+      - .github/scripts/star_history.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: star-history-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: 生成 Star 趋势图
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/star_history.py
+      - name: 提交更新
+        run: |
+          git add -- docs/star-history.svg
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m '更新 Star 趋势图'
+          git pull --rebase
+          git push
