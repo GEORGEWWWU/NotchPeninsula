@@ -280,6 +280,18 @@ dotnet publish -c Release -r win-x64 --self-contained false     # 发布
 
 运行产物中的可执行文件即可，程序会驻留托盘区；目标机需自备 .NET 10 Desktop Runtime。
 
+### 原生亚克力维护约束
+
+- Windows 11 原生亚克力通过独立背板窗口和 Windows Composition `CreateHostBackdropBrush` 合成。渲染优化、动画修改、材质重构和合并冲突处理都必须保留这条路径及刘海、灵动岛的轮廓裁切。**禁止用 GDI、DXGI 或其他屏幕抓取替代原生背板，也禁止将抓屏作为原生路径失败时的兜底。** 宿主或裁切初始化失败时只保留亚克力色调并记录异常。Windows 10 的旧版亚克力以及单独选择的液态玻璃继续走各自的兼容路径。
+- Windows 11 原生试验包发布时必须传 `-p:NativeAcrylicPreview=true`，确保双击即可启用。该模式保留用户原先的刘海或灵动岛形态。上面的普通构建和当前 `build.ps1` 需要用 `--native-acrylic` 启动才会启用原生路径，直接启动时选「亚克力」仍会使用旧抓屏实现。打原生试验包时使用下方命令。
+- 核对亚克力是否走原生路径时，以实际运行的 exe、启动参数和日志为准。原生宿主建立会记录「已建立 Windows Composition 背板宿主」。若同一次运行在亚克力模式下出现「[亚克力/原分辨率] 抓屏 ok」，该次绘制使用了旧抓屏背板。只看设置项名称无法判断。
+
+```powershell
+dotnet publish -c Release -r win-x64 --self-contained false -p:SelfContained=false `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:IncludeAllContentForSelfExtract=true -p:NativeAcrylicPreview=true -o publish
+```
+
 ## 兼容性与说明
 
 - 仅支持 Windows 10 / 11（依赖 Windows 通知管理 API），不支持 macOS / Linux。
