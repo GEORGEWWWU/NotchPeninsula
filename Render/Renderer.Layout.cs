@@ -26,8 +26,8 @@ namespace NotchPeninsula
                 DrawToneText(canvas, _cachedTimeStr, currentX, timeBaselineY, _timePaint, alpha);
                 float dateX = currentX + _cachedTimeWidth + 12f;
                 DrawToneText(canvas, _cachedDateStr, dateX, timeBaselineY, _datePaint, alpha, sub: true);
-                _clockZoneL = currentX;
-                _clockZoneR = dateX + _cachedDateWidth;
+                _hitDraft.ClockL = currentX;
+                _hitDraft.ClockR = dateX + _cachedDateWidth;
                 currentX = dateX + _cachedDateWidth + moduleGap;
             }
 
@@ -94,8 +94,8 @@ namespace NotchPeninsula
                         barH / 2f, barH / 2f, _barPaint);
 
                 currentX = ramX + ramGroupW + moduleGap;
-                _hardwareZoneL = cpuX;
-                _hardwareZoneR = ramX + ramGroupW;
+                _hitDraft.HardwareL = cpuX;
+                _hitDraft.HardwareR = ramX + ramGroupW;
             }
 
             // 2. 媒体控制器模块（含频谱，媒体激活时才显示）
@@ -205,8 +205,8 @@ namespace NotchPeninsula
                 DrawToneText(canvas, _cachedTimeStr, left + 16f, baselineY, _timePaint, alpha);
                 DrawToneText(canvas, _cachedDateStr, right - 16f - _cachedDateWidth, baselineY, _datePaint, alpha, sub: true);
                 // 待机时整条原生内容区（时间 + 日期）都算时钟区域
-                _clockZoneL = left + 16f;
-                _clockZoneR = right - 16f;
+                _hitDraft.ClockL = left + 16f;
+                _hitDraft.ClockR = right - 16f;
             }
             else if (StandbyDisplayMode == 1)
             {
@@ -254,8 +254,8 @@ namespace NotchPeninsula
                 float startX = centerX - totalContentW / 2f;
                 float cpuBarW = cpuGroupW;
                 float ramBarW = ramGroupW;
-                _hardwareZoneL = startX;
-                _hardwareZoneR = startX + totalContentW;
+                _hitDraft.HardwareL = startX;
+                _hitDraft.HardwareR = startX + totalContentW;
 
                 // ---- [ CPU ] ----
                 float cpuX = startX;
@@ -324,75 +324,124 @@ namespace NotchPeninsula
 
         // 只是按右键落在哪块原生内容上直达对应页签：
 
-        private static float _clockZoneL = -1f, _clockZoneR = -1f;
-        private static float _hardwareZoneL = -1f, _hardwareZoneR = -1f;
-        private static float _mediaZoneL = -1f, _mediaZoneR = -1f;
-
-        private static void InvalidateNativeHitZones()
+        /// <summary>
+        /// 岛内原生内容的命中几何（时钟 / 硬件 / 媒体区 + 遮罩 + 时间轴）。
+        ///
+        /// 关键约定：**渲染线程写 <see cref="_hitDraft"/>，画完一帧才整体发布到 <see cref="_hitPublished"/>；
+        /// 输入线程（点击、指针、拖放、岛外判定）只读 <see cref="HitZones"/>。**
+        /// 早先是同一批字段被两边共用，帧首 InvalidateNativeHitZones() 会先把它们清成 -1，
+        /// 再在绘制过程中逐个填回来 —— 绘制期间（144fps 下每帧都有几毫秒）落进来的点击和
+        /// WM_MOUSEMOVE 读到的是「所有热区都不存在」，表现就是**点岛体偶尔点不上**、
+        /// **指针在手指和箭头之间来回闪**。发布制之后输入侧永远拿到上一条完整帧的几何。
+        /// </summary>
+        internal struct NativeHitZones
         {
-            _clockZoneL = _clockZoneR = -1f;
-            _hardwareZoneL = _hardwareZoneR = -1f;
-            _mediaZoneL = _mediaZoneR = -1f;
-            _mediaBlockL = _mediaBlockR = -1f;
-            _mediaCoverRect = default;
+            internal float ClockL, ClockR, HardwareL, HardwareR;
+            internal float MediaL, MediaR;
+            internal float MediaBlockL, MediaBlockR;
+            internal SKRect MediaCover;
+            internal float TlX1, TlX2, TlY;
+
+            internal static NativeHitZones None => new NativeHitZones
+            {
+                ClockL = -1f, ClockR = -1f, HardwareL = -1f, HardwareR = -1f,
+                MediaL = -1f, MediaR = -1f, MediaBlockL = -1f, MediaBlockR = -1f,
+                MediaCover = default, TlX1 = 0f, TlX2 = 0f, TlY = 0f
+            };
         }
 
-        private static SKRect _mediaCoverRect;
+        // 渲染线程独占的草稿；发布用的快照只在上一条完整帧之后才更新。
+        private static NativeHitZones _hitDraft = NativeHitZones.None;
+        private static NativeHitZones _hitPublished = NativeHitZones.None;
+        private static readonly object _hitZoneLock = new object();
 
-        private static float _mediaBlockL = -1f, _mediaBlockR = -1f;
+        /// <summary>输入侧读到的命中几何：上一条完整帧。永远不会是「本帧还没画到」的半成品。</summary>
+        internal static NativeHitZones HitZones
+        {
+            get { lock (_hitZoneLock) return _hitPublished; }
+        }
+
+        /// <summary>渲染线程：本帧绘制结束（含提前返回与异常路径）时整体发布。</summary>
+        internal static void PublishHitZones()
+        {
+            lock (_hitZoneLock) _hitPublished = _hitDraft;
+            // 插件行热区同样是「帧末交换」：输入侧读到的永远是上一条完整帧的那份。
+            lock (_pluginSlotLock)
+            {
+                var published = _pluginSlots;
+                _pluginSlots = _pluginSlotsDraft;
+                _pluginSlotsDraft = published;
+            }
+        }
+
+        private static void InvalidateNativeHitZones() => _hitDraft = NativeHitZones.None;
 
         private static void RegisterMediaCover(SKRect rect)
         {
-            _mediaCoverRect = rect;
-            if (_mediaZoneL < 0f || rect.Left < _mediaZoneL) _mediaZoneL = rect.Left;
+            _hitDraft.MediaCover = rect;
+            if (_hitDraft.MediaL < 0f || rect.Left < _hitDraft.MediaL) _hitDraft.MediaL = rect.Left;
         }
 
         private static void RegisterMediaBlock(float left, float right)
         {
-            _mediaBlockL = left;
-            _mediaBlockR = right;
+            _hitDraft.MediaBlockL = left;
+            _hitDraft.MediaBlockR = right;
         }
 
         public static int NativeRightClickTab(float x)
         {
-            if (InZone(x, _mediaZoneL, _mediaZoneR)) return 2;
-            if (InZone(x, _clockZoneL, _clockZoneR) || InZone(x, _hardwareZoneL, _hardwareZoneR)) return 1;
+            var z = HitZones;
+            if (InZone(x, z.MediaL, z.MediaR)) return 2;
+            if (InZone(x, z.ClockL, z.ClockR) || InZone(x, z.HardwareL, z.HardwareR)) return 1;
             return -1;
         }
 
-        public static bool HitMediaZone(float x) => InZone(x, _mediaZoneL, _mediaZoneR);
+        public static bool HitMediaZone(float x)
+        {
+            var z = HitZones;
+            return InZone(x, z.MediaL, z.MediaR);
+        }
 
-        public static bool HitMediaLaunchZone(float x, float y)
+        public static bool HitMediaLaunchZone(float x, float y) => HitMediaLaunchZone(HitZones, x, y);
+
+        private static bool HitMediaLaunchZone(NativeHitZones z, float x, float y)
         {
             // 展开态：封面那一块
             if (IsMediaPanelShowing(MediaController.Instance))
             {
-                SKRect cover = _mediaCoverRect;
+                SKRect cover = z.MediaCover;
                 if (cover.Width <= 0f || cover.Height <= 0f) return false;
                 return x >= cover.Left - 5f && x <= cover.Right + 5f
                     && y >= cover.Top && y <= cover.Bottom;
             }
 
             // 折叠态：整个媒体模块的左半边
-            if (_mediaBlockL < 0f || _mediaBlockR <= _mediaBlockL) return false;
-            return x >= _mediaBlockL && x <= (_mediaBlockL + _mediaBlockR) / 2f;
+            float blockL = z.MediaBlockL, blockR = z.MediaBlockR;
+            if (blockL < 0f || blockR <= blockL) return false;
+            return x >= blockL && x <= (blockL + blockR) / 2f;
         }
 
         private static bool InZone(float x, float l, float r) => l >= 0f && x >= l && x <= r;
 
-        public static bool HitMediaSpectrumZone(float x)
+        public static bool HitMediaSpectrumZone(float x) => HitMediaSpectrumZone(HitZones, x);
+
+        private static bool HitMediaSpectrumZone(NativeHitZones z, float x)
         {
-            if (_mediaBlockL < 0f || _mediaBlockR <= _mediaBlockL) return false;
-            return x > (_mediaBlockL + _mediaBlockR) / 2f && x <= _mediaBlockR;
+            float blockL = z.MediaBlockL, blockR = z.MediaBlockR;
+            if (blockL < 0f || blockR <= blockL) return false;
+            return x > (blockL + blockR) / 2f && x <= blockR;
         }
 
         public static bool IsBlankAt(float x, float y, float currentHeight)
         {
+            // 一次取快照给下面所有判定共用：中途若发生发布，也不会出现「这一条用上帧、
+            // 下一条用新帧」的混合结果（点击判定里那会表现成「明明点在媒体区却说空白」）。
+            var z = HitZones;
             if (HitPluginZone(x, y)) return false;
-            if (HitMediaZone(x)) return false;
-            if (HitMediaLaunchZone(x, y)) return false;
-            if (HitMediaSpectrumZone(x)) return false;
-            if (HitTimeline(x, y)) return false;
+            if (InZone(x, z.MediaL, z.MediaR)) return false;
+            if (HitMediaLaunchZone(z, x, y)) return false;
+            if (HitMediaSpectrumZone(z, x)) return false;
+            if (HitTimeline(z, x, y)) return false;
             // 不判掉就会把待机胶囊的中央一大片误判成「非空白」——
             if (IsMediaPanelShowing(MediaController.Instance) && HitExpandedButton(x, y, currentHeight) >= 0) return false;
             return true;

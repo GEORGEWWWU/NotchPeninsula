@@ -1009,9 +1009,10 @@ namespace NotchPeninsula
                 else if (_hoveredMarketDetail != -1)
                 {
                     if (_marketSearchFocused) { _marketSearchFocused = false; Render(); }
-                    _marketDialog = MarketDialog.Detail;
-                    _marketDialogIndex = _hoveredMarketDetail;
-                    _hoveredDialogButton = -1;   // 新弹窗不继承上一个弹窗的悬停态
+                    // 详情按钮 = 官网插件市场的对应插件详情页（plugins.php?id=...）。
+                    // 本地详情弹窗只剩「岛上的推荐通知」那一条入口在用。
+                    var mp = GetMarketAt(_hoveredMarketDetail);
+                    if (mp != null) OpenMarketPluginPage(mp);
                     Render();
                 }
                 else

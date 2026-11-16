@@ -37,6 +37,31 @@ namespace NotchPeninsula
         private const string MarketApiUrl = "https://nps.georgewu.top/admin/api.php";
         private const string MarketApiBase = "https://nps.georgewu.top";
 
+        /// <summary>
+        /// 官网插件详情页前缀。id 与市场 API 里的 <see cref="MarketPlugin.Id"/> 是同一个
+        /// （plugins.php?id=nps-media-mixer 这类），所以插件卡片的「详情」按钮直接用浏览器
+        /// 打开对应页面，不再弹本地详情弹窗 —— 官网那页信息更全，也不用在本地维护一份文案。
+        /// </summary>
+        private const string MarketPluginPageUrl = "https://nps.georgewu.top/plugins.php?id=";
+
+        /// <summary>「详情」按钮：跳到官网插件市场里这个插件的详情页。</summary>
+        private void OpenMarketPluginPage(MarketPlugin mp)
+        {
+            string url = string.IsNullOrWhiteSpace(mp.Id)
+                ? PluginManager.MarketplaceUrl
+                : MarketPluginPageUrl + Uri.EscapeDataString(mp.Id);
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                Logger.Info($"[Market] 详情 → 官网插件页 {mp.Id}（{mp.Name}）：{url}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("[Market] 打开官网插件详情页失败", ex);
+                SetMarketHint("无法打开浏览器，可手动访问： " + url, true);
+            }
+        }
+
         private static readonly HttpClient _marketHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
 
         private List<MarketPlugin> _marketPlugins = new();   // 原始列表（API 返回）

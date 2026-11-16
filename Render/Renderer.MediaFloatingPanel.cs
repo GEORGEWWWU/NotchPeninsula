@@ -38,8 +38,9 @@ namespace NotchPeninsula
                 IsMediaExpanded = oldExpanded;
                 ForceMediaPanelExpanded = oldForce;
                 // 面板登记的是局部坐标命中区：清掉，别污染主岛自己的媒体右键 / 封面拖放判定。
-                _mediaZoneL = _mediaZoneR = _mediaBlockL = _mediaBlockR = -1f;
-                _mediaCoverRect = default;
+                _hitDraft.MediaL = _hitDraft.MediaR = -1f;
+                _hitDraft.MediaBlockL = _hitDraft.MediaBlockR = -1f;
+                _hitDraft.MediaCover = default;
             }
         }
 

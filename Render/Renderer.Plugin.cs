@@ -21,7 +21,11 @@ namespace NotchPeninsula
 
         private static float _compositeMediaRight = -1f;
 
-        private static readonly List<Plugins.WidgetLayout.Slot> _pluginSlots = new(8);
+        // 已发布（输入侧读）与本帧草稿（渲染线程写）两份插件热区槽位。
+        // 帧首只清草稿、帧末整体交换 —— 同一份字段既清又填时，绘制期间落进来的点击
+        // 会看到「插件行不存在」，那和原生热区是同一个「点不上」的根因。
+        private static List<Plugins.WidgetLayout.Slot> _pluginSlots = new(8);
+        private static List<Plugins.WidgetLayout.Slot> _pluginSlotsDraft = new(8);
 
         private static float _pluginRowBudget = float.PositiveInfinity;
 
@@ -462,7 +466,7 @@ namespace NotchPeninsula
         {
             lock (_pluginSlotLock)
             {
-                _pluginSlots.Clear();
+                _pluginSlotsDraft.Clear();
                 // 先拷到局部再清：_pluginDrawn 会被 InvalidatePluginSnapshot 置 null，
                 // 「判空之后再用」的窗口在这里同样会 NRE。
                 var drawn = _pluginDrawn;
@@ -505,6 +509,7 @@ namespace NotchPeninsula
             lock (_pluginSlotLock)
             {
                 _pluginSlots.Clear();
+                _pluginSlotsDraft.Clear();
 
                 _detailPage = null;
                 _detailHitPage = null;
@@ -935,7 +940,7 @@ namespace NotchPeninsula
 
                     drawn[i] = true;
                     var r = new SKRect(x, 0f, x + w, currentHeight);
-                    _pluginSlots.Add(new Plugins.WidgetLayout.Slot(widgets[i], r));
+                    _pluginSlotsDraft.Add(new Plugins.WidgetLayout.Slot(widgets[i], r));
 
                     bool hovered = mouseX >= r.Left && mouseX <= r.Right && mouseY >= r.Top && mouseY <= r.Bottom;
                     var frame = new Plugins.WidgetFrame(theme, alpha, textOffsetY, bars, hovered);

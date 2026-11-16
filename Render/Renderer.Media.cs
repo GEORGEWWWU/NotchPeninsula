@@ -61,7 +61,6 @@ namespace NotchPeninsula
         }
 
         // ---- 展开态歌曲时间轴 ----
-        private static float _tlBarX1, _tlBarX2, _tlBarY;
 
         private const float TL_SIDE_PAD = 22f;    // 时间文本距岛体左右边缘的留白
 
@@ -100,8 +99,10 @@ namespace NotchPeninsula
                 ? MEDIA_EXPANDED_HEIGHT_TIMELINE
                 : MEDIA_EXPANDED_HEIGHT_PLAIN;
 
-        public static bool HitTimeline(float x, float y)
-            => _tlBarX2 > _tlBarX1 && x >= _tlBarX1 - 8f && x <= _tlBarX2 + 8f && Math.Abs(y - _tlBarY) <= 13f;
+        public static bool HitTimeline(float x, float y) => HitTimeline(HitZones, x, y);
+
+        private static bool HitTimeline(NativeHitZones z, float x, float y)
+            => z.TlX2 > z.TlX1 && x >= z.TlX1 - 8f && x <= z.TlX2 + 8f && Math.Abs(y - z.TlY) <= 13f;
 
         // ---- 歌词翻译（上下两行） ----
 
@@ -122,7 +123,10 @@ namespace NotchPeninsula
         // 这里的右键只按区域决定「直达设置窗口的哪个页签」，
 
         public static float TimelineRatio(float x)
-            => _tlBarX2 > _tlBarX1 ? Math.Clamp((x - _tlBarX1) / (_tlBarX2 - _tlBarX1), 0f, 1f) : 0f;
+        {
+            var z = HitZones;
+            return z.TlX2 > z.TlX1 ? Math.Clamp((x - z.TlX1) / (z.TlX2 - z.TlX1), 0f, 1f) : 0f;
+        }
 
         // 高频字符串与排版宽度缓存
         private static string _lastMediaTitle = "";
@@ -262,7 +266,7 @@ namespace NotchPeninsula
             if (head > x1) canvas.DrawRoundRect(new SKRect(x1, top, head, top + h), radius, radius, _barPaint);
             if (media.IsDragging) canvas.DrawCircle(head, barY, 4.5f, _barPaint); // 拖动时才亮出圆点：常态极简，操作时给足抓取反馈
 
-            _tlBarX1 = x1; _tlBarX2 = x2; _tlBarY = barY;
+            _hitDraft.TlX1 = x1; _hitDraft.TlX2 = x2; _hitDraft.TlY = barY;
         }
 
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)

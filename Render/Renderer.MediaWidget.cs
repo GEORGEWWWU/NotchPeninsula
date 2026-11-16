@@ -34,8 +34,8 @@ namespace NotchPeninsula
         {
             _compositeMediaRight = geometry.AnchorRight;
             // 本模块的右键命中区 = 文字 + 频谱 / 按钮锚点
-            _mediaZoneL = geometry.ZoneLeft;
-            _mediaZoneR = geometry.AnchorRight;
+            _hitDraft.MediaL = geometry.ZoneLeft;
+            _hitDraft.MediaR = geometry.AnchorRight;
             RegisterMediaBlock(geometry.ZoneLeft, geometry.AnchorRight);
 
             _textPaint.Color = _currentTextColor.WithAlpha(alpha);
@@ -125,8 +125,8 @@ namespace NotchPeninsula
             float left = geometry.ZoneLeft;
             float right = geometry.AnchorRight;
 
-            _mediaZoneL = left;
-            _mediaZoneR = right;
+            _hitDraft.MediaL = left;
+            _hitDraft.MediaR = right;
 
             float coverSize = 50f; // 1. 封面缩小 10px
             float coverX = left + 20f;

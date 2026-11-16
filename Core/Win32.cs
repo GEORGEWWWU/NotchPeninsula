@@ -533,7 +533,12 @@ namespace NotchPeninsula
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
-        public const uint GW_HWNDPREV = 2;
+        // GW_HWNDPREV = 3（Z 序里在它**上面**的那个窗口）。
+        // ⚠️ 这里曾经写成 2 = GW_HWNDNEXT（下面那个），于是 IsTopOfZOrder 永远返回 false，
+        //    置顶保活每 2 秒就把岛体重新 HWND_TOPMOST 一次 —— DWM 每 2 秒白合成一遍，
+        //    期间窗口重排还会让「岛体输入」跟着抖一下。别再改回去。
+        public const uint GW_HWNDPREV = 3;
+        public const uint GW_HWNDNEXT = 2;
 
         /// <summary>
         /// 窗口是否已经处在 Z 序最顶（上面没有别的窗口）。

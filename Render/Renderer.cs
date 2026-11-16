@@ -295,9 +295,8 @@ namespace NotchPeninsula
                 // 每帧清空插件命中区，仅当本帧实际绘制插件行时才重新填充
                 InvalidatePluginHitAreas();
 
-                // 时间轴几何登记表帧首作废：本帧不画就等于命中区不存在
-                _tlBarX1 = _tlBarX2 = _tlBarY = 0f;
-
+                // 时间轴几何与原生热区一起在帧首作废（只清渲染线程自己的草稿，
+                // 输入侧读的是上一条完整帧的快照，见 NativeHitZones 的说明）。
                 InvalidateNativeHitZones();
 
                 // 岛体物理左边界（背景形状 / 裁剪范围以它为准）
@@ -521,6 +520,8 @@ namespace NotchPeninsula
             }
             finally
             {
+                // 本帧的命中几何到此才是完整的：整体发布给输入线程。
+                PublishHitZones();
                 Monitor.Exit(_renderLock);
             }
         }
