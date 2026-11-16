@@ -1599,7 +1599,7 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
                 string glassHint = NativeAcrylic.IsSupported
-                    ? "Windows Composition 背板 · 跟随系统合成刷新"
+                    ? (GlassMaterial.BlurUnavailable ? "此会话无法启用原生模糊" : "Windows Composition 背板 · 可调高斯模糊")
                     : "Windows 10 · 半透明色调和边缘高光";
                 canvas.DrawText(glassHint, CONTENT_TEXT_X, gY + 26f, _subTextPaint);
 
@@ -1658,9 +1658,13 @@ namespace NotchPeninsula
                 canvas.DrawCircle(active, railY, 5.5f, _dynamicFillPaint);
             }
 
-            string value = available
-                ? (paramIndex == GlassMaterial.FrameRate ? GlassMaterial.FpsLabels : GlassMaterial.Levels)[level]
-                : "—";
+            string[] values = paramIndex switch
+            {
+                GlassMaterial.Blur => GlassMaterial.BlurLabels,
+                GlassMaterial.FrameRate => GlassMaterial.FpsLabels,
+                _ => GlassMaterial.Levels
+            };
+            string value = available ? values[level] : "—";
             canvas.DrawText(value, colX + GLASS_VALUE_RIGHT - _subTextPaint.MeasureText(value), textY, _subTextPaint);
             _subTextPaint.TextSize = 12f;
             _subTextPaint.Color = Neutral(170);

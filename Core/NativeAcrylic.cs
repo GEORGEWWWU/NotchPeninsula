@@ -70,7 +70,7 @@ internal sealed partial class NativeAcrylic : IDisposable
             _brush = _compositor.CreateHostBackdropBrush();
             _visual = _compositor.CreateSpriteVisual();
             _visual.Clip = _clip;
-            _visual.Brush = _brush;
+            _visual.Brush = _appliedBackdrop = _brush;
             _root = _compositor.CreateContainerVisual();
             _root.Children.InsertAtBottom(_visual);
             _target.Root = _root;
@@ -114,14 +114,21 @@ internal sealed partial class NativeAcrylic : IDisposable
             if (_path == null) _clip!.Geometry = _pathGeometry;
             _path = (offset, size, outline);
         }
-        float backdropOpacity = glass ? GlassMaterial.BackdropOpacity * opacity : opacity;
+        var backdrop = SelectBackdrop(glass);
+        if (_appliedBackdrop != backdrop)
+        {
+            _visual!.Brush = backdrop;
+            _appliedBackdrop = backdrop;
+        }
+        // Cover the sharp desktop under the blurred copy. The foreground tint stays translucent.
+        float coverage = glass && backdrop == _brush ? GlassMaterial.BackdropOpacity : 1f;
+        float backdropOpacity = coverage * opacity;
         if (backdropOpacity != _opacity)
         {
             _visual!.Opacity = backdropOpacity;
             _opacity = backdropOpacity;
         }
-        PresentGlassEdge(glass, offset, size, outline, new Vector2(width, height), dpi, opacity);
-        PresentLiveGlass(liveRegions, canvasOrigin, dpi);
+        PresentLiveGlass(liveRegions, canvasOrigin, dpi, backdrop, coverage);
         if (!_visible || bounds != _bounds || GetWindow(foreground, NextWindow) != _window)
         {
             if (!Win32.SetWindowPos(_window, foreground, x, y, width, height,

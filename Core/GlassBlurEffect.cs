@@ -7,20 +7,20 @@ using WinRT.Interop;
 
 namespace NotchPeninsula;
 
-// Descriptor for the built-in Direct2D affine effect. Composition owns the backdrop
-// and executes the transform; the app only supplies the transform and source name.
-[WinRTExposedType(typeof(GlassRefractionEffect.InterfaceDetails))]
-internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGraphicsEffect, IGraphicsEffectSource
+// Descriptor for the built-in Direct2D Gaussian blur effect. Composition owns the backdrop
+// and applies the blur; the app only supplies the standard deviation and source name.
+[WinRTExposedType(typeof(GlassBlurEffect.InterfaceDetails))]
+internal sealed class GlassBlurEffect(IGraphicsEffectSource source) : IGraphicsEffect, IGraphicsEffectSource
 {
     internal const string SourceName = "Backdrop";
-    internal const string TransformProperty = "Refraction.TransformMatrix";
-    public string Name { get; set; } = "Refraction";
+    internal const string AmountProperty = "Blur.BlurAmount";
+    public string Name { get; set; } = "Blur";
     private IGraphicsEffectSource Source { get; } = source;
 
     public sealed unsafe class InterfaceDetails : IWinRTExposedTypeDetails
     {
         private const int InvalidArgument = unchecked((int)0x80070057);
-        private static readonly Guid AffineTransform = new("6AA97485-6354-4CFC-908C-E4A74F62C96C");
+        private static readonly Guid GaussianBlur = new("1FEB6D69-2FE6-4AC9-8C58-1D7F93E7A6A5");
         private static readonly Guid PropertyValueInterface = new("4BD682DD-7554-40E9-9A9B-82654EDE7E62");
         private static readonly ComWrappers.ComInterfaceEntry[] Interfaces =
         [
@@ -57,7 +57,7 @@ internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGra
         private static int GetName(nint self, nint* name)
         {
             *name = 0;
-            try { *name = MarshalString.FromManaged(ComWrappersSupport.FindObject<GlassRefractionEffect>(self).Name); }
+            try { *name = MarshalString.FromManaged(ComWrappersSupport.FindObject<GlassBlurEffect>(self).Name); }
             catch (Exception ex) { return ex.HResult; }
             return 0;
         }
@@ -65,7 +65,7 @@ internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGra
         [UnmanagedCallersOnly(CallConvs = [typeof(CallConvMemberFunction)])]
         private static int SetName(nint self, nint name)
         {
-            try { ComWrappersSupport.FindObject<GlassRefractionEffect>(self).Name = MarshalString.FromAbi(name); }
+            try { ComWrappersSupport.FindObject<GlassBlurEffect>(self).Name = MarshalString.FromAbi(name); }
             catch (Exception ex) { return ex.HResult; }
             return 0;
         }
@@ -73,7 +73,7 @@ internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGra
         [UnmanagedCallersOnly(CallConvs = [typeof(CallConvMemberFunction)])]
         private static int GetEffectId(nint self, Guid* effect)
         {
-            *effect = AffineTransform;
+            *effect = GaussianBlur;
             return 0;
         }
 
@@ -82,8 +82,7 @@ internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGra
         {
             *index = *mapping = 0;
             if (name == null || !MemoryMarshal.CreateReadOnlySpanFromNullTerminated(name)
-                .SequenceEqual("TransformMatrix")) return InvalidArgument;
-            *index = 2;
+                .SequenceEqual("BlurAmount")) return InvalidArgument;
             *mapping = 1; // GRAPHICS_EFFECT_PROPERTY_MAPPING_DIRECT
             return 0;
         }
@@ -91,7 +90,7 @@ internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGra
         [UnmanagedCallersOnly(CallConvs = [typeof(CallConvMemberFunction)])]
         private static int GetPropertyCount(nint self, uint* count)
         {
-            *count = 4;
+            *count = 3;
             return 0;
         }
 
@@ -99,15 +98,14 @@ internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGra
         private static int GetProperty(nint self, uint index, nint* value)
         {
             *value = 0;
-            if (index >= 4) return InvalidArgument;
+            if (index >= 3) return InvalidArgument;
             try
             {
                 object property = index switch
                 {
-                    0 => PropertyValue.CreateUInt32(1), // linear interpolation
-                    1 => PropertyValue.CreateUInt32(1), // hard border
-                    2 => PropertyValue.CreateSingleArray([1f, 0f, 0f, 1f, 0f, 0f]),
-                    _ => PropertyValue.CreateSingle(0f)
+                    0 => PropertyValue.CreateSingle(0f),
+                    1 => PropertyValue.CreateUInt32(1), // balanced optimization
+                    _ => PropertyValue.CreateUInt32(1) // hard border
                 };
                 nint boxed = MarshalInspectable<object>.FromManaged(property);
                 try { return Marshal.QueryInterface(boxed, in PropertyValueInterface, out *value); }
@@ -124,7 +122,7 @@ internal sealed class GlassRefractionEffect(IGraphicsEffectSource source) : IGra
             try
             {
                 *source = MarshalInterface<IGraphicsEffectSource>.FromManaged(
-                    ComWrappersSupport.FindObject<GlassRefractionEffect>(self).Source);
+                    ComWrappersSupport.FindObject<GlassBlurEffect>(self).Source);
                 return 0;
             }
             catch (Exception ex) { return ex.HResult; }

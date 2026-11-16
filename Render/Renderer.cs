@@ -271,7 +271,7 @@ namespace NotchPeninsula
 
         public static float MAX_WINDOW_HEIGHT => Math.Max(
             Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f),
-            // 实况窗详情页：RequiredWindowHeight 已含面板高度，这里再给玻璃合成留出边缘折射 / 模糊的采样余量
+            // 实况窗详情页：RequiredWindowHeight 已含面板高度，额外留出动画余量。
             // （窗口多出来的那块是透明的，不影响显示；抓屏高度靠它才能盖住面板底部）。
             LiveWindowHost.RequiredWindowHeight > 0f ? LiveWindowHost.RequiredWindowHeight + 72f : 0f);
 

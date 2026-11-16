@@ -4,14 +4,16 @@ namespace NotchPeninsula;
 
 internal static class GlassMaterial
 {
-    internal const int Refraction = 0, Rim = 1, Thickness = 2, Tint = 3, FrameRate = 4;
+    internal const int Blur = 0, Rim = 1, Thickness = 2, Tint = 3, FrameRate = 4;
     internal static readonly string[] Keys =
-        ["LiquidGlassRefraction", "LiquidGlassRim", "LiquidGlassThickness", "LiquidGlassFrost", "LiquidGlassFps"];
-    internal static readonly string[] Labels = ["折射", "高光", "厚度", "色调", "帧率"];
+        ["LiquidGlassBlur", "LiquidGlassRim", "LiquidGlassThickness", "LiquidGlassFrost", "LiquidGlassFps"];
+    internal static readonly string[] Labels = ["模糊", "高光", "厚度", "色调", "帧率"];
     internal static readonly string[] Levels = ["最低", "偏低", "标准", "偏高", "最高"];
     internal static readonly string[] FpsLabels = ["30", "60", "90", "120", "144", "不限"];
     private static readonly int[] DefaultLevels = [2, 2, 2, 1, 2];
     private static readonly int[] Settings = (int[])DefaultLevels.Clone();
+    internal static readonly string[] BlurLabels = ["关", "轻", "中", "强", "最强"];
+    private static readonly float[] BlurAmounts = [0f, 3f, 7f, 12f, 18f];
     private static readonly int[] FrameRates = [30, 60, 90, 120, 144, 0];
 
     internal static int DefaultLevel(int index) => DefaultLevels[index];
@@ -23,8 +25,8 @@ internal static class GlassMaterial
     // Composition refreshes the backing independently of the app's foreground frame limiter.
     internal static int ForegroundFps => FrameRates[GetLevel(FrameRate)];
     internal const float BackdropOpacity = 0.46f;
-    internal static float RefractionPixels => GetLevel(Refraction) * 1.75f;
-    internal static float EdgeWidth => 2f + GetLevel(Thickness) * 1.25f;
+    internal static float BlurAmount => BlurAmounts[GetLevel(Blur)];
+    internal static volatile bool BlurUnavailable;
     internal static volatile bool BackdropReady;
     internal static bool LiveBackdropReady { get; set; }
 
@@ -43,7 +45,7 @@ internal static class GlassMaterial
     private static readonly SKPaint TintPaint = new() { IsAntialias = true };
     private static readonly SKPaint RimPaint = new()
     {
-        IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, StrokeJoin = SKStrokeJoin.Round
+        IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeJoin = SKStrokeJoin.Round
     };
 
     internal static SKColor TintColor(bool light, bool hasBackdrop)
@@ -65,6 +67,7 @@ internal static class GlassMaterial
         canvas.Save();
         canvas.ClipPath(shape, SKClipOperation.Intersect, true);
         // Offset the contour slightly to put the reflection and shadow on opposing inner edges.
+        RimPaint.StrokeWidth = 0.75f + GetLevel(Thickness) * 0.375f;
         canvas.Translate(0f, 0.7f);
         RimPaint.Color = new SKColor(239, 247, 255, (byte)((28 + rim * 18) * opacity));
         canvas.DrawPath(shape, RimPaint);
