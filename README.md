@@ -1,298 +1,42 @@
 <div align="center">
-
-<img src="./NPS_NotchPeninsula-logo.ico" alt="NotchPeninsula" width="180" />
-
-<h1>NotchPeninsula</h1>
-  
-<p>专为 Windows 而生的刘海屏/灵动岛组件，极致内存占用与性能</p>
-
-![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows\&logoColor=white)
-![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white)
-![C#](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp&logoColor=white)
-![NAudio](https://img.shields.io/badge/NAudio-2.2-5C2D91)
-![SkiaSharp](https://img.shields.io/badge/SkiaSharp-2.88-8A2BE2)
-![Version](https://img.shields.io/github/v/release/GEORGEWWWU/NotchPeninsula?style=flat-square&label=Version&color=2ea44f)
-![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
-
-<p>
-  
-  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/wiki">进阶玩法</a> &nbsp; | &nbsp;
-  <a href="https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest">下载地址</a> &nbsp; | &nbsp;
-  想获取最新测试版？加入
-  <a href="https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW\&jump_from=webapi\&authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87" target="\_blank">QQ交流群：1080730621</a>
-  
-</p>
-
-<img width="1500" height="306" alt="NotchPeninsula 项目展示组件展示" src="https://github.com/user-attachments/assets/88150409-d532-486b-8b92-853aebab1165" />
-<img width="576" height="359" alt="全新液态玻璃 + 实况窗" src="https://github.com/user-attachments/assets/fce46aa3-3abc-47f0-937e-f0b092c32807" />
-<img width="1920" height="200" alt="NotchPeninsula 封面 1 3 0 效果" src="https://github.com/user-attachments/assets/b80857fa-58a5-4379-8f1c-cf75db704ab1" />
-
+  <img src="./NPS_NotchPeninsula-logo.ico" alt="" width="96" />
+  <h1>NotchPeninsula</h1>
+  <p>Windows 桌面上的刘海与灵动岛，把媒体、歌词、通知和常用组件集中在屏幕顶部。</p>
+  <p>
+    <a href="https://nps.georgewu.top/">官方网站</a> &nbsp;|&nbsp;
+    <a href="https://github.com/GEORGEWWWU/NotchPeninsula/wiki">进阶玩法</a> &nbsp;|&nbsp;
+    <a href="https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest">下载地址</a> &nbsp;|&nbsp;
+    想获取最新测试版？加入 <a href="https://qm.qq.com/cgi-bin/qm/qr?k=i70z7rbl-VWpejQugvlXeARDUjwP7sIW&amp;jump_from=webapi&amp;authKey=b6Pj6zLuuCINDhafPJRttePdy3D45vvtWzcZ109LWoWYXkcKo8bNWI7fMhr+yV87">QQ交流群：1080730621</a>
+  </p>
 </div>
 
-## 项目概览
+<img src="https://github.com/user-attachments/assets/88150409-d532-486b-8b92-853aebab1165" alt="NotchPeninsula 桌面组件展示" width="100%" />
 
-NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基于 Win32 + SkiaSharp + NAudio 实现：在桌面顶部生成一条轻量透明悬浮区域，集中承载系统媒体状态、通知消息与音频可视化。
+## 能做什么
 
-- 系统媒体播放状态与灵动岛歌词（含译文与逐字歌词）
-- 实时音频频谱，以及时间日期与 CPU / 内存占用
-- Windows Toast 通知与可选提示音
-- 可安装第三方插件的自定义组件
-- 待机模式、自动隐藏、窗口置顶、鼠标穿透与自动更新检测
-- 首次启动引导向导，常用项一次配好
-- MSP 接入（实验性）：外部程序可弹通知、查询并控制媒体
+- **媒体与歌词** · 控制系统媒体播放，查看逐字歌词、译文和实时音频频谱。
+- **通知与实况窗** · 在岛内查看 Windows 通知，用实况窗展示媒体或插件进度。
+- **桌面个性化** · 切换刘海或灵动岛，选择亚克力或液态玻璃，设置待机、自动隐藏、快捷键和多显示器。
+- **插件扩展** · 从内置市场安装和更新插件，也可导入 DLL 或 ZIP。
 
-## 功能特性
+<img src="https://github.com/user-attachments/assets/fce46aa3-3abc-47f0-937e-f0b092c32807" alt="液态玻璃与实况窗" width="100%" />
 
-| 模块 | 说明 |
-| --- | --- |
-| **媒体控制** | 自动接管系统媒体会话（浏览器 / 网易云 / QQ 音乐 / 酷狗 / Spotify / Apple Music / Echo Music / LX Music 等），支持播放暂停、上下曲与时间轴拖动。**系统同时给出歌名与歌手**即为音乐模式：联网取歌词与封面；否则按视频模式处理——不联网，封面取系统会话自带的缩略图（无则用应用图标；PotPlayer 放视频时缩略图是画面截图，直接改用应用图标） |
-| **实况窗（Live Window）** | 主岛左侧的圆形进度气泡；媒体可收进实况窗（封面旋转、进度环），右键从气泡展开原有面板。插件也能注册，在「设置 → 实况窗管理」逐个开关（插件默认启用；媒体默认关闭，开关在「媒体设置」） |
-| **灵动岛歌词** | 支持**译文**与**逐字歌词**（无逐字源自动回退软件模拟卡拉 OK 效果），岛体宽度随歌词自适应；多源获取链与各播放器的差异见下文 |
-| **实时音频可视化** | WASAPI Loopback 捕获系统输出，分析为 5 组频段并平滑渲染；未播放媒体时保留音量动态效果，自动跟随系统默认输出设备 |
-| **Windows 通知** | 监听 Toast 通知，**缩略 / 紧凑 / 完整**三档呈现，可整体关闭；通知图标自动取应用自身 logo，展示结束即释放，点击通知可唤回对应应用；可选消息提示音（内置 14 个音源或本地音频） |
-| **时间日期与硬件监测** | 内置时间日期与 CPU / 内存占用监测，在**显示设置**中统一控制显示与排序 |
-| **全局快捷键** | 媒体五动作（播放暂停 / 上下曲 / 快进快退 3 秒）与「唤出 / 隐藏灵动岛」各绑一组全局热键；按键必须搭配 Ctrl / Alt / Shift / Win，被其他程序占用时会说明哪一条没生效。**出厂全部关闭**（不注册任何热键）；录制键位期间自动挂起已注册热键，避免「按一下看看录成什么」变成真的切歌 |
-| **Just Solo 歌词** | 接入 Just Solo LyricServer，获取带时间轴歌词与服务端推送频谱；音量操作单一出口——连上走播放器音量，否则走系统主音量 |
-| **插件系统** | 独立 DLL 放入程序同级 `plugins` 目录即自动加载，支持热重载；开放组件、详情页、定时刷新、提醒、自定义窗口五类扩展点。插件还可以**把自己暴露成 MSP 工具与信号**（`[MspTool]` 一行注册，对端看到 `notchpeninsula_<插件id>_<工具名>`；schema 由方法签名生成，带默认值的参数自动可选）。插件窗口与详情页均支持**双向文件拖放**（可拖入文件 / 文件夹，也可拖出到资源管理器，组件还可声明「收起态也收文件」）；组件与详情页支持**双击 / 右键事件透传**（各有独立开关，默认全关，不影响已有插件）。另支持 **AutoWidth**：宽度由宿主测量分配，老插件零改动。[详见开发文档](./NPS_PluginsAPI.md) |
-| **外观与个性化** | 主题（深色 / 浅色 / 跟随系统）、背景材质（实体 / 亚克力 / 液态玻璃）、背景不透明度、刘海样式、底部圆角、各状态尺寸与全局 DPI 缩放，岛体宽度上限跟随显示器工作区；字体可整体替换（缺字自动回退）；窗口置顶、鼠标穿透、多显示器指定 |
-| **自动隐藏** | 总开关下三种模式**互相独立、可任意组合**：焦点离开时 / 暂停播放后 / 全屏应用时。**穿透模式下同样生效**（隐藏后点屏幕顶部那条细边即可唤回，也可用托盘菜单「唤回灵动岛」）；通知、媒体展开面板、插件详情页期间一律不隐藏 |
-| **待机模式** | 一键把岛体收成小胶囊，内容三选一：仅时间 / 空白 / 折叠媒体控制（选了媒体控制但当前没在播放时自动退化为空白）；可在**显示设置**手动切换，也可开启「双击空白切换」后在岛上双击进出。待机是运行时状态，重启后回到普通模式 |
-| **MSP 接入（实验性）** | 把灵动岛注册为本机 MSP 节点 `notchpeninsula`：外部程序可 ping、弹通知、查询媒体状态、控制播放；岛体同时广播本机事件、订阅对端通知。**插件注册的工具与信号也挂在同一个节点上**，对端看到的就是一棵完整的工具树。开关在**通用设置**，**默认关闭**、开启即时生效 |
-| **交互** | 双击封面切回正在播放的应用（默认关闭，可在交互设置开启）；岛内右键按区域直达对应设置页；托盘菜单快捷控制 |
+<img src="https://github.com/user-attachments/assets/b80857fa-58a5-4379-8f1c-cf75db704ab1" alt="刘海与灵动岛样式展示" width="100%" />
 
-### 歌词 / 译文 / 封面获取顺序
+## 开始使用
 
-**「逐字歌词」打开时（默认）—— 走两个落月源：**
+1. 在 [下载页](https://github.com/GEORGEWWWU/NotchPeninsula/releases/latest) 获取 Windows x64 版本。支持 Windows 10 / 11，需安装 .NET 10 Desktop Runtime。
+2. 双击 exe，按首次启动引导选择外观、显示器和开机自启设置。
+3. 右键托盘图标打开设置。可在「个性化中心」更换材质，在「显示设置」调整岛内内容，在「插件市场」安装扩展。
 
-- **网易云音乐播放时**：主歌词 / 译文取**落月 API（网易云）**；逐字先用它自己的，**没有才向落月 API（QQ 音乐）借**（借之前会校验两边歌词确实是同一版本）
-- **其他播放器**：**落月 API（QQ 音乐） → 落月 API（网易云）** 依次兜底
-- 两档落月都拿不到时，由**网易云官方歌词 → LRCLIB** 收尾（LRCLIB 只有整行歌词，逐字回退软件模拟卡拉 OK 效果）
-- **封面**：上面各档顺带给出 → QQ 音乐（直连兜底） → 该程序自身的应用图标
+## 开发
 
-**「逐字歌词」关闭时：**
+在 Windows 上安装 .NET 10 SDK。用 Visual Studio 打开 `NotchPeninsula.slnx`，按 F5 调试。运行 `.uild.ps1` 打包，产物位于 `publishNotchPeninsula.exe`。
 
-- **主歌词**：落月 API（QQ 音乐） → QQ 音乐官方歌词 → 落月 API（网易云） → 网易云 → LRCLIB
-- **译文**：落月 API（QQ 音乐） → QQ 音乐官方歌词 → 落月 API（网易云） → 网易云
-- **封面**：落月 API（QQ 音乐） → 落月 API（网易云） → 网易云官方 → QQ 音乐（直连兜底） → 该程序自身的应用图标
-
-> **「会话自带的封面」对所有播放器都会尝试**；仅当**网络封面**（按歌名 / 歌手精确匹配）成功取得时才会覆盖它。
->
-> **视频模式**不联网；**PotPlayer 放视频时**缩略图是画面截图而非封面，跳过会话缩略图直接用应用图标。
->
-> **B站 PC 客户端**关掉视频后不注销 SMTC 会话，岛体会在约半秒后自行忽略这个「僵尸会话」（判据是该进程是否还有标题匹配的**可见**窗口），重新打开视频立刻恢复。
->
-> **用网易云音乐播放、且「逐字歌词」关闭时走「网易优先」**：`落月 API（网易云） → 网易云 → 落月 API（QQ 音乐） → QQ 音乐官方歌词 → LRCLIB`。
-
-## 使用方式
-
-### 启动
-
-在 Windows 上直接运行编译后的程序即可，程序会驻留托盘区，界面默认显示在屏幕顶部中央。
-
-**首次启动**会先跑一遍横版引导向导：主题配色 / 背景材质 / 目标显示器 / 显示模式 / 开机自启一次配好，与设置窗口写同一份配置；向导内异常会立刻放弃引导、照常进入（不挡启动）。
-
-> [!TIP]
-> 想再跑一遍引导向导：删掉注册表 `HKEY_CURRENT_USER\SOFTWARE\NotchPeninsula` 下的 `OnboardedVersion` 值即可。
-> **别删整个键**——那样会连你的全部设置一起丢掉。
-
-### 设置入口
-
-右键托盘图标：**打开设置 / 唤回灵动岛 / 开机自启 / 退出**。设置窗口按左侧导航分为 9 个页签：
-
-- **个性化中心** —— 主题（黑 / 白 / 系统）、背景材质（实体 / **亚克力** / **液态玻璃**，后两者实验性）、背景不透明度、全局折叠态高度与底部圆角、通知尺寸、视觉比例；选「液态玻璃」后展开玻璃质量（流畅 / 均衡 / 精细 / 极致）与 12 项参数（模糊 / 折射 / 色散 / 高光 / 厚度 / 透镜 / 饱和 / 雾度 / 明度 / 抓屏刷新 / 岛体帧率 / 放大倍率），「恢复默认参数」在滑轨下方右下角；材质卡第三行是「背景模糊」两档 —— **原模糊**＝真实桌面按档位半径糊一层，**高斯模糊**＝在档位半径之外再加约 8px 高斯。两档下面都是**真实桌面**：岛体只在抓屏读取的那一瞬间从屏幕捕获里隐身（约 28ms），桌面静止时完全不隐身，所以截图 / 录屏照常拍得到岛；抓屏走 DXGI（静止桌面零开销），装不上时自动退回 GDI 轮询，GDI 节拍由「抓屏刷新」档控制；玻璃层重算按「深处快路径 + 位图复用」优化，折叠态约 3ms、展开态约 27ms（4 核 @1920×1080，内容变化时 4Hz 一次，静止时直接走缓存）
-- **通用设置** —— 开机自启、窗口置顶、系统消息通知与提示音、**MSP 接入（实验性）**、灵动岛字体
-- **显示设置** —— 显示形态（刘海 / 灵动岛）、目标显示器、显示模式（待机 / 普通 + 双击空白切换）、待机内容三选一、**显示内容**（勾选显示项并调整先后次序）
-- **实况窗管理** —— 控制哪些插件可以使用主岛左侧的实况窗（插件逐个开关，**默认全部启用**；关掉后该插件的内容只留在主岛，不会出现左侧气泡）。「媒体」一行只做状态提示，开关在「媒体设置」里（媒体实况窗**默认关闭**）
-- **媒体设置** —— 媒体控制、目标媒体平台与匹配方式、**使用实况窗展示媒体**、歌词与译文、逐字歌词、歌词延迟补偿、**全局快捷键**
-- **交互设置** —— 自动隐藏、媒体交互方式、双击封面跳转应用、鼠标穿透、**唤出灵动岛快捷键**
-- **我的插件** —— 导入 / 启用 / 禁用 / 热重载 / 卸载插件（二次确认）、打开插件目录、拖入 DLL / ZIP 直接安装（**在设置窗任意页面拖入会自动跳到本页**；导入只接受 `.dll` / `.zip`）
-- **插件市场** —— 按分类（全部插件 / 主题外观 / 媒体增强 / 效率工具 / 开发者）浏览，搜索与「只看已安装」筛选，排序（最热 / 评分 / 最新 / 名称，默认最热，官方插件恒置顶），下载 / 更新 / 重装 / 卸载（二次确认）；插件声明的最低 NPS 版本高于当前版本时，单个下载 / 更新前会弹窗提示确认，**一键更新会跳过这类插件**；存在可更新插件时列表底部出现**「一键更新全部插件」**（逐个排队安装、显示进度），侧栏「插件市场」右上角的黄色角标同步显示待更新数（超过 9 显示 9+）
-- **关于软件** —— 版本信息与相关链接（检测更新 / 项目仓库 / 开发者）
-
-> 插件导入或安装失败时会弹窗提示：**请确认已使用最新版 NPS，可前往 QQ 群下载最新版本**
-> （绝大多数失败原因都是插件按新版宿主 API 编译、宿主还旧）。成功导入 / 安装 / 卸载不再刷状态行提示，
-> 结果直接体现在列表里；失败的具体原因仍会在状态行标红。
->
-> 「媒体交互方式」是折叠态媒体区的**展开功能总闸**，同时决定展开入口：
-> 开启后左键留给双击跳转、展开走**右键**；关闭则左键单击展开。
-
-### 权限要求
-
-由于项目使用了 Windows 通知监听能力，首次运行时可能需要允许此应用访问通知：
-
-- 设置 → 隐私和安全性 → 通知
-- 打开对应权限开关
-
-> [!IMPORTANT]
-> 如果关闭了通知权限，Toast 监听将无法正常显示消息。
-
-## 开发动态
-
-> 下面每格数据都由 shields.io 直接读取本仓库，**打开或刷新页面即为最新值**。
-
-<table align="center">
-  <tr>
-    <td align="center"><b>最新版本</b><br />
-      <img src="https://img.shields.io/github/v/release/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=2ea44f" alt="最新版本" /></td>
-    <td align="center"><b>累计提交</b><br />
-      <img src="https://img.shields.io/github/commit-activity/t/GEORGEWWWU/NotchPeninsula?style=flat-square&label=" alt="累计提交" /></td>
-    <td align="center"><b>提交频率</b><br />
-      <img src="https://img.shields.io/github/commit-activity/m/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=007ec6" alt="提交频率" /></td>
-    <td align="center"><b>最近提交</b><br />
-      <img src="https://img.shields.io/github/last-commit/GEORGEWWWU/NotchPeninsula?style=flat-square&label=" alt="最近提交" /></td>
-  </tr>
-  <tr>
-    <td align="center"><b>贡献者</b><br />
-      <img src="https://img.shields.io/github/contributors/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=8957e5" alt="贡献者" /></td>
-    <td align="center"><b>Star</b><br />
-      <img src="https://img.shields.io/github/stars/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=dfb317" alt="Star" /></td>
-    <td align="center"><b>Fork</b><br />
-      <img src="https://img.shields.io/github/forks/GEORGEWWWU/NotchPeninsula?style=flat-square&label=" alt="Fork" /></td>
-    <td align="center"><b>待处理 Issue</b><br />
-      <img src="https://img.shields.io/github/issues/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=f0883e" alt="待处理 Issue" /></td>
-  </tr>
-  <tr>
-    <td align="center"><b>待处理 PR</b><br />
-      <img src="https://img.shields.io/github/issues-pr/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=2ea44f" alt="待处理 PR" /></td>
-    <td align="center"><b>下载总量</b><br />
-      <img src="https://img.shields.io/github/downloads/GEORGEWWWU/NotchPeninsula/total?style=flat-square&label=&color=8957e5" alt="下载总量" /></td>
-    <td align="center"><b>仓库体积</b><br />
-      <img src="https://img.shields.io/github/repo-size/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=blueviolet" alt="仓库体积" /></td>
-    <td align="center"><b>主要语言</b><br />
-      <img src="https://img.shields.io/github/languages/top/GEORGEWWWU/NotchPeninsula?style=flat-square&label=&color=239120" alt="主要语言" /></td>
-  </tr>
-</table>
-
-<div align="center">
-
-</div>
-
-## 项目结构
-
-```text
-NotchPeninsula/
-├── Core/                             # 程序骨架与系统底层
-│   ├── Program.cs                    # 程序入口，单例启动与配置读写
-│   ├── NotchWindow.cs                # 主窗口逻辑、动画、托盘、消息队列调度
-│   ├── LiveWindowHost.cs             # 实况窗宿主：注册、布局、动画、命中、右键展开态
-│   ├── MediaLiveWindow.cs            # 内置媒体实况窗：3 秒预览 → 收进左侧、封面旋转
-│   ├── NotchWindow.Acrylic.cs        # 亚克力背板：抓屏区域同步、成品交接与释放
-│   ├── GlassSupport.cs               # 液态玻璃的可用性守卫：连续失败判定不支持 → 弹窗 + 退回可用材质
-│   ├── UiAlert.cs                    # 极简弹窗（后台线程 MessageBoxW，同 key 一次会话只弹一次）
-│   ├── Win32.cs                      # Win32 API 封装
-│   ├── HotkeyText.cs                 # 快捷键键名格式化与合法性校验（两组全局热键共用）
-│   ├── IslandHotkey.cs               # 「隐藏 / 唤出灵动岛」全局快捷键（单键位）
-│   ├── SystemSettingManager.cs       # 系统音量控制
-│   ├── brightness.cs                 # 屏幕亮度控制
-│   ├── IslandBackdrop.cs             # 岛体背板（后台线程抓屏 + 缩略，避免渲染线程硬停顿）
-│   ├── DxgiBackdrop.cs               # DXGI Desktop Duplication 抓屏（GPU 采集，静止桌面零开销，不可用自动退回 GDI）
-│   ├── IslandDropTarget.cs           # 岛体 OLE 拖入目标（让插件详情页也能接文件拖放）
-│   ├── DataResources.cs              # data\ 内置资源解析（磁盘优先、嵌入兜底）
-│   ├── UpdateManager.cs              # GitHub 版本检测与更新弹窗
-│   └── Logger.cs                     # 日志
-├── Render/                           # 渲染与字体
-│   ├── Renderer.cs                   # 岛体渲染主流程：尺寸/主题/模式参数 + Draw() 主流程
-│   ├── Renderer.Layout.cs            # 岛体内容布局：按「显示内容」顺序表混排 / 穿透唤醒按钮
-│   ├── Renderer.Plugin.cs            # 插件行绘制与详情页（命中、预算、顺序表）
-│   ├── Renderer.Toast.cs             # 通知 Toast 绘制
-│   ├── Renderer.Media.cs             # 媒体/歌词/逐字/时间轴/硬件统计
-│   ├── Renderer.MediaWidget.cs       # 媒体控制模块绘制：折叠态内联行、展开面板、歌词与按钮
-│   ├── Renderer.MediaFloatingPanel.cs # 实况窗里复用原有媒体展开面板的浮层桥
-│   ├── LiveWindowRenderer.cs         # 实况窗绘制：气泡/进度环/细胞分裂/展开面板
-│   ├── Renderer.Paint.cs             # 画笔池、字体、矢量路径与图标资源
-│   ├── LiquidGlass.cs                # 液态玻璃背景：SDF 折射 + 色散 + 高斯模糊（按行并行 + 内容哈希跳过）
-│   ├── FontConfig.cs                 # 灵动岛字体统一配置中心
-│   └── LyricsFont.cs                 # 歌词字体
-├── Media/                            # 媒体、音频与歌词
-│   ├── MediaController.cs            # 媒体会话识别、歌词 / 译文 / 封面获取与逐字歌词
-│   ├── MediaLogoProvider.cs          # 媒体平台身份判定（AUMID 关键字归类）
-│   ├── SessionValidity.cs            # 僵尸会话判定（客户端关掉视频却不注销 SMTC 时判它失效）
-│   ├── AppIconProvider.cs            # 按会话 AUMID 取应用自身图标（视频模式封面 / 音乐模式兜底）
-│   ├── MediaAppLauncher.cs           # 双击媒体控制 → 跳回对应应用（窗口激活 + AUMID 兜底）
-│   ├── MediaHotkey.cs                # 全局快捷键：注册 / 注销、键位持久化、录制期挂起
-│   ├── JustSoloLyricClient.cs        # Just Solo LyricServer 歌词客户端
-│   ├── AudioAnalyzer.cs              # WASAPI Loopback 音频频谱分析
-│   ├── Audio.cs                      # NAudio 音频底层适配
-│   ├── ToastSoundConfig.cs           # 通知提示音配置与校验（动态扫描 data\sound）
-│   └── ToastSoundPlayer.cs           # 通知提示音播放队列
-├── UI/                               # 自绘窗口
-│   ├── ConsoleWindow.cs              # 设置窗口：状态字段、构造、窗口生命周期、消息泵、渲染主流程
-│   ├── ConsoleWindow.Render.cs       # 设置窗口绘制：侧边栏、各页签、下拉浮层与控件绘制
-│   ├── ConsoleWindow.WndProc.cs      # 设置窗口悬停命中（整窗热区）
-│   ├── ConsoleWindow.Click.cs        # 设置窗口点击分派（顺序敏感的 if/else 链）
-│   ├── ConsoleWindow.Backdrop.cs     # 亚克力/云母材质与窗口壳（材质窗、圆角、最小化）
-│   ├── ConsoleWindow.Plugin.cs       # 我的插件页与设置项辅助逻辑
-│   ├── ConsoleWindow.PluginDrop.cs   # 我的插件页：把 DLL / ZIP 直接拖进来即导入
-│   ├── ConsoleWindow.Market.cs       # 插件市场：API 拉取、分类/搜索过滤、下载安装、详情
-│   ├── ConsoleWindow.Settings.cs     # 尺寸/通知内容/字体等设置项的读写
-│   ├── ConsoleWindow.Paint.cs        # 设置窗口画笔池
-│   ├── OnboardingWindow.cs           # 首次启动引导向导（独立 STA 线程 + 看门狗，写同一份设置）
-│   └── TrayMenuWindow.cs             # 托盘菜单
-├── Notify/                           # 消息通知通道
-│   ├── Toast.cs                      # 系统 Toast 监听 + 本地 HTTP 推送接口
-│   ├── ToastIconProvider.cs          # 通知图标解析（内置别名 / 链接 / base64 / 本地路径）
-│   └── AppActivator.cs               # 通过 AUMID 激活应用
-├── Plugin/                           # 插件系统
-│   ├── PluginApi.cs                  # 插件 API 契约（接口与数据模型，只定义不实现）
-│   ├── LiveWindowApi.cs              # 实况窗注册契约（ILiveWindow / LiveWindowVisual / 默认三行文字）
-│   ├── PluginLoader.cs               # 插件来源发现（扫描 plugins 目录与 plugin.json）
-│   ├── PluginManager.cs              # 插件生命周期：加载 / 卸载 / 热重载 / 启用禁用 / 影子拷贝
-│   ├── PluginHost.cs                 # 宿主能力实现：注册表、刷新调度、详情页、设置持久化、内置内容伪 Id
-│   ├── PluginWindow.cs               # 插件自有窗口（分层窗口 + SkiaSharp + 鼠标键盘 + 文件拖放）
-│   ├── WidgetLayout.cs               # 布局引擎：测量 → 排列 → 产出 rect 快照
-│   ├── DropPayload.cs                # 从 OLE IDataObject 读出拖入的文件路径
-│   └── PluginDataBridge.cs           # 插件只读数据桥（媒体状态快照 / 系统通知 → 插件）
-├── Msp/                              # MSP（Model Sensing Protocol）原生接入
-│   └── MspNotchBridge.cs             # 把灵动岛暴露为本机 MSP 节点（被调用 + 广播 + 订阅对端通知）
-├── data/image/                       # 通知内置图标（qq / windows）
-├── data/sound/                       # 内置提示音（*.wav + sound.json 显示名覆盖）
-├── NPS_PluginsAPI.md                 # 插件开发文档
-├── build.ps1                         # 一键发布为单文件 exe
-├── NPS_NotchPeninsula-logo.ico       # 应用图标
-├── NotchPeninsula.csproj             # .NET 项目配置
-├── NotchPeninsula.slnx               # 解决方案文件
-├── msvcp140.dll                      # VC++ 运行库（随程序分发）
-├── vcruntime140.dll                  # VC++ 运行库（随程序分发）
-├── LICENSE                           # Apache 2.0
-└── README.md                         # 项目说明
-```
-
-> 目录只是物理分类，**所有源码仍在 `namespace NotchPeninsula` 下**（C# 命名空间与文件夹无关）。
-> 移动/重命名文件不会影响类型引用，插件 DLL 也不受影响。
-
-## 构建与运行
-
-**环境要求**：Windows 10 / 11，.NET 10 SDK。
-
-```bash
-dotnet restore
-dotnet build -c Release                                        # 本地构建
-dotnet publish -c Release -r win-x64 --self-contained false     # 发布
-```
-
-推荐用仓库自带的打包脚本：先清理 `bin` / `obj` / `publish`，再发布为单文件 exe
-
-```powershell
-.\build.ps1            # 产物：publish\NotchPeninsula.exe
-.\build.ps1 -Clean     # 仅清理，不打包
-.\build.ps1 -Force     # 强制打包，不检查是否已存在
-```
-
-运行产物中的可执行文件即可，程序会驻留托盘区；目标机需自备 .NET 10 Desktop Runtime。
+查阅 [插件开发文档](./NPS_PluginsAPI.md) 或 [Apache 2.0 许可证](./LICENSE)。
 
 ### 原生亚克力维护约束
 
-- Windows 11 原生亚克力通过独立背板窗口和 Windows Composition `CreateHostBackdropBrush` 合成。渲染优化、动画修改、材质重构和合并冲突处理都必须保留这条路径及刘海、灵动岛的轮廓裁切。**禁止用 GDI、DXGI 或其他屏幕抓取替代原生背板，也禁止将抓屏作为原生路径失败时的兜底。** 宿主或裁切初始化失败时只保留亚克力色调并记录异常。Windows 10 的旧版亚克力以及单独选择的液态玻璃继续走各自的兼容路径。
-- Windows 11 当前材质为「亚克力」时，普通发布和 Visual Studio 的 F5 调试都使用原生背板。`build.ps1` 固定传 `-p:NativeAcrylicPreview=true`，让产物双击时直接选中原生亚克力，效果等同于启动时传 `--native-acrylic`。启动时保留原先的刘海或灵动岛形态。
-- 核对亚克力是否走原生路径时，以实际运行的 exe、启动参数和日志为准。原生宿主建立会记录「已建立 Windows Composition 背板宿主」。若同一次运行在亚克力模式下出现「[亚克力/原分辨率] 抓屏 ok」，该次绘制使用了旧抓屏背板。只看设置项名称无法判断。
-
-```powershell
-dotnet publish -c Release -r win-x64 --self-contained false -p:SelfContained=false `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:IncludeAllContentForSelfExtract=true -p:NativeAcrylicPreview=true -o publish
-```
-
-## 兼容性与说明
-
-- 仅支持 Windows 10 / 11（依赖 Windows 通知管理 API），不支持 macOS / Linux。
-- 若系统未安装音频输出设备，音频频谱可能显示为空白或保持静止。
+- Windows 11 选中「亚克力」时，普通发布和 F5 调试均使用 Windows Composition `CreateHostBackdropBrush`。`build.ps1` 固定传 `-p:NativeAcrylicPreview=true`，让 exe 双击时直接选中原生亚克力，效果等同于启动时传 `--native-acrylic`。
+- 保留刘海和灵动岛的轮廓裁切。**禁止用 GDI、DXGI 或其他抓屏方式替换原生背板，也禁止在原生宿主或裁切失败时回退到抓屏。** 失败时只保留色调并记录异常。Windows 10 和液态玻璃沿用各自的兼容路径。
+- 排查时核对实际运行的 exe、启动参数和同一次运行的日志。「已建立 Windows Composition 背板宿主」表示宿主已建立。「[亚克力/原分辨率] 抓屏 ok」表示本次亚克力绘制走了旧抓屏背板。
