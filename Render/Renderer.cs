@@ -396,7 +396,9 @@ namespace NotchPeninsula
                 if (IslandAcrylic && PluginToneReady)
                     UpdateGlassTextTone((int)MathF.Round(ToneGridAverage * 255f), true);
                 if (glass)
-                    GlassMaterial.DrawCoating(canvas, _bgPath, _paletteIsLight, 1f, GlassMaterial.BackdropReady);
+                    GlassMaterial.DrawCoating(canvas, _bgPath, _paletteIsLight, 1f, GlassMaterial.BackdropReady,
+                        interactiveIsland: FullHideAlpha >= 0.99f
+                            && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake));
                 else
                     canvas.DrawPath(_bgPath, _bgPaint);
 

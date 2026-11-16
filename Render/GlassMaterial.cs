@@ -10,12 +10,14 @@ internal static class GlassMaterial
     internal static readonly string[] Labels = ["模糊", "高光", "厚度", "色调", "帧率"];
     internal static readonly string[] Levels = ["最低", "偏低", "标准", "偏高", "最高"];
     internal static readonly string[] FpsLabels = ["30", "60", "90", "120", "144", "不限"];
-    private static readonly int[] DefaultLevels = [2, 2, 2, 1, 2];
+    private static readonly int[] DefaultLevels = [1, 4, 1, 1, 5];
     private static readonly int[] Settings = (int[])DefaultLevels.Clone();
     internal static readonly string[] BlurLabels = ["关", "轻", "中", "强", "最强"];
     private static readonly float[] BlurAmounts = [0f, 0.75f, 7f, 12f, 18f];
-    // Keep a minimal alpha for hit testing through the transparent layered foreground.
     private static readonly byte[] TintAlphas = [2, 6, 14, 26, 44];
+    // The layered HWND uses its foreground alpha for mouse hit testing. Leave
+    // headroom for antialias coverage and the transition layer's alpha rounding.
+    private const byte InteractiveAlpha = 12;
     private static readonly int[] FrameRates = [30, 60, 90, 120, 144, 0];
 
     internal static int DefaultLevel(int index) => DefaultLevels[index];
@@ -57,10 +59,12 @@ internal static class GlassMaterial
         return color.WithAlpha(hasBackdrop ? TintAlphas[tint] : (byte)(54 + tint * 24));
     }
 
-    internal static void DrawCoating(SKCanvas canvas, SKPath shape, bool light, float opacity, bool hasBackdrop)
+    internal static void DrawCoating(SKCanvas canvas, SKPath shape, bool light, float opacity, bool hasBackdrop,
+        bool interactiveIsland = false)
     {
         var tint = TintColor(light, hasBackdrop);
-        TintPaint.Color = tint.WithAlpha((byte)MathF.Round(tint.Alpha * opacity));
+        byte alpha = interactiveIsland ? Math.Max(tint.Alpha, InteractiveAlpha) : tint.Alpha;
+        TintPaint.Color = tint.WithAlpha((byte)MathF.Round(alpha * opacity));
         canvas.DrawPath(shape, TintPaint);
 
         int rim = GetLevel(Rim);

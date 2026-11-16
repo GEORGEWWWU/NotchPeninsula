@@ -84,6 +84,13 @@ namespace NotchPeninsula
         private readonly SystemSettingsManager audio;
         private readonly IntPtr _hCursorHand;
         private bool _isCursorOverIcon = false;
+
+        private void SetIslandCursor(bool overIcon)
+        {
+            if (_isCursorOverIcon == overIcon) return;
+            _isCursorOverIcon = overIcon;
+            Win32.SetCursor(overIcon ? _hCursorHand : _hCursorArrow);
+        }
         private ToastNotificationListener? _listener;
         private Timer? _pollingTimer;
         private readonly Dispatcher _dispatcher;
@@ -2056,9 +2063,9 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_SETCURSOR:
-                    if (_isCursorOverIcon)
+                    if ((short)(Win32.Low32(lParam) & 0xffff) == Win32.HTCLIENT)
                     {
-                        Win32.SetCursor(_hCursorHand);
+                        Win32.SetCursor(_isCursorOverIcon ? _hCursorHand : _hCursorArrow);
                         return (IntPtr)1;
                     }
                     break;
@@ -2086,7 +2093,7 @@ namespace NotchPeninsula
                             Renderer.UpdatePluginMouse(-1f, -1f);
                             LiveWindowHost.DispatchPanelMouseMove(mx, my);
                             CancelLivePanelCollapse();
-                            _isCursorOverIcon = true;
+                            SetIslandCursor(true);
                             break;
                         }
                         if (LiveWindowHost.HitBubble(mx, my, out _))
@@ -2094,7 +2101,7 @@ namespace NotchPeninsula
                             _isOverLiveWindow = true;
                             Renderer.UpdatePluginMouse(-1f, -1f);
                             CancelLivePanelCollapse();
-                            _isCursorOverIcon = true;
+                            SetIslandCursor(true);
                             break;
                         }
                         _isOverLiveWindow = false;
@@ -2110,26 +2117,26 @@ namespace NotchPeninsula
                         {
                             if (HitWakeButton(mx, my))
                             {
-                                _isCursorOverIcon = true;
+                                SetIslandCursor(true);
                                 break; // 击中唤醒按钮，直接切小手并短路
                             }
                             else
                             {
-                                _isCursorOverIcon = false;
+                                SetIslandCursor(false);
                                 break; // 处于睡眠态时，绝对阻断底层媒体控制器的幽灵 Hover
                             }
                         }
 
                         if (Renderer.HasActiveDetailPage)
                         {
-                            _isCursorOverIcon = false;
+                            SetIslandCursor(false);
                             break;
                         }
 
                         if (_media.IsDragging)
                         {
                             _media.DragTo(Renderer.TimelineRatio(mx));
-                            _isCursorOverIcon = true;
+                            SetIslandCursor(true);
                             break;
                         }
 
@@ -2139,7 +2146,7 @@ namespace NotchPeninsula
                             float toastRight = (Renderer.WINDOW_WIDTH + _currentWidth) / 2f;
                             Renderer.ToastActionHovered = !string.IsNullOrEmpty(_currentToast.ActionLabel)
                                 && Renderer.GetToastActionRect(toastRight, Renderer.TOAST_HEIGHT).Contains(mx, my - hitTopY);
-                            _isCursorOverIcon = true;
+                            SetIslandCursor(true);
                         }
                         else if (_isHovered && _media.IsActive && _currentToast == null)
                         {
@@ -2147,31 +2154,31 @@ namespace NotchPeninsula
                             {
                                 int hoveredBtn = Renderer.HitExpandedButton(mx, my - hitTopY, _currentHeight);
                                 Renderer.HoveredExpandedButton = hoveredBtn;
-                                _isCursorOverIcon = hoveredBtn != -1 || Renderer.HitTimeline(mx, my - hitTopY);
+                                SetIslandCursor(hoveredBtn != -1 || Renderer.HitTimeline(mx, my - hitTopY));
                             }
                             else
                             {
                                 if (Renderer.MediaExpandByLeftClick)
                                 {
                                     // 媒体模块整块就是「点下去会展开」的热区 → 给小手。
-                                    _isCursorOverIcon = Renderer.HitMediaZone(mx)
-                                        && my >= hitTopY && my <= hitTopY + _currentHeight;
+                                    SetIslandCursor(Renderer.HitMediaZone(mx)
+                                        && my >= hitTopY && my <= hitTopY + _currentHeight);
                                 }
                                 else if (Renderer.MediaExpandByRightClick)
                                 {
                                     // 两种口径在这里保持一致。
-                                    _isCursorOverIcon = false;
+                                    SetIslandCursor(false);
                                 }
                                 else
                                 {
                                     float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
-                                    _isCursorOverIcon = Renderer.HitInlineButton(mx, my - hitTopY, right, _currentHeight) != -1;
+                                    SetIslandCursor(Renderer.HitInlineButton(mx, my - hitTopY, right, _currentHeight) != -1);
                                 }
                             }
                         }
                         else
                         {
-                            _isCursorOverIcon = false;
+                            SetIslandCursor(false);
                             Renderer.ToastActionHovered = false;
                         }
                         break;
