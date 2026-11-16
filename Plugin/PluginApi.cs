@@ -88,8 +88,23 @@ public interface IWidget
 
 public interface IDetailPage
 {
-    float MeasureWidth();
-    float MeasureHeight();
+    /// <summary>
+    /// 详情页想要的宽度（逻辑像素）。
+    ///
+    /// <para><b>返回 0 / 负数 / NaN = 「不指定」</b>，宿主用自己的默认宽度（350）。不想管尺寸的插件
+    /// 连这个方法都不用写 —— 默认实现就是这个语义，不要为了「有实现」而随手 return 一个数。</para>
+    ///
+    /// <para>展开期间随时改都行：宿主每帧读一次（<see cref="ResizeWithContent"/>）或收到
+    /// <c>host.InvalidateDetailPageSize()</c> 时重读，岛体会跟着弹簧动画变形，不会跳。</para>
+    /// </summary>
+    float MeasureWidth() => 0f;
+
+    /// <summary>
+    /// 详情页想要的高度（逻辑像素）。返回 0 / 负数 / NaN = 「不指定」→ 宿主默认高度（130）。
+    /// 宿主只做保护性裁剪：宽 180~1000、高 48~480。
+    /// </summary>
+    float MeasureHeight() => 0f;
+
     void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame);
     WidgetHit HitTest(float x, float y, SKRect rect);
     void OnAction(string? action, float x, float y);
@@ -127,8 +142,11 @@ public interface IDetailPage
     TimeSpan AutoCollapseDelay => TimeSpan.Zero;
 
     /// <summary>
-    /// 尺寸会随内容变化（例如媒体面板有没有时间轴）：true 时宿主每帧重测宽高，
-    /// 让实况窗浮层和主岛展开态始终同尺寸。默认 false（只在展开时测一次）。
+    /// 尺寸会随内容变化（例如媒体面板有没有时间轴）：true 时宿主在展开期间每帧重测宽高，
+    /// 主岛展开态和实况窗浮层都会跟着变。默认 false（只在展开那一刻测一次）。
+    ///
+    /// <para>只是偶尔变一次（切换 Tab、折叠一段内容）就别开这个：省下每帧两次调用，
+    /// 改完内容调一次 <c>host.InvalidateDetailPageSize()</c> 让宿主重测即可。</para>
     /// </summary>
     bool ResizeWithContent => false;
 }
@@ -258,6 +276,18 @@ public interface IPluginHost
     void CloseLiveWindowDetailPage() { }
 
     bool ToggleDetailPage(string widgetId);
+
+    /// <summary>
+    /// 让宿主重测当前详情页的宽高（<see cref="IDetailPage.MeasureWidth"/> /
+    /// <see cref="IDetailPage.MeasureHeight"/>）。
+    ///
+    /// <para>只在「内容变了、尺寸该跟着变」的时候调一次就够：展开期间宿主会在下一帧重读，
+    /// 岛体用弹簧动画过渡到新尺寸。没有展开的详情页时是空操作。</para>
+    ///
+    /// <para>默认实现为空：老宿主没有这个成员时插件源码仍可编译；运行时宿主不支持会抛
+    /// <see cref="MissingMethodException"/>，插件侧按需 try/catch。</para>
+    /// </summary>
+    void InvalidateDetailPageSize() { }
 
     // 布局调度
     void InvalidateWidgetLayout();

@@ -211,6 +211,9 @@ public static class LiveWindowHost
     private static readonly LiveWindowFrame _frame = new();
     private static PanelState? _panel;
 
+    /// <summary>插件点名要求重测浮动面板尺寸（<c>host.InvalidateDetailPageSize</c>），下一帧消费一次。</summary>
+    private static volatile bool _panelResizeRequested;
+
     // ---- 按插件开关实况窗（显示设置页「实况窗」一栏）----
     // 默认全部插件启用；媒体不在这里控制（媒体默认关，去「媒体设置」里开）。
     private static readonly HashSet<string> _knownOwners = new(StringComparer.OrdinalIgnoreCase);
@@ -733,17 +736,12 @@ public static class LiveWindowHost
         float w, h;
         try
         {
-            w = page.MeasureWidth();
-            h = page.MeasureHeight();
+            // 「不指定尺寸」的详情页用宿主默认（与岛内详情页同一套），不再拒绝展开。
+            Renderer.MeasureDetailPage(page, out w, out h);
         }
         catch (Exception ex)
         {
             Logger.Error($"[实况窗] 详情页尺寸测量异常: {id}", ex);
-            return;
-        }
-        if (float.IsNaN(w) || float.IsNaN(h) || w <= 0f || h <= 0f)
-        {
-            Logger.Warn($"[实况窗] 详情页尺寸非法（{w} x {h}），已忽略右键展开");
             return;
         }
         w = Math.Clamp(w, 120f, 1000f);
@@ -1058,8 +1056,8 @@ public static class LiveWindowHost
     }
 
     /// <summary>
-    /// 页面声明「尺寸随内容变」时每帧重测一次宽高（普通插件详情页 reszie=false，仍只在展开时测一次）。
-    /// 目前只有媒体详情页用：时间轴晚到 / 消失时，浮层高度要在 130 / 158 之间跟主岛展开面板同步。
+    /// 尺寸重测：插件点名要求（<c>host.InvalidateDetailPageSize</c>）时强制测一次，
+    /// 否则只有声明「尺寸随内容变」的页面才每帧重测。
     /// 调用方已持有 <see cref="_lock"/>。
     /// </summary>
     private static void RemeasurePanelIfNeededLocked(PanelState panel)
@@ -1068,11 +1066,12 @@ public static class LiveWindowHost
         if (page == null) return;
         try
         {
-            if (!page.ResizeWithContent) return;
+            bool forced = _panelResizeRequested;
+            if (!forced && !page.ResizeWithContent) return;
+            _panelResizeRequested = false;
 
-            float w = page.MeasureWidth();
-            float h = page.MeasureHeight();
-            if (float.IsNaN(w) || float.IsNaN(h) || w <= 0f || h <= 0f) return;
+            // 不指定尺寸 → 宿主默认（与岛内详情页同一套），不再当成非法值忽略。
+            Renderer.MeasureDetailPage(page, out float w, out float h);
 
             w = Math.Clamp(w, 120f, 1000f);
             h = Math.Clamp(h, 48f, 480f);
@@ -1087,6 +1086,9 @@ public static class LiveWindowHost
             Logger.Error("[实况窗] 详情页尺寸重测异常", ex);
         }
     }
+
+    /// <summary>插件改了内容、尺寸该跟着变：下一次 Tick 强制重测一次浮动面板尺寸。</summary>
+    public static void RequestPanelResize() => _panelResizeRequested = true;
 
     private static void PublishFrameLocked(float bubbleTop, float islandLeft, float diameter)
     {

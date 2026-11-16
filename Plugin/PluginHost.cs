@@ -401,6 +401,17 @@ public sealed class PluginHost
 
     public float GetPluginRowBudget() => Renderer.GetPluginRowBudget();
 
+    /// <summary>
+    /// 插件改了内容、详情页尺寸该跟着变：让渲染侧下一帧重读 MeasureWidth / MeasureHeight。
+    /// 岛内详情页和实况窗浮动面板都走这一条，插件不用区分自己现在开在哪。
+    /// </summary>
+    public void InvalidateDetailPageSize()
+    {
+        Renderer.RequestDetailPageResize();
+        try { LiveWindowHost.RequestPanelResize(); }
+        catch (Exception ex) { Logger.Error("[PluginHost] 请求重测实况窗面板尺寸异常", ex); }
+    }
+
     public float GetSlotBudget(string widgetId) => Renderer.GetPluginRowRemainingForWidget(widgetId);
 
     public float GetPluginRowBudgetFor(string pluginId) => Renderer.GetPluginRowRemaining(pluginId);
@@ -943,6 +954,7 @@ public sealed class ScopedPluginHost : IPluginHost
 
     public void CloseLiveWindowDetailPage() => _host.CloseLiveWindowDetailPage();
     public bool ToggleDetailPage(string widgetId) => _host.ToggleDetailPage(widgetId);
+    public void InvalidateDetailPageSize() => _host.InvalidateDetailPageSize();
     public IPluginWindow CreateWindow(string title, int width, int height) => _host.CreateWindow(_pluginId, title, width, height);
     public bool StartFileDrag(IReadOnlyList<string> paths, bool allowMove = false) => _host.StartFileDrag(paths, allowMove);
     public void RegisterUninstallDirectory(string path) => _host.RegisterUninstallDirectory(_pluginId, path);

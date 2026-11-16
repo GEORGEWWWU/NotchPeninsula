@@ -1070,6 +1070,27 @@ namespace NotchPeninsula
             }
         }
 
+        /// <summary>
+        /// 插件没报尺寸（<c>MeasureWidth/Height</c> 返回 0 / 负数 / NaN）时用的宿主默认尺寸：
+        /// 与宿主自己的展开面板（媒体面板）同一套数字，展开一块「什么都不指定」的详情页时
+        /// 岛体不会莫名其妙地变成另一个形状。
+        /// </summary>
+        private const float DEFAULT_DETAIL_WIDTH = MEDIA_EXPANDED_WIDTH;              // 350
+
+        private const float DEFAULT_DETAIL_HEIGHT = MEDIA_EXPANDED_HEIGHT_PLAIN;       // 130
+
+        /// <summary>尺寸每次重测的容差（逻辑像素）：小于这个值就当作没变，免得每帧重启弹簧。</summary>
+        private const float DETAIL_SIZE_EPSILON = 1f;
+
+        /// <summary>插件通过 <c>host.InvalidateDetailPageSize()</c> 要求重测（跨线程写，单次消费）。</summary>
+        private static volatile bool _detailResizeRequested;
+
+        /// <summary>当前详情页是否声明了「尺寸随内容变」。按页实例缓存，稳态下不每帧读插件属性。</summary>
+        private static bool _detailResizeWithContent;
+
+        /// <summary>插件改了内容想让岛体跟着变：下一帧重测一次尺寸。</summary>
+        public static void RequestDetailPageResize() => _detailResizeRequested = true;
+
         public static void RefreshDetailPageState()
         {
             var page = Plugins.PluginManager.Instance.Host.ActiveDetailPage;
@@ -1080,30 +1101,53 @@ namespace NotchPeninsula
                     _detailPage = null;
                     _detailWidth = _detailHeight = 0f;
                     _detailBroken = false;
+                    _detailResizeRequested = false;
+                    _detailResizeWithContent = false;
                     _detailHitPage = null;
                     _detailHitRect = default;
                     return;
                 }
-                if (ReferenceEquals(page, _detailPage)) return; // 同一个详情页：尺寸已算好，不重复触碰插件代码
 
-                _detailPage = page;
-                _detailBroken = false;
-                _detailWidth = _detailHeight = 0f;
+                bool newPage = !ReferenceEquals(page, _detailPage);
+                bool resizeRequested = _detailResizeRequested;
+                _detailResizeRequested = false;
 
-                _detailHitPage = null;
-                _detailHitRect = default;
+                if (newPage)
+                {
+                    _detailPage = page;
+                    _detailBroken = false;
+                    _detailWidth = _detailHeight = 0f;
+                    _detailHitPage = null;
+                    _detailHitRect = default;
+                    _detailResizeWithContent = SafeResizeWithContent(page);
+                }
+                else if (resizeRequested)
+                {
+                    // 插件点名要求重测：顺手把「随内容变」的声明也刷新一次（它可能在运行期改变主意）。
+                    _detailResizeWithContent = SafeResizeWithContent(page);
+                }
+                else if (!_detailResizeWithContent)
+                {
+                    // 稳态：一次引用比较 + 一个 bool 就返回，完全不碰插件代码。
+                    return;
+                }
+
                 try
                 {
-                    float w = page.MeasureWidth();
-                    float h = page.MeasureHeight();
-                    if (float.IsNaN(w) || float.IsNaN(h) || w <= 0f || h <= 0f)
-                    {
-                        Logger.Warn($"[Renderer] 详情页尺寸非法（{w} x {h}），已按最小尺寸兜底");
-                        w = Math.Max(w, MIN_DETAIL_WIDTH);
-                        h = Math.Max(h, MIN_DETAIL_HEIGHT);
-                    }
-                    _detailWidth = Math.Clamp(w, MIN_DETAIL_WIDTH, MAX_DETAIL_WIDTH);
-                    _detailHeight = Math.Clamp(h, MIN_DETAIL_HEIGHT, MAX_DETAIL_HEIGHT);
+                    // 「不指定」是正常用法（新协议下 MeasureWidth 默认返回 0），不再当错误记日志。
+                    MeasureDetailPage(page, out float w, out float h);
+                    bool changed = newPage
+                        || MathF.Abs(w - _detailWidth) > DETAIL_SIZE_EPSILON
+                        || MathF.Abs(h - _detailHeight) > DETAIL_SIZE_EPSILON;
+                    if (!changed) return;
+
+                    if (!newPage && _detailWidth > 0f)
+                        Logger.Debug($"[Renderer] 详情页尺寸变化 {_detailWidth:F0}×{_detailHeight:F0} → {w:F0}×{h:F0}");
+
+                    _detailWidth = w;
+                    _detailHeight = h;
+                    // 尺寸变了，上一帧算出来的命中矩形立即作废（本帧 Draw 会重算）。
+                    _detailHitRect = default;
                 }
                 catch (Exception ex)
                 {
@@ -1112,6 +1156,38 @@ namespace NotchPeninsula
                     _detailCloseRequested = true;
                     Logger.Error("[Renderer] 详情页尺寸测量异常，已熔断该详情页", ex);
                 }
+            }
+        }
+
+        /// <summary>把插件报的尺寸收进宿主区间；不指定（0 / 负 / NaN / 无穷）就落到宿主默认值。</summary>
+        private static float NormalizeDetailSize(float value, bool width)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f)
+                return width ? DEFAULT_DETAIL_WIDTH : DEFAULT_DETAIL_HEIGHT;
+            return width
+                ? Math.Clamp(value, MIN_DETAIL_WIDTH, MAX_DETAIL_WIDTH)
+                : Math.Clamp(value, MIN_DETAIL_HEIGHT, MAX_DETAIL_HEIGHT);
+        }
+
+        /// <summary>
+        /// 读一次详情页想要的尺寸（宽高各自带「不指定 → 宿主默认」兜底）。
+        /// 岛内详情页和实况窗浮层共用这一份口径，别各写一套默认值。
+        /// <para>插件实现可能抛异常，调用方负责 try/catch。</para>
+        /// </summary>
+        public static void MeasureDetailPage(Plugins.IDetailPage page, out float width, out float height)
+        {
+            width = NormalizeDetailSize(page.MeasureWidth(), true);
+            height = NormalizeDetailSize(page.MeasureHeight(), false);
+        }
+
+        /// <summary>读 <see cref="Plugins.IDetailPage.ResizeWithContent"/>；插件抛异常就当它没声明。</summary>
+        private static bool SafeResizeWithContent(Plugins.IDetailPage page)
+        {
+            try { return page.ResizeWithContent; }
+            catch (Exception ex)
+            {
+                Logger.Error("[Renderer] 读取详情页 ResizeWithContent 异常，按固定尺寸处理", ex);
+                return false;
             }
         }
 

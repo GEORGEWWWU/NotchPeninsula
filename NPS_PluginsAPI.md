@@ -53,6 +53,7 @@ NotchPeninsula 在屏幕顶部显示一条「灵动岛」。岛上的原生内�
 | 记住用户的设置 | `host.GetSetting / SetSetting` |
 | 开一个自己的小窗口 | `host.CreateWindow(...)` |
 | 展开 / 收起详情页 | `host.OpenDetailPage / CloseDetailPage` |
+| 详情页尺寸改了要重测 | `host.InvalidateDetailPageSize()`（见 [7.2](#72-尺寸由你决定也可以不决定)） |
 | 收起实况窗浮动面板 | `host.CloseLiveWindowDetailPage()`（见 [8.7](#87-实况窗live-window)） |
 | 在岛左侧加一个实况窗 | `host.RegisterLiveWindow(...)`（见 [8.7](#87-实况窗live-window)） |
 
@@ -649,6 +650,7 @@ public bool AcceptsFileDropWhenCollapsed => true;
 ```csharp
 internal sealed class MyDetailPage : IDetailPage
 {
+    // 想指定尺寸就写这两行；不写 = 用宿主默认（350 × 130）。
     public float MeasureWidth() => 320f;
     public float MeasureHeight() => 140f;
 
@@ -670,14 +672,37 @@ internal sealed class MyDetailPage : IDetailPage
 
 组件里：`public IDetailPage? DetailPage { get; } = new MyDetailPage();`（建一次就缓存，别每次访问都 `new`）。
 
-### 7.2 尺寸与裁剪
+### 7.2 尺寸由你决定，也可以不决定
 
-- `MeasureWidth()` / `MeasureHeight()` 返回**你想要的尺寸**（逻辑像素），宿主只做保护性裁剪：
-  - 宽 `180 ~ 1000`
-  - 高 `48 ~ 480`
-- 返回 `NaN` / `<= 0` 会按最小尺寸兜底并记日志。
-- **同一次展开期间尺寸是固定的**：内容变了想让岛变大，得等下次展开。所以要么保证内容落在已报尺寸内，要么自己按当前尺寸重新排版（见下一条）。
+- `MeasureWidth()` / `MeasureHeight()` 返回**你想要的尺寸**（逻辑像素）。两个成员都有默认实现，
+  **返回 `0` / 负数 / `NaN` 就是「我不指定」**，宿主用自己的默认尺寸：**宽 350、高 130**
+  （和宿主自己的媒体展开面板同一套）。不想管尺寸的插件连这两个方法都不写。
+- 宿主只做保护性裁剪：宽 `180 ~ 1000`、高 `48 ~ 480`；超出按边界收，不会报错。
 - 展开 / 收起带弹簧动画，不用你自己做。
+
+**展开期间还能改尺寸**，两条路选一条：
+
+| 场景 | 怎么写 |
+|---|---|
+| 尺寸跟着内容连续变（时间轴出现 / 消失、列表增减） | `public bool ResizeWithContent => true;` 宿主每帧重测一次 |
+| 偶尔变一次（切换 Tab、折叠一段内容） | 改完内容调一次 `host.InvalidateDetailPageSize()`，下一帧重测 |
+
+两条路都只是让宿主**重读** `MeasureWidth/MeasureHeight` —— 尺寸的真相始终在你手里。
+
+```csharp
+public bool ResizeWithContent => true;          // 或者不定期调 host.InvalidateDetailPageSize()
+
+public float MeasureWidth() => _wideMode ? 420f : 300f;
+public float MeasureHeight() => _wideMode ? 180f : 96f;
+
+void SwitchMode() { _wideMode = !_wideMode; _host.InvalidateDetailPageSize(); }
+```
+
+改尺寸时岛体是**弹簧过渡**（约 0.45s）到新尺寸的，不会跳。原地反复抖动没有意义：
+宿主对小于 1px 的变化直接忽略。
+
+> 同一份 `IDetailPage` 实例如果被实况窗浮层复用，`InvalidateDetailPageSize()`
+> 会把浮层也一起重测，插件不用判断自己现在开在哪。
 
 ### 7.3 坐标系与展开动画
 
@@ -1026,7 +1051,7 @@ public sealed class MyLiveWindow : ILiveWindow
 **左右键 = 原有的展开态（自动复用插件已有详情页）**
 
 - **插件不需要为实况窗再注册一套新详情页，也不需要自己管「展开按钮」**：`DetailPage` 返回 `null` 时，宿主自动取该插件第一个「有详情页」的组件（`IWidget.DetailPage`）来展开；只有内置消费者 / 特殊场景才需要返回自定义 `IDetailPage`。
-- **左键单击 / 右键气泡都由宿主直接展开**同一个浮动面板：宽高取 `MeasureWidth()` / `MeasureHeight()`（夹到 `120..1000 × 48..480`），内容按**目标矩形**排版，随裁剪窗长出来；展开是细胞分裂式的收口桥 + ease-out 连续减速，不是硬放大。
+- **左键单击 / 右键气泡都由宿主直接展开**同一个浮动面板：宽高取 `MeasureWidth()` / `MeasureHeight()`（不指定就用宿主默认 350 × 130，夹到 `120..1000 × 48..480`），内容按**目标矩形**排版，随裁剪窗长出来；展开是细胞分裂式的收口桥 + ease-out 连续减速，不是硬放大。
 - **主岛尺寸、形状、布局完全不变** —— 不走主岛详情页那套变形路径；鼠标事件、拖放、自动收起照 [7.4](#74-鼠标事件) 的 `IDetailPage` 实现即可，不用学新接口。
 - 没有可复用的 `DetailPage`（`null`）时改走 `OnExpand()`，用来打开你「原有的」界面（如市场页 / 设置页）。
 - 再次点击气泡、或点击面板外，面板缩回气泡收起。
@@ -1441,7 +1466,8 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 
 | 分类 | 成员 | 默认 |
 |---|---|---|
-| 尺寸 | `MeasureWidth()` / `MeasureHeight()` | — |
+| 尺寸 | `MeasureWidth()` / `MeasureHeight()` | `0`（= 不指定 → 宿主默认 350 × 130） |
+| 尺寸 | `ResizeWithContent` | `false`（`true` = 展开期间每帧重测） |
 | 绘制 | `Draw(canvas, rect, frame)` | — |
 | 交互 | `HitTest(x, y, rect)` / `OnAction(action, x, y)` | — |
 | 鼠标 | `OnMouseDown/OnMouseMove/OnMouseUp(x, y)` / `OnMouseLeave()` | 空 |
