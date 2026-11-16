@@ -91,6 +91,20 @@ namespace NotchPeninsula
             _isCursorOverIcon = overIcon;
             Win32.SetCursor(overIcon ? _hCursorHand : _hCursorArrow);
         }
+
+        private void TrackIslandMouse(IntPtr hwnd)
+        {
+            if (_isTrackingMouse) return;
+            var tracking = new Win32.TRACKMOUSEEVENT
+            {
+                cbSize = (uint)Marshal.SizeOf<Win32.TRACKMOUSEEVENT>(),
+                dwFlags = Win32.TME_LEAVE,
+                hwndTrack = hwnd
+            };
+            _isTrackingMouse = Win32.TrackMouseEvent(ref tracking);
+            _isHovered = true;
+            CancelPanelCollapse();
+        }
         private ToastNotificationListener? _listener;
         private Timer? _pollingTimer;
         private readonly Dispatcher _dispatcher;
@@ -1663,7 +1677,7 @@ namespace NotchPeninsula
             // 拿过去比一整张画布（1.8~4MB 逐字节）纯属白读 —— 直接提交，
             // 把「像素没变就别传」那项优化留给真正可能静止的帧。
             bool visiblyMoving = _isAnimating || _isYAnimating || _isStyleAnimating
-                                 || _isHovered || startupProgress < 1f || transitionAlpha < 1f;
+                                 || startupProgress < 1f || transitionAlpha < 1f;
 
             if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow(visiblyMoving);
             else HideNativeBackdrop();
@@ -2072,14 +2086,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_MOUSEMOVE:
                     {
-                        if (!_isTrackingMouse)
-                        {
-                            var tme = new Win32.TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf(typeof(Win32.TRACKMOUSEEVENT)), dwFlags = 2, hwndTrack = hwnd, dwHoverTime = 0 };
-                            Win32.TrackMouseEvent(ref tme);
-                            _isTrackingMouse = true;
-                            _isHovered = true;
-                            CancelPanelCollapse();
-                        }
+                        TrackIslandMouse(hwnd);
 
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
                         int mx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
@@ -2319,6 +2326,9 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDOWN:
                     {
+                        // Windows can deliver the first click before WM_MOUSEMOVE,
+                        // particularly when the animated HWND moves under a still pointer.
+                        TrackIslandMouse(hwnd);
                         int cx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
                         int cy = (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale);
                         float hitTopY = 12f * _currentStyleProgress;
@@ -2454,6 +2464,7 @@ namespace NotchPeninsula
                     }
 
                 case Win32.WM_RBUTTONDOWN:
+                    TrackIslandMouse(hwnd);
                     if (_isHovered)
                     {
                         int rx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);

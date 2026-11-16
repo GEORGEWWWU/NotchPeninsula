@@ -55,7 +55,7 @@ internal sealed partial class NativeAcrylic : IDisposable
             Win32.RegisterClass(ref wc);
             _window = Win32.CreateWindowEx(
                 NoRedirectionBitmap | Transparent | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
-                WindowClass, "NotchPeninsula Acrylic", Win32.WS_POPUP,
+                WindowClass, "NotchPeninsula Acrylic", Win32.WS_POPUP | Win32.WS_DISABLED,
                 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, module, IntPtr.Zero);
             if (_window == IntPtr.Zero)
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
@@ -132,10 +132,16 @@ internal sealed partial class NativeAcrylic : IDisposable
             _opacity = backdropOpacity;
         }
         PresentLiveGlass(liveRegions, canvasOrigin, dpi, backdrop, coverage);
-        if (!_visible || bounds != _bounds || GetWindow(foreground, NextWindow) != _window)
+        // This HWND only renders the backdrop. Keep it behind the input HWND,
+        // without resetting its Z-order on each animated size/position update.
+        bool needsRestack = !_visible || GetWindow(foreground, NextWindow) != _window;
+        if (needsRestack || bounds != _bounds)
         {
+            uint flags = Win32.SWP_NOACTIVATE;
+            if (needsRestack) flags |= Win32.SWP_SHOWWINDOW;
+            else flags |= Win32.SWP_NOZORDER;
             if (!Win32.SetWindowPos(_window, foreground, x, y, width, height,
-                Win32.SWP_NOACTIVATE | Win32.SWP_SHOWWINDOW))
+                flags))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             _bounds = bounds;
             _visible = true;

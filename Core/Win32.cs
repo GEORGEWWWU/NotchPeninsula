@@ -7,6 +7,7 @@ namespace NotchPeninsula
     {
         public const int WS_POPUP = unchecked((int)0x80000000);
         public const int WS_VISIBLE = 0x10000000;
+        public const int WS_DISABLED = 0x08000000;
         public const int WS_MINIMIZEBOX = 0x00020000;
         public const int WS_EX_TOPMOST = 0x00000008;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
