@@ -15,11 +15,16 @@ internal sealed class NativeAcrylic : IDisposable
     private const string WindowClass = "NotchPeninsulaNativeAcrylic";
     private static readonly Win32.WndProc WindowProc = ProcessWindowMessage;
 
-    internal static readonly bool Enabled = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
-#if !NATIVE_ACRYLIC_PREVIEW
-        && Array.IndexOf(Environment.GetCommandLineArgs(), "--native-acrylic") >= 0
+    internal static readonly bool IsSupported = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
+
+    internal static bool ShouldSelectAtStartup(string[] args)
+    {
+#if NATIVE_ACRYLIC_PREVIEW
+        return IsSupported;
+#else
+        return IsSupported && Array.IndexOf(args, "--native-acrylic") >= 0;
 #endif
-        ;
+    }
 
     private IntPtr _window;
     private Compositor? _compositor;

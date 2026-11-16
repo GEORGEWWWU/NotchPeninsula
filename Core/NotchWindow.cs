@@ -496,7 +496,8 @@ namespace NotchPeninsula
                 Name = "NPS-Render",
                 Priority = ThreadPriority.AboveNormal
             };
-            if (NativeAcrylic.Enabled) _renderThread.SetApartmentState(ApartmentState.STA);
+            // Windows 11 启动后也可以切到原生亚克力，先为 Composition 宿主准备 STA。
+            if (NativeAcrylic.IsSupported) _renderThread.SetApartmentState(ApartmentState.STA);
             _renderThread.Start();
             _topmostTimer = new System.Threading.Timer(
                 _ => EnsureTopmostAlive(), null, TOPMOST_KEEPALIVE_MS, TOPMOST_KEEPALIVE_MS);

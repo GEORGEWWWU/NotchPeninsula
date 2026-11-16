@@ -12,7 +12,7 @@ namespace NotchPeninsula
         private DispatcherQueueController? _acrylicDispatcher;
         private bool _nativeAcrylicFailed;
 
-        private bool WantsNativeAcrylic => NativeAcrylic.Enabled
+        private bool WantsNativeAcrylic => NativeAcrylic.IsSupported
             && Renderer.IslandAcrylic && !Renderer.IslandAnyGlass;
 
         private void PresentNativeAcrylic(int x, int y)
