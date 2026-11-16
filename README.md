@@ -283,7 +283,7 @@ dotnet publish -c Release -r win-x64 --self-contained false     # 发布
 ### 原生亚克力维护约束
 
 - Windows 11 原生亚克力通过独立背板窗口和 Windows Composition `CreateHostBackdropBrush` 合成。渲染优化、动画修改、材质重构和合并冲突处理都必须保留这条路径及刘海、灵动岛的轮廓裁切。**禁止用 GDI、DXGI 或其他屏幕抓取替代原生背板，也禁止将抓屏作为原生路径失败时的兜底。** 宿主或裁切初始化失败时只保留亚克力色调并记录异常。Windows 10 的旧版亚克力以及单独选择的液态玻璃继续走各自的兼容路径。
-- Windows 11 只要当前材质为「亚克力」，普通发布、单文件打包和 Visual Studio 的 F5 调试都使用原生背板，无需额外参数。普通启动按保存的偏好选材质。需要启动时临时选中「亚克力」时可传 `--native-acrylic`，也可用 `-p:NativeAcrylicPreview=true` 打包，让试验包双击时临时选中「亚克力」。这两种方式均保留原先的刘海或灵动岛形态。
+- Windows 11 当前材质为「亚克力」时，普通发布和 Visual Studio 的 F5 调试都使用原生背板。`build.ps1` 固定传 `-p:NativeAcrylicPreview=true`，让产物双击时直接选中原生亚克力，效果等同于启动时传 `--native-acrylic`。启动时保留原先的刘海或灵动岛形态。
 - 核对亚克力是否走原生路径时，以实际运行的 exe、启动参数和日志为准。原生宿主建立会记录「已建立 Windows Composition 背板宿主」。若同一次运行在亚克力模式下出现「[亚克力/原分辨率] 抓屏 ok」，该次绘制使用了旧抓屏背板。只看设置项名称无法判断。
 
 ```powershell

@@ -157,6 +157,8 @@ try {
         '-p:PublishSingleFile=true'
         '-p:IncludeNativeLibrariesForSelfExtract=true'
         '-p:IncludeAllContentForSelfExtract=true'
+        # 等同于在 Windows 11 启动时传 --native-acrylic，双击即选中原生亚克力。
+        '-p:NativeAcrylicPreview=true'
     )
 
     Write-Host '开始打包...' -ForegroundColor Cyan
