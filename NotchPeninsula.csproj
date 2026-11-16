@@ -82,11 +82,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- GPU resources and DWM shared-visual interop; no desktop frame capture. -->
-		<EmbeddedResource Include="THIRD-PARTY-NOTICES.txt" />
-		<PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
-		<PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
-		<PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
 		<PackageReference Include="SkiaSharp" Version="2.88.8" />
 		<PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.8" />
 		<!-- 音频采集库 -->

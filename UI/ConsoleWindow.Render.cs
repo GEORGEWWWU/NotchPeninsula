@@ -1598,10 +1598,9 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
-                string glassHint = GlassMaterial.RefractionReady ? "内缘折射 · 模糊可关闭 · 背景随系统刷新"
-                    : GlassMaterial.RefractionUnavailable ? "折射暂不可用 · 已降级显示"
-                    : GlassDesktopSource.IsSupported ? "内缘折射 · 可调模糊与厚度"
-                    : "兼容模式 · 无内缘折射";
+                string glassHint = NativeAcrylic.IsSupported
+                    ? (GlassMaterial.BlurUnavailable ? "此会话无法启用原生模糊" : "Windows Composition 背板 · 可调高斯模糊")
+                    : "Windows 10 · 半透明色调和边缘高光";
                 canvas.DrawText(glassHint, CONTENT_TEXT_X, gY + 26f, _subTextPaint);
 
                 float rY = gY + GlassResetTopY;
@@ -1662,7 +1661,6 @@ namespace NotchPeninsula
             string[] values = paramIndex switch
             {
                 GlassMaterial.Blur => GlassMaterial.BlurLabels,
-                GlassMaterial.Refraction => GlassMaterial.BlurLabels,
                 GlassMaterial.FrameRate => GlassMaterial.FpsLabels,
                 _ => GlassMaterial.Levels
             };

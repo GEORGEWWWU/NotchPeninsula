@@ -493,7 +493,7 @@ namespace NotchPeninsula
                 Priority = ThreadPriority.AboveNormal
             };
             // Windows 11 启动后也可以切到原生亚克力，先为 Composition 宿主准备 STA。
-            if (NativeAcrylic.IsSupported || GlassDesktopSource.IsSupported) _renderThread.SetApartmentState(ApartmentState.STA);
+            if (NativeAcrylic.IsSupported) _renderThread.SetApartmentState(ApartmentState.STA);
             _renderThread.Start();
             _topmostTimer = new System.Threading.Timer(
                 _ => EnsureTopmostAlive(), null, TOPMOST_KEEPALIVE_MS, TOPMOST_KEEPALIVE_MS);
@@ -554,7 +554,6 @@ namespace NotchPeninsula
             try { RunRenderThread(); }
             finally
             {
-                _nativeGlass?.Dispose();
                 _nativeAcrylic?.Dispose();
                 Renderer.AcrylicBackdrop = null;
                 _acrylicOwned?.Dispose();
