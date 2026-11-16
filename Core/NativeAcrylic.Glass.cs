@@ -11,9 +11,8 @@ internal sealed partial class NativeAcrylic
     private float _blurAmount = -1f;
     private bool _blurFailed;
 
-    private CompositionBrush SelectBackdrop(bool glass)
+    private CompositionBrush SelectBackdrop(float amount)
     {
-        float amount = glass ? GlassMaterial.BlurAmount : 0f;
         if (amount == 0f || _blurFailed) return _brush!;
 
         try

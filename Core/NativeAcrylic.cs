@@ -114,14 +114,17 @@ internal sealed partial class NativeAcrylic : IDisposable
             if (_path == null) _clip!.Geometry = _pathGeometry;
             _path = (offset, size, outline);
         }
-        var backdrop = SelectBackdrop(glass);
+        float blurAmount = glass ? GlassMaterial.BlurAmount : 0f;
+        var backdrop = SelectBackdrop(blurAmount);
         if (_appliedBackdrop != backdrop)
         {
             _visual!.Brush = backdrop;
             _appliedBackdrop = backdrop;
         }
-        // Cover the sharp desktop under the blurred copy. The foreground tint stays translucent.
-        float coverage = glass && backdrop == _brush ? GlassMaterial.BackdropOpacity : 1f;
+        // Clear glass leaves the desktop itself visible under the layered foreground.
+        float coverage = !glass ? 1f
+            : blurAmount == 0f ? 0f
+            : backdrop == _brush ? GlassMaterial.BackdropOpacity : 1f;
         float backdropOpacity = coverage * opacity;
         if (backdropOpacity != _opacity)
         {
