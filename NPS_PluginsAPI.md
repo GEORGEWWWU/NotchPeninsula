@@ -645,12 +645,12 @@ public bool AcceptsFileDropWhenCollapsed => true;
 
 ### 7.1 最小实现
 
-组件上挂一个对象即可：
+组件上挂一个对象即可（**尺寸可以不写**，不写就是用宿主默认的 350 × 130）：
 
 ```csharp
 internal sealed class MyDetailPage : IDetailPage
 {
-    // 想指定尺寸就写这两行；不写 = 用宿主默认（350 × 130）。
+    // 想指定尺寸就写这两行；两行都删掉也能跑 = 用宿主默认。
     public float MeasureWidth() => 320f;
     public float MeasureHeight() => 140f;
 
@@ -672,47 +672,89 @@ internal sealed class MyDetailPage : IDetailPage
 
 组件里：`public IDetailPage? DetailPage { get; } = new MyDetailPage();`（建一次就缓存，别每次访问都 `new`）。
 
-### 7.2 尺寸由你决定，也可以不决定
+### 7.2 尺寸：由你决定，也可以不决定
 
-- `MeasureWidth()` / `MeasureHeight()` 返回**你想要的尺寸**（逻辑像素）。两个成员都有默认实现，
-  **返回 `0` / 负数 / `NaN` 就是「我不指定」**，宿主用自己的默认尺寸：**宽 350、高 130**
-  （和宿主自己的媒体展开面板同一套）。不想管尺寸的插件连这两个方法都不写。
-- 宿主只做保护性裁剪：宽 `180 ~ 1000`、高 `48 ~ 480`；超出按边界收，不会报错。
-- 展开 / 收起带弹簧动画，不用你自己做。
+两句话说完：
 
-**展开期间还能改尺寸**，两条路选一条：
+1. `MeasureWidth()` / `MeasureHeight()` 返回**你想要的尺寸**（逻辑像素），两个成员都有默认实现；
+   **返回 `0` / 负数 / `NaN` / `无穷` = 「我不指定」**，宿主用自己的默认尺寸。
+2. 尺寸**不是一次性的**：展开期间任何时候都能变，宿主读一次就弹簧过渡过去。
 
-| 场景 | 怎么写 |
-|---|---|
-| 尺寸跟着内容连续变（时间轴出现 / 消失、列表增减） | `public bool ResizeWithContent => true;` 宿主每帧重测一次 |
-| 偶尔变一次（切换 Tab、折叠一段内容） | 改完内容调一次 `host.InvalidateDetailPageSize()`，下一帧重测 |
+#### 谁生效
 
-两条路都只是让宿主**重读** `MeasureWidth/MeasureHeight` —— 尺寸的真相始终在你手里。
+宽高**各自独立判断**，一个报了一个没报也合法：
+
+| `MeasureWidth()` | `MeasureHeight()` | 实际尺寸 |
+|---|---|---|
+| `420` | `200` | `420 × 200` |
+| `420` | `0` | `420 × 130`（高度用宿主默认） |
+| `0` | `200` | `350 × 200`（宽度用宿主默认） |
+| `0` | `0`（或干脆不写这两个方法） | `350 × 130` |
+| `5000` | `20` | `1000 × 48`（夹到边界，不报错） |
+
+- 宿主默认值：**宽 350、高 130**，和宿主自己的媒体展开面板同一套，所以「什么都不指定」的详情页展开后和媒体面板一样大。
+- 保护性裁剪：宽 `180 ~ 1000`、高 `48 ~ 480`。超出按边界收，不会抛异常、也不会记警告。
+- 展开 / 收起本身带弹簧动画，不用你自己做。
+
+#### 展开期间改尺寸（两条路，按变化频率选）
+
+| 变化频率 | 怎么写 | 宿主行为 |
+|---|---|---|
+| 连续变（时间轴出现 / 消失、列表增减、文字换行） | `public bool ResizeWithContent => true;` | 展开期间**每帧**读一次宽高 |
+| 偶尔变一次（切 Tab、折叠一段内容、点了「更多」） | 改完调一次 `host.InvalidateDetailPageSize()` | 下一帧读一次 |
+
+两条路都只是让宿主**重读** `MeasureWidth` / `MeasureHeight` —— 尺寸的真相始终在你手里，宿主不缓存你算好的数。
 
 ```csharp
-public bool ResizeWithContent => true;          // 或者不定期调 host.InvalidateDetailPageSize()
+internal sealed class MyDetailPage : IDetailPage
+{
+    private readonly IPluginHost _host;
+    private bool _wide;
+    private int _rows = 3;
 
-public float MeasureWidth() => _wideMode ? 420f : 300f;
-public float MeasureHeight() => _wideMode ? 180f : 96f;
+    public MyDetailPage(IPluginHost host) => _host = host;
 
-void SwitchMode() { _wideMode = !_wideMode; _host.InvalidateDetailPageSize(); }
+    // 尺寸的真相：随内容算
+    public float MeasureWidth() => _wide ? 420f : 320f;
+    public float MeasureHeight() => 96f + _rows * 22f;
+
+    // 行数是「连续变」的 → 声明由宿主每帧读
+    public bool ResizeWithContent => true;
+
+    // 切 Tab 是「一次性」变 → 也可以自己喊一声（两条并存没问题）
+    private void SwitchTab()
+    {
+        _wide = !_wide;
+        try { _host.InvalidateDetailPageSize(); }
+        catch (MissingMethodException) { }   // 老宿主没这个成员（见 7.2.1）
+    }
+}
 ```
 
-改尺寸时岛体是**弹簧过渡**（约 0.45s）到新尺寸的，不会跳。原地反复抖动没有意义：
-宿主对小于 1px 的变化直接忽略。
+补充约定：
 
-> 同一份 `IDetailPage` 实例如果被实况窗浮层复用，`InvalidateDetailPageSize()`
-> 会把浮层也一起重测，插件不用判断自己现在开在哪。
+- **弹簧过渡**：尺寸变化时岛体约 0.45s 弹到新尺寸，不是硬跳。变化小于 **1px** 的直接忽略 —— 别让测量值在边界上抖，那会把弹簧一次次重启。
+- **尺寸一变，命中矩形立刻作废、下一帧重算**：点完按钮马上就能点到新位置的控件，不用等动画结束。
+- **收起状态下改尺寸也没问题**，下次展开按新值来。
+- **实况窗浮层共用同一份 `IDetailPage` 时**，`InvalidateDetailPageSize()` 会把浮层也一起重测，插件不用判断自己现在开在哪。
+
+#### 7.2.1 版本兼容
+
+`InvalidateDetailPageSize()` 与「`MeasureWidth` 可为空」都是 **2.2.5 当前构建**新增的能力（比它早的宿主，包括早期的 2.2.5，都还没有）：
+
+- 你的插件在**老宿主**上跑：`MeasureWidth` 返回 0 会被当成非法值按最小尺寸兜底（不是崩溃，但页面会很小）；调 `InvalidateDetailPageSize()` 会抛 `MissingMethodException`（接口的默认实现只在声明它的程序集里有）。
+- 想同时兼容，按上面示例那样 `try/catch (MissingMethodException)`；或者干脆只声明 `ResizeWithContent`，它在老宿主上也不会报错。
 
 ### 7.3 坐标系与展开动画
 
-`Draw` 拿到的 `rect` 是**岛内绝对坐标**，但**动画进行中的每一帧它是插值尺寸**（目标 380×108，前几帧可能只有 130×34）。
+`Draw` 拿到的 `rect` 是**岛内绝对坐标**，但**动画进行中的每一帧它是插值尺寸**（目标 380×108，前几帧可能只有 130×34）；换尺寸时同样会插值。
 
 ⚠️ **不要拿 `rect` 当排版基准**。按它换行会让文字每帧重排、每帧跳位（肉眼就是「展开不丝滑」），任何以 `rect` 尺寸为 key 的缓存都会每帧失效。
 
 正确做法：**排版永远按你 `MeasureWidth` / `MeasureHeight` 的目标尺寸算**，绘制时把整块内容对齐 / 缩放到当前 `rect`：
 
 ```csharp
+// 目标尺寸 = 你上报的值；「不指定」时就按宿主默认 350×130 排版
 float layoutW = 320f, layoutH = 140f;             // 与 MeasureWidth/Height 一致
 float scale = Math.Min(Math.Min(rect.Width / layoutW, rect.Height / layoutH), 1f);  // 封顶 1，免得过冲被裁
 
@@ -725,6 +767,14 @@ canvas.Restore();
 ```
 
 动画期间内容随容器一起放大，展开完成时 `scale = 1`，与设计尺寸 1:1。
+
+**换尺寸时同一套写法照样成立**：目标尺寸变了就重算一次排版（`layoutW/layoutH` 跟着 `MeasureWidth/Height` 走），插值交给上面的 `scale`。
+`HitTest` 收到的是 `rect`（动画矩形）+ **相对矩形左上角**的 `x/y`，要和 `Draw` 用同一个变换，反向算回排版坐标再判命中：
+
+```csharp
+float lx = (x - rect.Width * 0.5f) / scale + layoutW * 0.5f;
+float ly = (y - rect.Height * 0.5f) / scale + layoutH * 0.5f;
+```
 
 ### 7.4 鼠标事件
 
@@ -809,10 +859,11 @@ bool now = host.ToggleDetailPage("组件Id");    // 切换语义：已展开则�
 
 典型用法：数据加载完了自动弹出来（`TryOpenDetailPage`），或在面板里放一个 × 按钮（`CloseDetailPage`）。
 
-### 7.9 熔断与尺寸固定
+### 7.9 熔断与其他约定
 
 - `MeasureWidth` / `MeasureHeight` / `Draw` 抛异常 → 该详情页被熔断并自动收起，主程序照常运行（日志有原因）。
-- 一次展开期间尺寸固定；想变尺寸只能等下次展开。
+  尺寸测量每帧都会被调（声明了 `ResizeWithContent` 时），所以这里**不要做会抛异常或耗时的活**：读字段、做几次加法就够了。
+- 尺寸随时可变（见 [7.2](#72-尺寸由你决定也可以不决定)），宿主不再把「一次展开一个固定尺寸」当契约。
 - 详情页展开时：岛内左键只走详情页；来了 Toast 会先显示通知，通知结束后详情页自动回来。
 
 ---
@@ -1387,6 +1438,9 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 26 | 插件底色把岛上文字衬没了 | 拿 `Theme.BackgroundColor` 当对比度依据 | 玻璃下它 alpha 为 0，没有可用底色（见 10.2） |
 | 27 | 同一块面板左半边字清楚、右半边糊 | 整块面板只用一个 `Theme.TextColor`，没按元素判 | 每段文字改用 `PluginTone.DrawText`（见 10.3） |
 | 28 | 插件文字黑白和自己的底不一致 | 文字画在不透明实心按钮上却仍用玻璃网格采样 | 实心按钮上的文字保留原对比色，别用 `PluginTone` |
+| 29 | 详情页里改了内容 / 点了按钮，尺寸没变 | 没声明 `ResizeWithContent`，也没调 `InvalidateDetailPageSize()` | 连续变就声明 `ResizeWithContent => true`，一次性变就调一次 `InvalidateDetailPageSize()`（见 [7.2](#72-尺寸由你决定也可以不决定)） |
+| 30 | 详情页设了尺寸，展开后却很小 / 文字被压 | `MeasureWidth` / `MeasureHeight` 返回了 0 或 NaN → 走宿主默认，或老宿主把它当非法值兜底 | 想指定就返回真实正数；不想管就别写这两个方法（2.2.5+ 语义） |
+| 31 | 换尺寸时文字每帧重排、抖 | 排版按 `rect`（动画插值）算 | 按目标尺寸排版，再整体 `scale` 到 `rect`（见 [7.3](#73-坐标系与展开动画)） |
 
 ---
 
@@ -1421,6 +1475,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 交互 | `RequestRedraw()` | 空操作 |
 | 交互 | `OpenDetailPage(id)` / `TryOpenDetailPage(id)` / `CloseDetailPage()` / `ToggleDetailPage(id)` | 开放 |
 | 交互 | `CloseLiveWindowDetailPage()` | 开放（收起实况窗气泡展开的浮动面板；没有展开时是空操作） |
+| 交互 | `InvalidateDetailPageSize()` | 开放（2.2.5 现版新增；让宿主下一帧重读详情页宽高，见 [7.2](#72-尺寸由你决定也可以不决定)） |
 | 布局 | `InvalidateWidgetLayout()` | 开放 |
 | 布局 | `GetPluginRowBudget()` / `GetSlotBudget(widgetId)` | 开放 |
 | 窗口 | `CreateWindow(title, w, h)` | 开放 |
