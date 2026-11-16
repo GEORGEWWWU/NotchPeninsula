@@ -9,6 +9,7 @@ namespace NotchPeninsula
         // 渲染线程独占的一份背板引用：只有它能释放，避免和后台线程抢着析构
         private SKImage? _acrylicOwned;
         private NativeAcrylic? _nativeAcrylic;
+        private NativeGlass? _nativeGlass;
         private DispatcherQueueController? _acrylicDispatcher;
         private bool _nativeAcrylicFailed;
 
@@ -19,7 +20,9 @@ namespace NotchPeninsula
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
             int material = Renderer.IslandMaterialIndex;
             bool glass = material == 2;
-            if (!NativeAcrylic.IsSupported || material == 0 || _nativeAcrylicFailed || opacity <= 0.001f
+            bool sharedGlass = glass && GlassDesktopSource.IsSupported && !GlassMaterial.RefractionUnavailable;
+            if ((!NativeAcrylic.IsSupported && !sharedGlass) || material == 0
+                || (_nativeAcrylicFailed && !sharedGlass) || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
                 HideNativeBackdrop();
@@ -28,12 +31,7 @@ namespace NotchPeninsula
 
             try
             {
-                if (_nativeAcrylic == null)
-                {
-                    _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
-                    _nativeAcrylic = new NativeAcrylic();
-                    Logger.Info($"[{(glass ? "液态玻璃" : "亚克力")}] 已建立 Windows Composition 背板宿主");
-                }
+                _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
 
                 // 与 Renderer.Draw 的胶囊使用同一帧尺寸和逻辑坐标。
                 var outline = IslandOutline.Create(_currentHeight, _currentStyleProgress);
@@ -56,6 +54,40 @@ namespace NotchPeninsula
                 }
                 var offset = new Vector2(left - leftPx, top - topPx);
                 var scaledOutline = new IslandOutline(outline.TopX * _dpiScale, outline.TopY * _dpiScale, outline.Bottom * _dpiScale);
+                if (sharedGlass)
+                {
+                    try
+                    {
+                        _nativeAcrylic?.Hide();
+                        if (_nativeGlass == null)
+                        {
+                            _nativeGlass = new NativeGlass();
+                            Logger.Info("[液态玻璃] 已建立 DWM 共享视觉树内缘折射宿主（无抓屏、无应用背板限帧）");
+                        }
+                        _nativeGlass.Present(_hwnd, x + leftPx, y + topPx, rightPx - leftPx, bottomPx - topPx,
+                            offset, size, scaledOutline, opacity, _dpiScale, regions, new Vector2(-leftPx, -topPx));
+                        GlassMaterial.RefractionReady = GlassMaterial.BackdropReady = GlassMaterial.LiveBackdropReady = true;
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        GlassMaterial.RefractionReady = false;
+                        GlassMaterial.RefractionUnavailable = true;
+                        Logger.Error("[液态玻璃] DWM 共享视觉折射不可用，回退无抓屏背板；本次会话不再重试", ex);
+                        var failedGlass = _nativeGlass;
+                        _nativeGlass = null;
+                        try { failedGlass?.Dispose(); }
+                        catch (Exception releaseError) { Logger.Error("[液态玻璃] 释放共享视觉失败", releaseError); }
+                        if (!NativeAcrylic.IsSupported || _nativeAcrylicFailed) { HideNativeBackdrop(); return; }
+                    }
+                }
+                _nativeGlass?.Hide();
+                GlassMaterial.RefractionReady = false;
+                if (_nativeAcrylic == null)
+                {
+                    _nativeAcrylic = new NativeAcrylic();
+                    Logger.Info($"[{(glass ? "液态玻璃" : "亚克力")}] 已建立 Windows Composition 背板宿主");
+                }
                 _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, rightPx - leftPx, bottomPx - topPx,
                     offset, size, scaledOutline, _currentStyleProgress == 1f, opacity, glass, _dpiScale,
                     regions, new Vector2(-leftPx, -topPx));
@@ -77,6 +109,8 @@ namespace NotchPeninsula
         private void HideNativeBackdrop()
         {
             _nativeAcrylic?.Hide();
+            _nativeGlass?.Hide();
+            GlassMaterial.RefractionReady = false;
             GlassMaterial.BackdropReady = false;
             GlassMaterial.LiveBackdropReady = false;
         }

@@ -258,7 +258,8 @@ namespace NotchPeninsula
                 sb.AppendLine($"岛体帧率: {GlassMaterial.FpsLabels[GlassMaterial.GetLevel(GlassMaterial.FrameRate)]}");
                 if (Renderer.IslandLiquidGlass)
                 {
-                    sb.AppendLine($"玻璃背板: {(GlassMaterial.BackdropReady ? "Windows Composition" : "半透明色调")}");
+                    sb.AppendLine($"玻璃背板: {(GlassMaterial.RefractionReady ? "DWM 共享视觉树（内缘分层折射）" : GlassMaterial.BackdropReady ? "Windows Composition（无折射）" : "半透明色调")}");
+                    sb.AppendLine($"折射初始化失败: {GlassMaterial.RefractionUnavailable}");
                     for (int i = 0; i < GlassMaterial.FrameRate; i++)
                         sb.AppendLine($"  {GlassMaterial.Labels[i]}={GlassMaterial.GetLevel(i)}/{GlassMaterial.MaxLevel(i)}");
                 }

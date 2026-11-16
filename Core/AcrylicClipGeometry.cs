@@ -10,7 +10,7 @@ namespace NotchPeninsula
     // The compositor consumes a D2D geometry. No D2D render target or bitmap is needed.
     [WinRTExposedType(typeof(AcrylicClipGeometry.InterfaceDetails))]
     internal sealed class AcrylicClipGeometry(float left, float top, float width, float height, IslandOutline outline,
-        float inset = 0f)
+        float inset = 0f, float bandStart = 0f, float bandEnd = 0f)
         : IGeometrySource2D
     {
         internal int GetGeometry(out nint geometry)
@@ -45,6 +45,49 @@ namespace NotchPeninsula
             {
                 Marshal.Release(geometry);
                 geometry = 0;
+            }
+            else if (bandEnd > 0f)
+            {
+                try
+                {
+                    // Widen the actual contour, including concave notch shoulders. The
+                    // lens's outer clip removes the outward half of this distance band.
+                    Marshal.AddRef(factory);
+                    using var f = new Vortice.Direct2D1.ID2D1Factory(factory);
+                    Marshal.AddRef(geometry);
+                    using var contour = new Vortice.Direct2D1.ID2D1PathGeometry(geometry);
+                    using var outer = f.CreatePathGeometry();
+                    using (var output = outer.Open())
+                    {
+                        contour.Widen(bandEnd * 2f, 0.1f, output);
+                        output.Close();
+                    }
+                    using var band = f.CreatePathGeometry();
+                    using (var output = band.Open())
+                    {
+                        if (bandStart > 0f)
+                        {
+                            using var inner = f.CreatePathGeometry();
+                            using (var innerOutput = inner.Open())
+                            {
+                                contour.Widen(bandStart * 2f, 0.1f, innerOutput);
+                                innerOutput.Close();
+                            }
+                            outer.CombineWithGeometry(inner, Vortice.Direct2D1.CombineMode.Exclude, 0.1f, output);
+                        }
+                        else outer.Simplify(Vortice.Direct2D1.GeometrySimplificationOption.CubicsAndLines, output);
+                        output.Close();
+                    }
+                    Marshal.Release(geometry);
+                    geometry = band.NativePointer;
+                    Marshal.AddRef(geometry);
+                }
+                catch (Exception ex)
+                {
+                    Marshal.Release(geometry);
+                    geometry = 0;
+                    return ex.HResult;
+                }
             }
             return hr;
         }

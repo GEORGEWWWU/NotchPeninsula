@@ -4,13 +4,13 @@ namespace NotchPeninsula;
 
 internal static class GlassMaterial
 {
-    internal const int Blur = 0, Rim = 1, Thickness = 2, Tint = 3, FrameRate = 4;
+    internal const int Blur = 0, Rim = 1, Thickness = 2, Tint = 3, Refraction = 4, FrameRate = 5;
     internal static readonly string[] Keys =
-        ["LiquidGlassBlur", "LiquidGlassRim", "LiquidGlassThickness", "LiquidGlassFrost", "LiquidGlassFps"];
-    internal static readonly string[] Labels = ["模糊", "高光", "厚度", "色调", "帧率"];
+        ["LiquidGlassBlur", "LiquidGlassRim", "LiquidGlassThickness", "LiquidGlassFrost", "LiquidGlassRefraction", "LiquidGlassFps"];
+    internal static readonly string[] Labels = ["模糊", "高光", "厚度", "色调", "折射", "帧率"];
     internal static readonly string[] Levels = ["最低", "偏低", "标准", "偏高", "最高"];
     internal static readonly string[] FpsLabels = ["30", "60", "90", "120", "144", "不限"];
-    private static readonly int[] DefaultLevels = [2, 2, 2, 1, 2];
+    private static readonly int[] DefaultLevels = [1, 2, 2, 1, 2, 5];
     private static readonly int[] Settings = (int[])DefaultLevels.Clone();
     internal static readonly string[] BlurLabels = ["关", "轻", "中", "强", "最强"];
     private static readonly float[] BlurAmounts = [0f, 0.75f, 7f, 12f, 18f];
@@ -28,6 +28,10 @@ internal static class GlassMaterial
     internal static int ForegroundFps => FrameRates[GetLevel(FrameRate)];
     internal const float BackdropOpacity = 0.46f;
     internal static float BlurAmount => BlurAmounts[GetLevel(Blur)];
+    internal static float RefractionThickness => 3f + GetLevel(Thickness) * 2f;
+    internal static float RefractionAmount => GetLevel(Refraction) * 1.5f;
+    internal static volatile bool RefractionReady;
+    internal static volatile bool RefractionUnavailable;
     internal static volatile bool BlurUnavailable;
     internal static volatile bool BackdropReady;
     internal static bool LiveBackdropReady { get; set; }
