@@ -9,7 +9,7 @@ namespace NotchPeninsula
     {
         private static readonly SKPaint _layerPaint = new SKPaint(); // 零GC硬件级透明图层
 
-        private static bool _acrylicLogged;
+        private static int _loggedMaterial = -1;
 
         private static readonly SKPaint _wakePaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Stroke, StrokeWidth = 2.8f, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round, IsAntialias = true }; // 折角箭头（线条）
 
@@ -245,11 +245,7 @@ namespace NotchPeninsula
             {
                 // 面板网格建不起来（背板映射失败 / 没抓到像素）时也必须把「面板作用域」打开：
                 // 否则 PluginTone 会退到主岛网格，把面板局部坐标当岛体坐标查，颜色完全随机。
-                bool hasGlassLum = IslandAnyGlass
-                    && (IslandLiquidGlass2 ? LiquidGlass2.HasLuminance : LiquidGlass.HasLuminance);
-                float lum = hasGlassLum
-                    ? (IslandLiquidGlass2 ? LiquidGlass2.GlassLuminance : LiquidGlass.GlassLuminance) / 255f
-                    : Luminance(_bgPaint.Color);
+                float lum = Luminance(_bgPaint.Color);
                 lum = Math.Clamp(lum, 0f, 1f);
                 for (int i = 0; i < _panelToneGrid.Length; i++) _panelToneGrid[i] = lum;
                 Array.Copy(_panelToneGrid, _panelToneGridPrev, _panelToneGrid.Length);
@@ -263,66 +259,9 @@ namespace NotchPeninsula
             ApplyPanelPaletteAverage(Average(_panelToneGrid));
         }
 
-        /// <summary>
-        /// 实况窗面板专用：直接采样**合成后的玻璃位图**，用于内置媒体面板。
-        /// 背板映射只反映桌面原样，玻璃合成（尤其上半压在深色标题栏上）会把实际明暗改掉；
-        /// 位图就是用户看到的那张图，逐格采样最准。
-        /// </summary>
-        internal static void BeginPanelToneGridBitmap(SKCanvas canvas, SKBitmap glass, SKRect dst)
-        {
-            _panelToneBase = canvas.TotalMatrix;
-            _toneUsePanel = false;
-            _panelToneReady = false;
-
-            if (dst.Width < 4f || dst.Height < 4f) return;
-
-            using var pm = glass.PeekPixels();
-            if (pm == null) return;
-            IntPtr basePtr = pm.GetPixels();
-            if (basePtr == IntPtr.Zero) return;
-
-            SKColorType ct = pm.ColorType;
-            if (ct != SKColorType.Bgra8888 && ct != SKColorType.Rgba8888) return;
-            int bOff = ct == SKColorType.Bgra8888 ? 0 : 2;
-            int rOff = ct == SKColorType.Bgra8888 ? 2 : 0;
-            int stride = pm.RowBytes, pw = pm.Width, ph = pm.Height;
-            if (pw < 1 || ph < 1) return;
-
-            bool hadPrev = _panelTonePrimed;
-            for (int gy = 0; gy < ToneGridY; gy++)
-            {
-                int py = Math.Clamp((int)((gy + 0.5f) / ToneGridY * ph), 0, ph - 1);
-                IntPtr row = basePtr + py * stride;
-                for (int gx = 0; gx < ToneGridX; gx++)
-                {
-                    int px = Math.Clamp((int)((gx + 0.5f) / ToneGridX * pw), 0, pw - 1);
-                    int i = px * 4;
-                    float b = Marshal.ReadByte(row, i + bOff);
-                    float g = Marshal.ReadByte(row, i + 1);
-                    float r = Marshal.ReadByte(row, i + rOff);
-                    float lum = (0.213f * r + 0.715f * g + 0.072f * b) * (1f / 255f);
-
-                    int idx = gy * ToneGridX + gx;
-                    _panelToneGrid[idx] = hadPrev
-                        ? _panelToneGridPrev[idx] + (lum - _panelToneGridPrev[idx]) * 0.35f
-                        : lum;
-                }
-            }
-
-            Array.Copy(_panelToneGrid, _panelToneGridPrev, _panelToneGrid.Length);
-            _panelTonePrimed = true;
-            _panelToneReady = true;
-            _panelToneDstL = dst.Left; _panelToneDstT = dst.Top; _panelToneDstW = dst.Width; _panelToneDstH = dst.Height;
-            _toneUsePanel = true;
-
-            ApplyPanelPalette(Average(_panelToneGrid));
-        }
-
-        /// <summary>面板绘制期间，插件文字统一取面板整体明暗（含滞回）。</summary>
         internal static SKColor PanelToneText(byte alpha, bool sub)
             => (sub ? _currentSubTextColor : _currentTextColor).WithAlpha(alpha);
 
-        /// <summary>面板调色滞回：只有明确跨过 0.65 / 0.55 才翻转，挡住平均亮度抖动。</summary>
         private static bool _panelPaletteLight;
         private static bool _panelPaletteKnown;
 
@@ -350,9 +289,6 @@ namespace NotchPeninsula
             _panelPaletteOverridden = true;
         }
 
-        /// <summary>面板调色（ApplyPanelPalette 的旧入口名，保留给位图采样路径）。</summary>
-        private static void ApplyPanelPalette(float average) => ApplyPanelPaletteAverage(average);
-
         internal static void EndPanelToneGrid()
         {
             _toneUsePanel = false;
@@ -367,11 +303,7 @@ namespace NotchPeninsula
 
         /// <summary>
         /// 把一块底色降采样成 24×6 亮度网格（岛体 / 实况窗面板共用同一份采样与平滑）。
-        /// 三种材质各有各的「成品亮度」算法：
-        ///   · 实体（material = 0）：主题纯色，整张网格填同一个亮度；
-        ///   · 亚克力（1）：背板像素按涂层 alpha 与主题底色混合；
-        ///   · 玻璃（2 / 3）：背板像素乘明度补偿、再掺玻璃雾度（v1 / v2 各用自己的参数）。
-        /// 返回 false = 玻璃 / 亚克力拿不到背板（或像素格式不支持），调用方回落到全局文字色。
+        /// 实体和液态玻璃按主题填色；Windows 10 亚克力按背板和涂层的混合亮度采样。
         /// </summary>
         private static bool SampleToneGrid(SKImage? backdrop, SKRect dst, SKRect src,
             float[] grid, float[] prev, ref bool primed, int material)
@@ -381,8 +313,7 @@ namespace NotchPeninsula
             primed = false;
             if (dst.Width < 4f || dst.Height < 4f) return false;
 
-            // 实体：底就是主题纯色，不需要背板。整张网格同亮度，逐元素查询仍然可用。
-            if (material == 0)
+            if (material != 1)
             {
                 float lum = Luminance(_bgPaint.Color);
                 for (int i = 0; i < grid.Length; i++)
@@ -407,23 +338,9 @@ namespace NotchPeninsula
             int pw = pm.Width, ph = pm.Height;
             if (pw < 1 || ph < 1) return false;
 
-            bool acrylic = material == 1;
-
-            // 亚克力：背板 + 主岛涂层（_bgPaint 的 RGB 与 alpha）。
-            // 玻璃：背板 + 明度补偿 / 雾度掺白。当前只有一档液态玻璃（2.0 已下线，分支保留但不会命中）。
-            float coatAlpha = 0f, coatLum = 0f;
-            float dark = 1f, tint = 0f;
-            if (acrylic)
-            {
-                SKColor coat = _bgPaint.Color;
-                coatAlpha = coat.Alpha * (1f / 255f);
-                coatLum = Luminance(coat);
-            }
-            else
-            {
-                dark = IslandLiquidGlass2 ? LiquidGlass2.Darkening : LiquidGlass.Darkening;
-                tint = IslandLiquidGlass2 ? LiquidGlass2.TintAlpha : LiquidGlass.TintAlpha;
-            }
+            SKColor coat = _bgPaint.Color;
+            float coatAlpha = coat.Alpha * (1f / 255f);
+            float coatLum = Luminance(coat);
 
             for (int gy = 0; gy < ToneGridY; gy++)
             {
@@ -440,15 +357,7 @@ namespace NotchPeninsula
                     float r = Marshal.ReadByte(row, i + rOff);
                     float lum = (0.213f * r + 0.715f * g + 0.072f * b) * (1f / 255f);
 
-                    if (acrylic)
-                    {
-                        lum = lum * (1f - coatAlpha) + coatLum * coatAlpha;
-                    }
-                    else
-                    {
-                        lum *= dark;
-                        lum += (1f - lum) * tint;
-                    }
+                    lum = lum * (1f - coatAlpha) + coatLum * coatAlpha;
                     if (lum < 0f) lum = 0f; else if (lum > 1f) lum = 1f;
 
                     int idx = gy * ToneGridX + gx;
@@ -577,47 +486,22 @@ namespace NotchPeninsula
             => ReferenceEquals(paint, _bodyPaint) || ReferenceEquals(paint, _tlTextPaint)
             || ReferenceEquals(paint, _datePaint) || ReferenceEquals(paint, _compactAppPaint);
 
-        public static void ApplyThemeColors() // 刷新颜色的方法
-        {            bool isLight = ThemeMode == 1;
-            if (ThemeMode == 2) // 跟随系统
-            {
-                isLight = SystemIsLightTheme;
-            }
-            // 液态玻璃 / 亚克力：明暗不再由 ThemeMode 决定 —— 玻璃的底是桌面，亚克力的底是
-            // 模糊背板 + 涂层，文字黑白跟着实际底色走（Renderer.Draw 里逐帧判，翻转时回调本方法）。
-            // 判定还没出来（首帧抓屏之前）时沿用 ThemeMode 兜底，避免启动头一瞬文字色跳变。
-            // ⚠️ 这里不能再看 AcrylicBackdrop 是否为 null：背板在隐藏 / 停顿抓屏时也会是 null，
-            //    那样文字会在玻璃文字色与主题色之间来回闪。
-            if ((IslandAnyGlass || IslandAcrylic) && _glassTextKnown)
+        public static void ApplyThemeColors()
+        {
+            int material = IslandMaterialIndex;
+            bool isLight = ThemeMode == 1 || (ThemeMode == 2 && SystemIsLightTheme);
+            if (material == 1 && _glassTextKnown)
                 isLight = _glassTextIsLight;
 
-            // 预计算颜色，避免在渲染树中生成新对象
-            // 亚克力 = 模糊背板 + 上层的浅色/深色涂层（真实亚克力的"奶感"就来自这层）。
-            // 上限 140/255 ≈ 55%，与设置窗口那套亚克力色调（0x8C）同口径；档位滑到最左 = 纯模糊。
-            // 液态玻璃的涂层固定为 0：玻璃的着色（明度/雾度/饱和）全在 LiquidGlass 合成里算，
-            // 再叠一层黑只会让背板变暗（暗壁纸下直接糊成一片死黑，就是"玻璃永远黑"的一半原因）。
-            // ⚠️ 唯一例外：背板还没产出时（启动头一瞬）必须垫一层 45 的深色底 ——
-            //    否则岛体整帧全透明，看起来就是"启动没渲染、岛体闪没"。
-            // ⚠️ 这里算出来的只是初值：玻璃模式下 Renderer.Draw 每帧按"背板在不在"重定 ——
-            //    本方法在启动时跑在首帧抓屏之前，那时背板必然为 null，一把梭定成 45 就再也下不来了。
-            bool backdropReady = AcrylicBackdrop != null;
-            byte bgAlpha = IslandAnyGlass
-                ? (backdropReady ? (byte)0 : (byte)45)
-                : IslandAcrylic
-                    ? (byte)Math.Clamp(BgOpacityLevel * 140 / 4, 0, 255)
-                    : (byte)Math.Clamp(BgOpacityLevel * 255 / 4, 0, 255);
-
-            // 一次性诊断：材质开关一变就记一行 —— 排查「亚克力/玻璃看不见」时第一时间看它
-            bool wantBackdrop = IslandAcrylic || IslandAnyGlass;
-            if (wantBackdrop != _acrylicLogged)
+            byte bgAlpha = (byte)(BgOpacityLevel * (material == 1 ? 140 : 255) / 4);
+            if (material != _loggedMaterial)
             {
-                _acrylicLogged = wantBackdrop;
-                Logger.Info($"[背景材质] 材质={(IslandLiquidGlass2 ? "液态玻璃2.0" : IslandLiquidGlass ? "液态玻璃" : IslandAcrylic ? "亚克力" : "实体")}"
-                    + $"  涂层alpha={(IslandAnyGlass ? "按背板每帧重定" : bgAlpha.ToString())}"
-                    + $"  档位={BgOpacityLevel}  主题={(isLight ? "浅" : "深")}  底色={(isLight ? "白" : "黑")}");
+                _loggedMaterial = material;
+                string name = material switch { 2 => "液态玻璃", 1 => "亚克力", _ => "实体" };
+                Logger.Info($"[背景材质] 材质={name}  主题={(isLight ? "浅" : "深")}");
             }
             var baseBg = isLight ? SKColors.White : SKColors.Black;
-            var bg = baseBg.WithAlpha(bgAlpha); // 只改变背景色的透明度，不影响内部元素
+            var bg = material == 2 ? GlassMaterial.TintColor(isLight, GlassMaterial.BackdropReady) : baseBg.WithAlpha(bgAlpha);
             _currentTextColor = isLight ? SKColors.Black : SKColors.White;
             _currentSubTextColor = isLight ? new SKColor(80, 80, 80) : new SKColor(200, 200, 200);
 
@@ -645,7 +529,9 @@ namespace NotchPeninsula
         }
 
         public static Plugins.RenderTheme GetCurrentTheme()
-            => new Plugins.RenderTheme(_currentTextColor, _currentSubTextColor, _bgPaint.Color, GLOBAL_DPI, NOTCH_BOTTOM_RADIUS);
+            => new Plugins.RenderTheme(_currentTextColor, _currentSubTextColor,
+                IslandLiquidGlass ? GlassMaterial.TintColor(_paletteIsLight, GlassMaterial.BackdropReady) : _bgPaint.Color,
+                GLOBAL_DPI, NOTCH_BOTTOM_RADIUS);
 
         private static readonly object _renderLock = new();
 
@@ -653,14 +539,9 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
 
-        // 液态玻璃的涂层：每帧按"背板在不在"重定（见 Renderer.Draw）。
-        // ⚠️ 故意与 _bgPaint 分开：_bgPaint 还要经 GetCurrentTheme 交给插件当主题底色，
-        //    在玻璃模式下每帧把它改成透明会让插件自己画的底色一起消失。
-        private static readonly SKPaint _coatPaint = new() { Color = SKColors.Black, IsAntialias = true };
-
         // 亚克力背板画笔。
         // 这里**故意不带 ImageFilter** —— 每帧带高斯画一次会让 Skia 每帧开临时缓冲，帧率和内存都会崩。
-        // 模糊已经在抓到背板时一次性做完了（缩 1/12 + 降半升回的盒式模糊），这里只需平滑放大。
+        // 模糊已经在抓到背板时一次性做完了（降半再升回的盒式模糊），这里只需平滑放大。
         // ⚠️ 必须用 Low（纯双线性）：Medium 会走 mipmap，Skia 按图像 uniqueID 缓存 mip 层级，
         // 而背板每 250ms 就是一张新图 → 同样只增不减。
         private static readonly SKPaint _acrylicPaint = new()

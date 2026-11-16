@@ -251,43 +251,20 @@ namespace NotchPeninsula
             sb.AppendLine($"命令行  : {Environment.CommandLine}");
 
             try { sb.AppendLine($"应用内缩放: {Renderer.GLOBAL_DPI:F2}"); } catch { }
-            try { sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {(Renderer.IslandLiquidGlass2 ? "液态玻璃 2.0" : Renderer.IslandLiquidGlass ? "液态玻璃" : Renderer.IslandAcrylic ? "亚克力" : "实体")}"); } catch { }
-            // 液态玻璃 2 的可用性守卫：误降级的排查全看这一行 ——
-            // 背板有没有产出过、合成失败 / 无内容各累计了多久、本次会话是否已经降级（降级不写设置）。
-            try { sb.AppendLine($"玻璃守卫: {GlassSupport.StatusLine}"); } catch { }
             try
             {
+                string material = Renderer.IslandMaterialIndex switch { 2 => "液态玻璃", 1 => "亚克力", _ => "实体" };
+                sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {material}");
+                sb.AppendLine($"岛体帧率: {GlassMaterial.FpsLabels[GlassMaterial.GetLevel(GlassMaterial.FrameRate)]}");
                 if (Renderer.IslandLiquidGlass)
                 {
-                    sb.Append($"液态玻璃: 质量={LiquidGlass.QualityName}  抓屏=");
-                    sb.AppendLine($"  玻璃层命中: {LiquidGlass.Stats}");
-                    sb.AppendLine(IslandBackdrop.UsingDxgi ? $"DXGI(1/{LiquidGlass.CaptureDownscale})"
-                        : $"GDI 兜底(1/{LiquidGlass.CaptureDownscale})");
-                    for (int i = 0; i < LiquidGlass.ParamCount; i++)
-                        sb.Append($"  {LiquidGlass.ParamNames[i]}={LiquidGlass.GetLevel(i)}/{LiquidGlass.MaxLevel}");
-                    sb.AppendLine();
+                    sb.AppendLine($"玻璃背板: {(GlassMaterial.BackdropReady ? "Windows Composition" : "半透明色调")}");
+                    for (int i = 0; i < GlassMaterial.FrameRate; i++)
+                        sb.AppendLine($"  {GlassMaterial.Labels[i]}={GlassMaterial.GetLevel(i)}/{GlassMaterial.MaxLevel(i)}");
                 }
-                else if (Renderer.IslandLiquidGlass2)
+                else if (Renderer.IslandAcrylic && !NativeAcrylic.IsSupported)
                 {
-                    sb.Append($"液态玻璃 2.0: 质量={LiquidGlass.QualityName}  抓屏=");
-                    sb.AppendLine(IslandBackdrop.UsingDxgi ? "DXGI(1:1)" : "GDI 兜底(1:1)");
-                    sb.AppendLine($"  玻璃层: {LiquidGlass2.Stats}");
-                    sb.AppendLine($"  背景细节 {LiquidGlass2.BackgroundDetail:F2}"
-                        + $"（均值 {LiquidGlass2.DetailMeanGradient:F1} / 密度 {LiquidGlass2.DetailEdgeDensity:F2}）"
-                        + $" → 模糊半径 {LiquidGlass2.EffectiveBlurRadius}px（0 = 清晰透过）");
-                    for (int i = 0; i < LiquidGlass2.ParamCount; i++)
-                        sb.Append($"  {LiquidGlass2.ParamNames[i]}={LiquidGlass2.GetLevel(i)}/{LiquidGlass2.MaxLevel}");
-                    sb.AppendLine();
-                    sb.AppendLine($"  能力自检：{LiquidGlass2.Health}"
-                        + (string.IsNullOrEmpty(LiquidGlass2.HealthDetail) ? "" : $"（{LiquidGlass2.HealthDetail}）")
-                        + $"  系统 {UiAlert.WindowsVersion()}");
-                }
-                if (Renderer.IslandAnyGlass)
-                {
-                    int gl = Renderer.IslandLiquidGlass2 ? LiquidGlass2.GlassLuminance : LiquidGlass.GlassLuminance;
-                    bool ok = Renderer.IslandLiquidGlass2 ? LiquidGlass2.HasLuminance : LiquidGlass.HasLuminance;
-                    sb.AppendLine($"  玻璃明暗 {gl}/255（{(ok ? "已测" : "无有效采样")}）"
-                        + $" → 岛上文字 {(Renderer.GlassTextIsLight ? "压黑" : "反白")}（平滑值 {Renderer.GlassToneLevel:F2}）");
+                    sb.AppendLine($"Windows 10 亚克力背板: {IslandBackdrop.DebugState}");
                 }
             }
             catch { }

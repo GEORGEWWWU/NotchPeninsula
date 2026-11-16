@@ -12,16 +12,17 @@ namespace NotchPeninsula
         private DispatcherQueueController? _acrylicDispatcher;
         private bool _nativeAcrylicFailed;
 
-        private bool WantsNativeAcrylic => NativeAcrylic.IsSupported
-            && Renderer.IslandAcrylic && !Renderer.IslandAnyGlass;
+        private static bool UsesLegacyAcrylic => !NativeAcrylic.IsSupported && Renderer.IslandAcrylic;
 
-        private void PresentNativeAcrylic(int x, int y)
+        private void PresentNativeBackdrop(int x, int y)
         {
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
-            if (!WantsNativeAcrylic || _nativeAcrylicFailed || opacity <= 0.001f
+            int material = Renderer.IslandMaterialIndex;
+            bool glass = material == 2;
+            if (!NativeAcrylic.IsSupported || material == 0 || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
-                _nativeAcrylic?.Hide();
+                HideNativeBackdrop();
                 return;
             }
 
@@ -31,7 +32,7 @@ namespace NotchPeninsula
                 {
                     _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
                     _nativeAcrylic = new NativeAcrylic();
-                    Logger.Info("[亚克力] 已建立 Windows Composition 背板宿主");
+                    Logger.Info($"[{(glass ? "液态玻璃" : "亚克力")}] 已建立 Windows Composition 背板宿主");
                 }
 
                 // 与 Renderer.Draw 的胶囊使用同一帧尺寸和逻辑坐标。
@@ -42,35 +43,53 @@ namespace NotchPeninsula
                 float flare = outline.Flare * _dpiScale;
                 int leftPx = (int)MathF.Floor(left - flare);
                 int topPx = (int)MathF.Floor(top);
-                int width = (int)MathF.Ceiling(left + size.X + flare) - leftPx;
-                int height = (int)MathF.Ceiling(top + size.Y) - topPx;
+                int rightPx = (int)MathF.Ceiling(left + size.X + flare);
+                int bottomPx = (int)MathF.Ceiling(top + size.Y);
+                var regions = glass ? GlassMaterial.LiveRegions : default;
+                foreach (ref readonly var region in regions)
+                {
+                    var rect = region.Rect;
+                    leftPx = Math.Min(leftPx, Math.Max(0, (int)MathF.Floor(rect.Left * _dpiScale)));
+                    topPx = Math.Min(topPx, Math.Max(0, (int)MathF.Floor(rect.Top * _dpiScale)));
+                    rightPx = Math.Max(rightPx, Math.Min(_scaledWidth, (int)MathF.Ceiling(rect.Right * _dpiScale)));
+                    bottomPx = Math.Max(bottomPx, Math.Min(_scaledHeight, (int)MathF.Ceiling(rect.Bottom * _dpiScale)));
+                }
                 var offset = new Vector2(left - leftPx, top - topPx);
                 var scaledOutline = new IslandOutline(outline.TopX * _dpiScale, outline.TopY * _dpiScale, outline.Bottom * _dpiScale);
-                _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, width, height,
-                    offset, size, scaledOutline, _currentStyleProgress == 1f, opacity);
+                _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, rightPx - leftPx, bottomPx - topPx,
+                    offset, size, scaledOutline, _currentStyleProgress == 1f, opacity, glass, _dpiScale,
+                    regions, new Vector2(-leftPx, -topPx));
+                GlassMaterial.BackdropReady = glass;
+                GlassMaterial.LiveBackdropReady = glass && _nativeAcrylic.LiveGlassAvailable;
             }
             catch (Exception ex)
             {
                 _nativeAcrylicFailed = true;
-                _nativeAcrylic?.Dispose();
+                var failedHost = _nativeAcrylic;
                 _nativeAcrylic = null;
-                Logger.Error("[亚克力] Windows Composition 宿主失败，使用亚克力色调兜底", ex);
+                GlassMaterial.BackdropReady = false;
+                GlassMaterial.LiveBackdropReady = false;
+                Logger.Error("[背景材质] Windows Composition 宿主失败，使用色调兜底", ex);
+                try { failedHost?.Dispose(); }
+                catch (Exception disposeError) { Logger.Error("[背景材质] 释放 Composition 宿主失败", disposeError); }
             }
         }
-        private int _acrFrames;
-        private bool _acrLogged;
-        private bool _acrBootRefresh; // 启动后是否已做过一次「等价于点质量档」的刷新
-        private long _bootAtMs;       // 启动后第一次进入这里的时间戳
-        private long _acrBootRetryMs; // 背板还没内容时，下一次催重抓的时间戳
-        private int _acrBootRetries;  // 催抓次数（封顶，别无限刷）
-        private bool _lastGlassMode;
-        private int _lastGlassKind;   // 0 实体/亚克力，1 液态玻璃，2 液态玻璃2
+        private void HideNativeBackdrop()
+        {
+            _nativeAcrylic?.Hide();
+            GlassMaterial.BackdropReady = false;
+            GlassMaterial.LiveBackdropReady = false;
+        }
 
+        private bool _acrLogged;
+        private bool _legacyCaptureActive;
+        private long _legacyFirstCaptureMs;
+        private bool _legacyRefreshedAfterStartup;
         // 背板自愈用：最近一次看到的背板版本号 + 它的时间戳（见 SyncIslandBackdrop）
         private int _lastBackdropVer = -1;
         private long _lastBackdropVerMs;
 
-        // 「跳过抓屏」的原因也要能查：玻璃背景是假的时候，日志里必须能看出是渲染侧没给矩形。
+        // 记录 Windows 10 亚克力兼容路径的无效目标。
         private long _backdropSkipMs;
         private string _backdropSkipWhy = "";
 
@@ -96,57 +115,21 @@ namespace NotchPeninsula
             // 先在这里重算一次，否则会把旧显示器的坐标喂给抓屏线程。
             if (NeedsMonitorRefresh()) UpdateMonitorBounds();
 
-            // 亚克力与两种液态玻璃共用同一条抓屏管线，只是降采样倍数不同
-            int kind = Renderer.IslandLiquidGlass2 ? 2 : (Renderer.IslandLiquidGlass ? 1 : 0);
-            bool glass = kind != 0;
-            bool nativeAcrylic = WantsNativeAcrylic;
-            if (nativeAcrylic || (!Renderer.IslandAcrylic && !glass) || Renderer.FullHideAlpha < 0.5f)
+            if (!UsesLegacyAcrylic || Renderer.FullHideAlpha < 0.5f)
             {
-                if (!nativeAcrylic && (Renderer.IslandAcrylic || glass))
-                    LogBackdropSkip($"材质已切走或岛体处于隐藏态 FullHideAlpha={Renderer.FullHideAlpha:F2}");
-                IslandBackdrop.SetTarget(0, 0, 0, 0);
-                IslandBackdrop.ClearMask();
-                if (_acrylicOwned != null)
+                if (_legacyCaptureActive)
                 {
+                    _legacyCaptureActive = false;
+                    IslandBackdrop.SetTarget(0, 0, 0, 0);
+                    IslandBackdrop.ClearMask();
+                    IslandBackdrop.Expire();
                     Renderer.AcrylicBackdrop = null;
-                    _acrylicOwned.Dispose();
+                    _acrylicOwned?.Dispose();
                     _acrylicOwned = null;
                 }
-                // 材质切走就把两份玻璃缓存都放掉，别白占内存
-                LiquidGlass.Invalidate();
-                LiquidGlass2.Invalidate();
-                _lastGlassKind = 0;
                 return;
             }
-            IslandBackdrop.SetMode(glass);
-
-            // 背板刚从「全黑」跳到「有内容」（启动时桌面要十几秒才出来）→ 玻璃缓存作废重算。
-            // 等效于用户手动切一次质量档，这也是那个"必须手动刷新"的现象来源。
-            if (IslandBackdrop.TakeGlassWake())
-            {
-                Logger.Info("[亚克力] 背板从全黑变亮，作废玻璃缓存重算");
-                LiquidGlass.Invalidate();
-                LiquidGlass2.Invalidate();
-            }
-
-            // 换材质 = 换降采样倍数：旧背板（另一倍率下抓的）先丢掉，
-            // 否则新算出来的源矩形会指到旧图外面，切换瞬间会闪一块错位的色块。
-            // ⚠️ 液态玻璃 ↔ 液态玻璃2 之间 glass 恒为 true，只比它切不动 ——
-            //    两种玻璃的编号也要进比较，否则玻璃 1 那张缓存图会原样贴到玻璃 2 上。
-            if (_lastGlassMode != glass || _lastGlassKind != kind)
-            {
-                _lastGlassMode = glass;
-                _lastGlassKind = kind;
-                if (_acrylicOwned != null)
-                {
-                    Renderer.AcrylicBackdrop = null;
-                    _acrylicOwned.Dispose();
-                    _acrylicOwned = null;
-                }
-                LiquidGlass.Invalidate();
-                LiquidGlass2.Invalidate();
-                IslandBackdrop.Expire();
-            }
+            _legacyCaptureActive = true;
 
             // 岛体画布比屏幕宽：中心对齐屏幕中心后，画布两侧各挂出屏幕外一截（给展开/滑动留余量）。
             // ⚠️ 抓取矩形必须与屏幕求交，否则会把屏幕外的黑一起抓下来 → 背板全黑 = 亚克力「消失」。
@@ -162,19 +145,6 @@ namespace NotchPeninsula
             int capY = Math.Max(_cachedMonitorY, capBaseY);
             int capW = Math.Min(_cachedMonitorX + _cachedMonitorWidth, dstX + _scaledWidth) - capX;
             int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, capBaseY + _scaledHeight) - capY;
-            // 玻璃只用到屏幕上边一条，整块画布那么大一张图没必要。
-            // 按 32px 量化，免得胶囊高度一动就重抓。
-            if (glass && IslandBackdrop.DxgiAllowed && DxgiBackdrop.Available && capH > 120)
-            {
-                // 实况窗的详情页面板挂在岛体下方，也吃同一张背板：抓取高度必须盖住面板底部
-                //（LiveWindowHost.RequiredWindowHeight 已经是「气泡 + 面板 + 余量」的整段高度）。
-                // 玻璃合成还要在玻璃边缘向外多采几十像素做折射 / 模糊，所以面板那一路再留 64。
-                float needLogical = MathF.Max(_currentHeight + 60f, LiveWindowHost.RequiredWindowHeight + 64f);
-                int need = (int)Math.Ceiling(needLogical * _dpiScale);
-                if (need < 120) need = 120;
-                need = (need + 31) / 32 * 32;
-                if (capH > need) capH = need;
-            }
 
             // 交矩形与胶囊尺寸无关 → 胶囊变大变小只挪源矩形，不重抓，尺寸变换期间不闪
             if (capW < 16 || capH < 16)
@@ -191,7 +161,7 @@ namespace NotchPeninsula
             //    岛体自己原封不动留在背板里；玻璃的源矩形又正好是岛体那块 ⇒ 玻璃采到自己的输出，
             //    45/46 的灰度成了不动点（"无法透过玻璃看到后面，点一下质量档才好"就是这么来的）。
             float left = (Renderer.WINDOW_WIDTH - _currentWidth) / 2f;
-            float topY = 12f * _currentStyleProgress;
+            float topY = IslandOutline.CapsuleOffset * _currentStyleProgress;
             float islandX = dstX + left * _dpiScale;
             float islandY = dstY + topY * _dpiScale;
             float islandW = _currentWidth * _dpiScale;
@@ -199,20 +169,12 @@ namespace NotchPeninsula
 
             // 刘海模式顶角向外张开的那两块角料也属于岛体：玻璃会在那里采样，
             // 遮罩必须一起盖住，否则 GDI 那条线会把岛体自己的像素留在背板里（玻璃采到自己上一帧的输出）。
-            float flare = 0f;
-            if (_currentStyleProgress < 1f)
-            {
-                float islandRadius = MathF.Min(_currentHeight / 2f, 20f);
-                float rTopX = -Renderer.OUTER_R * (1f - _currentStyleProgress)
-                              + islandRadius * _currentStyleProgress;
-                if (rTopX < 0f) flare = -rTopX * _dpiScale;
-            }
+            float flare = IslandOutline.Create(_currentHeight, _currentStyleProgress).Flare * _dpiScale;
 
             // 先告诉抓屏线程「岛体占哪块」（抓完要把这块抹掉），再给抓取矩形 —— 顺序反了首帧可能抓到没抹的
             IslandBackdrop.SetMask(islandX - flare, islandY, islandX + islandW + flare, islandY + islandH);
 
             // 实况窗（详情页面板 + 左侧气泡）也要计入遮罩，口径同样是屏幕物理像素。
-            // 它们现在也吃玻璃材质：不擦掉的话，抓屏兜底路径会让玻璃采到自己上一帧的残影。
             {
                 var liveFrame = LiveWindowHost.Frame;
                 var extra = _extraMaskScratch;
@@ -238,7 +200,7 @@ namespace NotchPeninsula
                 IslandBackdrop.SetExtraMasks(extra.AsSpan(0, n));
             }
 
-            // 贴图用的源矩形按【实际产出图】的比例与原点换算（DXGI 是 1:1，GDI 是 1/k），切换后端时不会错位
+            // 贴图用的源矩形按【实际产出图】的比例与原点换算
             float inv = IslandBackdrop.LastScale;
             float orgX = IslandBackdrop.LastOriginX;
             float orgY = IslandBackdrop.LastOriginY;
@@ -262,84 +224,39 @@ namespace NotchPeninsula
                 }
             }
 
-            _acrFrames++;
-
-            // 背板自愈：抓屏线程真的卡住时兜一下（DXGI 会话卡死、线程被拖住、待取图丢了……）。
-            //
-            // ⚠️ 判据不能只看「version 多久没变」：液态玻璃是**按需抓屏**——
-            //    桌面静止时背板本来就不更新（这是它省 CPU 的核心），version 停着是正常状态。
-            //    所以要求「长时间没更新 **且** 抓屏确实在连续失败」才动手，
-            //    否则会在静止桌面下反复拆缓冲，玻璃周期性闪黑纱。
-            int bdVer = IslandBackdrop.Version;
-            if (bdVer != _lastBackdropVer) { _lastBackdropVer = bdVer; _lastBackdropVerMs = Environment.TickCount64; }
-            else if (Environment.TickCount64 - _lastBackdropVerMs > 15000 && IslandBackdrop.CaptureFailStreak >= 3)
+            int version = IslandBackdrop.Version;
+            long now = Environment.TickCount64;
+            if (!_legacyRefreshedAfterStartup)
             {
-                _lastBackdropVerMs = Environment.TickCount64;
-                Logger.Warn($"[背板] 15 秒没有新背板且抓屏连续失败 {IslandBackdrop.CaptureFailStreak} 次"
-                    + $"（version={bdVer}），强制重建抓屏");
-                IslandBackdrop.Expire();
-                LiquidGlass.Invalidate();
-                LiquidGlass2.Invalidate();
+                if (_legacyFirstCaptureMs == 0) _legacyFirstCaptureMs = now;
+                if (now - _legacyFirstCaptureMs >= 400 && Renderer.FullHideAlpha >= 0.9f
+                    && Math.Abs(_currentY) < 0.5f)
+                {
+                    _legacyRefreshedAfterStartup = true;
+                    IslandBackdrop.Expire();
+                }
             }
 
-            // 启动刷新：等岛体**完全落位**（淡入完成、没有滑动/下沉偏移）再做，
-            // 动作与设置页点一次「玻璃质量」逐句对应（见 ConsoleWindow.Click）：
-            //   LiquidGlass.Quality = 原档 → 强制走 ApplyQuality（ReapplyQuality），
-            //   再 RequestAcrylicRebuild() —— 就是点击分支最后那一句。
-            // ⚠️ 用户点的是「原来那档」，setter 会早退，所以必须用 ReapplyQuality 才等效。
-            //
-            // ⚠️ 但这把刷新**必须等到背板真的有内容**再收工：启动时显示器/会话可能还没出画面，
-            //    首帧背板就是全黑，0.8 秒一把梭刷新等于白做（实测刷完玻璃依旧是 45/46 的死灰）。
-            //    抓屏线程的内容守卫（IslandBackdrop.TrackContent）会判定并重抓；这里只在
-            //    "有内容"之后做那一次等价点击的刷新，之前按 600ms 节奏催一下。
-            long nowMs = Environment.TickCount64;
-            if (_bootAtMs == 0) _bootAtMs = nowMs;
-
-            bool settled = nowMs - _bootAtMs >= 400
-                           && Renderer.FullHideAlpha >= 0.9f
-                           && Math.Abs(_currentY) < 0.5f;
-
-            // 非玻璃材质没有内容守卫（TrackContent 只在液态玻璃下跑），按老规矩一把梭
-            bool contentReady = !Renderer.IslandAnyGlass || IslandBackdrop.IsContentAlive;
-
-            if (settled && !_acrBootRefresh)
+            if (version != _lastBackdropVer)
             {
-                if (contentReady)
-                {
-                    _acrBootRefresh = true;
-                    Logger.Info("[亚克力] 启动刷新玻璃（等价于设置里点一次玻璃质量）");
-                    if (Renderer.IslandLiquidGlass2) LiquidGlass2.ReapplyQuality();
-                    else LiquidGlass.ReapplyQuality();
-                    RequestAcrylicRebuild();
-                }
-                else if (nowMs - _acrBootRetryMs >= 600)
-                {
-                    _acrBootRetryMs = nowMs;
-                    _acrBootRetries++;
-                    if (_acrBootRetries <= 8)
-                    {
-                        // 背板还是黑的：先按点击的同款动作强推一次（新建 DC/DIB 能治好"GDI 抓住黑帧"），
-                        // 但自愈不在这里收工 —— 等守卫判出"有内容"，再走上面那一支。
-                        Logger.Info($"[亚克力] 启动时背板还没有内容，第 {_acrBootRetries} 次强制重抓");
-                        IslandBackdrop.Expire();
-                        LiquidGlass.Invalidate();
-                        LiquidGlass2.Invalidate();
-                    }
-                    else
-                    {
-                        // 约 5 秒都没内容：交给内容守卫（死黑超时自己重建、恢复时自己 Invalidate），
-                        // 这里收工，别每帧再惦记。
-                        _acrBootRefresh = true;
-                        Logger.Warn("[亚克力] 启动自愈放弃：背板长时间无内容，转交内容守卫");
-                    }
-                }
+                _lastBackdropVer = version;
+                _lastBackdropVerMs = now;
+            }
+            else if (now - _lastBackdropVerMs > 15000 && IslandBackdrop.CaptureFailStreak >= 3)
+            {
+                _lastBackdropVerMs = now;
+                Logger.Warn($"[背板] 15 秒没有新背板且抓屏连续失败 {IslandBackdrop.CaptureFailStreak} 次，重建背板");
+                IslandBackdrop.Expire();
             }
 
             Renderer.AcrylicBackdropSrc = new SKRect(srcL, srcT, srcL + srcW, srcT + srcH);
         }
 
         // 设置面板切材质 / 换主题后调用（UI 线程）：标记过期，后台线程下一轮重抓
-        public static void RequestAcrylicRebuild() => IslandBackdrop.Expire();
+        public static void RequestAcrylicRebuild()
+        {
+            if (UsesLegacyAcrylic) IslandBackdrop.Expire();
+        }
 
         private static void ShutdownIslandBackdrop() => IslandBackdrop.Stop();
     }

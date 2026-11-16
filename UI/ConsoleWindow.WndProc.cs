@@ -84,19 +84,14 @@ namespace NotchPeninsula
 
             int newHoveredTheme = -1;            int newHoveredMaterial = -1;
             int newHoveredOpacityIndex = -1;
-            int newHoveredGlassQuality = -1;      // 液态玻璃卡：质量分段控件
-            int newHoveredGlassParam = -1;        // 9 根滑轨里悬停的是哪一根
+            int newHoveredGlassParam = -1;
             int newHoveredGlassParamLevel = -1;   // 悬停到的档位
             bool newHoveredGlassReset = false;    // 卡底「恢复默认参数」
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
-            int newHoveredBlurMode = -1;   // 个性化卡第三行：背景模糊（0 原模糊 / 1 高斯模糊）
-            int newHoveredCapture = -1;    // 个性化卡第四行：抓屏方式（0 默认 / 1 DXGI / 2 GDI）
             if (_selectedTab == 5)
             {
                 float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
-                // 液态玻璃下不认这块：玻璃的明暗由背后的桌面决定，主题色只剩"文字反白"，摆着会误导
-                if (!Renderer.IslandAnyGlass
-                    && y >= themeSegY && y <= themeSegY + SEG_H
+                if (y >= themeSegY && y <= themeSegY + SEG_H
                     && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
                     newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
 
@@ -104,16 +99,6 @@ namespace NotchPeninsula
                 if (y >= matSegY && y <= matSegY + SEG_H
                     && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
                     newHoveredMaterial = SegmentIndexAt(MaterialLabels, MAT_SEG_W, fitLabels: true, dx: x - MAT_SEG_X);
-
-                // 个性化卡第三行「背景模糊」：两档分段，按落点算选中哪一档。
-                if (HitBlurModeRow(x, y))
-                    newHoveredBlurMode = SegmentIndexAt(BlurModeLabels, BLUR_MODE_SEG_W, fitLabels: false,
-                        dx: x - BlurModeSegX);
-
-                // 第四行「抓屏方式」：三档分段，同上。
-                if (HitCaptureRow(x, y))
-                    newHoveredCapture = SegmentIndexAt(CaptureBackendLabels, CAPTURE_SEG_W, fitLabels: true,
-                        dx: x - CaptureSegX);
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
@@ -142,41 +127,30 @@ namespace NotchPeninsula
                 } 
 
                 // 玻璃卡：材质不是玻璃时整张卡都不画，命中也跟着关掉
-                if (Renderer.IslandAnyGlass)
+                if (Renderer.IslandLiquidGlass)
                 {
                     float gCardY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
-                    float segY = gCardY + GLASS_SEG_Y;
-                    // 液态玻璃 2 卡上没有质量分段（见 GlassRow0Y 注释）：命中也得关，
-                    // 否则点在原分段位置上，改的仍是 v1 的档位。
-                    if (!Renderer.IslandLiquidGlass2 && y >= segY && y <= segY + SEG_H)
-                    {
-                        if (x >= GLASS_QUALITY_SEG_X && x <= GLASS_QUALITY_SEG_X + GLASS_QUALITY_SEG_W)
-                            newHoveredGlassQuality = Math.Min(3, (int)((x - GLASS_QUALITY_SEG_X) / (GLASS_QUALITY_SEG_W / 4f)));
-                    }
-
-                    // 滑轨：先定位行，再看落在哪一列（液态玻璃 12 根 / 液态玻璃 2 是 9 根）
-                    int glassRows = GlassRowCount, glassParams = GlassParamCount;
+                    int glassRows = GlassRowCount;
                     for (int row = 0; row < glassRows; row++)
                     {
-                        float ry = gCardY + GlassRow0Y + (row * GLASS_ROW_H) + 17f;
+                        float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
                         if (y < ry - 12 || y > ry + 12) continue;
 
                         for (int col = 0; col < 3; col++)
                         {
-                            int idx = (int)(row * 3) + col;
-                            if (idx >= glassParams) continue;
+                            int idx = row * 3 + col;
+                            if (idx >= GlassMaterial.Keys.Length || !GlassParameterAvailable(idx)) continue;
 
                             float gx0 = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP) + GLASS_SLIDER_DX;
                             float gx1 = gx0 + GLASS_SLIDER_W;
                             if (x < gx0 - 16 || x > gx1 + 16) continue;
 
-                            int lvl = (int)Math.Round((x - gx0) / (GLASS_SLIDER_W / LiquidGlass.MaxLevel));
-                            if (lvl < 0) lvl = 0;
-                            if (lvl > LiquidGlass.MaxLevel) lvl = LiquidGlass.MaxLevel;
+                            int maxLevel = GlassMaterial.MaxLevel(idx);
+                            int lvl = Math.Clamp((int)Math.Round((x - gx0) * maxLevel / GLASS_SLIDER_W), 0, maxLevel);
 
                             newHoveredGlassParam = idx;
                             newHoveredGlassParamLevel = lvl;
-                            if (dragging && GlassLevelOf(idx) != lvl)
+                            if (dragging && GlassMaterial.GetLevel(idx) != lvl)
                             {
                                 ApplyGlassLevel(idx, lvl);
                                 Render();   // 与透明度滑轨同款：跨档立刻跟手
@@ -186,7 +160,7 @@ namespace NotchPeninsula
                         break;
                     }
 
-                    // 「恢复默认参数」：v1 与质量分段同一行，v2 在滑轨下方右下角 —— 滑轨之后判，命中就把滑轨悬停清掉
+                    // 恢复默认按钮位于滑轨下方。
                     float grY = gCardY + GlassResetTopY;
                     if (x >= GLASS_RESET_X && x <= GLASS_RESET_X + GLASS_RESET_W
                         && y >= grY && y <= grY + GLASS_RESET_H)
@@ -852,15 +826,12 @@ namespace NotchPeninsula
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
                 newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
                 newHoveredMaterial != _hoveredMaterialIndex ||
-                newHoveredGlassQuality != _hoveredGlassQualityIndex ||
                 newHoveredGlassParam != _hoveredGlassParamIndex ||
                 newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
                 newHoveredGlassReset != _hoveredGlassReset ||
                 // ⚠️ 这一项漏掉过：它只在被比较的几个状态里"顺带"赋值，
                 //    于是鼠标只停在这一行时整块 if 不成立 → 悬停永远不更新，
                 //    表现为「控件画得出来、高亮不亮、点了没反应」。
-                newHoveredBlurMode != _hoveredBlurModeIndex ||
-                newHoveredCapture != _hoveredCaptureIndex ||
                 newMonitorDropdownHovered != _monitorDropdownHovered ||
                 newHoveredMonitorDropdownIndex != _hoveredMonitorDropdownIndex ||
                 newToastModeDropdownHovered != _toastModeDropdownHovered ||
@@ -904,8 +875,6 @@ namespace NotchPeninsula
             {
                 _minHovered = newMinHovered; _closeHovered = newCloseHovered;
                 _hoveredTab = newHoveredTab; _toggleHovered = newToggleHovered;
-                _hoveredBlurModeIndex = newHoveredBlurMode;
-                _hoveredCaptureIndex = newHoveredCapture;
                 _toastToggleHovered = newToastToggleHovered;
                 _mediaToggleHovered = newMediaToggleHovered; _mediaLiveToggleHovered = newMediaLiveToggleHovered; _autoHideToggleHovered = newAutoHideToggleHovered;
                 _focusHideToggleHovered = newFocusHideToggleHovered;
@@ -937,7 +906,6 @@ namespace NotchPeninsula
                 _hoveredResetIndex = newHoverReset;
                 _hoveredThemeIndex = newHoveredTheme;
                 _hoveredMaterialIndex = newHoveredMaterial;
-                _hoveredGlassQualityIndex = newHoveredGlassQuality;
                 _hoveredGlassParamIndex = newHoveredGlassParam;
                 _hoveredGlassParamLevel = newHoveredGlassParamLevel;
                 _hoveredGlassReset = newHoveredGlassReset;

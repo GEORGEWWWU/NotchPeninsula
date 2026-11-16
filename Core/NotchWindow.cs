@@ -484,12 +484,8 @@ namespace NotchPeninsula
                 throw new Exception($"创建窗口失败！错误码: {Marshal.GetLastWin32Error()}");
             else Info($"窗口创建成功，句柄: {_hwnd}");
             InstanceHandle = _hwnd;
-            // 窗口一建好就把捕获亲和性落实成「正常可见」（抓屏线程之后会按需瞬时切换）
-            Renderer.ResetCaptureAffinity();
             SetupIslandDropTarget();
 
-            // 抓屏后端不需要窗口侧初始化：DXGI 用自己的 D3D11 设备（见 Core/DxgiBackdrop.cs），
-            // 首帧在后台线程懒建。
             _renderThread = new Thread(RenderThreadLoop)
             {
                 IsBackground = true,
@@ -534,13 +530,6 @@ namespace NotchPeninsula
         }
 
         // ---- 渲染线程主体 ----
-        // 帧间隔不再是常量：用户在个性化中心可以把岛体帧率调成 30/60/90/120/144。
-        // 渲染循环每帧读一次（不是启动时快照），所以改完立刻生效。
-        //
-        // ⚠️ 必须用精确毫秒：旧值 `1000 / fps` 是整数除法，144 档排成 6ms（实际 166.7fps），
-        //    标称 144 比设置页高 15%，常驻 DWM 提交量也跟着偏高。
-        private static double FrameIntervalMs => LiquidGlass.FrameIntervalMsExact;
-
         private const int FrameIdleWarnMs = 120;
 
         private long _lastFrameEndMs = -1;
@@ -563,7 +552,14 @@ namespace NotchPeninsula
         private void RenderThreadLoop()
         {
             try { RunRenderThread(); }
-            finally { _nativeAcrylic?.Dispose(); }
+            finally
+            {
+                _nativeAcrylic?.Dispose();
+                Renderer.AcrylicBackdrop = null;
+                _acrylicOwned?.Dispose();
+                GlassMaterial.BackdropReady = false;
+                GlassMaterial.LiveBackdropReady = false;
+            }
         }
 
         private void RunRenderThread()
@@ -611,7 +607,18 @@ namespace NotchPeninsula
                 _lastFrameEndMs = frameEnd;
 
                 // 用 Stopwatch ticks 排程（毫秒整数表达不了 144fps），实测帧率才和设置页一致
-                nextTick += (long)Math.Max(1.0, Math.Round(Stopwatch.Frequency * FrameIntervalMs / 1000.0));
+                int fps = GlassMaterial.ForegroundFps;
+                if (fps == 0)
+                {
+                    if (!_invisibleFrameUploaded)
+                    {
+                        Thread.Yield();
+                        nextTick = clock.ElapsedTicks;
+                        continue;
+                    }
+                    fps = 30;
+                }
+                nextTick += (long)Math.Round((double)Stopwatch.Frequency / fps);
                 long remainTicks;
                 while (!_shuttingDown && (remainTicks = nextTick - clock.ElapsedTicks) > 0)
                 {
@@ -1600,6 +1607,7 @@ namespace NotchPeninsula
 
             // 亚克力背板：与胶囊同口径抓一次（几何没变就什么都不做），本帧绘制直接用
             SyncIslandBackdrop();
+            GlassMaterial.BeginFrame();
 
             // 实况窗要「不出屏」：窗口比屏幕宽，content x=0 可能落在屏幕外，把可见范围喂给宿主。
             float viewLeft = (_scaledWidth - _cachedMonitorWidth) / 2f / _dpiScale;
@@ -1651,7 +1659,7 @@ namespace NotchPeninsula
                                  || _isHovered || startupProgress < 1f || transitionAlpha < 1f;
 
             if (Renderer.FullHideAlpha > 0f || _isYAnimating) UpdateWindow(visiblyMoving);
-            else _nativeAcrylic?.Hide();
+            else HideNativeBackdrop();
             // 不可见帧只需要这一帧全透明底；之后整帧跳过（见 3.5）。
             _invisibleFrameUploaded = frameInvisible;
 
@@ -1704,7 +1712,7 @@ namespace NotchPeninsula
 
             var size = new Win32.SIZE(_scaledWidth, _scaledHeight);
 
-            PresentNativeAcrylic(ptDst.x, ptDst.y);
+            PresentNativeBackdrop(ptDst.x, ptDst.y);
 
             // 像素与窗口位置都没变就不提交：UpdateLayeredWindow 每次都会整张上传（没有脏矩形），
             // 静止画面下这是纯浪费。2s 强制重推一次，DWM 被重置/切换后能自愈。

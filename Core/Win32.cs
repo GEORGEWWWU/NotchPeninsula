@@ -411,13 +411,6 @@ namespace NotchPeninsula
 
         public const uint SRCCOPY = 0x00CC0020;
 
-        // 抓屏时让自己对捕获隐身（否则会把岛体自己糊进背板，形成回声）
-        public const uint WDA_NONE = 0x00000000;
-        public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
-
-        [DllImport("user32.dll", SetLastError = true)]
-        public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
-
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
 

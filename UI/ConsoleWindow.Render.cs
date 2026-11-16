@@ -942,7 +942,7 @@ namespace NotchPeninsula
 
                 // 预览里的岛体跟着当前背景材质走：选了液态玻璃就画成玻璃（真机上岛就是一块玻璃），
                 // 实体 / 亚克力仍画纯色剪影 —— 这张卡是形态示意，材质信息不能在预览里丢。
-                if (Renderer.IslandAnyGlass)
+                if (Renderer.IslandLiquidGlass)
                 {
                     DrawLiquidGlassPreview(canvas, shape);
                 }
@@ -1533,26 +1533,8 @@ namespace NotchPeninsula
             // 「副标题」专指主标题下面这一行，统一灰色；它不属于状态说明。
             canvas.DrawText("背景与文本颜色自适应反转", CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
-            // 液态玻璃下明暗由桌面背景决定，黑/白/系统摆着只会误导（悬停/点击已一并屏蔽）。
-            // 这句状态说明保留原位（右上、与隐藏掉的主题分段同一基线），仍然是主题蓝，不算副标题。
-            if (Renderer.IslandAnyGlass)
-            {
-                const string glassThemeHint = "液态玻璃材质下文字自适应颜色";
-                var prevColor = _subTextPaint.Color;
-                float prevSize = _subTextPaint.TextSize;
-                _subTextPaint.Color = new SKColor(0, 140, 240);
-                _subTextPaint.TextSize = _uiTextPaint.TextSize;
-                canvas.DrawText(glassThemeHint,
-                    THEME_SEG_X + THEME_SEG_W - _subTextPaint.MeasureText(glassThemeHint),
-                    TITLE_BAR_HEIGHT + THEME_SEG_Y + SEG_H / 2f + 4.5f, _subTextPaint);
-                _subTextPaint.Color = prevColor;
-                _subTextPaint.TextSize = prevSize;
-            }
-            else
-            {
-                DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
-                    ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
-            }
+            DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
+                ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
 
             // 第二行：背景材质（独立选项，与主题配色互不影响）
             canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + MAT_TITLE_DY, _uiTextPaint);
@@ -1563,43 +1545,6 @@ namespace NotchPeninsula
             DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
                 MaterialLabels, Renderer.IslandMaterialIndex, _hoveredMaterialIndex, fitLabels: true);
 
-            // 第三行：只有液态玻璃才有这回事。
-            // 两档的背板都是真实桌面（岛体在捕获里隐身），区别只在糊多厚：
-            // 原模糊 = 档位半径那层，高斯模糊 = 再叠一层固定厚度。
-            // 整行结构与「背景材质」完全一致：主标题基线 = 分段顶 +10，灰色副标题 = 分段顶 +30。
-            if (Renderer.IslandAnyGlass)
-            {
-                canvas.DrawText("背景模糊", CONTENT_TEXT_X, BlurModeSegY + 16f, _uiTextPaint);
-
-                // 说明只留前半句（「真实桌面 + 档位半径…」），后半句「岛体只在抓屏瞬间隐身，
-                // 截图照常」用户点名去掉。主标题 +16 / 副标题 +32 —— 四组之间公共间距 16px。
-                _subTextPaint.Color = Neutral(170);
-                canvas.DrawText(Renderer.GlassGaussBackdrop
-                        ? "真实桌面 + 档位半径再加一层高斯"
-                        : "真实桌面 + 档位半径的原版模糊",
-                    CONTENT_TEXT_X, BlurModeSegY + 32f, _subTextPaint);
-
-                // 等分两档（fitLabels 保持 false）：命中侧 SegmentIndexAt 也必须用同一套分宽，
-                // 否则"点左边却选中右边"。
-                DrawSegmented(canvas, BlurModeSegX, BlurModeSegY, BLUR_MODE_SEG_W, SEG_H,
-                    BlurModeLabels, Renderer.GlassGaussBackdrop ? 1 : 0, _hoveredBlurModeIndex);
-
-                // 第四行：抓屏方式。说明文案比左列宽得多，按「太长了就换下一行」放在分段下方，
-                // 占满整行；主标题 +22，比上面两行再低一点，视觉上与分段内容居中。
-                canvas.DrawText("抓屏方式", CONTENT_TEXT_X, CaptureSegY + 22f, _uiTextPaint);
-                DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("抓屏方式") + BADGE_GAP_X,
-                    CaptureSegY + 22f - TEXT_INK_MID_OFFSET, "实验性");
-                _subTextPaint.Color = Neutral(170);
-                canvas.DrawText(CaptureBackendHint, CONTENT_TEXT_X, CaptureSegY + 45f, _subTextPaint);
-                // fitLabels：三档文字宽度差得多（「默认」两字 vs「GDI（兼容）」五字），
-                // 等分 + 自动缩字号，保证每格等宽且字都居中。
-                DrawSegmented(canvas, CaptureSegX, CaptureSegY, CAPTURE_SEG_W, SEG_H,
-                    CaptureBackendLabels, IslandBackdrop.CaptureBackend, _hoveredCaptureIndex,
-                    fitLabels: true);
-            }
-
-            // 液态玻璃模式下整卡不画：玻璃的着色由「玻璃雾度」管，涂层恒为 0（见 ApplyThemeColors），
-            // 这条滑轨摆在那儿只会让人以为能调。尺寸卡/玻璃卡跟着上移（见 SIZE_CARD_Y）。
             if (ShowOpacityCard)
             {
                 float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
@@ -1646,27 +1591,18 @@ namespace NotchPeninsula
             }
             DrawMultiCard(SIZE_CARD_Y, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
 
-            // 玻璃参数卡：只在材质选到两种玻璃之一时出现 —— 实体 / 亚克力下这些滑块没有任何意义
-            if (Renderer.IslandAnyGlass)
+            if (Renderer.IslandLiquidGlass)
             {
                 float gY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
                 var gRect = new SKRect(CONTENT_L, gY, WIDTH - CONTENT_RM, gY + GlassCardH);
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
-                // ── 第一行：玻璃质量（左） + 恢复默认参数（右）──
-                // 液态玻璃 2 不画质量分段：那四档只改 v1，v2 的合成参数全在下面 9 根滑轨上。
-                float segY = gY + GLASS_SEG_Y;
-                if (!Renderer.IslandLiquidGlass2)
-                {
-                    float segTextY = segY + 20f;
-                    canvas.DrawText("玻璃质量", GLASS_TEXT_X, segTextY, _uiTextPaint);
-                    DrawSegmented(canvas, GLASS_QUALITY_SEG_X, segY, GLASS_QUALITY_SEG_W, SEG_H,
-                        ["流畅", "均衡", "精细", "极致"], LiquidGlass.Quality, _hoveredGlassQualityIndex);
-                }
+                string glassHint = NativeAcrylic.IsSupported
+                    ? "Windows Composition 背板 · 跟随系统合成刷新"
+                    : "Windows 10 · 半透明色调和边缘高光";
+                canvas.DrawText(glassHint, CONTENT_TEXT_X, gY + 26f, _subTextPaint);
 
-                // 「恢复默认参数」：v1 与质量分段同一行（右对齐到卡片文字右缘），
-                // v2 没有那一行 → 落到 3 行滑轨下方的右下角（同一右缘）。
                 float rY = gY + GlassResetTopY;
                 _dynamicFillPaint.Color = _hoveredGlassReset ? Overlay(30) : Overlay(15);
                 canvas.DrawRoundRect(new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
@@ -1675,95 +1611,59 @@ namespace NotchPeninsula
                 float resetW = _uiTextPaint.MeasureText(resetLabel);
                 canvas.DrawText(resetLabel, GLASS_RESET_X + (GLASS_RESET_W - resetW) / 2f, rY + 18, _uiTextPaint);
 
-                // ── 滑轨：3 列 × N 行（液态玻璃 12 根，液态玻璃 2 是 9 根）──
                 int rows = GlassRowCount;
                 for (int row = 0; row < rows; row++)
                 {
-                    float rowY = gY + GlassRow0Y + row * GLASS_ROW_H;
+                    float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
                     for (int col = 0; col < 3; col++)
-                        DrawGlassSlider(canvas, rowY, col, (int)(row * 3) + col);
+                        DrawGlassSlider(canvas, rowY, col, row * 3 + col);
                 }
             }
         }
 
-        // 背景材质的四个档位：两种玻璃的合成模型完全不同，所以并列成两个选项，互不覆盖
         private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃"];
 
-        // 卡高必须由「实际排了几行」算出来，不能写死：
-        // 液态玻璃 2 从 9 根涨到 11 根（多了刷新 / 帧率），行数从 3 变 4，
-        // 写死 3 行的话第 4 行两根滑轨会直接画到卡片外面（"新加的两根不在父 UI 里"）。
-        private static float GlassCardH
-            => GLASS_ROW0_Y + Math.Max(3, GlassRowCount) * GLASS_ROW_H + 10f;
-
-        // 玻璃卡的一根 5 档滑轨：标签 + 滑轨 + 档位值（数值型参数直接显示具体值）。
-        // 两张玻璃卡共用这套画法，只是标签 / 档位 / 数值文案各自取表。
         private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
         {
-            bool v2 = Renderer.IslandLiquidGlass2;
-            if (paramIndex >= (v2 ? LiquidGlass2.ParamCount : LiquidGlass.ParamCount)) return;
+            if (paramIndex >= GlassMaterial.Keys.Length) return;
 
-            string label = v2 ? LiquidGlass2.ParamLabels[paramIndex] : LiquidGlass.ParamLabels[paramIndex];
-            string[] valueTexts = v2 ? LiquidGlass2.ValueTexts(paramIndex) : LiquidGlass.ValueTexts(paramIndex);
-            int level = GlassLevelOf(paramIndex);
-            // 只有 v1 有「被质量档锁住」的滑轨（刷新 / 帧率）
-            bool locked = !v2 && LiquidGlass.IsLevelLocked(paramIndex);
-
+            int level = GlassMaterial.GetLevel(paramIndex);
+            int maxLevel = GlassMaterial.MaxLevel(paramIndex);
+            bool available = GlassParameterAvailable(paramIndex);
             float colX = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP);
-            float x0 = colX + GLASS_SLIDER_DX, x1 = x0 + GLASS_SLIDER_W;
+            float x0 = colX + GLASS_SLIDER_DX;
             float textY = rowY + 17f;
-            // 滑轨对齐的是文字的**视觉中线**，不是基线 —— 按基线摆会显得整条轨道往下掉
             float railY = textY - 4.5f;
+            var accent = new SKColor(0, 120, 212);
 
-            // 玻璃卡的字号比其他页大一号：12px 下"标准"这类两字值挤在一格里很难读
             _subTextPaint.TextSize = 13f;
-
-            // 极致档把「刷新」「帧率」锁在最高：标签画灰、数值画成强调色，
-            // 免得用户以为拖了没反应是坏了
-            _subTextPaint.Color = locked ? Neutral(110) : _fgColor;
-            canvas.DrawText(label, colX, textY, _subTextPaint);
-            _subTextPaint.Color = locked ? new SKColor(0, 120, 212) : _fgColor;
-
-            level = Math.Clamp(level, 0, LiquidGlass.MaxLevel);
-            bool hovered = _hoveredGlassParamIndex == paramIndex;
-            int hoveredLevel = hovered ? _hoveredGlassParamLevel : -1;
-
-            canvas.DrawLine(x0, railY, x1, railY, _separatorPaint);
-            _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
-            _dynamicStrokePaint.StrokeWidth = 2f;
-            canvas.DrawLine(x0, railY, x0 + (GLASS_SLIDER_W / LiquidGlass.MaxLevel) * level, railY, _dynamicStrokePaint);
-            _dynamicStrokePaint.StrokeWidth = 1.5f;
-            for (int i = 0; i <= LiquidGlass.MaxLevel; i++)
+            _subTextPaint.Color = available ? _fgColor : Neutral(110);
+            canvas.DrawText(GlassMaterial.Labels[paramIndex], colX, textY, _subTextPaint);
+            canvas.DrawLine(x0, railY, x0 + GLASS_SLIDER_W, railY, _separatorPaint);
+            if (available)
             {
-                bool sel = level == i, hov = hoveredLevel == i;
-                if (!sel && !hov) continue;
-                float px = x0 + (GLASS_SLIDER_W / LiquidGlass.MaxLevel) * i;
-                _dynamicFillPaint.Color = sel ? new SKColor(0, 120, 212) : Overlay(80);
-                canvas.DrawCircle(px, railY, sel ? 5.5f : 4.5f, _dynamicFillPaint);
+                float step = GLASS_SLIDER_W / maxLevel;
+                float active = x0 + step * level;
+                _dynamicStrokePaint.Style = SKPaintStyle.Stroke;
+                _dynamicStrokePaint.StrokeCap = SKStrokeCap.Round;
+                _dynamicStrokePaint.Color = accent;
+                _dynamicStrokePaint.StrokeWidth = 2f;
+                canvas.DrawLine(x0, railY, active, railY, _dynamicStrokePaint);
+                if (_hoveredGlassParamIndex == paramIndex && _hoveredGlassParamLevel >= 0)
+                {
+                    _dynamicFillPaint.Color = Overlay(80);
+                    canvas.DrawCircle(x0 + step * _hoveredGlassParamLevel, railY, 4.5f, _dynamicFillPaint);
+                }
+                _dynamicFillPaint.Color = accent;
+                canvas.DrawCircle(active, railY, 5.5f, _dynamicFillPaint);
             }
 
-            // 档位值右对齐：左对齐时三字值（"1.08x"）会扎进下一列的标签里。
-            // 「刷新」档的 ms 单位挪到数字下方 —— 单行会被 max 档的滑块压住 "6"；
-            // s 档（"1s"/"0.5s"）本来就是单行，照原样画。
-            string valueText = valueTexts[level];
-            float right = colX + GLASS_VALUE_RIGHT;
-            if (valueText.EndsWith("ms", StringComparison.Ordinal))
-            {
-                string num = valueText.Substring(0, valueText.Length - 2);
-                canvas.DrawText(num, right - _subTextPaint.MeasureText(num), textY, _subTextPaint);
-                float prevSize = _subTextPaint.TextSize;
-                _subTextPaint.TextSize = 10f;
-                canvas.DrawText("ms", right - _subTextPaint.MeasureText("ms"), textY + 11f, _subTextPaint);
-                _subTextPaint.TextSize = prevSize;
-            }
-            else
-            {
-                canvas.DrawText(valueText, right - _subTextPaint.MeasureText(valueText), textY, _subTextPaint);
-            }
-
-            _subTextPaint.TextSize = 12f;   // 恢复基准字号：同一支画笔后面还要用
-            _subTextPaint.Color = Neutral(170);   // ⚠️ 必须恢复灰色：玻璃卡的档位值画成了白字，
-                                                  //    这里留 _fgColor 会让下一帧的副标题（主标题下面那行、
-                                                  //    「胶囊内背景材质」）全变成白色。
+            string value = available
+                ? (paramIndex == GlassMaterial.FrameRate ? GlassMaterial.FpsLabels : GlassMaterial.Levels)[level]
+                : "—";
+            canvas.DrawText(value, colX + GLASS_VALUE_RIGHT - _subTextPaint.MeasureText(value), textY, _subTextPaint);
+            _subTextPaint.TextSize = 12f;
+            _subTextPaint.Color = Neutral(170);
         }
 
         private void RenderTabPlugins(SKCanvas canvas)

@@ -22,35 +22,6 @@ public static class LiveWindowRenderer
     private static readonly SKColor LightPanelColor = new(0xF2, 0xF2, 0xF7);
     private static readonly SKColor DefaultProgressColor = new(0x32, 0xD7, 0x4B);
 
-    // 详情页面板的材质：虚拟「实体 / 亚克力 / 液态玻璃」和主岛共用同一张抓屏背板与同一套合成。
-    // 面板几何和岛体完全不同，所以玻璃走 LiquidGlass 的 transient 合成（不碰岛体缓存），
-    // 再按「背板版本 + 面板几何 + 材质」本地缓存成品；稳态每帧只贴图，不重算。
-    private static SKBitmap? _panelGlass;
-    private static int _panelGlassKeyVersion = -1;
-    private static int _panelGlassKeyMaterial = -1;
-    private static SKRect _panelGlassKeyRect;
-    private static float _panelGlassKeyRadius = -1f;
-
-    // 实况窗本体（气泡）的「进度条外圈」材质：实体 = 原来的纯色圆；亚克力 / 玻璃复用主岛背板。
-    // 每个气泡按 id 缓存一张玻璃图层（气泡小，成本很低），几何 / 背板版本没变就不重算。
-    private sealed class BubbleGlassEntry
-    {
-        public string? Id;
-        public int Version = -1;
-        public int Material = -1;
-        public SKRect Rect;
-        public SKBitmap? Bitmap;
-    }
-
-    private static readonly BubbleGlassEntry[] _bubbleGlass = CreateBubbleGlassEntries();
-
-    private static BubbleGlassEntry[] CreateBubbleGlassEntries()
-    {
-        var entries = new BubbleGlassEntry[LiveWindowHost.MaxItems];
-        for (int i = 0; i < entries.Length; i++) entries[i] = new BubbleGlassEntry();
-        return entries;
-    }
-
     private static readonly SKPaint _panelImagePaint = new()
     { IsAntialias = true, FilterQuality = SKFilterQuality.Low };
 
@@ -80,8 +51,7 @@ public static class LiveWindowRenderer
 
         var theme = Renderer.GetCurrentTheme();
 
-        // 明暗跟「文字色」而非 ThemeMode：液态玻璃下文字黑白由桌面亮度逐帧决定，
-        // 只按 ThemeMode 会出现「玻璃上是黑字、旁边却立着深色气泡」的割裂。
+        // 与主岛的文字配色一致。
         bool lightBubble = !IsLightColor(theme.TextColor);
 
         // 气泡本体。
@@ -260,7 +230,14 @@ public static class LiveWindowRenderer
             {
                 canvas.Save();
                 canvas.ClipPath(_ringPath, SKClipOperation.Intersect, true);
-                if (!DrawBubbleMaterial(canvas, in item, rect, cx, cy, r, alpha))
+                if (Renderer.IslandLiquidGlass)
+                {
+                    GlassMaterial.DrawCoating(canvas, _ringPath, lightBubble, alpha, GlassMaterial.LiveBackdropReady);
+                    float scaledRadius = r * scale;
+                    GlassMaterial.AddRegion(new SKRect(cx - scaledRadius, cy - scaledRadius,
+                        cx + scaledRadius, cy + scaledRadius), scaledRadius, contentClipR * scale, alpha);
+                }
+                else if (!DrawBubbleMaterial(canvas, rect, cx, cy, r, alpha))
                 {
                     SKColor baseColor = lightBubble ? SKColors.White : DarkBubbleColor;
                     _fillPaint.Color = WithOpacity(baseColor, alpha * (lightBubble ? BubbleLightAlpha : BubbleDarkAlpha));
@@ -428,13 +405,7 @@ public static class LiveWindowRenderer
                 SKRect toneSrc = default;
                 bool hasBackdrop = Renderer.AcrylicBackdrop != null
                     && Renderer.TryCanvasToBackdrop(frame.PanelRect, out toneSrc);
-                // 所有玻璃面板都优先采样合成后的玻璃位图：背板映射在面板跨出抓屏条带 /
-                // 上下半区明暗差很大时会失效，插件只能回落到主题色（浅灰字压浅底）。
-                // 采样位图不改变任何插件逻辑，只是把网格建准。
-                if (_panelGlass != null && Renderer.IslandMaterialIndex >= 2)
-                    Renderer.BeginPanelToneGridBitmap(canvas, _panelGlass, toneDst);
-                else
-                    Renderer.BeginPanelToneGrid(canvas, hasBackdrop ? Renderer.AcrylicBackdrop : null, toneDst, toneSrc);
+                Renderer.BeginPanelToneGrid(canvas, hasBackdrop ? Renderer.AcrylicBackdrop : null, toneDst, toneSrc);
 
                 try
                 {
@@ -459,14 +430,16 @@ public static class LiveWindowRenderer
         canvas.DrawPath(_clipPath, _strokePaint);
     }
 
-    /// <summary>
-    /// 详情页面板的材质底：实体 = 原来的纯色面板；亚克力 / 液态玻璃复用主岛那张背板与合成。
-    /// 背板没到 / 合成失败时逐级兜底（玻璃 → 模糊背板 → 纯色），绝不让面板变成一块全透明。
-    /// </summary>
     private static void DrawPanelMaterial(SKCanvas canvas, SKRect rect, float radius, float alpha, bool lightBubble)
     {
-        int material = Renderer.IslandMaterialIndex;
-        if (material > 0 && Renderer.AcrylicBackdrop != null
+        if (Renderer.IslandLiquidGlass)
+        {
+            GlassMaterial.DrawCoating(canvas, _clipPath, lightBubble, alpha, GlassMaterial.LiveBackdropReady);
+            GlassMaterial.AddRegion(rect, radius, 0f, alpha);
+            return;
+        }
+
+        if (Renderer.IslandAcrylic && Renderer.AcrylicBackdrop is { } backdrop
             && Renderer.TryCanvasToBackdrop(rect, out SKRect src))
         {
             int depth = canvas.SaveCount;
@@ -474,27 +447,11 @@ public static class LiveWindowRenderer
             try
             {
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
+                canvas.DrawImage(backdrop, src, rect, _panelImagePaint);
 
-                // 液态玻璃：直接复用岛体那套合成（transient：位图归面板，不写岛体缓存）。
-                SKBitmap? glass = material >= 2 ? GetPanelGlass(src, rect, radius) : null;
-                if (glass != null)
-                {
-                    _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
-                    canvas.DrawBitmap(glass, rect, _panelImagePaint);
-                }
-                else
-                {
-                    // 亚克力（以及玻璃合成失败时的兜底）：同一张背板 + 主岛同色涂层。
-                    _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
-                    canvas.DrawImage(Renderer.AcrylicBackdrop!, src, rect, _panelImagePaint);
-
-                    SKColor coat = Renderer.MaterialCoatColor;
-                    if (coat.Alpha > 0)
-                    {
-                        _fillPaint.Color = WithOpacity(coat, alpha);
-                        canvas.DrawRoundRect(rect, radius, radius, _fillPaint);
-                    }
-                }
+                _fillPaint.Color = WithOpacity(Renderer.MaterialCoatColor, alpha);
+                canvas.DrawRoundRect(rect, radius, radius, _fillPaint);
             }
             finally
             {
@@ -503,143 +460,21 @@ public static class LiveWindowRenderer
             return;
         }
 
-        // 实体 / 没有背板：沿用原来的纯色面板底。
         _fillPaint.Color = WithOpacity(lightBubble ? LightPanelColor : DarkBubbleColor, alpha * PanelBaseAlpha);
         canvas.DrawRoundRect(rect, radius, radius, _fillPaint);
     }
 
-    /// <summary>
-    /// 详情页面板的玻璃图层：用 LiquidGlass 的 transient 合成（不污染岛体缓存 / 亮度 / 缓动），
-    /// 并按「背板版本 + 面板矩形 + 圆角 + 材质」缓存在本类里，稳态零重算。
-    /// </summary>
-    private static SKBitmap? GetPanelGlass(SKRect src, SKRect rect, float radius)
+    private static bool DrawBubbleMaterial(SKCanvas canvas, SKRect rect, float cx, float cy, float r, float alpha)
     {
-        int version = IslandBackdrop.Version;
-        int material = Renderer.IslandMaterialIndex;
+        if (!Renderer.IslandAcrylic || Renderer.AcrylicBackdrop is not { } backdrop
+            || !Renderer.TryCanvasToBackdrop(rect, out SKRect src)) return false;
 
-        if (_panelGlass != null && _panelGlassKeyVersion == version && _panelGlassKeyMaterial == material
-            && MathF.Abs(_panelGlassKeyRect.Left - rect.Left) < 0.5f
-            && MathF.Abs(_panelGlassKeyRect.Top - rect.Top) < 0.5f
-            && MathF.Abs(_panelGlassKeyRect.Width - rect.Width) < 0.5f
-            && MathF.Abs(_panelGlassKeyRect.Height - rect.Height) < 0.5f
-            && MathF.Abs(_panelGlassKeyRadius - radius) < 0.25f)
-            return _panelGlass;
-
-        SKBitmap? glass = null;
-        try
-        {
-            glass = LiquidGlass.Compose(Renderer.AcrylicBackdrop!, version, src,
-                rect.Width, rect.Height, radius, radius, transient: true);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("[实况窗] 详情页面板玻璃合成异常", ex);
-        }
-        if (glass == null) return null;
-
-        _panelGlass?.Dispose();
-        _panelGlass = glass;
-        _panelGlassKeyVersion = version;
-        _panelGlassKeyMaterial = material;
-        _panelGlassKeyRect = rect;
-        _panelGlassKeyRadius = radius;
-        return glass;
-    }
-
-    /// <summary>
-    /// 实况窗本体的圆形材质底（进度条外圈）。实体 = 原来的纯色圆；亚克力 / 液态玻璃复用主岛背板。
-    /// 返回 false 表示这一帧没铺材质（由调用方退回纯色）。
-    /// </summary>
-    private static bool DrawBubbleMaterial(SKCanvas canvas, in LiveWindowDrawItem item,
-        SKRect rect, float cx, float cy, float r, float alpha)
-    {
-        int material = Renderer.IslandMaterialIndex;
-        if (material <= 0 || Renderer.AcrylicBackdrop == null) return false;
-        if (!Renderer.TryCanvasToBackdrop(rect, out SKRect src)) return false;
-
-        var circle = new SKRect(cx - r, cy - r, cx + r, cy + r);
-        if (material >= 2)
-        {
-            SKBitmap? glass = GetBubbleGlass(item.Id, rect, src);
-            if (glass != null)
-            {
-                _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
-                canvas.DrawBitmap(glass, circle, _panelImagePaint);
-                return true;
-            }
-        }
-
-        // 亚克力（以及玻璃合成不可用时的兜底）：背板 + 主岛同色涂层，按圆裁切。
-        int depth = canvas.SaveCount;
-        try
-        {
-            canvas.Save();
-            _clipPath.Rewind();
-            _clipPath.AddCircle(cx, cy, r);
-            canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-
-            _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
-            canvas.DrawImage(Renderer.AcrylicBackdrop!, src, rect, _panelImagePaint);
-
-            SKColor coat = Renderer.MaterialCoatColor;
-            if (coat.Alpha > 0)
-            {
-                _fillPaint.Color = WithOpacity(coat, alpha);
-                canvas.DrawCircle(cx, cy, r, _fillPaint);
-            }
-        }
-        finally
-        {
-            RestoreTo(canvas, depth);
-        }
+        // 调用方已经用进度环的外圆和内圆裁切画布。
+        _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
+        canvas.DrawImage(backdrop, src, rect, _panelImagePaint);
+        _fillPaint.Color = WithOpacity(Renderer.MaterialCoatColor, alpha);
+        canvas.DrawCircle(cx, cy, r, _fillPaint);
         return true;
-    }
-
-    /// <summary>
-    /// 气泡玻璃图层：圆角矩形半径取半边长 = 正圆，复用 LiquidGlass 的 transient 合成
-    ///（不碰岛体缓存 / 亮度 / 缓动），按「id + 背板版本 + 气泡矩形 + 材质」缓存。
-    /// </summary>
-    private static SKBitmap? GetBubbleGlass(string? id, SKRect rect, SKRect src)
-    {
-        int version = IslandBackdrop.Version;
-        int material = Renderer.IslandMaterialIndex;
-
-        BubbleGlassEntry? slot = null, spare = null;
-        for (int i = 0; i < _bubbleGlass.Length; i++)
-        {
-            var e = _bubbleGlass[i];
-            if (id != null && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) { slot = e; break; }
-            if (spare == null && e.Bitmap == null) spare = e;
-        }
-        slot ??= spare ?? _bubbleGlass[0];
-
-        if (slot.Bitmap != null && slot.Version == version && slot.Material == material
-            && MathF.Abs(slot.Rect.Left - rect.Left) < 0.5f
-            && MathF.Abs(slot.Rect.Top - rect.Top) < 0.5f
-            && MathF.Abs(slot.Rect.Width - rect.Width) < 0.5f
-            && MathF.Abs(slot.Rect.Height - rect.Height) < 0.5f)
-            return slot.Bitmap;
-
-        SKBitmap? glass = null;
-        try
-        {
-            float radius = rect.Width * 0.5f;
-            glass = LiquidGlass.Compose(Renderer.AcrylicBackdrop!, version, src,
-                rect.Width, rect.Height, radius, radius, transient: true);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("[实况窗] 本体玻璃合成异常", ex);
-        }
-        if (glass == null) return null;
-
-        slot.Bitmap?.Dispose();
-        slot.Bitmap = glass;
-        slot.Id = id;
-        slot.Version = version;
-        slot.Material = material;
-        slot.Rect = rect;
-        return glass;
     }
 
     private static SKColor WithOpacity(SKColor color, float opacity)

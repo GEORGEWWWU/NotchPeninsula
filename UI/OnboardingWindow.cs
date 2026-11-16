@@ -296,8 +296,7 @@ namespace NotchPeninsula
         {
             _style = Math.Clamp(Renderer.NotchStyle, 0, 1);
             _theme = Math.Clamp(Renderer.ThemeMode, 0, 2);
-            // 本页只有三档（实体 / 亚克力 / 液态玻璃），液态玻璃 2 显示成第三档
-            _material = Renderer.IslandAnyGlass ? 2 : (Renderer.IslandAcrylic ? 1 : 0);
+            _material = Renderer.IslandMaterialIndex;
             _mode = Renderer.StandbyActive ? 0 : 1;
             _autoStart = true;   // 引导里默认推荐开启，用户不点就按开启处理
             _monitors = BuildMonitorNames();
@@ -545,17 +544,12 @@ namespace NotchPeninsula
                     break;
 
                 case ACT_MATERIAL:
-                    // 本页只有三档（实体 / 亚克力 / 液态玻璃），液态玻璃 2 只出现在设置页。
                     // 所以「点到的还是当前那档」时什么都不做 —— 否则玻璃 2 用户会在这一页被悄悄改回玻璃 1。
                     if (val == _material) break;
                     _material = val;
-                    Renderer.IslandAcrylic = _material == 1;
-                    if (_material != 2) Renderer.IslandLiquidGlass2 = false;
-                    Renderer.IslandLiquidGlass = _material == 2 && !Renderer.IslandLiquidGlass2;
-                    Renderer.ApplyThemeColors();          // 岛体涂层厚度要跟着换
+                    Renderer.IslandMaterialIndex = _material;
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                     Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
-                    Program.SaveSetting("IslandLiquidGlass2", Renderer.IslandLiquidGlass2 ? 1 : 0);
                     break;
 
                 case ACT_MONITOR:

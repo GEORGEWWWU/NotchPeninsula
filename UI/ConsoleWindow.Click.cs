@@ -206,7 +206,6 @@ namespace NotchPeninsula
             _islandHotkeyHint = "";
             _fontHint = "";
             _soundHint = "";
-            _hoveredBlurModeIndex = -1;   // 换页签后旧档位不该留着继续高亮
         }
 
         // 鼠标左键按下：整窗点击分派。
@@ -513,7 +512,7 @@ namespace NotchPeninsula
 
                 Render();
             }
-            else if (_selectedTab == 5 && _hoveredThemeIndex != -1 && !Renderer.IslandAnyGlass)
+            else if (_selectedTab == 5 && _hoveredThemeIndex != -1)
             {
                 Renderer.ThemeMode = _hoveredThemeIndex;
                 Renderer.ApplyThemeColors(); // 立即反转画笔颜色
@@ -521,93 +520,26 @@ namespace NotchPeninsula
                 NotchWindow.RequestAcrylicRebuild(); // 明暗换了，亚克力色调也要重贴
                 Render(); // 刷新控制台UI
             }
-            else if (_selectedTab == 5 && HitBlurModeRow(clickX, clickY))
-            {
-                // 背景模糊：0 = 原模糊（岛体那块抹成平均色再按档位糊），
-                //           1 = 高斯模糊（岛体在捕获里隐身 → 玻璃下是真实桌面 + 一层固定高斯）。
-                // 落点重算一次档位：窗口刚弹出就点、鼠标没发过 MOVE 时 hover 还是旧值。
-                int mode = SegmentIndexAt(BlurModeLabels, BLUR_MODE_SEG_W, fitLabels: false,
-                    dx: clickX - BlurModeSegX);
-                if (mode >= 0)
-                {
-                    Renderer.GlassGaussBackdrop = mode == 1;
-                    Program.SaveSetting("GlassBackdropBlur", mode);
-                    Render();
-                }
-            }
-            else if (_selectedTab == 5 && HitCaptureRow(clickX, clickY))
-            {
-                // 抓屏方式：0 = 默认（DXGI 优先、判死后退 GDI），
-                //           1 = 强制 DXGI，2 = 只用 GDI（兼容）。
-                // 落点重算一次档位（同背景模糊行：鼠标没发过 MOVE 时 hover 还是旧值）。
-                int backend = SegmentIndexAt(CaptureBackendLabels, CAPTURE_SEG_W, fitLabels: true,
-                    dx: clickX - CaptureSegX);
-                if (backend >= 0)
-                {
-                    IslandBackdrop.CaptureBackend = backend;
-                    Program.SaveSetting("GlassCaptureBackend", backend);
-                    Render();
-                }
-            }
             else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
             {
-                // 切到「液态玻璃 2」之前先跑一遍合成链路自检（纯内存小图，不碰抓屏）：
-                // 算不出来就别切过去 —— 切过去的表现是岛体退回一块死板，用户只会觉得「打不开」。
-                bool canSwitch = true;
-                if (_hoveredMaterialIndex == 3 && !Renderer.IslandLiquidGlass2
-                    && !LiquidGlass2.SelfTest(out string selfTestWhy))
-                {
-                    canSwitch = false;
-                    _hoveredMaterialIndex = -1;
-                    UiAlert.ShowOnce("lg2-selftest",
-                        "这台电脑无法渲染「液态玻璃 2.0」，已保持当前材质。\n\n"
-                        + "原因：" + selfTestWhy + "\n"
-                        + "系统：" + UiAlert.WindowsVersion() + "\n\n"
-                        + "这块材质只依赖 SkiaSharp 的位图运算，没有系统版本限制；"
-                        + "如果上面写的是「合成抛出异常」，把这段发出来就能定位。");
-                }
-
-                if (canSwitch)
-                {
-                    Renderer.IslandAcrylic = _hoveredMaterialIndex == 1;
-                    Renderer.IslandLiquidGlass = _hoveredMaterialIndex == 2;
-                    Renderer.IslandLiquidGlass2 = _hoveredMaterialIndex == 3;
-                    GlassSupport.Reset();   // 重新选材质 = 重新观察，别带着上一轮的失败计时
-                    Renderer.ApplyThemeColors(); // 岛体涂层厚度要跟着换
-                    Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
-                    Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
-                    Program.SaveSetting("IslandLiquidGlass2", Renderer.IslandLiquidGlass2 ? 1 : 0);
-                    // 换材质 = 换背板内容：恢复成"可见"并作废旧图，抓屏线程下一轮按需重抓
-                    Renderer.ResetCaptureAffinity();
-                    IslandBackdrop.Expire();
-                    NotchWindow.RequestAcrylicRebuild(); // 材质层在 UI 线程上建/拆
-                }
-                // 切走玻璃时那张参数卡当场消失，悬停索引一并清掉，别留着下一帧误命中
-                _hoveredGlassQualityIndex = _hoveredGlassParamIndex
-                    = _hoveredGlassParamLevel = -1;
+                Renderer.IslandMaterialIndex = _hoveredMaterialIndex;
+                Renderer.ApplyThemeColors();
+                Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                NotchWindow.RequestAcrylicRebuild();
+                _hoveredGlassParamIndex = _hoveredGlassParamLevel = -1;
                 _hoveredGlassReset = false;
                 Render();
             }
-            // 液态玻璃 2 卡上没有质量分段（见 GlassRow0Y 注释），这道分支只属于 v1：
-            // 加一道兜底，免得材质切走时残留的悬停索引被当成「点了档位」。
-            else if (_selectedTab == 5 && _hoveredGlassQualityIndex != -1 && !Renderer.IslandLiquidGlass2)
-            {
-                // 换质量 = 换抓屏倍率 + 模糊核：抓屏那边已经 Expire 过，这里再兜一次重建
-                LiquidGlass.Quality = _hoveredGlassQualityIndex;
-                Program.SaveSetting("LiquidGlassQuality", _hoveredGlassQualityIndex);
-                NotchWindow.RequestAcrylicRebuild();
-                Render();
-            }
-            else if (_selectedTab == 5 && _hoveredGlassParamIndex != -1 && _hoveredGlassParamLevel >= 0)
+            else if (_selectedTab == 5 && Renderer.IslandLiquidGlass && _hoveredGlassParamIndex != -1 && _hoveredGlassParamLevel >= 0)
             {
                 ApplyGlassLevel(_hoveredGlassParamIndex, _hoveredGlassParamLevel);
                 Render();
             }
-            else if (_selectedTab == 5 && _hoveredGlassReset)
+            else if (_selectedTab == 5 && Renderer.IslandLiquidGlass && _hoveredGlassReset)
             {
                 ResetGlassDefaults();
                 _hoveredGlassReset = false;   // 一次性动作：留着会连点两下又按一遍
-                NotchWindow.RequestAcrylicRebuild();   // 折射/厚度变了，抓屏那侧要重算
                 Render();
             }
             else if (_selectedTab == 5 && _hoveredOpacityIndex != -1)

@@ -9,7 +9,8 @@ namespace NotchPeninsula
 {
     // The compositor consumes a D2D geometry. No D2D render target or bitmap is needed.
     [WinRTExposedType(typeof(AcrylicClipGeometry.InterfaceDetails))]
-    internal sealed class AcrylicClipGeometry(float left, float top, float width, float height, IslandOutline outline)
+    internal sealed class AcrylicClipGeometry(float left, float top, float width, float height, IslandOutline outline,
+        float inset = 0f)
         : IGeometrySource2D
     {
         internal int GetGeometry(out nint geometry)
@@ -57,18 +58,30 @@ namespace NotchPeninsula
             var end = (delegate* unmanaged[Stdcall]<nint, int, void>)methods[8];
             var close = (delegate* unmanaged[Stdcall]<nint, int>)methods[9];
 
-            float right = left + width, bottom = top + height;
-            var (rx, ry, rb) = outline;
-            begin(sink, new(left + rx, top), 0); // filled
-            Corner(new(left, top + ry), Math.Abs(rx), ry, rx < 0);
-            line(sink, new(left, bottom - rb));
-            Corner(new(left + rb, bottom), rb, rb, false);
-            line(sink, new(right - rb, bottom));
-            Corner(new(right, bottom - rb), rb, rb, false);
-            line(sink, new(right, top + ry));
-            Corner(new(right - rx, top), Math.Abs(rx), ry, rx < 0);
-            end(sink, 1); // closed
+            WriteFigure(left, top, width, height, outline);
+            // The sink's alternate fill rule makes the inset figure a hole.
+            if (inset > 0f && width > 2f * inset && height > 2f * inset)
+            {
+                var inner = new IslandOutline(Math.Max(0f, outline.TopX - inset),
+                    Math.Max(0f, outline.TopY - inset), Math.Max(0f, outline.Bottom - inset));
+                WriteFigure(left + inset, top + inset, width - 2f * inset, height - 2f * inset, inner);
+            }
             return close(sink);
+
+            void WriteFigure(float x, float y, float w, float h, IslandOutline corners)
+            {
+                float right = x + w, bottom = y + h;
+                var (rx, ry, rb) = corners;
+                begin(sink, new(x + rx, y), 0); // filled
+                Corner(new(x, y + ry), Math.Abs(rx), ry, rx < 0);
+                line(sink, new(x, bottom - rb));
+                Corner(new(x + rb, bottom), rb, rb, false);
+                line(sink, new(right - rb, bottom));
+                Corner(new(right, bottom - rb), rb, rb, false);
+                line(sink, new(right, y + ry));
+                Corner(new(right - rx, y), Math.Abs(rx), ry, rx < 0);
+                end(sink, 1); // closed
+            }
 
             void Corner(Vector2 endpoint, float x, float y, bool clockwise)
             {

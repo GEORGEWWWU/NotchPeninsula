@@ -11,13 +11,7 @@ namespace NotchPeninsula
         // 就会让人以为「液态玻璃下岛是黑的」。所以这里按材质给预览换画法 —— 只有玻璃预览，
         // 外面那个选项卡框子不动（它表达的是"选哪个形态"，不是材质）。
         //
-        // 为什么是手画的假玻璃、而不是搬主岛那套 LiquidGlass：
-        //   这里是 20px 高的示意图形，没有可折射的真实桌面，抓屏 + SDF 位移搬过来也没东西可折射；
-        //   而且设置窗是逐像素 alpha 的分层窗，半透明渐变本来就会把背后的亚克力透上来，
-        //   足够"像玻璃"。成本只有几个渐变对象，设置窗按需重绘，谈不上性能。
-        //
-        // 层次（与主岛/宣传图的玻璃同序）：投影 → 上亮下透的玻璃体 → 底缘冷色 → 顶缘高光线 → 1px 亮边。
-
+        // 这里画的是设置页的形状示意图，复用色调和边缘高光的视觉特征。
         private static readonly SKMaskFilter _glassBlurShadow = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 3f);
         private static readonly SKMaskFilter _glassBlurEdge = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 1f);
 

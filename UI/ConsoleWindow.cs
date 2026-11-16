@@ -527,12 +527,6 @@ namespace NotchPeninsula
 
         private bool _toggleHovered = false;
 
-        // 个性化卡第三行：「背景模糊」两档分段（仅液态玻璃），-1 = 没悬停
-        private int _hoveredBlurModeIndex = -1;
-
-        // 个性化卡第四行：「抓屏方式」三档分段（仅液态玻璃），-1 = 没悬停
-        private int _hoveredCaptureIndex = -1;
-
         private bool _toastToggleHovered = false;
 
         private bool _topmostToggleHovered = false;
@@ -1096,7 +1090,6 @@ namespace NotchPeninsula
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
 
         private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力, 2:液态玻璃, 3:液态玻璃2.0
-        private int _hoveredGlassQualityIndex = -1;      // 液态玻璃：0流畅 1均衡 2精细
         private int _hoveredGlassParamIndex = -1;        // 11 根滑轨里悬停的是哪一根（-1 = 没有）
         private int _hoveredGlassParamLevel = -1;        // 悬停到的档位 0..4
         private bool _hoveredGlassReset;                 // 「恢复默认参数」（质量分段同一行右侧）

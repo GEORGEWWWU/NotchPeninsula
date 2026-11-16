@@ -6,7 +6,7 @@ using Windows.UI.Composition.Desktop;
 
 namespace NotchPeninsula;
 
-internal sealed class NativeAcrylic : IDisposable
+internal sealed partial class NativeAcrylic : IDisposable
 {
     private const int UseHostBackdropBrush = 17;
     private const int NoRedirectionBitmap = 0x00200000;
@@ -29,6 +29,7 @@ internal sealed class NativeAcrylic : IDisposable
     private IntPtr _window;
     private Compositor? _compositor;
     private DesktopWindowTarget? _target;
+    private ContainerVisual? _root;
     private SpriteVisual? _visual;
     private CompositionRoundedRectangleGeometry? _geometry;
     private CompositionPathGeometry? _pathGeometry;
@@ -70,7 +71,9 @@ internal sealed class NativeAcrylic : IDisposable
             _visual = _compositor.CreateSpriteVisual();
             _visual.Clip = _clip;
             _visual.Brush = _brush;
-            _target.Root = _visual;
+            _root = _compositor.CreateContainerVisual();
+            _root.Children.InsertAtBottom(_visual);
+            _target.Root = _root;
         }
         catch
         {
@@ -80,13 +83,14 @@ internal sealed class NativeAcrylic : IDisposable
     }
 
     internal void Present(IntPtr foreground, int x, int y, int width, int height,
-        Vector2 offset, Vector2 size, IslandOutline outline, bool capsule, float opacity)
+        Vector2 offset, Vector2 size, IslandOutline outline, bool capsule, float opacity,
+        bool glass, float dpi, ReadOnlySpan<GlassMaterial.Region> liveRegions, Vector2 canvasOrigin)
     {
         var bounds = (x, y, width, height);
         bool resized = width != _bounds.Width || height != _bounds.Height;
         if (resized)
         {
-            _visual!.Size = new Vector2(width, height);
+            _root!.Size = _visual!.Size = new Vector2(width, height);
         }
         if (capsule)
         {
@@ -110,11 +114,14 @@ internal sealed class NativeAcrylic : IDisposable
             if (_path == null) _clip!.Geometry = _pathGeometry;
             _path = (offset, size, outline);
         }
-        if (opacity != _opacity)
+        float backdropOpacity = glass ? GlassMaterial.BackdropOpacity * opacity : opacity;
+        if (backdropOpacity != _opacity)
         {
-            _visual!.Opacity = opacity;
-            _opacity = opacity;
+            _visual!.Opacity = backdropOpacity;
+            _opacity = backdropOpacity;
         }
+        PresentGlassEdge(glass, offset, size, outline, new Vector2(width, height), dpi, opacity);
+        PresentLiveGlass(liveRegions, canvasOrigin, dpi);
         if (!_visible || bounds != _bounds || GetWindow(foreground, NextWindow) != _window)
         {
             if (!Win32.SetWindowPos(_window, foreground, x, y, width, height,
@@ -139,6 +146,9 @@ internal sealed class NativeAcrylic : IDisposable
             _target.Root = null;
             _target = null;
         }
+        DisposeGlass();
+        _root?.Dispose();
+        _root = null;
         _visual?.Dispose();
         _visual = null;
         _brush?.Dispose();

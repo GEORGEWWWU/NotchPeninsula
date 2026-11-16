@@ -100,7 +100,7 @@ NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基
 
 右键托盘图标：**打开设置 / 唤回灵动岛 / 开机自启 / 退出**。设置窗口按左侧导航分为 9 个页签：
 
-- **个性化中心** —— 主题（黑 / 白 / 系统）、背景材质（实体 / **亚克力** / **液态玻璃**，后两者实验性）、背景不透明度、全局折叠态高度与底部圆角、通知尺寸、视觉比例；选「液态玻璃」后展开玻璃质量（流畅 / 均衡 / 精细 / 极致）与 12 项参数（模糊 / 折射 / 色散 / 高光 / 厚度 / 透镜 / 饱和 / 雾度 / 明度 / 抓屏刷新 / 岛体帧率 / 放大倍率），「恢复默认参数」在滑轨下方右下角；材质卡第三行是「背景模糊」两档 —— **原模糊**＝真实桌面按档位半径糊一层，**高斯模糊**＝在档位半径之外再加约 8px 高斯。两档下面都是**真实桌面**：岛体只在抓屏读取的那一瞬间从屏幕捕获里隐身（约 28ms），桌面静止时完全不隐身，所以截图 / 录屏照常拍得到岛；抓屏走 DXGI（静止桌面零开销），装不上时自动退回 GDI 轮询，GDI 节拍由「抓屏刷新」档控制；玻璃层重算按「深处快路径 + 位图复用」优化，折叠态约 3ms、展开态约 27ms（4 核 @1920×1080，内容变化时 4Hz 一次，静止时直接走缓存）
+- **个性化中心** —— 可选黑、白或系统主题，切换实体、亚克力和液态玻璃，调整折叠态高度、底部圆角、通知尺寸和视觉比例。Windows 11 液态玻璃使用 Windows Composition 背板，中心保留通透感，岛体边缘叠加折射，刘海、灵动岛及实况窗都保留各自的裁切。可调折射、高光、厚度、色调和岛体帧率。帧率「不限」取消应用前景的帧率上限，背板本身由 DWM 随桌面合成。Windows 10 显示半透明色调和边缘高光。
 - **通用设置** —— 开机自启、窗口置顶、系统消息通知与提示音、**MSP 接入（实验性）**、灵动岛字体
 - **显示设置** —— 显示形态（刘海 / 灵动岛）、目标显示器、显示模式（待机 / 普通 + 双击空白切换）、待机内容三选一、**显示内容**（勾选显示项并调整先后次序）
 - **实况窗管理** —— 控制哪些插件可以使用主岛左侧的实况窗（插件逐个开关，**默认全部启用**；关掉后该插件的内容只留在主岛，不会出现左侧气泡）。「媒体」一行只做状态提示，开关在「媒体设置」里（媒体实况窗**默认关闭**）
@@ -183,16 +183,16 @@ NotchPeninsula/
 │   ├── NotchWindow.cs                # 主窗口逻辑、动画、托盘、消息队列调度
 │   ├── LiveWindowHost.cs             # 实况窗宿主：注册、布局、动画、命中、右键展开态
 │   ├── MediaLiveWindow.cs            # 内置媒体实况窗：3 秒预览 → 收进左侧、封面旋转
-│   ├── NotchWindow.Acrylic.cs        # 亚克力背板：抓屏区域同步、成品交接与释放
-│   ├── GlassSupport.cs               # 液态玻璃的可用性守卫：连续失败判定不支持 → 弹窗 + 退回可用材质
+│   ├── NotchWindow.Acrylic.cs        # 原生背板同步及 Windows 10 亚克力兼容路径
 │   ├── UiAlert.cs                    # 极简弹窗（后台线程 MessageBoxW，同 key 一次会话只弹一次）
 │   ├── Win32.cs                      # Win32 API 封装
 │   ├── HotkeyText.cs                 # 快捷键键名格式化与合法性校验（两组全局热键共用）
 │   ├── IslandHotkey.cs               # 「隐藏 / 唤出灵动岛」全局快捷键（单键位）
 │   ├── SystemSettingManager.cs       # 系统音量控制
 │   ├── brightness.cs                 # 屏幕亮度控制
-│   ├── IslandBackdrop.cs             # 岛体背板（后台线程抓屏 + 缩略，避免渲染线程硬停顿）
-│   ├── DxgiBackdrop.cs               # DXGI Desktop Duplication 抓屏（GPU 采集，静止桌面零开销，不可用自动退回 GDI）
+│   ├── IslandBackdrop.cs             # Windows 10 亚克力的 GDI 兼容背板
+│   ├── NativeAcrylic.cs              # Windows Composition 宿主及岛体轮廓裁切
+│   ├── NativeAcrylic.Glass.cs        # 液态玻璃的边缘折射与实况窗背板
 │   ├── IslandDropTarget.cs           # 岛体 OLE 拖入目标（让插件详情页也能接文件拖放）
 │   ├── DataResources.cs              # data\ 内置资源解析（磁盘优先、嵌入兜底）
 │   ├── UpdateManager.cs              # GitHub 版本检测与更新弹窗
@@ -207,7 +207,7 @@ NotchPeninsula/
 │   ├── Renderer.MediaFloatingPanel.cs # 实况窗里复用原有媒体展开面板的浮层桥
 │   ├── LiveWindowRenderer.cs         # 实况窗绘制：气泡/进度环/细胞分裂/展开面板
 │   ├── Renderer.Paint.cs             # 画笔池、字体、矢量路径与图标资源
-│   ├── LiquidGlass.cs                # 液态玻璃背景：SDF 折射 + 色散 + 高斯模糊（按行并行 + 内容哈希跳过）
+│   ├── GlassMaterial.cs              # 液态玻璃色调、高光与前景帧率设置
 │   ├── FontConfig.cs                 # 灵动岛字体统一配置中心
 │   └── LyricsFont.cs                 # 歌词字体
 ├── Media/                            # 媒体、音频与歌词
@@ -289,9 +289,10 @@ dotnet publish -c Release -r win-x64 --self-contained false     # 发布
 
 ### 原生亚克力维护约束
 
-- Windows 11 原生亚克力通过独立背板窗口和 Windows Composition `CreateHostBackdropBrush` 合成。渲染优化、动画修改、材质重构和合并冲突处理都必须保留这条路径及刘海、灵动岛的轮廓裁切。**禁止用 GDI、DXGI 或其他屏幕抓取替代原生背板，也禁止将抓屏作为原生路径失败时的兜底。** 宿主或裁切初始化失败时只保留亚克力色调并记录异常。Windows 10 的旧版亚克力以及单独选择的液态玻璃继续走各自的兼容路径。
+- Windows 11 原生亚克力通过独立背板窗口和 Windows Composition `CreateHostBackdropBrush` 合成。渲染优化、动画修改、材质重构和合并冲突处理都必须保留这条路径及刘海、灵动岛的轮廓裁切。**禁止用 GDI、DXGI 或其他屏幕抓取替代原生背板，也禁止将抓屏作为原生路径失败时的兜底。** 宿主或裁切初始化失败时只保留亚克力色调并记录异常。Windows 10 的亚克力继续使用旧版兼容背板。
+- 液态玻璃在 Windows 11 复用同一宿主。用低不透明度显示内层，并用 Composition 的二维仿射效果在岛体内缘近似折射。折射初始化或更新失败时保留原生背板和高光并记录异常。宿主不可用时显示半透明色调和高光。液态玻璃的任一路径都禁止抓屏。
 - Windows 11 当前材质为「亚克力」时，普通发布和 Visual Studio 的 F5 调试都使用原生背板。`build.ps1` 固定传 `-p:NativeAcrylicPreview=true`，让产物双击时直接选中原生亚克力，效果等同于启动时传 `--native-acrylic`。启动时保留原先的刘海或灵动岛形态。
-- 核对亚克力是否走原生路径时，以实际运行的 exe、启动参数和日志为准。原生宿主建立会记录「已建立 Windows Composition 背板宿主」。若同一次运行在亚克力模式下出现「[亚克力/原分辨率] 抓屏 ok」，该次绘制使用了旧抓屏背板。只看设置项名称无法判断。
+- 核对原生材质时，以实际运行的 EXE、启动参数及同一次运行的日志为准。宿主建立会记录「已建立 Windows Composition 背板宿主」，边缘效果建立会记录「已建立 Composition 边缘折射」。日志中的「[亚克力/原分辨率] 抓屏 ok」只应来自 Windows 10 的亚克力兼容路径。
 
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained false -p:SelfContained=false `
