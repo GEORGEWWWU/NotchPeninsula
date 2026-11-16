@@ -43,16 +43,13 @@ public struct LiveWindowDrawItem
 
     public bool Hovered;
 
-    /// <summary>生成动画进度 0..1，1 = 结束（细胞分裂特效用）。</summary>
+    /// <summary>生成动画进度 0..1，1 = 结束（液体从岛体里挤出来）。</summary>
     public float SpawnProgress;
-
-    /// <summary>两圆分裂进度 0..1（1 = 没有分裂动画）。母气泡与新气泡同时缩放到 R/√2 再长回来。</summary>
-    public float SplitProgress;
 
     /// <summary>分裂来源中心 x（画布坐标）。</summary>
     public float SpawnFromX;
 
-    /// <summary>「移回宿主」的终点 x：岛体左缘（画布坐标）。退出动画期间用来画收口桥。</summary>
+    /// <summary>「移回宿主」的终点 x：岛体左缘（画布坐标）。退出动画期间用来画液体颈。</summary>
     public float MergeTargetX;
 
     /// <summary>退出动画进度 0..1（只有 <see cref="Exiting"/> 时有效）。</summary>
@@ -120,9 +117,10 @@ public static class LiveWindowHost
     /// <summary>没显式传 SpinSpeed 时的默认转速（圈/秒）：约 8 秒一圈，慢速不抢视线。</summary>
     private const float DefaultSpinRevPerSecond = 0.12f;
 
-    private const float SpawnSeconds = 0.5f;
-    private const float SplitSeconds = 0.55f;
-    private const float ExitSeconds = 0.5f;
+    // 液滴的「出生 / 吞入」共用一条时间轴。0.44~0.46s 是吸附感最明显的区间：
+    // 再慢就拖沓，再快看不清脖子被掐断那一下。
+    private const float SpawnSeconds = 0.46f;
+    private const float ExitSeconds = 0.44f;
     private const float PanelOpenSeconds = 0.34f;
     private const float PanelCloseSeconds = 0.30f;
 
@@ -140,9 +138,10 @@ public static class LiveWindowHost
 
         public bool Exiting;
         public double ExitElapsed;
+        /// <summary>开始被吸进去的那一刻的 x：吸入曲线要从这里起算，不能每帧跟着目标重算。</summary>
+        public float ExitFromX;
 
         public double SpawnElapsed;
-        public double SplitElapsed = double.MaxValue;
 
         public float X;
         public float TargetX;
@@ -334,9 +333,10 @@ public static class LiveWindowHost
                 e.Suppressed = suppressed;
                 if (suppressed)
                 {
-                    // 和主动注销一模一样的「往右滑回岛体」收起动画；播完由 Tick 留在列表里不绘制，
+                    // 和主动注销一模一样的「往右滑回岛体」吸附动画；播完由 Tick 留在列表里不绘制，
                     // 重新启用时再播一遍生成动画 —— 开关的手感和插件自己注销 / 注册完全一致。
                     e.SuppressElapsed = 0d;
+                    e.ExitFromX = e.X;      // 吸入曲线从这个位置起算
                     e.Hovered = false;
                     // 正在显示这个气泡的详情面板要跟着收起（走正常收起动画，而不是下一帧被 Drop）。
                     if (_panel != null && !_panel.Closing
@@ -345,23 +345,11 @@ public static class LiveWindowHost
                 }
                 else
                 {
-                    // 重新启用：与「插件重新注册」完全同一套细胞分裂生成动画 ——
-                    // 从岛体左缘长出，旁边已有气泡时母圆也一起缩一次。
+                    // 重新启用：与「插件重新注册」完全同一套「岛体挤出水滴」的生成动画。
                     e.SuppressElapsed = 0d;
                     e.SpawnElapsed = 0d;
                     e.DisplayProgress = e.TargetProgress;
-                    e.X = e.SpawnFromX = _lastIslandLeft - IslandGap - BubbleDiameter / 2f;
-
-                    Entry? parent = null;
-                    for (int j = _entries.Count - 1; j >= 0; j--)
-                    {
-                        var p = _entries[j];
-                        if (p == e || p.Window == null || p.Exiting || p.Suppressed) continue;
-                        parent = p;
-                        break;
-                    }
-                    e.SplitElapsed = parent != null ? 0d : SplitSeconds;
-                    if (parent != null) parent.SplitElapsed = 0d;   // 母圆也重播一次分裂
+                    e.X = e.SpawnFromX = _lastIslandLeft + BubbleDiameter * 0.02f;
                 }
                 if (e.Window != null && !e.Exiting) windows.Add(e.Window);
             }
@@ -540,18 +528,9 @@ public static class LiveWindowHost
             }
 
             int attached = AttachedCountLocked();
-            // 入场把出场动画反放：起点就是出场动画的终点（岛体左缘），再平滑滑到自己的槽位，
-            // 这样「吐出来」的轨迹和「吞进去」的轨迹是同一段，只是方向相反。
-            float spawnFrom = attached > 0
-                ? _lastIslandLeft - IslandGap - BubbleDiameter / 2f
-                : _lastIslandLeft + BubbleDiameter * 0.02f;
-
-            // 母气泡：分裂动画要让「原有那个圆」一起参与（两个圆同时缩到 R/√2 再分开长大）。
-            Entry? parent = null;
-            for (int i = _entries.Count - 1; i >= 0; i--)
-            {
-                if (_entries[i].Window != null && !_entries[i].Exiting) { parent = _entries[i]; break; }
-            }
+            // 每次出生都是「岛体挤出一颗水滴」：起点固定在岛体左缘，再滑到自己的槽位。
+            // 旧版是起点直接等于槽位 + 母圆跟着缩一圈 R/√2，那几个圆一起抽动才是「菌子感」的来源。
+            float spawnFrom = _lastIslandLeft + BubbleDiameter * 0.02f;
 
             entry = new Entry
             {
@@ -560,11 +539,9 @@ public static class LiveWindowHost
                 Window = window,
                 X = spawnFrom,
                 SpawnFromX = spawnFrom,
-                SpawnElapsed = 0d,
-                SplitElapsed = parent != null ? 0d : SplitSeconds   // 第一个气泡没有母圆可分裂，跳过缩圈
+                SpawnElapsed = 0d
             };
             _entries.Add(entry);
-            if (parent != null) parent.SplitElapsed = 0d;   // 母圆也重播一次分裂
             UpdateSizingLocked();
         }
         return new Handle(entry, window);
@@ -610,6 +587,7 @@ public static class LiveWindowHost
         e.Window = null;
         e.Exiting = true;
         e.ExitElapsed = 0d;
+        e.ExitFromX = e.X;          // 吸入曲线从当前位置起算
         e.Completed = false;
 
         if (_panel != null && string.Equals(_panel.EntryId, e.Id, StringComparison.OrdinalIgnoreCase))
@@ -911,23 +889,24 @@ public static class LiveWindowHost
             for (int i = 0; i < _entries.Count; i++)
             {
                 var e = _entries[i];
+                // 所有「液体转移」的终点都是岛体左缘（画布坐标）。
+                float edgeX = islandLeft + diameter * 0.02f;
 
                 if (e.Suppressed && !e.Exiting)
                 {
-                    // 插件级开关关闭：播一遍和主动注销相同的「滑回岛体」收起动画，
+                    // 插件级开关关闭：播一遍和主动注销完全相同的吸附动画，
                     // 播完后窗口对象继续留在列表里（不绘制、不命中、不回调插件），
                     // 重新启用时直接重生，插件不必重新注册。
                     if (e.Window != null)
                     {
-                        e.SuppressElapsed = Math.Min(ExitSeconds + 1d, e.SuppressElapsed + dt);
-                        float ep = (float)Math.Clamp(e.SuppressElapsed / ExitSeconds, 0.0, 1.0);
-                        e.TargetX = islandLeft + diameter * 0.02f;
-                        float fade = Math.Clamp((ep - 0.55f) / 0.45f, 0f, 1f);
-                        e.Alpha = 255f * (1f - fade * fade);
+                        e.SuppressElapsed = Math.Min(ExitSeconds, e.SuppressElapsed + dt);
+                        float t = (float)Math.Clamp(e.SuppressElapsed / ExitSeconds, 0d, 1d);
+                        e.X = e.ExitFromX + (edgeX - e.ExitFromX) * LiquidSuck(t);
+                        e.Alpha = 255f * (1f - SmoothStep01((t - 0.84f) / 0.16f));
+                        e.Scale = 1f;
                     }
+                    e.TargetX = edgeX;
                     e.Hovered = false;
-                    float kSup = 1f - MathF.Exp(-12f * dt);
-                    e.X += (e.TargetX - e.X) * kSup;
                     continue;
                 }
 
@@ -946,19 +925,16 @@ public static class LiveWindowHost
                     }
                 }
 
-                // 分裂进度：母圆 / 新圆同步走一遍「缩到 R/√2 再长回来」。
-                if (e.SplitElapsed < SplitSeconds)
-                    e.SplitElapsed = Math.Min(SplitSeconds, e.SplitElapsed + dt);
-
                 if (e.Exiting)
                 {
-                    e.ExitElapsed = Math.Min(ExitSeconds + 1d, e.ExitElapsed + dt);
-                    float ep = (float)Math.Clamp(e.ExitElapsed / ExitSeconds, 0.0, 1.0);
-                    // 「分裂合并回宿主」：气泡滑到岛体左缘，半径按两圆合并的数学缩到 R/√2 再收回。
-                    e.TargetX = islandLeft + diameter * 0.02f;
+                    e.ExitElapsed = Math.Min(ExitSeconds, e.ExitElapsed + dt);
+                    float t = (float)Math.Clamp(e.ExitElapsed / ExitSeconds, 0d, 1d);
+                    // 吸附：起步慢、越过一半后越来越快（真水滴是被表面张力「抽」进去的），
+                    // 最后 16% 只剩一丝，透明度和半径同时收掉，不会在岛体边上留残影。
+                    e.X = e.ExitFromX + (edgeX - e.ExitFromX) * LiquidSuck(t);
+                    e.TargetX = edgeX;
                     e.Scale = 1f;
-                    float fade = Math.Clamp((ep - 0.55f) / 0.45f, 0f, 1f);
-                    e.Alpha = 255f * (1f - fade * fade);
+                    e.Alpha = 255f * (1f - SmoothStep01((t - 0.84f) / 0.16f));
                     e.Hovered = false;
                 }
                 else
@@ -976,21 +952,29 @@ public static class LiveWindowHost
                                     - (Math.Min(attached, MaxItems) - 1 - drawnSlot) * (diameter + BubbleGap);
                     }
 
+                    bool budding = e.SpawnElapsed < SpawnSeconds;
                     e.SpawnElapsed = Math.Min(SpawnSeconds, e.SpawnElapsed + dt);
-                    e.SpawnProgress = (float)Math.Clamp(e.SpawnElapsed / SpawnSeconds, 0, 1);
-                    e.Scale = 1f;   // 缩放交给渲染器的分裂半径曲线，这里只做淡入
-                    // 入场 = 出场「吞噬」膜动画的反放：前半段气泡藏在膜里（透明度按出场的 α 曲线倒着走），
-                    // 膜收回时才露出来 —— 没有单独的淡入动画。
-                    double reversedFade = Math.Clamp((1.0 - e.SpawnProgress - 0.55) / 0.45, 0.0, 1.0);
-                    e.Alpha = (float)(255.0 * (1.0 - reversedFade * reversedFade));
+                    e.SpawnProgress = (float)Math.Clamp(e.SpawnElapsed / SpawnSeconds, 0d, 1d);
+                    e.Scale = 1f;
+
+                    if (budding)
+                    {
+                        // 从岛体里挤出来：起步快、落点带一点过冲（水滴脱开母体时的惯性）。
+                        e.X = e.SpawnFromX + (e.TargetX - e.SpawnFromX) * EaseOutBack(e.SpawnProgress, 1.25f);
+                        // 刚出生那几帧还藏在液体颈里，透明度只补一点点，免得在岛体外闪一个半透明圆。
+                        e.Alpha = 255f * (0.25f + 0.75f * SmoothStep01(e.SpawnProgress / 0.4f));
+                    }
+                    else
+                    {
+                        // 稳态：指数平滑跟随槽位（邻居让位），别整排瞬移。
+                        float k = 1f - MathF.Exp(-14f * dt);
+                        e.X += (e.TargetX - e.X) * k;
+                        e.Alpha = 255f;
+                    }
 
                     e.Hovered = mouseX >= 0f && MathF.Abs(mouseX - e.X) <= diameter / 2f
                                 && mouseY >= bubbleTop && mouseY <= bubbleTop + diameter;
                 }
-
-                // 位置指数平滑：注册瞬间与旧气泡重叠，几帧内散开 —— 这就是「细胞分裂」的观感来源。
-                float k = 1f - MathF.Exp(-12f * dt);
-                e.X += (e.TargetX - e.X) * k;
 
                 // 「不出屏」：窗口比屏幕宽，content x=0 可能已在屏幕外；装不下的最旧气泡不画、不参与命中。
                 e.Hidden = e.TargetX < -1000f
@@ -999,7 +983,7 @@ public static class LiveWindowHost
 
             for (int i = _entries.Count - 1; i >= 0; i--)
             {
-                if (_entries[i].ExitElapsed > ExitSeconds) _entries.RemoveAt(i);
+                if (_entries[i].ExitElapsed >= ExitSeconds) _entries.RemoveAt(i);
             }
 
             TickPanelLocked(topY, islandLeft, islandCenterY, diameter, dt);
@@ -1135,7 +1119,6 @@ public static class LiveWindowHost
             item.PercentText = e.PercentText;
             item.Hovered = e.Hovered;
             item.SpawnProgress = e.SpawnProgress;
-            item.SplitProgress = (float)Math.Clamp(e.SplitElapsed / SplitSeconds, 0.0, 1.0);
             item.SpawnFromX = e.SpawnFromX;
             item.MergeTargetX = islandLeft + diameter * 0.02f;   // 「移回宿主」的终点：岛体左缘
             // 挂起收起也走同一套「被宿主吞进去」的动画：渲染器只认 Exiting / ExitProgress，
@@ -1300,6 +1283,29 @@ public static class LiveWindowHost
 
     private static double SpringEase(double elapsedSeconds)
         => 1.0 - Math.Cos(SpringFrequency * elapsedSeconds * 2.0 * Math.PI) * Math.Exp(-SpringDecay * elapsedSeconds);
+
+    /// <summary>
+    /// 吸附曲线：起步慢、后段加速（水滴是被表面张力越抽越快的），末端一拍收住。
+    /// 三条动画（位置、半径、颈的粗细）都从同一个 t 推，彼此才不会错拍。
+    /// </summary>
+    private static float LiquidSuck(float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return t * t * (1.75f - 0.75f * t);
+    }
+
+    /// <summary>脱离曲线：先快后慢，落点带一点过冲（水滴甩出去再回稳）。</summary>
+    private static float EaseOutBack(float t, float overshoot)
+    {
+        float u = Math.Clamp(t, 0f, 1f) - 1f;
+        return 1f + (overshoot + 1f) * u * u * u + overshoot * u * u;
+    }
+
+    private static float SmoothStep01(float x)
+    {
+        x = Math.Clamp(x, 0f, 1f);
+        return x * x * (3f - 2f * x);
+    }
 
     private static float EaseInOutCubic(float t)
     {

@@ -29,15 +29,16 @@ public static class LiveWindowRenderer
     private static readonly SKPaint _fillPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
     private static readonly SKPaint _strokePaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke };
     private static readonly SKPaint _arcPaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
-    private static readonly SKPaint _bridgePaint = new() { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
     private static readonly SKPaint _alphaLayerPaint = new();
     /// <summary>气泡的隐形命中底（alpha≈2，肉眼看不见但吃鼠标），见 DrawBubble 里的说明。</summary>
     private static readonly SKPaint _hitFillPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
     private static readonly SKPath _clipPath = new();
     // 气泡进度环带（外圆 - 内圆，EvenOdd）：材质只铺在这一圈，环内内容区保持透明。
     private static readonly SKPath _ringPath = new();
-    private static readonly SKPath _mouthPath = new();
+    // 液体颈：_neckPath = 闭合区域（填色 + 气泡差集裁切），_lipPath = 两条水腰线（描边）。
+    private static readonly SKPath _neckPath = new();
     private static readonly SKPath _lipPath = new();
+    private static readonly SKPath _maskPath = new();
 
     public static void Draw(SKCanvas canvas)
     {
@@ -54,6 +55,21 @@ public static class LiveWindowRenderer
         // 与主岛的文字配色一致。
         bool lightBubble = !IsLightColor(theme.TextColor);
 
+        // 液体颈先画：它是「连在一起的那部分液体」，气泡是浮在它上面的那半颗。
+        // 退出 = 被岛体吸进去，出生 = 从岛体挤出来，两个方向共用同一条几何，只是 t 走向相反。
+        for (int i = 0; i < frame.Count; i++)
+        {
+            var item = frame.Items[i];
+            bool absorbing = item.Exiting;
+            float t = absorbing ? item.ExitProgress : item.SpawnProgress;
+            if (t >= 1f || t <= 0.0005f) continue;
+
+            int depth = canvas.SaveCount;
+            try { DrawLiquidBridge(canvas, in item, in theme, global, t, absorbing); }
+            catch (Exception ex) { Logger.Error("[实况窗] 液体转移绘制异常", ex); }
+            finally { RestoreTo(canvas, depth); }
+        }
+
         // 气泡本体。
         for (int i = 0; i < frame.Count; i++)
         {
@@ -63,29 +79,6 @@ public static class LiveWindowRenderer
             int depth = canvas.SaveCount;
             try { DrawBubble(canvas, in item, in theme, lightBubble, global); }
             catch (Exception ex) { Logger.Error("[实况窗] 气泡绘制异常", ex); }
-            finally { RestoreTo(canvas, depth); }
-        }
-
-        // 「宿主吞噬」膜动画：这就是实况窗的出入场动画本体（用户定义）。
-        // 退出正向播：岛主张嘴把气泡吞进去；生成把它反放：岛体把气泡吐出来。
-        for (int i = 0; i < frame.Count; i++)
-        {
-            var item = frame.Items[i];
-            float t;
-            if (item.Exiting)
-            {
-                if (item.ExitProgress >= 1f) continue;
-                t = item.ExitProgress;
-            }
-            else
-            {
-                if (item.SpawnProgress >= 1f) continue;
-                t = 1f - item.SpawnProgress;   // 反放
-            }
-
-            int depth = canvas.SaveCount;
-            try { DrawHostMouth(canvas, in item, in theme, lightBubble, global, t); }
-            catch (Exception ex) { Logger.Error("[实况窗] 宿主吞噬动画绘制异常", ex); }
             finally { RestoreTo(canvas, depth); }
         }
 
@@ -99,61 +92,145 @@ public static class LiveWindowRenderer
     }
 
     /// <summary>
-    /// 「宿主吞噬」膜动画（实况窗出入场动画定义）：根扎在岛体左缘的上下两点，两条对称曲线向左伸出，
-    /// 围住气泡后合拢（手稿里那种「一个圆 + 两条膜曲线」），最后整只口缩回岛体。
-    /// 画在气泡之后，膜内填岛体底色，合拢时正好盖住气泡。
-    /// <para>
-    /// <paramref name="t"/> = 出场进度 0→1（吞进去）；入场时调用方传 1 - 生成进度，
-    /// 同一段动画反放（岛体把气泡吐出来）。不用另做淡入淡出。
-    /// </para>
+    /// 液体颈：液滴和岛体之间那段「水桥」。
+    ///
+    /// <para>几何就是两圆之间的经典水桥：在液滴朝岛体那一侧、以及岛体左缘各取一对对称切点，
+    /// 中间用两条向内收的贝塞尔连起来，围出一只沙漏。颈的粗细只由 <paramref name="t"/> 推：
+    /// 吸附时先长后掐断，出芽时从连着到拉断 —— 掐断那一下才是吸附感，所以它必须是一条
+    /// 非线性曲线（钟形），不能跟着位置线性缩放。</para>
+    ///
+    /// <para>填色用岛体自己的底色（玻璃就跟着玻璃的色调），描边只描两条腰线：
+    /// 旧版那种「一张嘴 + 粗轮廓」正是看起来像吃了菌子的原因。</para>
     /// </summary>
-    private static void DrawHostMouth(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme,
-        bool lightBubble, float global, float t)
+    private static void DrawLiquidBridge(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme,
+        float global, float t, bool absorbing)
     {
-        t = Math.Clamp(t, 0f, 1f);
-        if (t <= 0.02f) return;
+        float alpha = (item.Alpha / 255f) * global;
+        if (alpha <= 0.01f) return;
+
+        float rBase = item.Rect.Width * 0.5f;
+        if (rBase < 3f) return;
+        float r = rBase * TransferRadiusFactor(t, absorbing);
+
+        float girth = BuildLiquidNeck(in item, t, absorbing, r, _neckPath, _lipPath);
+        if (girth <= 0f) return;
+
+        // 颈里的液体 = 岛体的材质：实体材质就是实体底色，液态玻璃就跟着玻璃的色调走。
+        // 绝不像旧版那样刷一块不透明底色 —— 玻璃材质下那块「黑袋子」是最出戏的地方。
+        _fillPaint.Color = WithOpacity(theme.BackgroundColor, alpha);
+        canvas.DrawPath(_neckPath, _fillPaint);
+
+        int depth = canvas.SaveCount;
+        try
+        {
+            // 腰线只描在「水膜外侧」：液滴圆内部不画，否则那两条线会穿过气泡的透明内容区，
+            // 看着像两根浮在气泡里的黑钩子（低半径、大接触角时最明显）。
+            _maskPath.Rewind();
+            _maskPath.AddCircle(item.Rect.MidX, item.Rect.MidY, r);
+            canvas.ClipPath(_maskPath, SKClipOperation.Difference, true);
+
+            // 两条腰线：亮边给水膜高光，暗边给内缘阴影，配方与岛体玻璃的描边一致，接缝才不突兀。
+            _strokePaint.StrokeCap = SKStrokeCap.Round;
+            _strokePaint.StrokeWidth = 1f + 1.6f * girth;
+            canvas.Translate(0f, 0.6f);
+            _strokePaint.Color = new SKColor(239, 247, 255, AlphaByte(alpha * (0.10f + 0.26f * girth)));
+            canvas.DrawPath(_lipPath, _strokePaint);
+            canvas.Translate(0f, -1.2f);
+            _strokePaint.Color = new SKColor(9, 15, 27, AlphaByte(alpha * (0.06f + 0.14f * girth)));
+            canvas.DrawPath(_lipPath, _strokePaint);
+        }
+        finally
+        {
+            RestoreTo(canvas, depth);
+            _strokePaint.StrokeCap = SKStrokeCap.Butt;
+        }
+    }
+
+    /// <summary>
+    /// 生成液体颈的几何（画布坐标，未经缩放）。返回颈部腰身的粗细 0..1（0 = 这一段没有颈）。
+    /// 同时填 <paramref name="body"/>（闭合区域 = 液滴被吃掉的那块 + 颈）与 <paramref name="lip"/>（两条腰线）。
+    /// </summary>
+    private static float BuildLiquidNeck(in LiveWindowDrawItem item, float t, bool absorbing,
+        float r, SKPath body, SKPath lip)
+    {
+        body.Rewind();
+        lip.Rewind();
 
         float R = item.Rect.Width * 0.5f;
-        float edgeX = item.MergeTargetX;
+        if (R < 3f || r < 2f) return 0f;
+
+        float cx = item.Rect.MidX;
         float cy = item.Rect.MidY;
-        float bubbleCx = item.Rect.MidX;
 
-        float reach = SmoothStep01(Math.Clamp(t / 0.58f, 0f, 1f));     // 膜向左伸出的比例
-        float close = SmoothStep01(Math.Clamp((t - 0.5f) / 0.34f, 0f, 1f)); // 合拢比例
-        float retract = Math.Clamp((t - 0.82f) / 0.18f, 0f, 1f);       // 整口缩回岛体
+        // edgeX = 岛体左边线。下面只用一颗「虚拟圆」来量液滴和岛体的间距（决定颈部粗细），
+        // 真正的切点接在岛体左端圆帽的表面上（见 capCx）。
+        float edgeX = item.MergeTargetX;
+        float anchorX = edgeX + R * 0.75f;
+        float anchorR = R * 0.75f;
 
-        float tipX = edgeX - R * 0.15f + (bubbleCx - R * 0.95f - (edgeX - R * 0.15f)) * reach + retract * R * 1.5f;
-        float tipY = R * (1.02f - 0.74f * close);   // 口径：先张大，再合拢
-        float edgeY = R * 1.05f;
-        float alpha = global * (1f - retract * 0.92f);
-        if (alpha <= 0.01f || tipY < 0.5f) return;
+        float d = anchorX - cx;                      // 液滴永远在岛体左侧
+        if (d <= 0.25f) return 0f;
 
-        SKColor membrane = theme.BackgroundColor.Alpha > 8
-            ? theme.BackgroundColor
-            : (lightBubble ? SKColors.White : DarkBubbleColor);
+        // 两件事分开算，才不会一上来就变成一只大漏斗：
+        //   phi  = 接触角（液体啃掉了液滴多少），前期很小、后段猛地扫过去；
+        //   girth = 颈部腰身（那根「水丝」有多粗），中途最粗、掐断时归零。
+        float eat = absorbing
+            ? SmoothStep01((t - 0.10f) / 0.85f)
+            : 1f - SmoothStep01((t - 0.02f) / 0.55f);
+        float phi = 0.22f + 1.05f * eat;
 
-        // 膜内（吞下去的部分）：岛体底色，盖住气泡。
-        _mouthPath.Rewind();
-        _mouthPath.MoveTo(edgeX, cy - edgeY);
-        _mouthPath.CubicTo(edgeX - R * 1.35f, cy - R * 1.5f, tipX + R * 0.9f, cy - tipY, tipX, cy - tipY);
-        _mouthPath.CubicTo(tipX - R * 0.62f, cy - tipY * 0.58f, tipX - R * 0.62f, cy + tipY * 0.58f, tipX, cy + tipY);
-        _mouthPath.CubicTo(tipX + R * 0.9f, cy + tipY, edgeX - R * 1.35f, cy + R * 1.5f, edgeX, cy + edgeY);
-        _mouthPath.Close();
-        _fillPaint.Color = WithOpacity(membrane, alpha * 0.97f);
-        canvas.DrawPath(_mouthPath, _fillPaint);
+        float girth = absorbing
+            ? MathF.Sin(MathF.PI * Math.Clamp(t / 0.95f, 0f, 1f))
+            : 1f - SmoothStep01(t / 0.60f);
 
-        // 两条膜曲线（手稿里的那两条线），只描边、不画收口线。
-        _lipPath.Rewind();
-        _lipPath.MoveTo(edgeX, cy - edgeY);
-        _lipPath.CubicTo(edgeX - R * 1.35f, cy - R * 1.5f, tipX + R * 0.9f, cy - tipY, tipX, cy - tipY);
-        _lipPath.CubicTo(tipX - R * 0.62f, cy - tipY * 0.58f, tipX - R * 0.62f, cy + tipY * 0.58f, tipX, cy + tipY);
-        _lipPath.CubicTo(tipX + R * 0.9f, cy + tipY, edgeX - R * 1.35f, cy + R * 1.5f, edgeX, cy + edgeY);
+        // 距离越远脖子越细：两颗水滴离得远时只能是「一丝」，不能是一条粗管子。
+        float gap = d - r - anchorR;                 // 负 = 两圆已经重叠
+        girth *= Math.Clamp(1f - MathF.Max(0f, gap) / (r * 1.9f), 0.22f, 1f);
+        girth = Math.Clamp(girth, 0f, 1f);
+        if (girth <= 0.05f) return 0f;
 
-        _strokePaint.StrokeWidth = MathF.Max(1.2f, R * 0.14f);
-        _strokePaint.StrokeCap = SKStrokeCap.Round;
-        _strokePaint.Color = WithOpacity(theme.TextColor, alpha * 0.72f);
-        canvas.DrawPath(_lipPath, _strokePaint);
-        _strokePaint.StrokeCap = SKStrokeCap.Butt;
+        float sinPhi = MathF.Sin(phi), cosPhi = MathF.Cos(phi);
+
+        float pdUpY = cy - r * sinPhi, pdDnY = cy + r * sinPhi;
+        float pdX = cx + r * cosPhi;
+
+        // 岛体左端是一颗半径 R 的圆帽：颈接在**帽的表面**上。
+        // 接在内部的话，那两条描边会从岛体里长出来，看着像两根灰钩子。
+        float capCx = edgeX + R * 0.96f;             // 圆帽圆心（edgeX 就是岛体左边线）
+        float piX = capCx - R * cosPhi;
+        float piUpY = cy - R * sinPhi, piDnY = cy + R * sinPhi;
+
+        // 腰身压到 R 的三成左右：两颗圆之间要看得见一根「水丝」，才像水；
+        // 顶到切点高度就成了一张糊死的嘴（旧版就是这个观感）。
+        float neckHalf = MathF.Min(R * 0.30f * girth, R * sinPhi * 0.92f);
+        float midUpY = cy - neckHalf, midDnY = cy + neckHalf;
+        float cAx = pdX + (piX - pdX) * 0.42f;
+        float cBx = piX - (piX - pdX) * 0.42f;
+
+        body.MoveTo(piX, piUpY);
+        body.CubicTo(cBx, midUpY, cAx, midUpY, pdX, pdUpY);
+        // 沿液滴朝岛体那一侧绕过去：上切点 → 最右点 → 下切点。这一段就是「被吃掉」的边界。
+        float deg = phi * 180f / MathF.PI;
+        body.ArcTo(new SKRect(cx - r, cy - r, cx + r, cy + r), -deg, deg * 2f, false);
+        body.CubicTo(cAx, midDnY, cBx, midDnY, piX, piDnY);
+        body.Close();
+
+        lip.MoveTo(piX, piUpY);
+        lip.CubicTo(cBx, midUpY, cAx, midUpY, pdX, pdUpY);
+        lip.MoveTo(piX, piDnY);
+        lip.CubicTo(cBx, midDnY, cAx, midDnY, pdX, pdDnY);
+        return girth;
+    }
+
+    /// <summary>转移期间的半径系数：吸附时被抽走，出芽时由小长到正常（末端轻微过冲）。</summary>
+    private static float TransferRadiusFactor(float t, bool absorbing)
+    {
+        if (absorbing)
+            return 1f - 0.42f * SmoothStep01((t - 0.30f) / 0.70f);
+
+        float u = Math.Clamp(t, 0f, 1f) - 1f;
+        float back = 1f + 1.9f * u * u * u + 0.9f * u * u;   // easeOutBack(overshoot 0.9)
+        return 0.52f + 0.48f * back;
     }
 
     private static void DrawBubble(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme, bool lightBubble, float global)
@@ -169,12 +246,14 @@ public static class LiveWindowRenderer
         if (item.Hovered) scale *= 1.03f;
         if (scale <= 0.01f) return;
 
-        // 两圆分裂的核心数学：半径从 R 缩到 R/√2 再长回来（面积守恒的观感），
-        // 圆心距由宿主的位置动画负责（新气泡从母圆中心滑出）。
-        // 退出走「宿主张嘴吞入」的膜动画，不再缩半径。
-        float pinching = !item.Exiting && item.SplitProgress < 1f ? Math.Clamp(item.SplitProgress, 0f, 1f) : 0f;
-        float radiusFactor = 1f - 0.293f * MathF.Sin(MathF.PI * pinching);
-        float r = rBase * radiusFactor;
+        // 液体转移（出生 / 吞入）期间，半径、压扁、以及「被吃掉」的裁切都从同一个 t 推出来；
+        // 位置曲线在宿主那边用同一段时间轴 —— 三样必须同步，否则又会出现「圆在抖但脖子没动」。
+        bool absorbing = item.Exiting;
+        float transfer = absorbing
+            ? Math.Clamp(item.ExitProgress, 0f, 1f)
+            : (item.SpawnProgress < 1f ? Math.Clamp(item.SpawnProgress, 0f, 1f) : 1f);
+        bool transferring = transfer < 1f;
+        float r = rBase * (transferring ? TransferRadiusFactor(transfer, absorbing) : 1f);
 
         float cx = rect.MidX;
         float cy = rect.MidY;
@@ -194,11 +273,29 @@ public static class LiveWindowRenderer
         float innerHalf = contentClipR * 0.94f;                          // 与去掉边框前 0.62 / 0.66 的比例一致
 
         canvas.Save();
-        // 围绕气泡中心缩放：生成弹入 / 退出缩小都走这一条，位置仍由宿主给的 Rect 决定。
-        if (MathF.Abs(scale - 1f) > 0.0005f)
+        // 被液体吃掉的那一块：用颈的闭合区域做差集裁切（颈本身由 DrawLiquidBridge 画在气泡下层）。
+        // 于是圆环是被「吃掉」的，而不是整体淡出的 —— 这是吸附感最关键的一步。
+        if (transferring && r > 1.5f)
+        {
+            if (BuildLiquidNeck(in item, transfer, absorbing, r, _neckPath, _lipPath) > 0f)
+                canvas.ClipPath(_neckPath, SKClipOperation.Difference, true);
+
+            // 岛体那一侧一律切掉：岛体画在气泡之前，重叠出来的像素就是一颗贴在边上的鼓包。
+            // 颈掐断之后（girth = 0）也仍然靠这条兜住，不会突然「弹回整圆」再淡出。
+            _maskPath.Rewind();
+            _maskPath.AddRect(new SKRect(item.MergeTargetX, cy - rBase * 3f,
+                item.MergeTargetX + rBase * 6f, cy + rBase * 3f));
+            canvas.ClipPath(_maskPath, SKClipOperation.Difference, true);
+        }
+
+        // 液体形变：沿运动方向（x）拉伸、另一轴收缩，才像水而不是气球。
+        float squash = transferring ? MathF.Sin(MathF.PI * transfer) * (absorbing ? 0.85f : 0.55f) : 0f;
+        float sx = scale * (1f + 0.20f * squash);
+        float sy = scale * (1f - 0.16f * squash);
+        if (MathF.Abs(sx - 1f) > 0.0005f || MathF.Abs(sy - 1f) > 0.0005f)
         {
             canvas.Translate(cx, cy);
-            canvas.Scale(scale);
+            canvas.Scale(sx, sy);
             canvas.Translate(-cx, -cy);
         }
 
@@ -354,22 +451,10 @@ public static class LiveWindowRenderer
 
         float reveal = Math.Clamp(frame.PanelReveal, 0f, 1f);
 
-        // 细胞分裂的「收口桥」：面板从气泡长出来时，先画一条逐渐变细的颈把母细胞和子细胞连起来，
-        // 只在前 60% 出现；比单纯放大一个圆角矩形更接近分裂的观感。
-        if (reveal < 0.6f)
-        {
-            var src = frame.PanelSourceRect;
-            float neckAlpha = (1f - reveal / 0.6f);
-            neckAlpha *= neckAlpha * (110f / 255f) * global;
-            if (neckAlpha > 0.003f && src.Width > 0.5f)
-            {
-                _bridgePaint.StrokeWidth = MathF.Max(4f, src.Width * (0.55f - 0.25f * reveal));
-                _bridgePaint.Color = WithOpacity(theme.TextColor, neckAlpha);
-                canvas.DrawLine(src.MidX, src.MidY, revealRect.MidX, revealRect.MidY, _bridgePaint);
-            }
-        }
+        // 旧的「一条粗线从气泡连到面板」已经删掉：那根 110/255 的圆头直线是实况窗里最像卡通的一笔。
+        // 面板本来就是从气泡的圆角直接长出来的（下面的 radius 插值），不需要再补一根管子。
 
-        // 圆角从气泡的半径一路收到面板的 16：展开动画看起来是「气泡被拉成面板」。
+        // 圆角从气泡的半径一路收到面板的 20：展开动画看起来是「气泡被拉成面板」。
         float radius = frame.BubbleDiameter * 0.5f * (1f - reveal) + PanelRadius * reveal;
 
         _clipPath.Rewind();
