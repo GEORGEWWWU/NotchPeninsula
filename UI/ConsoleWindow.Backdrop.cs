@@ -10,6 +10,10 @@ namespace NotchPeninsula
     public partial class ConsoleWindow
     {
         private IntPtr _backdropHwnd;
+        private NativeAcrylic? _nativeConsoleBackdrop;
+        private static Windows.System.DispatcherQueueController? _consoleBackdropDispatcher;
+        private bool _nativeConsoleBackdropFailed;
+        private bool? _consoleAdvancedEffectsEnabled;
 
         private bool _backdropRebuilding;
 
@@ -43,6 +47,11 @@ namespace NotchPeninsula
 
         private void SyncBackdropToContent(bool keepZOrder = false)
         {
+            if (NativeAcrylic.IsSupported)
+            {
+                SyncNativeConsoleBackdrop();
+                return;
+            }
             if (_backdropHwnd == IntPtr.Zero || _hwnd == IntPtr.Zero)
                 return;
 
@@ -56,6 +65,66 @@ namespace NotchPeninsula
             uint flags = Win32.SWP_NOACTIVATE | (keepZOrder ? Win32.SWP_NOZORDER : 0u);
             _ = Win32.SetWindowPos(_backdropHwnd, keepZOrder ? IntPtr.Zero : _hwnd,
                 rect.Left, rect.Top, width, height, flags);
+        }
+
+        private void SyncNativeConsoleBackdrop()
+        {
+            if (_hwnd == IntPtr.Zero || !Win32.IsWindowVisible(_hwnd) || Win32.IsIconic(_hwnd)) return;
+            if (!Win32.GetWindowRect(_hwnd, out var rect)) return;
+            int width = rect.Right - rect.Left;
+            int height = rect.Bottom - rect.Top;
+            if (width <= 0 || height <= 0) return;
+
+            var previousMode = _backdropMode;
+            if (!_nativeConsoleBackdropFailed)
+            {
+                try
+                {
+                    _consoleAdvancedEffectsEnabled ??= !System.Windows.SystemParameters.HighContrast
+                        && new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled;
+                    if (!_consoleAdvancedEffectsEnabled.Value)
+                    {
+                        _nativeConsoleBackdrop?.Hide();
+                        _backdropMode = BackdropMaterialMode.SolidDark;
+                    }
+                    else
+                    {
+                        if (_nativeConsoleBackdrop == null)
+                        {
+                            if (Windows.System.DispatcherQueue.GetForCurrentThread() == null)
+                                _consoleBackdropDispatcher = NativeAcrylic.CreateDispatcher();
+                            _nativeConsoleBackdrop = new NativeAcrylic();
+                        }
+
+                        float radius = 8f * _dpiScale;
+                        _nativeConsoleBackdrop.Present(_hwnd, rect.Left, rect.Top, width, height,
+                            default, new System.Numerics.Vector2(width, height), new IslandOutline(radius, radius, radius),
+                            capsule: true, opacity: 1f, glass: false, dpi: _dpiScale, liveRegions: default, canvasOrigin: default);
+                        _backdropMode = BackdropMaterialMode.Acrylic;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _nativeConsoleBackdropFailed = true;
+                    _backdropMode = BackdropMaterialMode.SolidDark;
+                    Logger.Error("[设置窗口] Windows Composition 背板失败，使用实色背景", ex);
+                    DisposeNativeConsoleBackdrop();
+                }
+            }
+
+            if (previousMode != _backdropMode)
+            {
+                ApplyBackdropPalette();
+                Render();
+            }
+        }
+
+        private void DisposeNativeConsoleBackdrop()
+        {
+            var backdrop = _nativeConsoleBackdrop;
+            _nativeConsoleBackdrop = null;
+            try { backdrop?.Dispose(); }
+            catch (Exception ex) { Logger.Error("[设置窗口] 释放原生背板失败", ex); }
         }
 
         // 拖动 / 缩放期间：材质窗继续跟随，但不做任何视觉切换（不藏、不实心化、不重绘）。
@@ -78,14 +147,15 @@ namespace NotchPeninsula
 
         private void HideBackdrop()
         {
+            _nativeConsoleBackdrop?.Hide();
             if (_backdropHwnd == IntPtr.Zero) return;
             Win32.ShowWindow(_backdropHwnd, Win32.SW_HIDE);
         }
 
         private void ShowBackdrop()
         {
-            if (_backdropHwnd == IntPtr.Zero || _hwnd == IntPtr.Zero) return;
-            Win32.ShowWindow(_backdropHwnd, Win32.SW_SHOWNOACTIVATE);
+            if (_hwnd == IntPtr.Zero) return;
+            if (_backdropHwnd != IntPtr.Zero) Win32.ShowWindow(_backdropHwnd, Win32.SW_SHOWNOACTIVATE);
             SyncBackdropToContent();
         }
 
@@ -263,7 +333,13 @@ namespace NotchPeninsula
             switch (_backdropMode)
             {
                 case BackdropMaterialMode.Acrylic:
-                    Logger.Debug($"重贴亚克力材质: {(ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, AcrylicTint) ? "ok" : "fail")}");
+                    if (!TryEnableAcrylicBackdrop())
+                    {
+                        Logger.Warn("[设置窗口] 恢复亚克力失败，重新选择可用背板");
+                        TryEnableBackdropMaterial();
+                        ApplyBackdropPalette();
+                        Render();
+                    }
                     break;
 
                 case BackdropMaterialMode.Mica:

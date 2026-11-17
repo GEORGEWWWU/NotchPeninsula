@@ -9,7 +9,7 @@ internal static class GlassMaterial
         ["LiquidGlassBlur", "LiquidGlassRim", "LiquidGlassThickness", "LiquidGlassFrost", "LiquidGlassFps"];
     internal static readonly string[] Labels = ["模糊", "高光", "厚度", "色调", "帧率"];
     internal static readonly string[] Levels = ["最低", "偏低", "标准", "偏高", "最高"];
-    internal static readonly string[] FpsLabels = ["30", "60", "90", "120", "144", "不限"];
+    internal static readonly string[] FpsLabels = ["30", "60", "90", "120", "144", "自动"];
     private static readonly int[] DefaultLevels = [1, 4, 1, 1, 5];
     private static readonly int[] Settings = (int[])DefaultLevels.Clone();
     internal static readonly string[] BlurLabels = ["关", "轻", "中", "强", "最强"];
@@ -18,7 +18,8 @@ internal static class GlassMaterial
     // The layered HWND uses its foreground alpha for mouse hit testing. Leave
     // headroom for antialias coverage and the transition layer's alpha rounding.
     private const byte InteractiveAlpha = 12;
-    private static readonly int[] FrameRates = [30, 60, 90, 120, 144, 0];
+    private const int AutomaticFrameRateLevel = 5; // 与旧「不限」共用档位，升级后自动停止无上限循环。
+    private static readonly int[] FrameRates = [30, 60, 90, 120, 144];
 
     internal static int DefaultLevel(int index) => DefaultLevels[index];
     internal static int MaxLevel(int index) => index == FrameRate ? FpsLabels.Length - 1 : Levels.Length - 1;
@@ -27,7 +28,12 @@ internal static class GlassMaterial
         Volatile.Write(ref Settings[index], Math.Clamp(level, 0, MaxLevel(index)));
 
     // Composition refreshes the backing independently of the app's foreground frame limiter.
-    internal static int ForegroundFps => FrameRates[GetLevel(FrameRate)];
+    internal static int GetForegroundFps(bool active, bool hidden)
+    {
+        if (hidden) return 30;
+        int level = GetLevel(FrameRate);
+        return level == AutomaticFrameRateLevel ? (active ? 60 : 30) : FrameRates[level];
+    }
     internal const float BackdropOpacity = 0.46f;
     internal static float BlurAmount => BlurAmounts[GetLevel(Blur)];
     internal static volatile bool BlurUnavailable;

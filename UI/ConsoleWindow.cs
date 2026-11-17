@@ -1247,18 +1247,21 @@ namespace NotchPeninsula
             IntPtr hInstance = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero;
 
             // 采用“双窗口”结构：
-            _backdropHwnd = Win32.CreateWindowEx(
-                Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
-                "NotchConsoleClass", string.Empty,
-                Win32.WS_POPUP | Win32.WS_VISIBLE,
-                left, top,
-                _scaledWidth, _scaledHeight,
-                IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
-            );
+            if (!NativeAcrylic.IsSupported)
+            {
+                _backdropHwnd = Win32.CreateWindowEx(
+                    Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
+                    "NotchConsoleClass", string.Empty,
+                    Win32.WS_POPUP | Win32.WS_VISIBLE,
+                    left, top,
+                    _scaledWidth, _scaledHeight,
+                    IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
+                );
+                ApplyRoundedRegion(_backdropHwnd);
+            }
 
-            ApplyRoundedRegion(_backdropHwnd);
             ApplyAppearance();
-            TryEnableBackdropMaterial();
+            if (!NativeAcrylic.IsSupported) TryEnableBackdropMaterial();
             ApplyBackdropPalette();
 
             _hwnd = Win32.CreateWindowEx(
@@ -1486,6 +1489,8 @@ namespace NotchPeninsula
 
                 case Win32.WM_SETTINGCHANGE:
                 {
+                    _consoleAdvancedEffectsEnabled = null;
+                    SyncBackdropToContent(keepZOrder: _dragMoving);
                     bool wasLight = _isLightAppearance;
                     ApplyAppearance();
                     if (_isLightAppearance != wasLight)
@@ -1718,6 +1723,7 @@ namespace NotchPeninsula
                     // 钩子挂在 UI 线程上，窗口没了必须摘掉：否则键盘会一直卡在「按下没反应」。
                     KeyboardCapture.Stop();
                     RevokePluginDropTarget();
+                    DisposeNativeConsoleBackdrop();
                     if (_backdropHwnd != IntPtr.Zero)
                     {
                         IntPtr backdrop = _backdropHwnd;

@@ -628,17 +628,10 @@ namespace NotchPeninsula
                 _lastFrameEndMs = frameEnd;
 
                 // 用 Stopwatch ticks 排程（毫秒整数表达不了 144fps），实测帧率才和设置页一致
-                int fps = GlassMaterial.ForegroundFps;
-                if (fps == 0)
-                {
-                    if (!_invisibleFrameUploaded)
-                    {
-                        Thread.Yield();
-                        nextTick = clock.ElapsedTicks;
-                        continue;
-                    }
-                    fps = 30;
-                }
+                int fps = GlassMaterial.GetForegroundFps(
+                    _isAnimating || _isYAnimating || _isStyleAnimating || _isHovered || HasAnyExpanded
+                    || _currentToast != null || _media.IsPlaying || LiveWindowHost.Frame.Count > 0,
+                    _invisibleFrameUploaded);
                 nextTick += (long)Math.Round((double)Stopwatch.Frequency / fps);
                 long remainTicks;
                 while (!_shuttingDown && (remainTicks = nextTick - clock.ElapsedTicks) > 0)
@@ -654,9 +647,8 @@ namespace NotchPeninsula
                         if (waitMs > 0 && Win32.WaitTimer(frameTimer, waitMs)) continue;
                     }
 
-                    // 回退（定时器建不出来时）：富余多就让出 CPU，尾段才自旋
-                    if (remainMs > 4) Thread.Sleep(1);
-                    else Thread.Yield();
+                    // 高精度定时器不可用时也阻塞等待，避免低配 CPU 忙等。
+                    Thread.Sleep(1);
                 }
                 if (nextTick < clock.ElapsedTicks) nextTick = clock.ElapsedTicks;
             }

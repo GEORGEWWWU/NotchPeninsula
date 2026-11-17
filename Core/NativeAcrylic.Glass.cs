@@ -6,7 +6,6 @@ namespace NotchPeninsula;
 internal sealed partial class NativeAcrylic
 {
     private CompositionEffectBrush? _blurBrush;
-    private CompositionBackdropBrush? _windowBackdrop;
     private CompositionBrush? _appliedBackdrop;
     private float _blurAmount = -1f;
     private bool _blurFailed;
@@ -23,23 +22,14 @@ internal sealed partial class NativeAcrylic
                 using var factory = _compositor!.CreateEffectFactory(new GlassBlurEffect(source),
                     [GlassBlurEffect.AmountProperty]);
                 _blurBrush = factory.CreateBrush();
-                try
-                {
-                    _blurBrush.SetSourceParameter(GlassBlurEffect.SourceName, _brush);
-                }
-                catch (ArgumentException ex)
-                {
-                    Logger.Info($"[液态玻璃] Host Backdrop 无法绑定高斯模糊，尝试窗口合成背板：{ex.Message}");
-                    _windowBackdrop = _compositor.CreateBackdropBrush();
-                    _blurBrush.SetSourceParameter(GlassBlurEffect.SourceName, _windowBackdrop);
-                }
+                _blurBrush.SetSourceParameter(GlassBlurEffect.SourceName, _brush);
             }
 
             if (_blurAmount != amount)
             {
                 _blurBrush.Properties.InsertScalar(GlassBlurEffect.AmountProperty, amount);
                 _blurAmount = amount;
-                Logger.Info($"[液态玻璃] Composition 高斯模糊={amount} ({(_windowBackdrop == null ? "Host Backdrop" : "Backdrop")})");
+                Logger.Info($"[液态玻璃] Composition 高斯模糊={amount} (Host Backdrop)");
             }
             return _blurBrush;
         }
@@ -140,6 +130,5 @@ internal sealed partial class NativeAcrylic
         foreach (var live in _liveGlass) live.Dispose();
         _liveGlass.Clear();
         _blurBrush?.Dispose();
-        _windowBackdrop?.Dispose();
     }
 }

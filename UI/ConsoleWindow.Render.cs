@@ -1599,7 +1599,7 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
 
                 string glassHint = NativeAcrylic.IsSupported
-                    ? (GlassMaterial.BlurUnavailable ? "此会话无法启用原生模糊" : "Windows Composition 背板 · 可调高斯模糊")
+                    ? (GlassMaterial.BlurUnavailable ? "原生模糊不可用 · 保留色调和高光" : "Windows Composition 背板 · 可调高斯模糊")
                     : "Windows 10 · 半透明色调和边缘高光";
                 canvas.DrawText(glassHint, CONTENT_TEXT_X, gY + 26f, _subTextPaint);
 

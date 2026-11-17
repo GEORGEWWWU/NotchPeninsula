@@ -11,6 +11,7 @@ namespace NotchPeninsula
         private NativeAcrylic? _nativeAcrylic;
         private DispatcherQueueController? _acrylicDispatcher;
         private bool _nativeAcrylicFailed;
+        private int _lastNativeMaterial = -1;
 
         private static bool UsesLegacyAcrylic => !NativeAcrylic.IsSupported && Renderer.IslandAcrylic;
 
@@ -19,6 +20,17 @@ namespace NotchPeninsula
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
             int material = Renderer.IslandMaterialIndex;
             bool glass = material == 2;
+            if (_lastNativeMaterial != material)
+            {
+                _lastNativeMaterial = material;
+                if (_nativeAcrylicFailed || (glass && GlassMaterial.BlurUnavailable))
+                {
+                    _nativeAcrylic?.Dispose();
+                    _nativeAcrylic = null;
+                    _nativeAcrylicFailed = false;
+                    GlassMaterial.BlurUnavailable = false;
+                }
+            }
             if (!NativeAcrylic.IsSupported || material == 0 || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
@@ -65,6 +77,7 @@ namespace NotchPeninsula
             catch (Exception ex)
             {
                 _nativeAcrylicFailed = true;
+                if (glass) GlassMaterial.BlurUnavailable = true;
                 var failedHost = _nativeAcrylic;
                 _nativeAcrylic = null;
                 GlassMaterial.BackdropReady = false;
