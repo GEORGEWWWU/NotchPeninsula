@@ -16,22 +16,6 @@ namespace NotchPeninsula
         private static readonly Queue<string> _widthOrder = new(24);
         private const int WidthCacheCap = 64;
 
-        internal static bool NeedsFallback(string text, SKTypeface baseTypeface)
-        {
-            for (int i = 0; i < text.Length; i++)
-            {
-                int cp = text[i];
-                if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length)
-                {
-                    cp = char.ConvertToUtf32(text[i], text[i + 1]);
-                    i++;
-                }
-                if (cp < 0x20 || cp == 0xFE0F || cp == 0xFE0E || cp == 0x200D || cp == 0x20E3) continue;
-                if (baseTypeface.GetGlyph(cp) == 0) return true;
-            }
-            return false;
-        }
-
         internal static SKTypeface? Resolve(int cp, SKTypeface baseTypeface)
         {
             if (!ReferenceEquals(baseTypeface, _baseFace))

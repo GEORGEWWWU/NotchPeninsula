@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using static NotchPeninsula.Logger;
 
 namespace NotchPeninsula
 {
@@ -26,7 +25,6 @@ namespace NotchPeninsula
     internal static unsafe class DxgiBackdrop
     {
         // ---- DXGI / D3D11 常量 ----
-        private const int D3D_DRIVER_TYPE_UNKNOWN = 0;
         private const int D3D_DRIVER_TYPE_HARDWARE = 1;
         private const int D3D_DRIVER_TYPE_WARP = 5;
 

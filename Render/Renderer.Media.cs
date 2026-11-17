@@ -1,6 +1,4 @@
 using SkiaSharp;
-using System.Drawing.Imaging;
-using System.IO;
 using System.Runtime.InteropServices;
 
 namespace NotchPeninsula
@@ -414,7 +412,7 @@ namespace NotchPeninsula
                 string scene = StandbySceneKey;
                 if (string.IsNullOrEmpty(scene)) return STANDBY_BLANK_WIDTH;
 
-                float own = 0f;
+                float own;
                 if (string.Equals(scene, Plugins.BuiltinWidgets.Clock, StringComparison.OrdinalIgnoreCase))
                     own = _cachedTimeWidth + 12f + _cachedDateWidth;
                 else if (string.Equals(scene, Plugins.BuiltinWidgets.Hardware, StringComparison.OrdinalIgnoreCase))

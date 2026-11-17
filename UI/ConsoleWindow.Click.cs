@@ -1,7 +1,3 @@
-using System.Drawing.Imaging;
-using System.IO;
-using System.Runtime.InteropServices;
-using SkiaSharp;
 using System.Diagnostics;
 using NotchPeninsula.Plugins;
 

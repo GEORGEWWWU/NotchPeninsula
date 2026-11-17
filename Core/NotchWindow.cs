@@ -178,7 +178,6 @@ namespace NotchPeninsula
         private bool HasAnyExpanded
             => _isManuallyExpanded || Renderer.IsMediaExpanded || Renderer.HasActiveDetailPage
                || LiveWindowHost.HasOpenPanel;
-        private readonly ToastNotificationListener _toastListener = new ToastNotificationListener(); // Toast 监听器
         // ---- 弹簧动画引擎（三处共用） ----
         //（峰值在 t≈0.154s），即「Q 弹」的来源。
         private const double SpringFrequency = 2.65;
@@ -614,7 +613,7 @@ namespace NotchPeninsula
                 }
                 catch (Exception ex)
                 {
-                    // 单帧异常不能打死整条渲染线程（旧版未捕获 ⇒ 线程内异常 = 进程直接终止）。
+                    // 捕获单帧异常，允许渲染循环继续。
                     // 限频记录，下一帧继续跑；根因仍然靠日志里的异常链排查。
                     long nowEx = Environment.TickCount64;
                     if (nowEx - _lastRenderErrorLogMs >= 5000)
@@ -638,9 +637,6 @@ namespace NotchPeninsula
                 {
                     double remainMs = remainTicks * 1000.0 / Stopwatch.Frequency;
 
-                    // 主路径：高精度可等待定时器。内核按 ~0.5ms 唤醒，睡眠期间不占 CPU。
-                    // 旧版在最后几毫秒 Thread.Yield() 忙等（为对齐 144fps 的 6.9ms 网格），
-                    // 代价是一个核持续跑满 —— 空闲时这一项就占了可观的后台占用。
                     if (frameTimer != IntPtr.Zero)
                     {
                         int waitMs = (int)Math.Ceiling(remainMs);
@@ -773,8 +769,7 @@ namespace NotchPeninsula
         {
             _shuttingDown = true;
 
-            // ⚠️ 渲染线程还活着时，下面绝不能释放它正在读写的 SKSurface / DIB（use-after-free）。
-            // 旧版只 Join 500ms 就继续往下走；改成 3s，并把「线程是否已退出」带下去决定释放与否。
+            // 等渲染线程退出后才能释放它读写的 SKSurface 和 DIB。
             bool renderThreadAlive = false;
             try
             {
@@ -1575,10 +1570,7 @@ namespace NotchPeninsula
                 }
             }
 
-            // ---- 3.5 整帧不可见（自动隐藏 / 穿透淡出到 0）----
-            // 旧版即使 alpha 已经是 0，也每帧画整张 2000×H 画布再提交给 DWM（静止画面 60~144 次/秒）。
-            // 现在只把「刚变透明」那一帧画出来，之后整帧跳过；留 500ms 缓冲，
-            // 免得插件 Draw 回调在隐藏瞬间被硬掐断。
+            // 完全透明后保留 500ms 渲染缓冲，再跳过不可见帧。
             bool frameInvisible = Renderer.PassthroughAlpha <= 0.001f && Renderer.FullHideAlpha <= 0.001f;
             if (frameInvisible)
             {
@@ -1611,7 +1603,6 @@ namespace NotchPeninsula
             if (canvas == null)
             {
                 // GDI/DIB 或 SKSurface 创建失败（驱动 TDR / DWM 重置后常见）：限频重试，
-                // 绝不在这里 NRE —— 旧版 `_renderSurface!` 会让整条渲染线程带着异常死掉。
                 RetryInitRenderBuffer();
                 return;
             }
@@ -2031,8 +2022,7 @@ namespace NotchPeninsula
                     SetRawMouseSink(false);     // 窗口要没了，原始输入先摘掉
                     RevokeIslandDropTarget();
                     LiveWindowHost.Reset();     // 实况窗引用一并摘掉，别再回调解载中的插件
-                    // 先让渲染线程自己停：不置这个标志的话，WM_DESTROY 之后渲染线程可能还在
-                    // UpdateLayeredWindow 提交一个正在被销毁的窗口（旧版 500ms Join 之后照样释放 DIB）。
+                    // 通知渲染线程停止向正在销毁的窗口提交帧。
                     _shuttingDown = true;
                     ShutdownIslandBackdrop();   // 停掉后台抓屏线程并释放它自己的 GDI 资源
                     Win32.PostQuitMessage(0);   // 走正常退出：让 GetMessage 返回 0，Run() 收尾后 Main 返回
@@ -2788,10 +2778,7 @@ namespace NotchPeninsula
             }
         }
 
-        /// <summary>
-        /// 后备缓冲创建失败时的限频重试。绝不把异常抛回渲染线程：
-        /// 旧版在 TDR/DWM 重置后一次分配失败 = 渲染线程带异常死掉 = 进程终止。
-        /// </summary>
+        /// <summary>后备缓冲创建失败时限频重试，避免渲染线程因分配异常退出。</summary>
         private void RetryInitRenderBuffer()
         {
             long now = Environment.TickCount64;

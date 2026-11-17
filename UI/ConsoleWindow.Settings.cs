@@ -1,10 +1,3 @@
-using System.Drawing.Imaging;
-using System.IO;
-using System.Runtime.InteropServices;
-using SkiaSharp;
-using System.Diagnostics;
-using NotchPeninsula.Plugins;
-
 namespace NotchPeninsula
 {
     public partial class ConsoleWindow
@@ -107,13 +100,8 @@ namespace NotchPeninsula
 
         private const float MAT_SUB_DY = MAT_SEG_Y + 18f;    // 96
 
-        // 尺寸卡：4 行 × 34 + 上下各留 12
-        // 尺寸卡：4 行 × 34 + 上下各留 12 = 150（行的绘制见 RenderTabPersonalize.DrawMultiCard）
-        private const float SIZE_CARD_H = 150f;
-
         // ---- 尺寸卡：三种材质下都固定排最下 ----
         // 实体 / 亚克力挂在「背景透明度」卡后，液态玻璃挂在玻璃参数卡后 ——
-        // 顺序统一成「先把外观调好，最后才是这几个全局尺寸」，不再随材质换位置。
         private static float SIZE_CARD_Y => Renderer.IslandLiquidGlass
             ? GLASS_CARD_Y + GlassCardH + CARD_GAP
             : OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP;

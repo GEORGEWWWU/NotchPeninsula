@@ -57,8 +57,6 @@ namespace NotchPeninsula
         static MediaHotkeys() => ResetToDefaults();
 
         public static string Label(int index) => _labels[index];
-        public static uint Modifiers(int index) => _mods[index];
-        public static int VirtualKey(int index) => _vks[index];
 
         public static bool IsBound(int index) => _vks[index] != 0;
 

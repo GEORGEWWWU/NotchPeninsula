@@ -1,4 +1,3 @@
-using System;
 using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula;
@@ -51,7 +50,7 @@ public partial class ConsoleWindow
     }
 
     /// <summary>拖动中：按鼠标所在行实时重排（只在跨行时写一次设置）。</summary>
-    private void UpdateDisplayDrag(int x, int y)
+    private void UpdateDisplayDrag(int y)
     {
         if (!_displayDragActive || _displayDragKey == null) return;
 

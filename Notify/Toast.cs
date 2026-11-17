@@ -15,14 +15,13 @@ namespace NotchPeninsula
         // 轮询诊断的"上一次状态"。
         private string _lastPollDiag = "";
 
-        // 心跳诊断状态：用来区分两种"静默"——
+        // 心跳诊断用于区分无新通知和轮询停滞。
         private const int HeartbeatRounds = 30;      // ≈60s（轮询 2s 一次）
         private const long SlowPollWarnMs = 3000;    // 单次取快照超过这个耗时就在日志里点出来
         private int _pollRounds;
         private int _lastSnapshotCount = -1;
         private uint _lastSnapshotMaxId;
 
-        //                               "取不到数据"由轮询自己的诊断负责，看门狗只管"有没有在跑"）。
         private long _lastSnapshotUtcTicks;
         private long _lastPollAttemptUtcTicks;
         public long LastSnapshotUtcTicks => System.Threading.Volatile.Read(ref _lastSnapshotUtcTicks);
@@ -32,7 +31,6 @@ namespace NotchPeninsula
         private readonly HashSet<uint> _seenIds = new();
         private readonly Queue<uint> _seenIdOrder = new();
 
-        //       所以"超时"这一个判据只对应"调用挂死"，两者在日志里能区分开。
         private const int PollTimeoutMs = 8000;        // 单次取快照超时
         private const int RecoverRetryMs = 60_000;     // 判定失效后，每 60s 重连一次
         private const int RecoverFailLogMinutes = 10;  // 重连连续失败时，最多每 10 分钟落一条 WARN
@@ -85,7 +83,6 @@ namespace NotchPeninsula
             }
         }
 
-        // 极致性能的轻量级 HTTP 监听
         private void StartHttpServer()
         {
             System.Net.HttpListener? listener = null;

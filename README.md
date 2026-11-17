@@ -184,7 +184,6 @@ NotchPeninsula/
 │   ├── LiveWindowHost.cs             # 实况窗宿主：注册、布局、动画、命中、右键展开态
 │   ├── MediaLiveWindow.cs            # 内置媒体实况窗：3 秒预览 → 收进左侧、封面旋转
 │   ├── NotchWindow.Acrylic.cs        # 原生背板同步及 Windows 10 亚克力兼容路径
-│   ├── UiAlert.cs                    # 极简弹窗（后台线程 MessageBoxW，同 key 一次会话只弹一次）
 │   ├── Win32.cs                      # Win32 API 封装
 │   ├── HotkeyText.cs                 # 快捷键键名格式化与合法性校验（两组全局热键共用）
 │   ├── IslandHotkey.cs               # 「隐藏 / 唤出灵动岛」全局快捷键（单键位）

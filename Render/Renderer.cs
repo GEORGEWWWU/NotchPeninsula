@@ -1,6 +1,4 @@
 using SkiaSharp;
-using System.Drawing.Imaging;
-using System.IO;
 
 namespace NotchPeninsula
 {
@@ -317,21 +315,18 @@ namespace NotchPeninsula
                 float islandLeft = (WINDOW_WIDTH - currentWidth) / 2f;
                 // 岛体物理右边界（背景形状 / 裁剪范围以它为准）
                 float islandRight = islandLeft + currentWidth;
-                // 插件行的位置：
-                //     不单独占用预留区；
-                //     都不会影响原生功能本身。
                 float pluginReserve = toast == null && !CompositeModeEnabled ? GetPluginRowReserve() : 0f;
                 string? nativeBuiltinId = CompositeModeEnabled ? null : GetNativeBuiltinId(media.IsActive && !SuppressMediaInIsland);
                 int nativeOrderIndex = OrderIndexOf(nativeBuiltinId);
-                float leftGroupW = 0f, rightGroupW = 0f;
+                float rightGroupW = 0f;
                 float leftPluginBlock = 0f;
                 float rightPluginBlock = pluginReserve;
                 if (pluginReserve > 0f)
                 {
-                    MeasurePluginSides(nativeOrderIndex, out leftGroupW, out rightGroupW);
+                    MeasurePluginSides(nativeOrderIndex, out float leftGroupW, out rightGroupW);
                     leftPluginBlock = leftGroupW > 0f ? leftGroupW + PLUGIN_GAP : 0f;
                     rightPluginBlock = rightGroupW > 0f ? rightGroupW + PLUGIN_GAP : 0f;
-                    //    原生内容区本来就是空的，没有东西会被负宽度翻面。
+                    // 有原生内容时，限制插件占用宽度以保留原生区域。
                     if (nativeBuiltinId != null)
                     {
                         float totalBlock = leftPluginBlock + rightPluginBlock;
@@ -548,8 +543,6 @@ namespace NotchPeninsula
                         canvas.Restore();
                     }
                 }
-
-                // 下方旧版残留的 _wakePath 绘制代码已彻底删除
 
                 EndContents(canvas, useLayer);   // 1. 裁切 2. 透明层：本体内部渲染到此彻底完结，任何阴影/遮罩随之消失
                 // 独立于本体之外，绘制隐形物理热区与极速渐变唤醒按钮。

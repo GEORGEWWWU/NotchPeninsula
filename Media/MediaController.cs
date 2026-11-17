@@ -2195,12 +2195,11 @@ namespace NotchPeninsula
             if (wantTitle.Length == 0) return 0;
             var wantArtists = SplitArtists(artist);
 
-            string? foundCover = null, foundMid = null;
-            long resultId = 0;
+            string? foundCover, foundMid;
+            long resultId;
 
             void PickBest(bool strictDuration)
             {
-                resultId = 0;
                 foundCover = null;
                 foundMid = null;
                 long id0 = 0;

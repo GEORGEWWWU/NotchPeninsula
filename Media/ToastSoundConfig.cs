@@ -10,7 +10,6 @@ internal static class ToastSoundConfig
 
     internal const string BrowseName = "浏览音频…";
 
-    internal const string SoundFolderName = "data\\sound";
 
     internal const long MaxFileSizeBytes = 2 * 1024 * 1024;
 
@@ -41,11 +40,8 @@ internal static class ToastSoundConfig
     }
 
     private static BuiltinEntry[] _builtins = [];
-    private static string _folder = "";
 
     internal static IReadOnlyList<BuiltinEntry> Builtins => _builtins;
-
-    internal static string SoundFolderPath => _folder;
 
     internal const int BuiltinOffset = 1;
 
@@ -72,7 +68,6 @@ internal static class ToastSoundConfig
         _optionLabelsCache = null;
 
         var byName = new Dictionary<string, BuiltinEntry>(StringComparer.OrdinalIgnoreCase);
-        _folder = "";
 
         // ① exe 内嵌资源：exe 里始终带着的那份内置音。
         foreach (string name in DataResources.ListEmbedded("data/sound", ".wav"))
@@ -95,7 +90,6 @@ internal static class ToastSoundConfig
                     byName[Path.GetFileName(f)] = new BuiltinEntry(f, stem, "");
                 }
 
-                _folder = dir;
                 break; // 找到第一个能用的目录就不再往下找
             }
             catch

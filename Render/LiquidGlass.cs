@@ -1,4 +1,3 @@
-using System;
 using SkiaSharp;
 
 namespace NotchPeninsula
@@ -33,9 +32,7 @@ namespace NotchPeninsula
         // 边缘高光的衰减宽度（越小越贴边）
         public const float RimWidth = 3.2f;
 
-        // ==================== 可调参数（设置页「液态玻璃」卡，9 项） ====================
-
-        // 参数下标：设置页与注册表都按这个顺序走，加参数只需往后追加
+        // 玻璃渲染参数在 _levels 中的下标。
         public const int P_Blur = 0;          // 背景模糊（最影响"清不清晰"）
         public const int P_Refraction = 1;    // 折射强度：边缘把背景掰弯多少
         public const int P_Dispersion = 2;    // 边缘色散：彩虹边
@@ -46,41 +43,15 @@ namespace NotchPeninsula
         public const int P_Frost = 7;         // 玻璃雾度：掺白比例
         public const int P_Brightness = 8;    // 明度
         public const int P_CaptureHz = 9;     // 抓屏刷新间隔（多久读一次屏幕）
-        public const int P_FrameRate = 10;    // 岛体渲染帧率上限（影响整个岛，不只是玻璃）
-        public const int P_Zoom = 11;         // 放大倍率：玻璃整体上把背景放大多少
+        public const int P_Zoom = 10;         // 放大倍率：玻璃整体上把背景放大多少
 
-        public const int ParamCount = 12;
-
-        public static readonly string[] ParamNames =
-        {
-            "背景模糊", "折射强度", "边缘色散", "边缘高光", "玻璃厚度", "透镜感", "饱和度", "玻璃雾度", "明度",
-            "抓屏刷新", "岛体帧率", "放大倍率"
-        };
-
-        public static readonly string[] ParamKeys =
-        {
-            "LiquidGlassBlur", "LiquidGlassRefraction", "LiquidGlassDispersion", "LiquidGlassRim",
-            "LiquidGlassThickness", "LiquidGlassDepth", "LiquidGlassSaturation", "LiquidGlassFrost",
-            "LiquidGlassBrightness", "LiquidGlassCaptureMs", "LiquidGlassFps", "LiquidGlassZoom"
-        };
-
-        // 设置页用的两字简写。一列只有 123px（标签 24 + 滑轨 52 + 档位值 27），
-        // 四字标签会把滑轨挤回 36 以内 —— 那样比排版拥挤更糟。
-        // ParamNames 保留完整名：诊断日志要能和注册表键对得上。
-        public static readonly string[] ParamLabels =
-        {
-            "模糊", "折射", "色散", "高光", "厚度", "透镜", "饱和", "雾度", "明度",
-            "刷新", "帧率", "倍率"
-        };
+        public const int ParamCount = 11;
 
         // 抓屏刷新间隔（ms）：越短越跟手，代价是更频繁地读屏幕
         private static readonly int[] CaptureMsTable = { 1000, 500, 250, 160, 60 };
 
-        // 岛体渲染帧率（fps）→ 帧间隔 ms
-        private static readonly int[] FrameFpsTable = { 30, 60, 90, 120, 144 };
-
         /// <summary>后台抓屏线程的刷新节拍（ms）。</summary>
-        public static int RefreshMs => CaptureMsTable[EffectiveLevel(P_CaptureHz)];
+        public static int RefreshMs => CaptureMsTable[_levels[P_CaptureHz]];
 
         private static volatile int _glassLum;
 
@@ -95,27 +66,6 @@ namespace NotchPeninsula
         /// <summary>亮度是否来自一张真正合成出来的玻璃图（未合成时 _glassLum 是 0，不能当纯黑用）。</summary>
         public static bool HasLuminance => _glassLumOk;
 
-        /// <summary>渲染线程的帧间隔（ms）。渲染循环每帧读一次，所以改完立刻生效。</summary>
-        public static int FrameIntervalMs => 1000 / FrameFpsTable[EffectiveLevel(P_FrameRate)];
-
-        /// <summary>
-        /// 精确帧间隔（毫秒）。<see cref="FrameIntervalMs"/> 用整数除法表达毫秒：144 档会变成 6ms
-        /// （实际 166.7fps）、120 档变 8ms（125fps）—— 标称帧率和真实负载对不上。
-        /// 渲染循环现在按 Stopwatch ticks 排程，用这个精确值，帧率才和设置页写的一致。
-        /// </summary>
-        public static double FrameIntervalMsExact => 1000.0 / FrameFpsTable[EffectiveLevel(P_FrameRate)];
-
-        // 以前「极致」档会把「刷新」「帧率」锁死到最高档（60ms / 144fps）。
-        // 实测这条锁弊大于利：60ms 的 GDI 回读本身要 20ms，等于每三帧就白烧一帧的采集时间，
-        // 观感是"越调极致越卡"。现在两根滑轨全部交给用户自己调，档位只管质量相关的那几项。
-        private static bool IsLockedByQuality(int index) => false;
-
-        /// <summary>该滑轨是否被当前质量档锁在固定值（设置页据此把标签画灰、数值画成强调色）。</summary>
-        public static bool IsLevelLocked(int index)
-            => index >= 0 && index < ParamCount && IsLockedByQuality(index);
-
-        private static int EffectiveLevel(int index) => IsLockedByQuality(index) ? MaxLevel : _levels[index];
-
         /// <summary>某根滑轨 5 个档位各自的显示文本（数值型参数显示具体值，其余显示强弱）。</summary>
         public static string[] ValueTexts(int index)
         {
@@ -123,7 +73,6 @@ namespace NotchPeninsula
             {
                 case P_Blur: return ["无", "2", "4", "6", "10"];
                 case P_CaptureHz: return ["1s", "0.5s", "250ms", "160ms", "60ms"];
-                case P_FrameRate: return ["30", "60", "90", "120", "144"];
                 case P_Zoom: return ["1.0x", "1.08x", "1.18x", "1.32x", "1.5x"];
                 default: return ["最低", "偏低", "标准", "偏高", "最高"];
             }
@@ -132,19 +81,8 @@ namespace NotchPeninsula
         // 所有滑块统一 5 档（0..4），与背景透明度那根滑轨同口径
         public const int MaxLevel = 4;
 
-        // 各档默认值（下标 = 上面的 P_*）：刷新默认 250ms、帧率默认 60fps，都是表中下标 2。
-        // 倍率默认 0（1.0x）：放大是把背板内容整体撑开，边缘会被拉得更假，默认不放大。
-        private static readonly int[] DefaultLevels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0 };
-
-        private static readonly int[] _levels = (int[])DefaultLevels.Clone();
-
-        /// <summary>出厂默认档位（设置页「恢复默认参数」用）。</summary>
-        public static int DefaultLevelOf(int index)
-            => index >= 0 && index < ParamCount ? DefaultLevels[index] : 0;
-
-        // 设置页读的是「实际生效值」：被质量档锁住的两根滑轨直接显示最高档，
-        // 用户拖它也会立刻弹回最高 —— 比"能拖但没反应"清楚。
-        public static int GetLevel(int index) => index >= 0 && index < ParamCount ? EffectiveLevel(index) : 0;
+        // 默认每项取中档，倍率取 1.0x。
+        private static readonly int[] _levels = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0 };
 
         public static void SetLevel(int index, int value)
         {
@@ -167,7 +105,7 @@ namespace NotchPeninsula
 
         private static readonly float[] BrightnessTable = { 0.80f, 0.90f, 1.00f, 1.08f, 1.15f };
 
-        // 放大倍率：1.0 = 原样（不放大），越大越像一块凸透镜。默认 1.18x
+        // 放大倍率默认 1.0x。
         private static readonly float[] ZoomTable = { 1.00f, 1.08f, 1.18f, 1.32f, 1.50f };
 
         public static float Zoom => ZoomTable[_levels[P_Zoom]];
@@ -205,31 +143,17 @@ namespace NotchPeninsula
             }
         }
 
-        // ---- 高斯模糊 ----
-        // ⚠️ _radius 是**背板像素**口径，不是逻辑像素：抓屏被降采样 1/2、1/3 时抽头数不变，
-        // 屏幕上的模糊半径就跟着放大同样倍数（均衡档 4px 实际是 8px），观感是"糊成一团、像折射过头"。
-        // Compose 里按「背板 px / 逻辑 px」把档位半径换算回来，这里只存换算后的值。
+        // Compose 按背板缩放比换算卷积半径，使模糊强度在不同抓屏倍率下保持一致。
         private static int _radius = 4;
 
-        // 档位原始半径（逻辑像素口径 0/2/4/6/10）。初值取默认档下标 2 的表值：
-        // 注册表值恰好等于默认时 SetLevel 会早退，ApplyBlur 根本不会被调用。
+        // 档位原始半径，以逻辑像素为单位。
         private static int _levelRadius = 4;
-
-        // 「高斯模糊」这一档在档位半径之外再加的厚度（逻辑像素）。
-        // 10px 左右在胶囊尺寸下刚好：看得出是磨砂，又还认得出底下是什么。
 
         private static float _sigma = 2.2f;
 
-        public static int BlurRadius => _radius;
-
         private static void SetRadius(int r)
         {
-            // ⚠️ 判"算过没有"必须用 _weightsValid，**不能**用 _weights.Length > 0：
-            //    _weights 的声明初始化就是 new float[7]（全 0），而 _radius 初值 4 又正好等于默认档半径，
-            //    于是静态构造里的 SetRadius(4) 会命中"看起来已经算过"的分支直接返回 —— 权重一项都没赋值。
-            //    BuildBlur 拿全 0 的抽头一卷，整张模糊图被乘成纯黑，玻璃恒等于 tint(0)=45.9（抖动后 45/46），
-            //    且与桌面内容无关；点一次质量档把 imgPerX 换成 0.5/0.33、半径变成 2/3 才会真正重算 ⇒
-            //    「每次启动都是死灰、点一下就好」。这就是那个 bug 的根。
+            // 初始权重全为零，即使半径没变也要计算一次。
             if (r == _radius && _weightsValid) return;
             _radius = r;
             _sigma = r <= 0 ? 0f : r / 2.7f;
@@ -245,85 +169,11 @@ namespace NotchPeninsula
             SetRadius(_levelRadius);
         }
 
-        // ---- 质量档：抓屏倍率 / 色散采样数 / 玻璃层上限 / 刷新间隔 ----
+        // GDI 抓屏按 1/2 采样，DXGI 保持 1:1。
+        public static float CaptureDownscale => 2f;
 
-        private static int _quality = 1;      // 0=流畅 1=均衡 2=精细 3=极致
-
-        public static int Quality
-        {
-            get => _quality;
-            set
-            {
-                int q = value < 0 ? 0 : (value > 3 ? 3 : value);
-                if (q == _quality) return;
-                _quality = q;
-                ApplyQuality();
-            }
-        }
-
-        public static string QualityName => _quality switch { 0 => "流畅", 1 => "均衡", 2 => "精细", _ => "极致" };
-
-        // GDI 抓屏降采样（DXGI 固定 1:1，不受它影响）：
-        // 折射位移要看得出来，不能像亚克力那样糊到 1/12
-        private static float _downscale = 2f;
-
-        public static float CaptureDownscale => _downscale;
-
-        // 玻璃图层分辨率上限：超出后按面积等比降采样。
-        // ⚠️ 这个上限一超，玻璃图就比胶囊小 → 贴图时被放大 → 观感是"展开态整个背景被放大、还糊"。
-        // 展开态 900×400 逻辑 @125% = 1125×500 ≈ 56 万像素，所以默认档必须给到 60 万。
-        // （折叠态 570×40 ≈ 2.8 万，怎么都够 —— 这也是折叠态一直正常的原因。）
-        private static int _maxGlassPixels = 600000;
-
-        // 玻璃图层超采样倍数（只在「极致」档开 2）：SDF 边缘、色散与边缘高光都按双倍分辨率算，
-        // 贴图时再由 Skia 降采样回逻辑尺寸 —— 边缘那圈 1px 的硬折线和色散采样的台阶会一起消失。
-        // 代价是玻璃层像素 ×4（模糊那一步不变），所以只给最高档。
-        private static int _supersample = 1;
-
-        // 色散采样数：7 次（R/G/B 各一整套）或 3 次（每通道只采一次）
-        private static int _samples = 7;
-
-        /// <summary>
-        /// 重新套一遍当前质量档（= 设置页点一次「玻璃质量」）。
-        /// 启动自愈走这条：手动刷新有效、单靠 Invalidate+Expire 无效，差别就在这一步。
-        /// </summary>
-        public static void ReapplyQuality() => ApplyQuality();
-
-        // 质量档只管「抓屏倍率 / 玻璃层上限 / 色散采样数 / 超采样」——
-        // 刷新间隔交给 P_CaptureHz 单独控制，免得两个控件抢同一个数。
-        private static void ApplyQuality()
-        {
-            switch (_quality)
-            {
-                case 0:                       // 流畅：抓屏更糊、色散只采 3 次
-                    _downscale = 3f;
-                    _maxGlassPixels = 200000;
-                    _samples = 3;
-                    _supersample = 1;
-                    break;
-                case 2:                       // 精细：1:1 抓屏 + 全分辨率玻璃层
-                    _downscale = 1f;
-                    _maxGlassPixels = 900000;
-                    _samples = 7;
-                    _supersample = 1;
-                    break;
-                case 3:                       // 极致：1:1 抓屏 + 2× 超采样玻璃层（不设实用上限）
-                    _downscale = 1f;
-                    _maxGlassPixels = 3200000;
-                    _samples = 7;
-                    _supersample = 2;
-                    break;
-                default:                      // 均衡
-                    _downscale = 2f;
-                    _maxGlassPixels = 600000;
-                    _samples = 7;
-                    _supersample = 1;
-                    break;
-            }
-
-            Invalidate();
-            IslandBackdrop.Expire();   // 抓屏倍率变了 → 后台那张背板作废重抓
-        }
+        // 玻璃层超过像素上限时按面积等比降采样。
+        private const int MaxGlassPixels = 600000;
 
         // ==================== 性能护栏 ====================
 
@@ -362,13 +212,6 @@ namespace NotchPeninsula
         private static float _diagSx = float.NaN, _diagSy = float.NaN;
         private static int _diagW = -1;
 
-        // 命中统计：诊断里能直接看到「缓存命中 / 内容未变跳过 / 真重算」的比例
-        private static int _statCache, _statHash, _statBuild;
-
-        public static string Stats => $"重算 {_statBuild} / 内容未变跳过 {_statHash} / 缓存命中 {_statCache}";
-
-        public static void ResetStats() { _statCache = _statHash = _statBuild = 0; }
-
         // 几何微动复用：上一张玻璃多久之前算的，以及允许拉伸贴合的最大尺寸差。
         // 判据见 Compose 里那段说明 —— 只在缓动尾巴这种"每帧差几像素"的场景生效。
         private static long _lastComposeMs;
@@ -384,7 +227,8 @@ namespace NotchPeninsula
         static LiquidGlass()
         {
             ApplyBlur();
-            ApplyQuality();
+            Invalidate();
+            IslandBackdrop.Expire();
         }
 
         // 高斯权重（C++ 版 ComputeGaussianWeights 直译）
@@ -472,17 +316,15 @@ namespace NotchPeninsula
             if (logicalW < 8f || logicalH < 4f) return null;
             if (src.Width < 4f || src.Height < 2f) return null;
 
-            // 超采样：极致档按 2× 分辨率算玻璃层（SDF 边缘 / 色散 / 高光都翻倍），
-            // 贴图时 Skia 再降回逻辑尺寸 —— 几何全部走「玻璃层 px / 逻辑 px」换算，所以只改这里就够。
-            int gw = (int)MathF.Round(src.Width * _supersample);
-            int gh = (int)MathF.Round(src.Height * _supersample);
+            int gw = (int)MathF.Round(src.Width);
+            int gh = (int)MathF.Round(src.Height);
             if (gw < 1) gw = 1;
             if (gh < 1) gh = 1;
 
             float area = (float)gw * gh;
-            if (area > _maxGlassPixels)
+            if (area > MaxGlassPixels)
             {
-                float q = MathF.Sqrt(_maxGlassPixels / area);
+                float q = MathF.Sqrt(MaxGlassPixels / area);
                 gw = Math.Max(1, (int)(gw * q));
                 gh = Math.Max(1, (int)(gh * q));
             }
@@ -497,7 +339,6 @@ namespace NotchPeninsula
                 && MathF.Abs(_keyLw - logicalW) < 0.5f && MathF.Abs(_keyLh - logicalH) < 0.5f
                 && MathF.Abs(_keyRt - rTop) < 0.5f && MathF.Abs(_keyRb - rBottom) < 0.5f)
             {
-                _statCache++;
                 return _glass;
             }
 
@@ -526,12 +367,7 @@ namespace NotchPeninsula
                 int blurLogical = _levelRadius;
                 int radiusNow = Math.Max(0, (int)MathF.Round(blurLogical * MathF.Max(imgPerX, imgPerY)));
 
-                // ── 几何微动时的复用（缓动尾巴 / 插件测宽抖动）──
-                // 宽度与高度都走弹簧缓动，收敛前每一帧 logicalW/H 与裁切窗口都在变，缓存键全不命中，
-                // 于是每帧整层重算（极致档还是 2× 超采样）—— 一次几十毫秒，观感就是"动画一开就掉帧"。
-                // 这里的判据刻意很窄：背板没换、模糊半径没变、尺寸差 ≤10px、距上次重算 ≤30ms。
-                // 满足时把上一张玻璃交给调用方拉伸贴合当前矩形：偏差被运动本身掩盖，
-                // 超过 10px 或 30ms 立刻回到全量重算，不会累积漂移。
+                // 背板和模糊半径未变时，短暂复用上一帧以避免为细微尺寸变化重算玻璃层。
                 long nowMs = 0;
                 if (!transient)
                 {
@@ -542,7 +378,6 @@ namespace NotchPeninsula
                         && MathF.Abs(_keyLh - logicalH) <= ComposeReuseMaxDeltaPx
                         && MathF.Abs(_keyRt - rTop) <= ComposeReuseMaxDeltaPx)
                     {
-                        _statCache++;
                         return _glass;
                     }
                 }
@@ -575,7 +410,6 @@ namespace NotchPeninsula
                     && MathF.Abs(_keyRt - rTop) < 0.5f && MathF.Abs(_keyRb - rBottom) < 0.5f)
                 {
                     _keyVersion = version;   // 内容一致 → 认下这个版本，下一帧连哈希都不用比
-                    _statHash++;
                     return _glass;
                 }
 
@@ -791,16 +625,6 @@ namespace NotchPeninsula
                                 {
                                     AccumSample(blurLocal, bcw, bch, blurStride, baseX, baseY, 1f, 1f, 1f, ref ar, ref ag, ref ab);
                                 }
-                                else if (_samples < 7)
-                                {
-                                    // 流畅档：每通道只采一次（R 前 / G 中 / B 后），色散更糙但省 4 次采样
-                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX + dxi, baseY + dyi,
-                                        1f, 0f, 0f, ref ar, ref ag, ref ab);
-                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX, baseY,
-                                        0f, 1f, 0f, ref ar, ref ag, ref ab);
-                                    AccumSample(blurLocal, bcw, bch, blurStride, baseX - dxi, baseY - dyi,
-                                        0f, 0f, 1f, ref ar, ref ag, ref ab);
-                                }
                                 else
                                 {
                                     // 与 GlassDispersionPS 完全同权：R 1.0 / G 1.0 / B 1.0
@@ -911,7 +735,6 @@ namespace NotchPeninsula
                 _keyCropY = cy0;
                 _keyCropW = cw;
                 _keyCropH = ch;
-                _statBuild++;
                 return bmp;
             }
         }

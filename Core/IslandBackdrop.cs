@@ -79,15 +79,9 @@ namespace NotchPeninsula
         // 本帧背板对应的【屏幕原点】：源矩形换算要用它，不能假定等于请求值（屏幕边界处可能裁掉一截）
         private static volatile int _originX, _originY;
 
-        public static int LastOriginX => _originX;
-
-        public static int LastOriginY => _originY;
-
         // 背板图 1 像素 = 屏幕多少像素（= 1 / 降采样倍数）。
         // 用实际产出图的尺寸反推，而不是用请求值 —— 首帧/边界裁剪时也不会算错源矩形。
         private static volatile float _scale = 1f / Downscale;
-
-        public static float LastScale => _scale > 0f ? _scale : 1f / Downscale;
 
         public static float CurrentDownscale => _glass ? GlassDownscale : Downscale;
 
@@ -210,10 +204,7 @@ namespace NotchPeninsula
 
         private static long _dxgiProbeMs;
 
-        // ---- 内容守卫：抓到的这块到底"有没有东西" ----
-        // 判据只看【玻璃真正采样的那块区域】（= 遮罩区，也就是岛体那块），不看整张背板：
-        // 整图中央可能一直有内容（桌面），而胶囊那块恰好被岛体自己的黑色涂层占着 ——
-        // 那正是「玻璃永远灰 45、点一下质量档才正常」的样子，只看整图会把它判成"正常"。
+        // 只用玻璃实际采样的区域判断背板是否有内容，避免被岛外像素误导。
         private static volatile bool _contentAlive;
 
         private static int _deadStreak;
@@ -227,12 +218,6 @@ namespace NotchPeninsula
         // -1 = 还没打过日志；0 = 上一次打的是"死黑"；1 = "恢复"
         private static int _guardLogged = -1;
 
-        /// <summary>
-        /// 最近一次抓到的玻璃源区域是否有内容（亮度/极差过关）。
-        /// 启动自愈靠它判断"该不该收工"，别在背板还是黑的时候就把自愈机会用掉。
-        /// </summary>
-        public static bool IsContentAlive => _contentAlive;
-
         // 背板从全黑变亮的标记：渲染线程取走它再自己调 LiquidGlass.Invalidate()
         private static volatile bool _glassWake;
 
@@ -244,14 +229,7 @@ namespace NotchPeninsula
             return true;
         }
 
-        // 岛体在【屏幕物理像素】里的矩形（渲染线程每帧写 / 抓屏线程读）：用来把岛体自己那块抹掉。
-        //
-        // ⚠️ 必须记屏幕像素，**不能**记背板图像像素。图像像素要乘 LastScale、减 LastOrigin，
-        //    而这两个值在"本次抓屏落地之前"还是上一张图的 —— 启动首帧正好是默认的 1/12，
-        //    换算出来的遮罩只有 1/12 大小、位置也不对，于是岛体原封不动进了背板。
-        //    玻璃的源矩形又正好是岛体那块 ⇒ 玻璃采到的是自己上一帧的输出（还没画玻璃时是纯黑涂层），
-        //    而玻璃图层铺满同一块 ⇒ 45/46 的灰度成了不动点，永不自愈；只有点一次质量档强制
-        //    Expire + 重建缓冲才跳出来。换算放到 Capture 里用本次的原点与缩放比做，那里没有"上一帧"。
+        // 遮罩保存屏幕物理坐标，由抓屏线程按本次抓屏的原点和缩放比换算，避免采到岛体本身。
         private static volatile float _maskSx0, _maskSy0, _maskSx1, _maskSy1;
 
         // ---- 额外遮罩：实况窗详情页面板 + 左侧实况窗本体 ----
@@ -1144,11 +1122,6 @@ namespace NotchPeninsula
             int version = Interlocked.Increment(ref _version);
             var stale = Interlocked.Exchange(ref _pending, new CapturedFrame(img, x, y, _scale, version, glassMode));
             stale?.Image.Dispose();
-
-            // 桌面从「全黑」变成「有内容」的那一刻必须让玻璃重算一次（TrackContent 里判定）。
-            // 实测启动后十几秒内抓到的都是 (0,0,0)（锁屏/壁纸还没加载完），玻璃就照着黑图生成，
-            // 用户看到的是"启动后玻璃不显示、手动切一次质量档才正常"——切质量做的正是 Invalidate。
-            // ⚠️ 只能置标记：_glass 位图归渲染线程所有，这里 Dispose 会直接 AV。
 
             if (x != _loggedX || y != _loggedY)
             {

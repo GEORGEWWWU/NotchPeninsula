@@ -1,9 +1,4 @@
-using System.Drawing.Imaging;
-using System.IO;
-using System.Runtime.InteropServices;
 using SkiaSharp;
-using System.Diagnostics;
-using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -76,7 +71,7 @@ namespace NotchPeninsula
             // 而且每帧 Render 应该只服务拖动本身。
             if (_displayDragActive)
             {
-                UpdateDisplayDrag(x, y);
+                UpdateDisplayDrag(y);
                 return;
             }
             // 已按下把手、还在等长按判定：保持当前画面，别让底下的 hover 抢先亮。

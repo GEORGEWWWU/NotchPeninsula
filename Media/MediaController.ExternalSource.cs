@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula

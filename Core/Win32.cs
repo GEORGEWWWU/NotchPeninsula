@@ -581,14 +581,10 @@ namespace NotchPeninsula
         private static extern bool CloseHandle(IntPtr hObject);
 
         // ---- 高精度可等待定时器（帧节拍用）----
-        // 普通 Sleep 的精度受系统定时器分辨率限制（默认 15.6ms），所以旧版只能靠
-        // 最后几毫秒 Thread.Yield() 忙等去对齐 144fps 的 6.9ms 网格 —— 那是实打实的
-        // 一个核跑满。CREATE_WAITABLE_TIMER_HIGH_RESOLUTION（Win10 1803+）让内核按
-        // ~0.5ms 唤醒，且**不改系统全局定时器分辨率**，比 timeBeginPeriod(1) 干净。
+        // Windows 10 1803+ 可用高精度定时器，无需改动系统全局定时器分辨率。
         public const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x00000002;
         private const uint TIMER_ALL_ACCESS = 0x001F0003;
         private const uint WAIT_OBJECT_0 = 0x00000000;
-        private const uint INFINITE = 0xFFFFFFFF;
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern IntPtr CreateWaitableTimerExW(IntPtr lpTimerAttributes, string? lpTimerName,
@@ -799,7 +795,7 @@ namespace NotchPeninsula
         public struct RAWMOUSE
         {
             public ushort usFlags;
-            private ushort _padToUnion;
+            private ushort _padToUnion; // 保持原生 RAWMOUSE 联合体的 4 字节对齐。
             public ushort usButtonFlags;
             public ushort usButtonData;
             public uint ulRawButtons;

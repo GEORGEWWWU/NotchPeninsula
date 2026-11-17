@@ -1,8 +1,4 @@
-using System.Drawing.Imaging;
-using System.IO;
-using System.Runtime.InteropServices;
 using SkiaSharp;
-using System.Diagnostics;
 using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
@@ -14,7 +10,7 @@ namespace NotchPeninsula
 
         // 侧边栏单个页签：**只画文字**。选中态的底与蓝色竖条由 DrawTabSelection 单独画 ——
         // 它们是一个整体，要能滑到别的行上去。
-        private void DrawTab(SKCanvas canvas, int index, string label, float yOffset)
+        private void DrawTab(SKCanvas canvas, string label, float yOffset)
         {
             canvas.DrawText(label, 30, TITLE_BAR_HEIGHT + yOffset + 24, _uiTextPaint);
         }
@@ -668,20 +664,20 @@ namespace NotchPeninsula
             DrawTabSelection(canvas);   // 先铺选中块：它在悬停底与文字之下，才不会被盖住
 
             // 个性化中心最上，两条分割线（分割线 = 上一区块最后一行行首 + 42）
-            DrawTab(canvas, 5, "个性化中心", TabRowY(5));
+            DrawTab(canvas, "个性化中心", TabRowY(5));
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, _separatorPaint);
-            DrawTab(canvas, 0, "通用设置", TabRowY(0));
-            DrawTab(canvas, 1, "显示设置", TabRowY(1));
-            DrawTab(canvas, 8, "实况窗管理", TabRowY(8));
-            DrawTab(canvas, 2, "媒体设置", TabRowY(2));
-            DrawTab(canvas, 3, "交互设置", TabRowY(3));
+            DrawTab(canvas, "通用设置", TabRowY(0));
+            DrawTab(canvas, "显示设置", TabRowY(1));
+            DrawTab(canvas, "实况窗管理", TabRowY(8));
+            DrawTab(canvas, "媒体设置", TabRowY(2));
+            DrawTab(canvas, "交互设置", TabRowY(3));
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(3) + 42f, _separatorPaint);
-            DrawTab(canvas, 6, "我的插件", TabRowY(6));
-            DrawTab(canvas, 7, "插件市场", TabRowY(7));
+            DrawTab(canvas, "我的插件", TabRowY(6));
+            DrawTab(canvas, "插件市场", TabRowY(7));
             // 有可更新插件才画角标：数字超 9 显示 9+，与市场页「一键更新」共用同一份计数
             if (MarketUpdateCount > 0) DrawMarketTabBadge(canvas, TITLE_BAR_HEIGHT + TabRowY(7));
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(7) + 42f, _separatorPaint);
-            DrawTab(canvas, 4, "关于软件", TabRowY(4));
+            DrawTab(canvas, "关于软件", TabRowY(4));
 
             DrawExportBundleButton(canvas);
         }
@@ -2242,7 +2238,7 @@ namespace NotchPeninsula
             switch (_marketDialog)
             {
                 case MarketDialog.Detail: DrawDialogDetail(canvas, rect, mp, bodyY); break;
-                case MarketDialog.Rate: DrawDialogRate(canvas, rect, mp, bodyY); break;
+                case MarketDialog.Rate: DrawDialogRate(canvas, rect, bodyY); break;
             }
         }
 
@@ -2295,7 +2291,7 @@ namespace NotchPeninsula
         }
 
         // 评分正文：平均分行 → 五颗星（可点半星）→ 状态行
-        private void DrawDialogRate(SKCanvas canvas, SKRect rect, MarketPlugin mp, float y)
+        private void DrawDialogRate(SKCanvas canvas, SKRect rect, float y)
         {
             string summary = _rateCount > 0 ? $"{FormatScore(_rateAverage)} 分 · {_rateCount} 人评分" : "还没有人评分";
             if (_rateLoading) summary = "正在读取…";

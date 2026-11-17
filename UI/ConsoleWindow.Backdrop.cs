@@ -1,9 +1,5 @@
-using System.Drawing.Imaging;
-using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
-using System.Diagnostics;
-using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -11,6 +7,7 @@ namespace NotchPeninsula
     {
         private IntPtr _backdropHwnd;
         private NativeAcrylic? _nativeConsoleBackdrop;
+        // 持有 WinRT 控制器，确保设置窗口的 Composition 调度队列保持有效。
         private static Windows.System.DispatcherQueueController? _consoleBackdropDispatcher;
         private bool _nativeConsoleBackdropFailed;
         private bool? _consoleAdvancedEffectsEnabled;

@@ -99,8 +99,7 @@ public static class LiveWindowRenderer
     /// 吸附时先长后掐断，出芽时从连着到拉断 —— 掐断那一下才是吸附感，所以它必须是一条
     /// 非线性曲线（钟形），不能跟着位置线性缩放。</para>
     ///
-    /// <para>填色用岛体自己的底色（玻璃就跟着玻璃的色调），描边只描两条腰线：
-    /// 旧版那种「一张嘴 + 粗轮廓」正是看起来像吃了菌子的原因。</para>
+    /// <para>填色跟随岛体材质的色调，描边只画水桥的两条腰线。</para>
     /// </summary>
     private static void DrawLiquidBridge(SKCanvas canvas, in LiveWindowDrawItem item, in RenderTheme theme,
         float global, float t, bool absorbing)
@@ -115,8 +114,6 @@ public static class LiveWindowRenderer
         float girth = BuildLiquidNeck(in item, t, absorbing, r, _neckPath, _lipPath);
         if (girth <= 0f) return;
 
-        // 颈里的液体 = 岛体的材质：实体材质就是实体底色，液态玻璃就跟着玻璃的色调走。
-        // 绝不像旧版那样刷一块不透明底色 —— 玻璃材质下那块「黑袋子」是最出戏的地方。
         _fillPaint.Color = WithOpacity(theme.BackgroundColor, alpha);
         canvas.DrawPath(_neckPath, _fillPaint);
 
@@ -194,14 +191,12 @@ public static class LiveWindowRenderer
         float pdUpY = cy - r * sinPhi, pdDnY = cy + r * sinPhi;
         float pdX = cx + r * cosPhi;
 
-        // 岛体左端是一颗半径 R 的圆帽：颈接在**帽的表面**上。
-        // 接在内部的话，那两条描边会从岛体里长出来，看着像两根灰钩子。
+        // 把水桥接在圆帽表面，避免描边进入岛体。
         float capCx = edgeX + R * 0.96f;             // 圆帽圆心（edgeX 就是岛体左边线）
         float piX = capCx - R * cosPhi;
         float piUpY = cy - R * sinPhi, piDnY = cy + R * sinPhi;
 
-        // 腰身压到 R 的三成左右：两颗圆之间要看得见一根「水丝」，才像水；
-        // 顶到切点高度就成了一张糊死的嘴（旧版就是这个观感）。
+        // 水桥的腰部比两端的连接处窄。
         float neckHalf = MathF.Min(R * 0.30f * girth, R * sinPhi * 0.92f);
         float midUpY = cy - neckHalf, midDnY = cy + neckHalf;
         float cAx = pdX + (piX - pdX) * 0.42f;
@@ -258,8 +253,6 @@ public static class LiveWindowRenderer
         float cx = rect.MidX;
         float cy = rect.MidY;
 
-        // 半径全部按气泡尺寸成比例：气泡直径现在跟宿主高度走（默认约 40），
-        // 之前写死的 -4.5 / -8.5 会把这颗小气泡的环和内容挤没。
         float bandW = Math.Clamp(r * 0.15f, 2.5f, 4.5f);
         // 圆环只保留「进度条 + 内容区」，不再有整个圆盘的底色：
         //   进度条那一圈（contentClipR..r 的环带）就是气泡唯一的实体，材质直接铺在这圈上；
@@ -491,7 +484,7 @@ public static class LiveWindowRenderer
                 SKRect toneSrc = default;
                 bool hasBackdrop = Renderer.AcrylicBackdrop != null
                     && Renderer.TryCanvasToBackdrop(frame.PanelRect, out toneSrc);
-                Renderer.BeginPanelToneGrid(canvas, hasBackdrop ? Renderer.AcrylicBackdrop : null, toneDst, toneSrc);
+                Renderer.BeginPanelToneGrid(hasBackdrop ? Renderer.AcrylicBackdrop : null, toneDst, toneSrc);
 
                 try
                 {

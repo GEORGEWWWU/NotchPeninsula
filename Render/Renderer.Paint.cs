@@ -154,8 +154,6 @@ namespace NotchPeninsula
 
         private static float _toneDstL, _toneDstT, _toneDstW, _toneDstH;
 
-        private static float _toneSrcL, _toneSrcT, _toneSrcW, _toneSrcH;
-
         // 建立网格那一刻的画布矩阵。插件可能自己 Translate/Scale 后再排版，查询时用
         // 「当前矩阵 → 基准矩阵的逆」把文字矩形换回网格坐标系（见 PluginTone）。
         private static SKMatrix _toneBase = SKMatrix.Identity;
@@ -173,8 +171,6 @@ namespace NotchPeninsula
         private static bool _toneUsePanel;
 
         private static float _panelToneDstL, _panelToneDstT, _panelToneDstW, _panelToneDstH;
-
-        private static SKMatrix _panelToneBase = SKMatrix.Identity;
 
         // 面板绘制期间临时切到「面板整体明暗」的全局调色，画完原样还回去。
         private static bool _panelPaletteOverridden;
@@ -199,7 +195,6 @@ namespace NotchPeninsula
         internal static bool PluginTonePanel => _toneUsePanel;
 
         /// <summary>面板网格是否可用（PluginTone 诊断用）。</summary>
-        internal static bool PluginTonePanelReady => _panelToneReady;
 
         /// <summary>元素级判亮阈值：玻璃亮度高于它按浅底（黑字）处理。</summary>
         internal const float PluginToneLightAt = ToneLightAt;
@@ -238,7 +233,6 @@ namespace NotchPeninsula
                 IslandMaterialIndex);
             if (!_toneReady) return;
             _toneDstL = dst.Left; _toneDstT = dst.Top; _toneDstW = dst.Width; _toneDstH = dst.Height;
-            _toneSrcL = src.Left; _toneSrcT = src.Top; _toneSrcW = src.Width; _toneSrcH = src.Height;
             _toneGridAverage = Average(_toneGrid);
         }
 
@@ -246,9 +240,8 @@ namespace NotchPeninsula
         /// 实况窗详情页：面板在岛外、背的是另一块桌面，用自己的亮度建一张同规格的网格。
         /// 采样 / 平滑 / 着色补偿全部复用 <see cref="SampleToneGrid"/>，判定仍走 <see cref="ToneText"/>。
         /// </summary>
-        internal static void BeginPanelToneGrid(SKCanvas canvas, SKImage? backdrop, SKRect dst, SKRect src)
+        internal static void BeginPanelToneGrid(SKImage? backdrop, SKRect dst, SKRect src)
         {
-            _panelToneBase = canvas.TotalMatrix;
             _toneUsePanel = false;
             if (ThemeMode != 2 && IslandMaterialIndex != 0)
             {

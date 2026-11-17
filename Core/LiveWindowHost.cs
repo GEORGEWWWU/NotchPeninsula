@@ -124,10 +124,6 @@ public static class LiveWindowHost
     private const float PanelOpenSeconds = 0.34f;
     private const float PanelCloseSeconds = 0.30f;
 
-    // 与岛体共用同一套弹簧曲线，动效才不会像两个软件拼的。
-    private const double SpringFrequency = 2.65;
-    private const double SpringDecay = 10.8;
-
     private static readonly SKColor DefaultProgressColor = new(0x32, 0xD7, 0x4B);
 
     private sealed class Entry
@@ -532,7 +528,6 @@ public static class LiveWindowHost
 
             int attached = AttachedCountLocked();
             // 每次出生都是「岛体挤出一颗水滴」：起点固定在岛体左缘，再滑到自己的槽位。
-            // 旧版是起点直接等于槽位 + 母圆跟着缩一圈 R/√2，那几个圆一起抽动才是「菌子感」的来源。
             float spawnFrom = _lastIslandLeft + BubbleDiameter * 0.02f;
 
             entry = new Entry
@@ -984,13 +979,13 @@ public static class LiveWindowHost
                 if (_entries[i].ExitElapsed >= ExitSeconds) _entries.RemoveAt(i);
             }
 
-            TickPanelLocked(topY, islandLeft, islandCenterY, diameter, dt);
+            TickPanelLocked(islandCenterY, diameter, dt);
             PublishFrameLocked(bubbleTop, islandLeft, diameter);
             UpdateSizingLocked();
         }
     }
 
-    private static void TickPanelLocked(float topY, float islandLeft, float islandCenterY, float diameter, float dt)
+    private static void TickPanelLocked(float islandCenterY, float diameter, float dt)
     {
         var panel = _panel;
         if (panel == null) return;
@@ -1282,9 +1277,6 @@ public static class LiveWindowHost
         _frame.PanelPage = null;
         _frame.PanelClosing = false;
     }
-
-    private static double SpringEase(double elapsedSeconds)
-        => 1.0 - Math.Cos(SpringFrequency * elapsedSeconds * 2.0 * Math.PI) * Math.Exp(-SpringDecay * elapsedSeconds);
 
     /// <summary>
     /// 吸附曲线：起步慢、后段加速（水滴是被表面张力越抽越快的），末端一拍收住。

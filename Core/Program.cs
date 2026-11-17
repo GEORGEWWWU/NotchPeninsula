@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
-using System.Windows;
-using Microsoft.Win32; // 添加注册表命名空间
+using Microsoft.Win32;
 
 namespace NotchPeninsula
 {

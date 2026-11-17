@@ -8,19 +8,15 @@ internal static class ToastSoundPlayer
 {
     private const int MaxQueue = 4;
 
-    private const int PlayWatchdogMs = 8000;
-
     private static readonly object _lock = new();
     private static readonly Queue<SoundRequest> _queue = new();
     private static Thread? _worker;
-    private static int _queued; // 队列中尚未播放完的数量（含正在播放的），供 UI 判定
 
     private readonly record struct SoundRequest(string Path, string ResourceName, int VolumePercent)
     {
         internal bool FromResource => ResourceName.Length > 0;
     }
 
-    internal static bool IsBusy => Volatile.Read(ref _queued) > 0;
 
     internal static int PendingCount
     {
@@ -68,7 +64,6 @@ internal static class ToastSoundPlayer
         {
             if (_queue.Count >= MaxQueue) return; // 队列满，丢弃（不阻塞调用方）
             _queue.Enqueue(req);
-            Interlocked.Increment(ref _queued);
 
             if (_worker is null || !_worker.IsAlive)
             {
@@ -87,9 +82,7 @@ internal static class ToastSoundPlayer
     {
         lock (_lock)
         {
-            int dropped = _queue.Count;
             _queue.Clear();
-            Interlocked.Add(ref _queued, -dropped);
         }
     }
 
@@ -112,10 +105,6 @@ internal static class ToastSoundPlayer
             catch (Exception ex)
             {
                 Logger.Error("[提示音] 播放异常", ex);
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _queued);
             }
         }
     }

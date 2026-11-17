@@ -26,8 +26,6 @@ namespace NotchPeninsula
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
         }
 
-        private const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001;
-
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern bool EnumDisplayDevices(string? lpDevice, uint iDevNum, ref DISPLAY_DEVICE lpDisplayDevice, uint dwFlags);
 

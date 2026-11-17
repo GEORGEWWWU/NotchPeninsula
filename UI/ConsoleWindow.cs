@@ -2,7 +2,6 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using SkiaSharp;
-using System.Diagnostics;
 using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
@@ -295,8 +294,6 @@ namespace NotchPeninsula
 
         private const float TEXT_INK_MID_OFFSET = 5.5f;
 
-        private const float TEXT_INK_ASCENT = 11f;
-
         private const float ROW_SUB_OFFSET = 20f;
 
         private const float ROW_TEXT_BASELINE_SINGLE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET;   // = 35.5
@@ -304,8 +301,6 @@ namespace NotchPeninsula
         private const float ROW_TEXT_BASELINE = ROW_ANCHOR_Y + TEXT_INK_MID_OFFSET - ROW_SUB_OFFSET / 2f;   // = 25.5
 
         private const float ROW_DROPDOWN_TOP = 14f;
-
-        private const float DROPDOWN_TEXT_BASELINE = 21f;
 
         // ---- 下拉框内文排版：绘制与「框要多宽才不截断」共用同一组量 ----
         // 左内边距（文字起点离框左沿）

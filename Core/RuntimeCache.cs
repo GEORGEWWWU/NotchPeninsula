@@ -1,4 +1,3 @@
-using System;
 using System.IO;
 
 namespace NotchPeninsula
@@ -39,14 +38,6 @@ namespace NotchPeninsula
             var cur = CurrentDir();
             if (cur == null) return null;
             try { return Path.GetDirectoryName(cur); } catch { return null; }
-        }
-
-        /// <summary>整个缓存根目录的占用（字节）。</summary>
-        public static long MeasureRoot()
-        {
-            var root = Root();
-            if (root == null) return 0;
-            try { return MeasureDir(new DirectoryInfo(root)); } catch { return 0; }
         }
 
         /// <summary>清掉「不是当前这次运行」的解包目录，返回（删掉的目录数, 释放字节数）。</summary>

@@ -15,7 +15,6 @@ namespace NotchPeninsula
         private const int CORNER_RADIUS = 8;
         private const int TEXT_LEFT = 16;         // 文字基线左侧起点（相对菜单左边缘）
         private const int CHECK_SLOT = 18;        // 勾选图标占位宽度，保证有无勾选时文字左对齐一致
-        private const int ARROW_SLOT = 18;        // 子菜单箭头占位
         private const float TEXT_SIZE = 13.5f;
         private const float TEXT_TITLE_SIZE = 11.5f;
 
@@ -54,7 +53,6 @@ namespace NotchPeninsula
         }
 
         private readonly List<MenuItem> _items = new();
-        private readonly List<SKColor> _separatorColors = new(); // 与 _items 等长，仅分隔线项有意义
 
         // ---- 窗口与渲染状态 ----
         private IntPtr _hwnd = IntPtr.Zero;
