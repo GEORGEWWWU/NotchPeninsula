@@ -242,8 +242,12 @@ public interface IPluginHost
     // 主题（当前帧快照）
     RenderTheme CurrentTheme { get; }
 
-    // 提醒
+    /// <summary>在岛上显示公开提醒。宿主 MSP 启用时，订阅方可收到提醒的标题和正文。</summary>
     void PostReminder(ReminderData reminder);
+
+    /// <summary>仅在岛上显示提醒，保留普通提醒的样式、图标、时长和点击回调。
+    /// 不触发公开提醒事件，不经宿主通用 MSP 广播，宿主日志不记录提醒内容。</summary>
+    void ShowReminder(ReminderData reminder) => throw new NotSupportedException("当前宿主不支持仅显示提醒。");
 
     string GetSetting(string key, string fallback);
     void SetSetting(string key, string value);

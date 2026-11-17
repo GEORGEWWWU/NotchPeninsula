@@ -469,14 +469,30 @@ public sealed class PluginHost
     }
 
     // ---- 提醒（接现有 Toast 流） ----
+    internal event Action<ToastData>? ReminderDisplayRequested;
     public event Action<ToastData>? ReminderPosted;
 
-    public void PostReminder(ReminderData reminder)
+    public void PostReminder(ReminderData reminder) => PresentReminder(reminder, publish: true, pluginId: null);
+
+    internal void ShowReminder(ReminderData reminder, string pluginId) =>
+        PresentReminder(reminder, publish: false, pluginId: pluginId);
+
+    private void PresentReminder(ReminderData reminder, bool publish, string? pluginId)
     {
         var duration = reminder.Duration;
         if (duration <= TimeSpan.Zero) duration = TimeSpan.FromSeconds(4);
         else if (duration < TimeSpan.FromSeconds(1)) duration = TimeSpan.FromSeconds(1);
         else if (duration > TimeSpan.FromSeconds(60)) duration = TimeSpan.FromSeconds(60);
+
+        var onClick = reminder.OnClick;
+        if (!publish && onClick is { } privateClick)
+        {
+            onClick = () =>
+            {
+                try { privateClick(); }
+                catch (Exception) { Logger.Warn($"[PluginHost] 插件 {pluginId} 的私密提醒点击回调失败"); }
+            };
+        }
 
         var toast = new ToastData
         {
@@ -488,17 +504,23 @@ public sealed class PluginHost
             ProcessName = "PluginReminder",
             NotificationId = (uint)Environment.TickCount,
             Duration = duration,
-            OnClick = reminder.OnClick
+            OnClick = onClick
         };
         string iconSpec = DetachString(reminder.IconPath);
         string avatarSpec = DetachString(reminder.AvatarPath);
 
-        Logger.Info($"[PluginHost] 插件提醒已投递: {toast.Title} — {toast.Body}");
-        ReminderPosted?.Invoke(toast);
+        if (publish)
+            Logger.Info($"[PluginHost] 插件提醒已投递: {toast.Title} — {toast.Body}");
+        else
+            Logger.Info($"[PluginHost] 插件 {pluginId} 已投递私密提醒");
+
+        ReminderDisplayRequested?.Invoke(toast);
+        if (publish)
+            ReminderPosted?.Invoke(toast);
 
         // 头像优先级最高：先起它的解析，让它在预览窗口里更早到位；没头像时才轮得到 icon。
-        ToastIconProvider.ResolveInBackground(avatarSpec, bmp => toast.Avatar = bmp);
-        ToastIconProvider.ResolveInBackground(iconSpec, bmp => toast.CustomIcon = bmp);
+        ToastIconProvider.ResolveInBackground(avatarSpec, bmp => toast.Avatar = bmp, logDetails: publish);
+        ToastIconProvider.ResolveInBackground(iconSpec, bmp => toast.CustomIcon = bmp, logDetails: publish);
     }
 
     internal static string DetachString(string? s)
@@ -935,6 +957,7 @@ public sealed class ScopedPluginHost : IPluginHost
 
     public RenderTheme CurrentTheme => _host.CurrentTheme;
     public void PostReminder(ReminderData reminder) => _host.PostReminder(reminder);
+    public void ShowReminder(ReminderData reminder) => _host.ShowReminder(reminder, _pluginId);
     public string GetSetting(string key, string fallback) => _host.GetSetting(_pluginId, key, fallback);
     public void SetSetting(string key, string value) => _host.SetSetting(_pluginId, key, value);
     public event Action? SettingsChanged

@@ -34,7 +34,9 @@ namespace NotchPeninsula
             ["default"] = "wintoast-icon.png",
         };
 
-        public static SKBitmap? Resolve(string? spec)
+        public static SKBitmap? Resolve(string? spec) => Resolve(spec, logDetails: true);
+
+        private static SKBitmap? Resolve(string? spec, bool logDetails)
         {
             if (string.IsNullOrWhiteSpace(spec))
                 return null;
@@ -47,7 +49,7 @@ namespace NotchPeninsula
                     return cached;
             }
 
-            SKBitmap? bmp = ResolveCore(key);
+            SKBitmap? bmp = ResolveCore(key, logDetails);
 
             lock (_lock)
             {
@@ -69,7 +71,10 @@ namespace NotchPeninsula
             return bmp;
         }
 
-        public static void ResolveInBackground(string? spec, Action<SKBitmap> onResolved)
+        public static void ResolveInBackground(string? spec, Action<SKBitmap> onResolved) =>
+            ResolveInBackground(spec, onResolved, logDetails: true);
+
+        internal static void ResolveInBackground(string? spec, Action<SKBitmap> onResolved, bool logDetails)
         {
             if (string.IsNullOrWhiteSpace(spec))
                 return;
@@ -79,13 +84,14 @@ namespace NotchPeninsula
             {
                 try
                 {
-                    var bmp = Resolve(key);
+                    var bmp = Resolve(key, logDetails);
                     if (bmp != null)
                         onResolved(bmp);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Debug($"[Toast图标] 后台解析异常: {ex.GetType().Name}: {ex.Message}");
+                    if (logDetails)
+                        Logger.Debug($"[Toast图标] 后台解析异常: {ex.GetType().Name}: {ex.Message}");
                 }
             });
         }
@@ -103,7 +109,7 @@ namespace NotchPeninsula
             return s;
         }
 
-        private static SKBitmap? ResolveCore(string spec)
+        private static SKBitmap? ResolveCore(string spec, bool logDetails)
         {
             try
             {
@@ -133,7 +139,7 @@ namespace NotchPeninsula
                 if (spec.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                     spec.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 {
-                    return DownloadAndDecode(spec);
+                    return DownloadAndDecode(spec, logDetails);
                 }
 
                 // 4) 本地文件路径
@@ -153,12 +159,14 @@ namespace NotchPeninsula
                 if (spec.Length >= 64 && IsLikelyBase64(spec))
                     return DecodeBase64(spec);
 
-                Logger.Debug($"[Toast图标] 无法识别的图标描述: {Describe(spec)}");
+                if (logDetails)
+                    Logger.Debug($"[Toast图标] 无法识别的图标描述: {Describe(spec)}");
                 return null;
             }
             catch (Exception ex)
             {
-                Logger.Debug($"[Toast图标] 解析失败 ({Describe(spec)}): {ex.GetType().Name}: {ex.Message}");
+                if (logDetails)
+                    Logger.Debug($"[Toast图标] 解析失败 ({Describe(spec)}): {ex.GetType().Name}: {ex.Message}");
                 return null;
             }
         }
@@ -206,20 +214,22 @@ namespace NotchPeninsula
             return null;
         }
 
-        private static SKBitmap? DownloadAndDecode(string url)
+        private static SKBitmap? DownloadAndDecode(string url, bool logDetails)
         {
             try
             {
                 using var resp = _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
                 if (!resp.IsSuccessStatusCode)
                 {
-                    Logger.Debug($"[Toast图标] 下载失败 HTTP {(int)resp.StatusCode}: {Describe(url)}");
+                    if (logDetails)
+                        Logger.Debug($"[Toast图标] 下载失败 HTTP {(int)resp.StatusCode}: {Describe(url)}");
                     return null;
                 }
 
                 if (resp.Content.Headers.ContentLength is long declared && declared > MAX_BYTES)
                 {
-                    Logger.Debug($"[Toast图标] 图片过大({declared} 字节)，已跳过: {Describe(url)}");
+                    if (logDetails)
+                        Logger.Debug($"[Toast图标] 图片过大({declared} 字节)，已跳过: {Describe(url)}");
                     return null;
                 }
 
@@ -231,7 +241,8 @@ namespace NotchPeninsula
                 {
                     if (ms.Length + read > MAX_BYTES)
                     {
-                        Logger.Debug($"[Toast图标] 图片超过 {MAX_BYTES} 字节上限，已放弃: {Describe(url)}");
+                        if (logDetails)
+                            Logger.Debug($"[Toast图标] 图片超过 {MAX_BYTES} 字节上限，已放弃: {Describe(url)}");
                         return null;
                     }
                     ms.Write(buffer, 0, read);
@@ -242,7 +253,8 @@ namespace NotchPeninsula
             }
             catch (Exception ex)
             {
-                Logger.Debug($"[Toast图标] 下载异常 ({Describe(url)}): {ex.GetType().Name}: {ex.Message}");
+                if (logDetails)
+                    Logger.Debug($"[Toast图标] 下载异常 ({Describe(url)}): {ex.GetType().Name}: {ex.Message}");
                 return null;
             }
         }

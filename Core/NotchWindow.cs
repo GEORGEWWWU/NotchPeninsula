@@ -539,7 +539,7 @@ namespace NotchPeninsula
             _notifyIcon.Visible = true;
             Debug($"初始音量读取完成，当前音量：{audio.Volume:F2}");
             audio.VolumeSink = _media.TrySyncVolumeToJustSolo;
-            PluginManager.Instance.Host.ReminderPosted += OnPluginReminder;
+            PluginManager.Instance.Host.ReminderDisplayRequested += OnPluginReminder;
             PluginManager.Instance.Initialize();
             _ = InitializeListenerAsync();
 

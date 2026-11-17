@@ -49,7 +49,8 @@ NotchPeninsula 在屏幕顶部显示一条「灵动岛」。岛上的原生内�
 |---|---|
 | 在岛上放一段内容 | `host.RegisterWidget(new MyWidget())` |
 | 每 N 秒后台刷一次数据 | `host.ScheduleRefresh(...)` |
-| 弹一条几秒的提示 | `host.PostReminder(...)` |
+| 只在岛上弹一条提示 | `host.ShowReminder(...)`（见 [8.2](#82-提醒)） |
+| 弹出提示并发布公开提醒事件 | `host.PostReminder(...)`（见 [8.2](#82-提醒)） |
 | 记住用户的设置 | `host.GetSetting / SetSetting` |
 | 开一个自己的小窗口 | `host.CreateWindow(...)` |
 | 展开 / 收起详情页 | `host.OpenDetailPage / CloseDetailPage` |
@@ -368,7 +369,7 @@ public sealed class HelloPlugin : INotchPlugin, IDisposable
         });
 
         // 3) 证明自己活着
-        host.PostReminder(new ReminderData
+        host.ShowReminder(new ReminderData
         {
             Title = "Hello 插件已加载",
             Body = "灵动岛上多了一个圆点，点它可以切换",
@@ -885,17 +886,30 @@ timer.Dispose();   // 停止
 
 ### 8.2 提醒
 
+两个方法都使用相同的岛内通知样式、动画、提示音、图标、停留时长和点击处理，并遵循宿主的通知显示开关。
+
+| 调用 | 对外分发 | 宿主日志 |
+|---|---|---|
+| `host.ShowReminder(reminder)` | 仅在岛上显示，不触发公开的 `ReminderPosted` 事件，不进入宿主通用 MSP 通知广播 | 仅记录插件 ID 和投递状态。图标解析和点击回调失败时也不会写入可能含私密内容的诊断细节 |
+| `host.PostReminder(reminder)` | 在岛上显示并触发 `ReminderPosted`。宿主 MSP 启用时，订阅 `notify.notchpeninsula.reminder.raised` 的程序可收到来源、标题和正文 | 沿用公开提醒的标题和正文日志 |
+
+手机短信、验证码等内容用 `ShowReminder`。下面的示例假设 `messageText` 是插件收到的短信正文。
+
 ```csharp
-host.PostReminder(new ReminderData
+host.ShowReminder(new ReminderData
 {
-    Title = "下载完成",
-    Body = "3 个文件已就绪",
+    Source = "消息同步推送",
+    Title = "收到手机短信",
+    Body = messageText,
     Duration = TimeSpan.FromSeconds(6),   // 可选
     IconPath = "qq",                      // 可选
-    AvatarPath = "https://example.com/a.png",  // 可选，优先级高于 IconPath
     OnClick = () => host.TryOpenDetailPage("com.example.hello.widget"),  // 可选
 });
 ```
+
+如果插件还要让「通知中心」读取消息，可以在用户开启共享后，通过插件自己的 MSP 接口校验密钥，再提供应用名、包名、分类、图标和正文。岛上显示始终可以使用 `ShowReminder`。宿主仍需读取提醒内容来绘制，接口约定仅覆盖宿主的提醒分发和日志。若填写远程图标或头像 URL，宿主仍会请求该图片，URL 应只包含取图所需的信息。
+
+已有插件可继续调用 `PostReminder`。调用 `ShowReminder` 需要引用包含该方法的宿主程序集，并运行在支持该方法的宿主版本上。对旧宿主提供兼容模式时，私密消息应留在插件自己的界面。
 
 | 字段 | 说明 |
 |---|---|
@@ -1469,7 +1483,8 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 注册 | `RegisterSettingsPage(ISettingsPage)` | **未开放** |
 | 注册 | `IDisposable RegisterLiveWindow(ILiveWindow)` | 开放（见 [8.7](#87-实况窗live-window)） |
 | 主题 | `RenderTheme CurrentTheme` | 开放 |
-| 提醒 | `PostReminder(ReminderData)` | 开放 |
+| 提醒 | `ShowReminder(ReminderData)` | 开放（仅岛内显示，见 [8.2](#82-提醒)） |
+| 提醒 | `PostReminder(ReminderData)` | 开放（公开提醒，见 [8.2](#82-提醒)） |
 | 设置 | `GetSetting(key, fallback)` / `SetSetting(key, value)` / `event SettingsChanged` | 开放 |
 | 刷新 | `IDisposable ScheduleRefresh(TimeSpan, Action)` | 开放 |
 | 交互 | `RequestRedraw()` | 空操作 |
