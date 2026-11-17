@@ -40,6 +40,10 @@ internal sealed partial class NativeAcrylic : IDisposable
     private (Vector2 Offset, Vector2 Size, IslandOutline Outline)? _path;
     private float _opacity = 1f;
     private bool _visible;
+    private (int X, int Y, int Width, int Height, Vector2 Offset, Vector2 Size, IslandOutline Outline,
+        bool Capsule, float Opacity, bool Glass, float Blur, float Dpi, Vector2 CanvasOrigin)? _lastPresentation;
+    private readonly GlassMaterial.Region[] _lastLiveRegions = new GlassMaterial.Region[LiveWindowHost.MaxItems + 1];
+    private int _lastLiveRegionCount;
 
     internal NativeAcrylic()
     {
@@ -87,15 +91,29 @@ internal sealed partial class NativeAcrylic : IDisposable
         bool glass, float dpi, ReadOnlySpan<GlassMaterial.Region> liveRegions, Vector2 canvasOrigin)
     {
         var bounds = (x, y, width, height);
+        float blurAmount = glass ? GlassMaterial.BlurAmount : 0f;
+        var presentation = (x, y, width, height, offset, size, outline, capsule, opacity, glass, blurAmount, dpi, canvasOrigin);
+        bool needsRestack = !_visible || GetWindow(foreground, NextWindow) != _window;
+        if (!needsRestack && _lastPresentation == presentation
+            && liveRegions.SequenceEqual(_lastLiveRegions.AsSpan(0, _lastLiveRegionCount))) return;
+
         bool resized = width != _bounds.Width || height != _bounds.Height;
         if (resized)
         {
-            _root!.Size = _visual!.Size = new Vector2(width, height);
+            _root!.Size = new Vector2(width, height);
         }
+        // The window also hosts live panels. Keep the main brush at the island's
+        // actual size so its Gaussian effect does not cover the combined canvas.
+        float flare = outline.Flare;
+        var visualSize = new Vector2(size.X + 2f * flare, size.Y);
+        var visualOffset = new Vector3(offset.X - flare, offset.Y, 0f);
+        if (_visual!.Size != visualSize) _visual.Size = visualSize;
+        if (_visual.Offset != visualOffset) _visual.Offset = visualOffset;
+        var localOffset = new Vector2(flare, 0f);
         if (capsule)
         {
             if (_geometry!.Size != size) _geometry.Size = size;
-            if (_geometry.Offset != offset) _geometry.Offset = offset;
+            if (_geometry.Offset != localOffset) _geometry.Offset = localOffset;
             if (outline.Bottom != _radius)
             {
                 _geometry.CornerRadius = new Vector2(outline.Bottom);
@@ -107,14 +125,13 @@ internal sealed partial class NativeAcrylic : IDisposable
                 _path = null;
             }
         }
-        else if (_path != (offset, size, outline))
+        else if (_path != (localOffset, size, outline))
         {
             _pathGeometry ??= _compositor!.CreatePathGeometry();
-            _pathGeometry.Path = new CompositionPath(new AcrylicClipGeometry(offset.X, offset.Y, size.X, size.Y, outline));
+            _pathGeometry.Path = new CompositionPath(new AcrylicClipGeometry(localOffset.X, localOffset.Y, size.X, size.Y, outline));
             if (_path == null) _clip!.Geometry = _pathGeometry;
-            _path = (offset, size, outline);
+            _path = (localOffset, size, outline);
         }
-        float blurAmount = glass ? GlassMaterial.BlurAmount : 0f;
         var backdrop = SelectBackdrop(blurAmount);
         if (_appliedBackdrop != backdrop)
         {
@@ -134,7 +151,6 @@ internal sealed partial class NativeAcrylic : IDisposable
         PresentLiveGlass(liveRegions, canvasOrigin, dpi, backdrop, coverage);
         // This HWND only renders the backdrop. Keep it behind the input HWND,
         // without resetting its Z-order on each animated size/position update.
-        bool needsRestack = !_visible || GetWindow(foreground, NextWindow) != _window;
         if (needsRestack || bounds != _bounds)
         {
             uint flags = Win32.SWP_NOACTIVATE;
@@ -146,6 +162,9 @@ internal sealed partial class NativeAcrylic : IDisposable
             _bounds = bounds;
             _visible = true;
         }
+        _lastPresentation = presentation;
+        liveRegions.CopyTo(_lastLiveRegions);
+        _lastLiveRegionCount = liveRegions.Length;
     }
 
     internal void Hide()

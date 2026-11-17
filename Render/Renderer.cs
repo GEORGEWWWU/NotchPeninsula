@@ -281,14 +281,23 @@ namespace NotchPeninsula
 
         public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
         {
+            SKRectI previous = canvas.DeviceClipBounds;
+            DrawWithDamage(canvas, media, isHovered, currentWidth, currentHeight, startupProgress, bars, toast,
+                styleProgress, transitionAlpha, ref previous, out _);
+        }
+
+        internal static void DrawWithDamage(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth,
+            float currentHeight, float startupProgress, float[]? bars, ToastData? toast, float styleProgress,
+            float transitionAlpha, ref SKRectI previous, out SKRectI damage)
+        {
+            damage = default;
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
+            int saveCount = canvas.SaveCount;
             try
             {
                 // 本帧频谱留给 LiveWindowRenderer 用：实况窗详情页复用的就是主岛那块媒体面板，
                 // 右边那组律动条必须和岛内是同一份数据。
                 _lastBars = bars;
-
-                canvas.Clear(SKColors.Transparent);
 
                 SetHitTestHeight(currentHeight);
 
@@ -338,6 +347,38 @@ namespace NotchPeninsula
 
                 // 实况窗：独立于主岛、画在岛体左侧，每帧先算布局与动画（插件 GetVisual 也在这里被调）。
                 LiveWindowHost.Tick(topY, islandLeft, currentWidth, currentHeight);
+
+                var full = canvas.DeviceClipBounds;
+                var frame = LiveWindowHost.Frame;
+                var paintBounds = full;
+                var logicalMatrix = canvas.TotalMatrix;
+                if (frame.Count == 0 && !frame.PanelVisible)
+                {
+                    // Live window plugins can paint beyond the island. Keep their full canvas.
+                    float center = (islandLeft + islandRight) / 2f;
+                    float flare = IslandOutline.Create(currentHeight, styleProgress).Flare;
+                    float overhang = Math.Max(0f, (WAKE_BTN_SIZE - currentHeight) / 2f);
+                    var bounds = logicalMatrix.MapRect(new SKRect(
+                        Math.Min(islandLeft - flare, center - WAKE_BTN_SIZE / 2f),
+                        topY - overhang,
+                        Math.Max(islandRight + flare, center + WAKE_BTN_SIZE / 2f),
+                        topY + currentHeight + overhang));
+                    paintBounds = new SKRectI(
+                        Math.Max(full.Left, (int)MathF.Floor(bounds.Left) - 3),
+                        Math.Max(full.Top, (int)MathF.Floor(bounds.Top) - 3),
+                        Math.Min(full.Right, (int)MathF.Ceiling(bounds.Right) + 3),
+                        Math.Min(full.Bottom, (int)MathF.Ceiling(bounds.Bottom) + 3));
+                }
+                // Include the previous outline so shrinking never leaves stale pixels.
+                damage = previous.IsEmpty ? paintBounds : new SKRectI(
+                    Math.Min(previous.Left, paintBounds.Left), Math.Min(previous.Top, paintBounds.Top),
+                    Math.Max(previous.Right, paintBounds.Right), Math.Max(previous.Bottom, paintBounds.Bottom));
+                previous = paintBounds;
+                canvas.Save();
+                canvas.ResetMatrix();
+                canvas.ClipRect(new SKRect(damage.Left, damage.Top, damage.Right, damage.Bottom));
+                canvas.Clear(SKColors.Transparent);
+                canvas.SetMatrix(logicalMatrix);
 
                 canvas.Save();
                 // 整个画布向下平移，让内部所有元素自动完美适应居中
@@ -520,6 +561,7 @@ namespace NotchPeninsula
             }
             finally
             {
+                canvas.RestoreToCount(saveCount);
                 // 本帧的命中几何到此才是完整的：整体发布给输入线程。
                 PublishHitZones();
                 Monitor.Exit(_renderLock);

@@ -334,6 +334,24 @@ namespace NotchPeninsula
             IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize,
             IntPtr hdcSrc, ref POINT pprSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
 
+        [StructLayout(LayoutKind.Sequential)]
+        internal unsafe struct LayeredWindowUpdate
+        {
+            internal uint Size;
+            internal IntPtr DestinationDc;
+            internal POINT* Destination;
+            internal SIZE* WindowSize;
+            internal IntPtr SourceDc;
+            internal POINT* Source;
+            internal uint ColorKey;
+            internal BLENDFUNCTION* Blend;
+            internal uint Flags;
+            internal RECT* Dirty;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool UpdateLayeredWindowIndirect(IntPtr hwnd, ref LayeredWindowUpdate info);
+
         [DllImport("msimg32.dll", SetLastError = true)]
         public static extern bool AlphaBlend(
             IntPtr hdcDest, int xoriginDest, int yoriginDest, int wDest, int hDest,
