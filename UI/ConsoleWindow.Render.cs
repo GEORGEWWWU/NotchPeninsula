@@ -1531,10 +1531,11 @@ namespace NotchPeninsula
 
             canvas.DrawText("刘海 / 灵动岛主题", CONTENT_TEXT_X, themeY + 26, _uiTextPaint);
             // 「副标题」专指主标题下面这一行，统一灰色；它不属于状态说明。
-            canvas.DrawText("背景与文本颜色自适应反转", CONTENT_TEXT_X, themeY + 46, _subTextPaint);
+            canvas.DrawText(Renderer.IslandLiquidGlass ? "自动按玻璃背景亮度切换文字颜色" : "可固定黑白或跟随系统主题",
+                CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
             DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
-                ["黑", "白", "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
+                ["黑", "白", Renderer.IslandLiquidGlass ? "自动" : "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
 
             // 第二行：背景材质（独立选项，与主题配色互不影响）
             canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + MAT_TITLE_DY, _uiTextPaint);

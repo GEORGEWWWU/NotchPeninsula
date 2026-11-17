@@ -432,14 +432,18 @@ namespace NotchPeninsula
                 }
 
                 BeginToneGrid(canvas, backdrop, destination, source);
-                if (glassDrawn && LiquidGlass.HasLuminance)
-                    UpdateGlassTextTone(LiquidGlass.GlassLuminance, true);
-                else if ((IslandAcrylic || glass) && PluginToneReady)
-                    UpdateGlassTextTone((int)MathF.Round(ToneGridAverage * 255f), true);
+                if (glass && ThemeMode == 2)
+                {
+                    bool hasGlassTone = glassDrawn && LiquidGlass.HasLuminance;
+                    UpdateGlassTextTone(hasGlassTone ? LiquidGlass.GlassLuminance
+                        : (int)MathF.Round(ToneGridAverage * 255f), hasGlassTone || (backdrop != null && PluginToneReady));
+                }
                 if (glass && !glassDrawn)
                     GlassMaterial.DrawCoating(canvas, _bgPath, _paletteIsLight, 1f, GlassMaterial.BackdropReady,
                         interactiveIsland: FullHideAlpha >= 0.99f
                             && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake));
+                else if (glass && ThemeMode != 2)
+                    GlassMaterial.DrawManualThemeTint(canvas, _bgPath, _paletteIsLight);
                 else if (!glass)
                     canvas.DrawPath(_bgPath, _bgPaint);
 

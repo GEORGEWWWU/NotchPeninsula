@@ -99,6 +99,17 @@ namespace NotchPeninsula
         /// <param name="valid">这个亮度是否来自一张真正合成出来的玻璃图。</param>
         internal static void UpdateGlassTextTone(int lum, bool valid)
         {
+            if (!IslandLiquidGlass || ThemeMode != 2) return;
+            if (!valid)
+            {
+                if (_glassTextKnown)
+                {
+                    _glassTextKnown = false;
+                    _glassLumSmooth = 0.5f;
+                    ApplyThemeColors();
+                }
+                return;
+            }
             if (valid)
             {
                 float t = lum <= 0 ? 0f : (lum >= 255 ? 1f : lum / 255f);
@@ -239,6 +250,13 @@ namespace NotchPeninsula
         {
             _panelToneBase = canvas.TotalMatrix;
             _toneUsePanel = false;
+            if (ThemeMode != 2 && IslandMaterialIndex != 0)
+            {
+                _panelToneReady = false;
+                _panelTonePrimed = false;
+                _toneUsePanel = true;
+                return;
+            }
             _panelToneReady = SampleToneGrid(backdrop, dst, src, _panelToneGrid, _panelToneGridPrev,
                 ref _panelTonePrimed, IslandMaterialIndex);
             if (!_panelToneReady)
@@ -311,6 +329,7 @@ namespace NotchPeninsula
             // primed 表示「上一帧已经有网格」；先取出来再清，否则下面的插值永远走不到。
             bool hadPrev = primed;
             primed = false;
+            if (material != 0 && ThemeMode != 2) return false;
             if (dst.Width < 4f || dst.Height < 4f) return false;
 
             if (material == 0 || (material == 2 && backdrop == null))
@@ -490,7 +509,7 @@ namespace NotchPeninsula
         {
             int material = IslandMaterialIndex;
             bool isLight = ThemeMode == 1 || (ThemeMode == 2 && SystemIsLightTheme);
-            if (material == 1 && _glassTextKnown)
+            if (material == 2 && ThemeMode == 2 && _glassTextKnown)
                 isLight = _glassTextIsLight;
 
             byte bgAlpha = (byte)(BgOpacityLevel * (material == 1 ? 140 : 255) / 4);
