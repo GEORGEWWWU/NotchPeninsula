@@ -47,6 +47,20 @@ namespace NotchPeninsula
         public static float NOTCH_BOTTOM_RADIUS { get => _notchBottomRadius; set => _notchBottomRadius = value; }
 
         private static int _themeMode = 0; // 0=黑, 1=白, 2=跟随系统
+        private static long _lastGlassErrorMs = -5000;
+
+        // Older Windows 10 builds interpret EXCLUDEFROMCAPTURE as a black
+        // capture region. The legacy eraser handles those builds instead.
+        internal static bool SetCaptureHide(bool hide)
+        {
+            if (hide && (!IslandLiquidGlass || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)))
+                return false;
+            var hwnd = NotchWindow.InstanceHandle;
+            return hwnd != IntPtr.Zero && Win32.SetWindowDisplayAffinity(hwnd,
+                hide ? Win32.WDA_EXCLUDEFROMCAPTURE : Win32.WDA_NONE);
+        }
+
+        internal static void EnsureVisibleInCapture() => SetCaptureHide(false);
 
         public static int ThemeMode
         {
@@ -281,23 +295,14 @@ namespace NotchPeninsula
 
         public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
         {
-            SKRectI previous = canvas.DeviceClipBounds;
-            DrawWithDamage(canvas, media, isHovered, currentWidth, currentHeight, startupProgress, bars, toast,
-                styleProgress, transitionAlpha, ref previous, out _);
-        }
-
-        internal static void DrawWithDamage(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth,
-            float currentHeight, float startupProgress, float[]? bars, ToastData? toast, float styleProgress,
-            float transitionAlpha, ref SKRectI previous, out SKRectI damage)
-        {
-            damage = default;
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
-            int saveCount = canvas.SaveCount;
             try
             {
                 // 本帧频谱留给 LiveWindowRenderer 用：实况窗详情页复用的就是主岛那块媒体面板，
                 // 右边那组律动条必须和岛内是同一份数据。
                 _lastBars = bars;
+
+                canvas.Clear(SKColors.Transparent);
 
                 SetHitTestHeight(currentHeight);
 
@@ -348,38 +353,6 @@ namespace NotchPeninsula
                 // 实况窗：独立于主岛、画在岛体左侧，每帧先算布局与动画（插件 GetVisual 也在这里被调）。
                 LiveWindowHost.Tick(topY, islandLeft, currentWidth, currentHeight);
 
-                var full = canvas.DeviceClipBounds;
-                var frame = LiveWindowHost.Frame;
-                var paintBounds = full;
-                var logicalMatrix = canvas.TotalMatrix;
-                if (frame.Count == 0 && !frame.PanelVisible)
-                {
-                    // Live window plugins can paint beyond the island. Keep their full canvas.
-                    float center = (islandLeft + islandRight) / 2f;
-                    float flare = IslandOutline.Create(currentHeight, styleProgress).Flare;
-                    float overhang = Math.Max(0f, (WAKE_BTN_SIZE - currentHeight) / 2f);
-                    var bounds = logicalMatrix.MapRect(new SKRect(
-                        Math.Min(islandLeft - flare, center - WAKE_BTN_SIZE / 2f),
-                        topY - overhang,
-                        Math.Max(islandRight + flare, center + WAKE_BTN_SIZE / 2f),
-                        topY + currentHeight + overhang));
-                    paintBounds = new SKRectI(
-                        Math.Max(full.Left, (int)MathF.Floor(bounds.Left) - 3),
-                        Math.Max(full.Top, (int)MathF.Floor(bounds.Top) - 3),
-                        Math.Min(full.Right, (int)MathF.Ceiling(bounds.Right) + 3),
-                        Math.Min(full.Bottom, (int)MathF.Ceiling(bounds.Bottom) + 3));
-                }
-                // Include the previous outline so shrinking never leaves stale pixels.
-                damage = previous.IsEmpty ? paintBounds : new SKRectI(
-                    Math.Min(previous.Left, paintBounds.Left), Math.Min(previous.Top, paintBounds.Top),
-                    Math.Max(previous.Right, paintBounds.Right), Math.Max(previous.Bottom, paintBounds.Bottom));
-                previous = paintBounds;
-                canvas.Save();
-                canvas.ResetMatrix();
-                canvas.ClipRect(new SKRect(damage.Left, damage.Top, damage.Right, damage.Bottom));
-                canvas.Clear(SKColors.Transparent);
-                canvas.SetMatrix(logicalMatrix);
-
                 canvas.Save();
                 // 整个画布向下平移，让内部所有元素自动完美适应居中
                 canvas.Translate(0, topY);
@@ -415,11 +388,12 @@ namespace NotchPeninsula
                 _bgPath.Close();
 
                 bool glass = IslandLiquidGlass;
-                var backdrop = IslandAcrylic ? AcrylicBackdrop : null;
+                var backdrop = IslandAcrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
                 UpdateBackdropCanvasMapping(backdrop != null, islandLeft, currentWidth, currentHeight, source);
 
+                bool glassDrawn = false;
                 if (backdrop != null)
                 {
                     float flare = Math.Max(0f, -rTopX);
@@ -427,19 +401,46 @@ namespace NotchPeninsula
                     acrylicSource.Inflate(flare * source.Width / Math.Max(1f, currentWidth), 0f);
                     canvas.Save();
                     canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-                    canvas.DrawImage(backdrop, acrylicSource,
-                        new SKRect(islandLeft - flare, 0f, islandRight + flare, currentHeight), _acrylicPaint);
+                    var expanded = new SKRect(islandLeft - flare, 0f, islandRight + flare, currentHeight);
+                    SKBitmap? refracted = null;
+                    if (glass)
+                    {
+                        try
+                        {
+                            refracted = LiquidGlass.Compose(backdrop, GlassMaterial.BackdropVersion, acrylicSource,
+                                expanded.Width, currentHeight, flare > 0f ? 0f : Math.Max(1f, rTopY),
+                                Math.Max(1f, rBottom), flare, rTopY, flare > 0.25f && styleProgress < 0.02f);
+                        }
+                        catch (Exception ex)
+                        {
+                            LiquidGlass.Invalidate();
+                            long now = Environment.TickCount64;
+                            if (now - _lastGlassErrorMs >= 5000)
+                            {
+                                _lastGlassErrorMs = now;
+                                Logger.Error("[液态玻璃] 折射合成失败，使用原始背板", ex);
+                            }
+                        }
+                    }
+                    if (refracted != null)
+                    {
+                        canvas.DrawBitmap(refracted, expanded, _acrylicPaint);
+                        glassDrawn = true;
+                    }
+                    else canvas.DrawImage(backdrop, acrylicSource, expanded, _acrylicPaint);
                     canvas.Restore();
                 }
 
                 BeginToneGrid(canvas, backdrop, destination, source);
-                if (IslandAcrylic && PluginToneReady)
+                if (glassDrawn && LiquidGlass.HasLuminance)
+                    UpdateGlassTextTone(LiquidGlass.GlassLuminance, true);
+                else if ((IslandAcrylic || glass) && PluginToneReady)
                     UpdateGlassTextTone((int)MathF.Round(ToneGridAverage * 255f), true);
-                if (glass)
+                if (glass && !glassDrawn)
                     GlassMaterial.DrawCoating(canvas, _bgPath, _paletteIsLight, 1f, GlassMaterial.BackdropReady,
                         interactiveIsland: FullHideAlpha >= 0.99f
                             && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake));
-                else
+                else if (!glass)
                     canvas.DrawPath(_bgPath, _bgPaint);
 
                 canvas.Save();
@@ -561,7 +562,6 @@ namespace NotchPeninsula
             }
             finally
             {
-                canvas.RestoreToCount(saveCount);
                 // 本帧的命中几何到此才是完整的：整体发布给输入线程。
                 PublishHitZones();
                 Monitor.Exit(_renderLock);

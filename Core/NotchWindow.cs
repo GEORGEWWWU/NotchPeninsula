@@ -564,9 +564,6 @@ namespace NotchPeninsula
         private long _lastBufferRetryMs;
 
         private byte[]? _uploadBaseline;        // 上一次真正提交给 DWM 的像素（用于跳过重复上传）
-        private SKRectI _foregroundPaintBounds;
-        private SKRectI _pendingForegroundDamage;
-        private bool _partialUploadUnavailable;
         private int _uploadBaseW, _uploadBaseH, _uploadBaseX, _uploadBaseY;
         private long _uploadBaseTick;
         private long _lastUploadWarnMs;
@@ -582,7 +579,7 @@ namespace NotchPeninsula
                 Renderer.AcrylicBackdrop = null;
                 _acrylicOwned?.Dispose();
                 GlassMaterial.BackdropReady = false;
-                GlassMaterial.LiveBackdropReady = false;
+                if (_legacyCaptureGlass) LiquidGlass.Invalidate();
             }
         }
 
@@ -1623,7 +1620,6 @@ namespace NotchPeninsula
 
             // 亚克力背板：与胶囊同口径抓一次（几何没变就什么都不做），本帧绘制直接用
             SyncIslandBackdrop();
-            GlassMaterial.BeginFrame();
 
             // 实况窗要「不出屏」：窗口比屏幕宽，content x=0 可能落在屏幕外，把可见范围喂给宿主。
             float viewLeft = (_scaledWidth - _cachedMonitorWidth) / 2f / _dpiScale;
@@ -1643,23 +1639,8 @@ namespace NotchPeninsula
                 _media.UpdateLyrics(); // 更新歌词
                 tLyricDone = Environment.TickCount64;
 
-                Renderer.DrawWithDamage(canvas, _media, _isHovered && !_isOverLiveWindow, _currentWidth, _currentHeight,
-                    startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha,
-                    ref _foregroundPaintBounds, out var damage);
-                if (!damage.IsEmpty)
-                {
-                    var pending = _pendingForegroundDamage;
-                    _pendingForegroundDamage = pending.IsEmpty ? damage : new SKRectI(
-                        Math.Min(pending.Left, damage.Left), Math.Min(pending.Top, damage.Top),
-                        Math.Max(pending.Right, damage.Right), Math.Max(pending.Bottom, damage.Bottom));
-                }
+                Renderer.Draw(canvas, _media, _isHovered && !_isOverLiveWindow, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
                 tDrawDone = Environment.TickCount64;
-            }
-            catch
-            {
-                // A plugin or draw failure may have partially overwritten the buffer.
-                _foregroundPaintBounds = _pendingForegroundDamage = new SKRectI(0, 0, _scaledWidth, _scaledHeight);
-                throw;
             }
             finally
             {
@@ -1679,7 +1660,13 @@ namespace NotchPeninsula
                 try { canvas.RestoreToCount(saveBase); } catch { }
             }
 
-            // 动画帧直接提交受影响区域，静止帧先比较该区域的像素。
+            // 完全隐藏且动画已停 → 整帧都是全透明的，画了也白画，更别提那次
+            // UpdateLayeredWindow 还要往 DWM 传一整张画布（540×450 约 1MB，60fps 就是 58MB/s）。
+            // ⚠️ 只在 FullHideAlpha 落到 0 且滑出动画结束时才跳过：这两个条件都意味着
+            //    「这一帧和上一帧一样、且屏幕上什么都看不见」，恢复时它会重新 >0，上屏自然继续。
+            // 这几类帧的像素必然在变（动画 / 叠化 / 启动淡入 / 悬停展开），
+            // 拿过去比一整张画布（1.8~4MB 逐字节）纯属白读 —— 直接提交，
+            // 把「像素没变就别传」那项优化留给真正可能静止的帧。
             bool visiblyMoving = _isAnimating || _isYAnimating || _isStyleAnimating
                                  || startupProgress < 1f || transitionAlpha < 1f;
 
@@ -1721,10 +1708,10 @@ namespace NotchPeninsula
         }
 
         /// <param name="likelyChanged">
-        /// 动画帧为 true，跳过受影响区域的像素比较。
+        /// 本帧画面确定在变（动画 / 叠化 / 悬停）时为 true：跳过整画布逐字节比较直接提交。
         /// 传错只会多传一次，不会少传 —— 静态帧仍然走比较，行为与原来一致。
         /// </param>
-        private unsafe void UpdateWindow(bool likelyChanged = false)
+        private void UpdateWindow(bool likelyChanged = false)
         {
             if (_hwnd == IntPtr.Zero || _memDc == IntPtr.Zero || _pBits == IntPtr.Zero) return;
 
@@ -1739,106 +1726,69 @@ namespace NotchPeninsula
 
             PresentNativeBackdrop(ptDst.x, ptDst.y);
 
-            var full = new SKRectI(0, 0, size.cx, size.cy);
-            var damage = _pendingForegroundDamage;
-            bool needsFullUpload = _uploadBaseline == null || _uploadBaseW != size.cx || _uploadBaseH != size.cy
-                || _uploadBaseX != ptDst.x || _uploadBaseY != ptDst.y
-                || Environment.TickCount64 - _uploadBaseTick >= UploadKeepAliveMs;
-            if (!needsFullUpload && (damage.IsEmpty || (!likelyChanged && MatchesUploadBaseline(damage))))
-            {
-                _pendingForegroundDamage = default;
-                return;
-            }
+            // 像素与窗口位置都没变就不提交：UpdateLayeredWindow 每次都会整张上传（没有脏矩形），
+            // 静止画面下这是纯浪费。2s 强制重推一次，DWM 被重置/切换后能自愈。
+            if (!likelyChanged && CanSkipUpload(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight)) return;
 
-            if (needsFullUpload) damage = full;
-            var blend = new Win32.BLENDFUNCTION
+            IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
+            if (screenDc == IntPtr.Zero) return;
+
+            // 从取到 DC 到归还之间不许有裸异常路径：
+            try
             {
-                BlendOp = Win32.AC_SRC_OVER,
-                SourceConstantAlpha = 255,
-                AlphaFormat = Win32.AC_SRC_ALPHA
-            };
-            bool uploaded = false;
-            if (!_partialUploadUnavailable && damage != full)
-            {
-                var rect = new Win32.RECT { Left = damage.Left, Top = damage.Top, Right = damage.Right, Bottom = damage.Bottom };
-                var update = new Win32.LayeredWindowUpdate
+                var blend = new Win32.BLENDFUNCTION
                 {
-                    Size = (uint)sizeof(Win32.LayeredWindowUpdate),
-                    SourceDc = _memDc,
-                    Source = &ptSrc,
-                    Blend = &blend,
-                    Flags = Win32.ULW_ALPHA,
-                    Dirty = &rect
+                    BlendOp = Win32.AC_SRC_OVER,
+                    BlendFlags = 0,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = Win32.AC_SRC_ALPHA
                 };
-                uploaded = Win32.UpdateLayeredWindowIndirect(_hwnd, ref update);
-                if (!uploaded)
-                {
-                    _partialUploadUnavailable = true;
-                    Warn($"[渲染] 局部前景提交失败（错误码={Marshal.GetLastWin32Error()}），本次会话改用整窗提交");
-                }
-            }
 
-            if (!uploaded)
-            {
-                uploaded = Win32.UpdateLayeredWindow(_hwnd, IntPtr.Zero, ref ptDst, ref size, _memDc, ref ptSrc,
-                    0, ref blend, Win32.ULW_ALPHA);
-            }
-            if (!uploaded)
-            {
-                long nowFail = Environment.TickCount64;
-                if (nowFail - _lastUploadWarnMs >= 5000)
+                // 直接提交已经画好的 _memDc
+                if (!Win32.UpdateLayeredWindow(_hwnd, screenDc, ref ptDst, ref size, _memDc, ref ptSrc, 0, ref blend, Win32.ULW_ALPHA))
                 {
-                    _lastUploadWarnMs = nowFail;
-                    Warn($"[渲染] UpdateLayeredWindow 失败（错误码={Marshal.GetLastWin32Error()}），下一帧重试");
+                    long nowFail = Environment.TickCount64;
+                    if (nowFail - _lastUploadWarnMs >= 5000)
+                    {
+                        _lastUploadWarnMs = nowFail;
+                        Warn($"[渲染] UpdateLayeredWindow 失败（错误码={Marshal.GetLastWin32Error()}），下一帧重试");
+                    }
+                    return;   // 失败时不动基准图，保证下一帧一定重试
                 }
-                return;
+
+                SaveUploadBaseline(ptDst.x, ptDst.y, _scaledWidth, _scaledHeight);
             }
-            SaveUploadBaseline(ptDst.x, ptDst.y, size.cx, size.cy, damage);
-            _pendingForegroundDamage = default;
+            finally
+            {
+                Win32.ReleaseDC(IntPtr.Zero, screenDc);
+            }
         }
 
-        /// <summary>比较受影响区域与上次成功提交的像素。</summary>
-        private unsafe bool MatchesUploadBaseline(SKRectI damage)
+        /// <summary>本帧像素与窗口位置都和上次提交的一致 → 跳过这次整表上传。</summary>
+        private unsafe bool CanSkipUpload(int x, int y, int w, int h)
         {
-            int stride = _scaledWidth * 4;
-            if (damage.Width == _scaledWidth)
+            var baseline = _uploadBaseline;
+            if (baseline == null || _uploadBaseW != w || _uploadBaseH != h
+                || _uploadBaseX != x || _uploadBaseY != y) return false;
+            if (Environment.TickCount64 - _uploadBaseTick >= UploadKeepAliveMs) return false;
+            int bytes = w * h * 4;
+            if (baseline.Length != bytes || _pBits == IntPtr.Zero) return false;
+            fixed (byte* bp = baseline)
             {
-                int offset = damage.Top * stride;
-                int length = damage.Height * stride;
-                return new ReadOnlySpan<byte>((byte*)_pBits + offset, length)
-                    .SequenceEqual(_uploadBaseline.AsSpan(offset, length));
+                return new ReadOnlySpan<byte>((void*)_pBits, bytes)
+                    .SequenceEqual(new ReadOnlySpan<byte>(bp, bytes));
             }
-            int rowBytes = damage.Width * 4;
-            for (int y = damage.Top; y < damage.Bottom; y++)
-            {
-                int offset = y * stride + damage.Left * 4;
-                if (!new ReadOnlySpan<byte>((byte*)_pBits + offset, rowBytes)
-                    .SequenceEqual(_uploadBaseline.AsSpan(offset, rowBytes))) return false;
-            }
-            return true;
         }
 
-        /// <summary>只更新受影响区域的提交基准。</summary>
-        private unsafe void SaveUploadBaseline(int x, int y, int w, int h, SKRectI damage)
+        /// <summary>记下这一帧真正提交出去的像素，供下一帧比较。</summary>
+        private unsafe void SaveUploadBaseline(int x, int y, int w, int h)
         {
             int bytes = w * h * 4;
             if (bytes <= 0 || _pBits == IntPtr.Zero) return;
             if (_uploadBaseline == null || _uploadBaseline.Length != bytes) _uploadBaseline = new byte[bytes];
-            int stride = w * 4;
-            if (damage.Width == w)
+            fixed (byte* bp = _uploadBaseline)
             {
-                int offset = damage.Top * stride;
-                int length = damage.Height * stride;
-                new ReadOnlySpan<byte>((byte*)_pBits + offset, length).CopyTo(_uploadBaseline.AsSpan(offset, length));
-            }
-            else
-            {
-                int rowBytes = damage.Width * 4;
-                for (int row = damage.Top; row < damage.Bottom; row++)
-                {
-                    int offset = row * stride + damage.Left * 4;
-                    new ReadOnlySpan<byte>((byte*)_pBits + offset, rowBytes).CopyTo(_uploadBaseline.AsSpan(offset, rowBytes));
-                }
+                Buffer.MemoryCopy((void*)_pBits, bp, bytes, bytes);
             }
             _uploadBaseW = w;
             _uploadBaseH = h;
@@ -2799,7 +2749,7 @@ namespace NotchPeninsula
             ClosePanelsNow();
         }
 
-        // CPU DIB：Skia 直接写窗口位图，提交时只更新变化的区域。
+        // 零拷贝显存通道
         private void InitRenderBuffer()
         {
             IntPtr screenDc = Win32.GetDC(IntPtr.Zero);
@@ -2829,7 +2779,6 @@ namespace NotchPeninsula
 
             // 新缓冲的像素布局变了，上一次上传的基准图作废
             _uploadBaseline = null;
-            _foregroundPaintBounds = _pendingForegroundDamage = new SKRectI(0, 0, _scaledWidth, _scaledHeight);
 
             if (_hBitmap == IntPtr.Zero || _memDc == IntPtr.Zero || _renderSurface == null)
             {

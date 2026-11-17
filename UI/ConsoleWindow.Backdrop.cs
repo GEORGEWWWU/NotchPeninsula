@@ -99,7 +99,7 @@ namespace NotchPeninsula
                         float radius = 8f * _dpiScale;
                         _nativeConsoleBackdrop.Present(_hwnd, rect.Left, rect.Top, width, height,
                             default, new System.Numerics.Vector2(width, height), new IslandOutline(radius, radius, radius),
-                            capsule: true, opacity: 1f, glass: false, dpi: _dpiScale, liveRegions: default, canvasOrigin: default);
+                            capsule: true, opacity: 1f);
                         _backdropMode = BackdropMaterialMode.Acrylic;
                     }
                 }

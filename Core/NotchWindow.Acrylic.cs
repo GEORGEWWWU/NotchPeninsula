@@ -19,19 +19,16 @@ namespace NotchPeninsula
         {
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
             int material = Renderer.IslandMaterialIndex;
-            bool glass = material == 2;
             if (_lastNativeMaterial != material)
             {
                 _lastNativeMaterial = material;
-                if (_nativeAcrylicFailed || (glass && GlassMaterial.BlurUnavailable))
+                if (_nativeAcrylicFailed)
                 {
-                    _nativeAcrylic?.Dispose();
                     _nativeAcrylic = null;
                     _nativeAcrylicFailed = false;
-                    GlassMaterial.BlurUnavailable = false;
                 }
             }
-            if (!NativeAcrylic.IsSupported || material == 0 || _nativeAcrylicFailed || opacity <= 0.001f
+            if (!NativeAcrylic.IsSupported || material != 1 || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
                 HideNativeBackdrop();
@@ -44,7 +41,7 @@ namespace NotchPeninsula
                 {
                     _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
                     _nativeAcrylic = new NativeAcrylic();
-                    Logger.Info($"[{(glass ? "液态玻璃" : "亚克力")}] 已建立 Windows Composition 背板宿主");
+                    Logger.Info("[亚克力] 已建立 Windows Composition 背板宿主");
                 }
 
                 // 与 Renderer.Draw 的胶囊使用同一帧尺寸和逻辑坐标。
@@ -57,31 +54,16 @@ namespace NotchPeninsula
                 int topPx = (int)MathF.Floor(top);
                 int rightPx = (int)MathF.Ceiling(left + size.X + flare);
                 int bottomPx = (int)MathF.Ceiling(top + size.Y);
-                var regions = glass ? GlassMaterial.LiveRegions : default;
-                foreach (ref readonly var region in regions)
-                {
-                    var rect = region.Rect;
-                    leftPx = Math.Min(leftPx, Math.Max(0, (int)MathF.Floor(rect.Left * _dpiScale)));
-                    topPx = Math.Min(topPx, Math.Max(0, (int)MathF.Floor(rect.Top * _dpiScale)));
-                    rightPx = Math.Max(rightPx, Math.Min(_scaledWidth, (int)MathF.Ceiling(rect.Right * _dpiScale)));
-                    bottomPx = Math.Max(bottomPx, Math.Min(_scaledHeight, (int)MathF.Ceiling(rect.Bottom * _dpiScale)));
-                }
                 var offset = new Vector2(left - leftPx, top - topPx);
                 var scaledOutline = new IslandOutline(outline.TopX * _dpiScale, outline.TopY * _dpiScale, outline.Bottom * _dpiScale);
                 _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, rightPx - leftPx, bottomPx - topPx,
-                    offset, size, scaledOutline, _currentStyleProgress == 1f, opacity, glass, _dpiScale,
-                    regions, new Vector2(-leftPx, -topPx));
-                GlassMaterial.BackdropReady = glass;
-                GlassMaterial.LiveBackdropReady = glass && _nativeAcrylic.LiveGlassAvailable;
+                    offset, size, scaledOutline, _currentStyleProgress == 1f, opacity);
             }
             catch (Exception ex)
             {
                 _nativeAcrylicFailed = true;
-                if (glass) GlassMaterial.BlurUnavailable = true;
                 var failedHost = _nativeAcrylic;
                 _nativeAcrylic = null;
-                GlassMaterial.BackdropReady = false;
-                GlassMaterial.LiveBackdropReady = false;
                 Logger.Error("[背景材质] Windows Composition 宿主失败，使用色调兜底", ex);
                 try { failedHost?.Dispose(); }
                 catch (Exception disposeError) { Logger.Error("[背景材质] 释放 Composition 宿主失败", disposeError); }
@@ -90,19 +72,19 @@ namespace NotchPeninsula
         private void HideNativeBackdrop()
         {
             _nativeAcrylic?.Hide();
-            GlassMaterial.BackdropReady = false;
-            GlassMaterial.LiveBackdropReady = false;
         }
 
         private bool _acrLogged;
         private bool _legacyCaptureActive;
+        private bool _legacyCaptureGlass;
+        private float _captureOriginX, _captureOriginY, _captureScale;
         private long _legacyFirstCaptureMs;
         private bool _legacyRefreshedAfterStartup;
         // 背板自愈用：最近一次看到的背板版本号 + 它的时间戳（见 SyncIslandBackdrop）
         private int _lastBackdropVer = -1;
         private long _lastBackdropVerMs;
 
-        // 记录 Windows 10 亚克力兼容路径的无效目标。
+        // 记录抓屏路径的无效目标。
         private long _backdropSkipMs;
         private string _backdropSkipWhy = "";
 
@@ -128,21 +110,43 @@ namespace NotchPeninsula
             // 先在这里重算一次，否则会把旧显示器的坐标喂给抓屏线程。
             if (NeedsMonitorRefresh()) UpdateMonitorBounds();
 
-            if (!UsesLegacyAcrylic || Renderer.FullHideAlpha < 0.5f)
+            bool glass = Renderer.IslandLiquidGlass;
+            if ((!glass && !UsesLegacyAcrylic) || Renderer.FullHideAlpha < 0.5f)
             {
                 if (_legacyCaptureActive)
                 {
                     _legacyCaptureActive = false;
                     IslandBackdrop.SetTarget(0, 0, 0, 0);
                     IslandBackdrop.ClearMask();
+                    IslandBackdrop.SetMode(false);
                     IslandBackdrop.Expire();
                     Renderer.AcrylicBackdrop = null;
                     _acrylicOwned?.Dispose();
                     _acrylicOwned = null;
+                    GlassMaterial.BackdropReady = false;
+                    if (_legacyCaptureGlass) LiquidGlass.Invalidate();
                 }
                 return;
             }
-            _legacyCaptureActive = true;
+            if (!_legacyCaptureActive || _legacyCaptureGlass != glass)
+            {
+                IslandBackdrop.SetTarget(0, 0, 0, 0);
+                IslandBackdrop.Expire();
+                IslandBackdrop.SetMode(glass);
+                _acrLogged = false;
+                Renderer.AcrylicBackdrop = null;
+                _acrylicOwned?.Dispose();
+                _acrylicOwned = null;
+                GlassMaterial.BackdropReady = false;
+                if (_legacyCaptureGlass) LiquidGlass.Invalidate();
+                _legacyCaptureGlass = glass;
+                _legacyCaptureActive = true;
+            }
+            if (glass)
+            {
+                GlassMaterial.SyncCaptureSettings();
+                if (IslandBackdrop.TakeGlassWake()) LiquidGlass.Invalidate();
+            }
 
             // 岛体画布比屏幕宽：中心对齐屏幕中心后，画布两侧各挂出屏幕外一截（给展开/滑动留余量）。
             // ⚠️ 抓取矩形必须与屏幕求交，否则会把屏幕外的黑一起抓下来 → 背板全黑 = 亚克力「消失」。
@@ -158,6 +162,12 @@ namespace NotchPeninsula
             int capY = Math.Max(_cachedMonitorY, capBaseY);
             int capW = Math.Min(_cachedMonitorX + _cachedMonitorWidth, dstX + _scaledWidth) - capX;
             int capH = Math.Min(_cachedMonitorY + _cachedMonitorHeight, capBaseY + _scaledHeight) - capY;
+            if (glass && IslandBackdrop.DxgiAllowed && DxgiBackdrop.Available)
+            {
+                float needed = Math.Max(_currentHeight + 60f, LiveWindowHost.RequiredWindowHeight + 64f);
+                int rows = Math.Max(120, (int)MathF.Ceiling(needed * _dpiScale));
+                capH = Math.Min(capH, (rows + 31) / 32 * 32);
+            }
 
             // 交矩形与胶囊尺寸无关 → 胶囊变大变小只挪源矩形，不重抓，尺寸变换期间不闪
             if (capW < 16 || capH < 16)
@@ -214,26 +224,27 @@ namespace NotchPeninsula
             }
 
             // 贴图用的源矩形按【实际产出图】的比例与原点换算
-            float inv = IslandBackdrop.LastScale;
-            float orgX = IslandBackdrop.LastOriginX;
-            float orgY = IslandBackdrop.LastOriginY;
-            float srcL = (islandX - orgX) * inv;
-            float srcT = (islandY - orgY) * inv;
-            float srcW = islandW * inv;
-            float srcH = islandH * inv;
-
             IslandBackdrop.SetTarget(capX, capY, capW, capH);
 
             var fresh = IslandBackdrop.TakePending();
             if (fresh != null)
             {
-                _acrylicOwned?.Dispose();
-                _acrylicOwned = fresh;
-                Renderer.AcrylicBackdrop = fresh;
-                if (!_acrLogged)
+                if (fresh.Glass != glass) fresh.Image.Dispose();
+                else
                 {
-                    _acrLogged = true;
-                    Logger.Info($"[亚克力] 渲染侧拿到背板 {fresh.Width}x{fresh.Height}");
+                    _acrylicOwned?.Dispose();
+                    _acrylicOwned = fresh.Image;
+                    _captureOriginX = fresh.X;
+                    _captureOriginY = fresh.Y;
+                    _captureScale = fresh.Scale;
+                    Renderer.AcrylicBackdrop = fresh.Image;
+                    GlassMaterial.BackdropReady = glass;
+                    GlassMaterial.BackdropVersion = fresh.Version;
+                    if (!_acrLogged)
+                    {
+                        _acrLogged = true;
+                        Logger.Info($"[{(glass ? "液态玻璃" : "亚克力")}] 渲染侧拿到背板 {fresh.Image.Width}x{fresh.Image.Height}");
+                    }
                 }
             }
 
@@ -262,13 +273,15 @@ namespace NotchPeninsula
                 IslandBackdrop.Expire();
             }
 
-            Renderer.AcrylicBackdropSrc = new SKRect(srcL, srcT, srcL + srcW, srcT + srcH);
+            Renderer.AcrylicBackdropSrc = new SKRect(
+                (islandX - _captureOriginX) * _captureScale, (islandY - _captureOriginY) * _captureScale,
+                (islandX + islandW - _captureOriginX) * _captureScale, (islandY + islandH - _captureOriginY) * _captureScale);
         }
 
         // 设置面板切材质 / 换主题后调用（UI 线程）：标记过期，后台线程下一轮重抓
         public static void RequestAcrylicRebuild()
         {
-            if (UsesLegacyAcrylic) IslandBackdrop.Expire();
+            if (UsesLegacyAcrylic || Renderer.IslandLiquidGlass) IslandBackdrop.Expire();
         }
 
         private static void ShutdownIslandBackdrop() => IslandBackdrop.Stop();

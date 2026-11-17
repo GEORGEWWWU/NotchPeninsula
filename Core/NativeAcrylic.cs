@@ -6,7 +6,7 @@ using Windows.UI.Composition.Desktop;
 
 namespace NotchPeninsula;
 
-internal sealed partial class NativeAcrylic : IDisposable
+internal sealed class NativeAcrylic : IDisposable
 {
     private const int UseHostBackdropBrush = 17;
     private const int NoRedirectionBitmap = 0x00200000;
@@ -40,10 +40,6 @@ internal sealed partial class NativeAcrylic : IDisposable
     private (Vector2 Offset, Vector2 Size, IslandOutline Outline)? _path;
     private float _opacity = 1f;
     private bool _visible;
-    private (int X, int Y, int Width, int Height, Vector2 Offset, Vector2 Size, IslandOutline Outline,
-        bool Capsule, float Opacity, bool Glass, float Blur, float Dpi, Vector2 CanvasOrigin)? _lastPresentation;
-    private readonly GlassMaterial.Region[] _lastLiveRegions = new GlassMaterial.Region[LiveWindowHost.MaxItems + 1];
-    private int _lastLiveRegionCount;
 
     internal NativeAcrylic()
     {
@@ -74,7 +70,7 @@ internal sealed partial class NativeAcrylic : IDisposable
             _brush = _compositor.CreateHostBackdropBrush();
             _visual = _compositor.CreateSpriteVisual();
             _visual.Clip = _clip;
-            _visual.Brush = _appliedBackdrop = _brush;
+            _visual.Brush = _brush;
             _root = _compositor.CreateContainerVisual();
             _root.Children.InsertAtBottom(_visual);
             _target.Root = _root;
@@ -87,33 +83,18 @@ internal sealed partial class NativeAcrylic : IDisposable
     }
 
     internal void Present(IntPtr foreground, int x, int y, int width, int height,
-        Vector2 offset, Vector2 size, IslandOutline outline, bool capsule, float opacity,
-        bool glass, float dpi, ReadOnlySpan<GlassMaterial.Region> liveRegions, Vector2 canvasOrigin)
+        Vector2 offset, Vector2 size, IslandOutline outline, bool capsule, float opacity)
     {
         var bounds = (x, y, width, height);
-        float blurAmount = glass ? GlassMaterial.BlurAmount : 0f;
-        var presentation = (x, y, width, height, offset, size, outline, capsule, opacity, glass, blurAmount, dpi, canvasOrigin);
-        bool needsRestack = !_visible || GetWindow(foreground, NextWindow) != _window;
-        if (!needsRestack && _lastPresentation == presentation
-            && liveRegions.SequenceEqual(_lastLiveRegions.AsSpan(0, _lastLiveRegionCount))) return;
-
         bool resized = width != _bounds.Width || height != _bounds.Height;
         if (resized)
         {
-            _root!.Size = new Vector2(width, height);
+            _root!.Size = _visual!.Size = new Vector2(width, height);
         }
-        // The window also hosts live panels. Keep the main brush at the island's
-        // actual size so its Gaussian effect does not cover the combined canvas.
-        float flare = outline.Flare;
-        var visualSize = new Vector2(size.X + 2f * flare, size.Y);
-        var visualOffset = new Vector3(offset.X - flare, offset.Y, 0f);
-        if (_visual!.Size != visualSize) _visual.Size = visualSize;
-        if (_visual.Offset != visualOffset) _visual.Offset = visualOffset;
-        var localOffset = new Vector2(flare, 0f);
         if (capsule)
         {
             if (_geometry!.Size != size) _geometry.Size = size;
-            if (_geometry.Offset != localOffset) _geometry.Offset = localOffset;
+            if (_geometry.Offset != offset) _geometry.Offset = offset;
             if (outline.Bottom != _radius)
             {
                 _geometry.CornerRadius = new Vector2(outline.Bottom);
@@ -125,32 +106,21 @@ internal sealed partial class NativeAcrylic : IDisposable
                 _path = null;
             }
         }
-        else if (_path != (localOffset, size, outline))
+        else if (_path != (offset, size, outline))
         {
             _pathGeometry ??= _compositor!.CreatePathGeometry();
-            _pathGeometry.Path = new CompositionPath(new AcrylicClipGeometry(localOffset.X, localOffset.Y, size.X, size.Y, outline));
+            _pathGeometry.Path = new CompositionPath(new AcrylicClipGeometry(offset.X, offset.Y, size.X, size.Y, outline));
             if (_path == null) _clip!.Geometry = _pathGeometry;
-            _path = (localOffset, size, outline);
+            _path = (offset, size, outline);
         }
-        var backdrop = SelectBackdrop(blurAmount);
-        if (_appliedBackdrop != backdrop)
+        if (opacity != _opacity)
         {
-            _visual!.Brush = backdrop;
-            _appliedBackdrop = backdrop;
+            _visual!.Opacity = opacity;
+            _opacity = opacity;
         }
-        // Clear glass leaves the desktop itself visible under the layered foreground.
-        float coverage = !glass ? 1f
-            : blurAmount == 0f ? 0f
-            : backdrop == _brush ? GlassMaterial.BackdropOpacity : 1f;
-        float backdropOpacity = coverage * opacity;
-        if (backdropOpacity != _opacity)
-        {
-            _visual!.Opacity = backdropOpacity;
-            _opacity = backdropOpacity;
-        }
-        PresentLiveGlass(liveRegions, canvasOrigin, dpi, backdrop, coverage);
         // This HWND only renders the backdrop. Keep it behind the input HWND,
         // without resetting its Z-order on each animated size/position update.
+        bool needsRestack = !_visible || GetWindow(foreground, NextWindow) != _window;
         if (needsRestack || bounds != _bounds)
         {
             uint flags = Win32.SWP_NOACTIVATE;
@@ -162,9 +132,6 @@ internal sealed partial class NativeAcrylic : IDisposable
             _bounds = bounds;
             _visible = true;
         }
-        _lastPresentation = presentation;
-        liveRegions.CopyTo(_lastLiveRegions);
-        _lastLiveRegionCount = liveRegions.Length;
     }
 
     internal void Hide()
@@ -181,7 +148,6 @@ internal sealed partial class NativeAcrylic : IDisposable
             _target.Root = null;
             _target = null;
         }
-        DisposeGlass();
         _root?.Dispose();
         _root = null;
         _visual?.Dispose();

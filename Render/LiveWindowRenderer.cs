@@ -329,10 +329,11 @@ public static class LiveWindowRenderer
                 canvas.ClipPath(_ringPath, SKClipOperation.Intersect, true);
                 if (Renderer.IslandLiquidGlass)
                 {
-                    GlassMaterial.DrawCoating(canvas, _ringPath, lightBubble, alpha, GlassMaterial.LiveBackdropReady);
                     float scaledRadius = r * scale;
-                    GlassMaterial.AddRegion(new SKRect(cx - scaledRadius, cy - scaledRadius,
-                        cx + scaledRadius, cy + scaledRadius), scaledRadius, contentClipR * scale, alpha);
+                    var sampleRect = new SKRect(cx - scaledRadius, cy - scaledRadius, cx + scaledRadius, cy + scaledRadius);
+                    var drawRect = new SKRect(cx - r, cy - r, cx + r, cy + r);
+                    bool drawn = DrawGlassBackdrop(canvas, sampleRect, drawRect, alpha);
+                    GlassMaterial.DrawCoating(canvas, _ringPath, lightBubble, alpha, drawn);
                 }
                 else if (!DrawBubbleMaterial(canvas, rect, cx, cy, r, alpha))
                 {
@@ -519,8 +520,15 @@ public static class LiveWindowRenderer
     {
         if (Renderer.IslandLiquidGlass)
         {
-            GlassMaterial.DrawCoating(canvas, _clipPath, lightBubble, alpha, GlassMaterial.LiveBackdropReady);
-            GlassMaterial.AddRegion(rect, radius, 0f, alpha);
+            int depth = canvas.SaveCount;
+            canvas.Save();
+            try
+            {
+                canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
+                bool drawn = DrawGlassBackdrop(canvas, rect, rect, alpha);
+                GlassMaterial.DrawCoating(canvas, _clipPath, lightBubble, alpha, drawn);
+            }
+            finally { RestoreTo(canvas, depth); }
             return;
         }
 
@@ -547,6 +555,15 @@ public static class LiveWindowRenderer
 
         _fillPaint.Color = WithOpacity(lightBubble ? LightPanelColor : DarkBubbleColor, alpha * PanelBaseAlpha);
         canvas.DrawRoundRect(rect, radius, radius, _fillPaint);
+    }
+
+    private static bool DrawGlassBackdrop(SKCanvas canvas, SKRect sampleRect, SKRect drawRect, float alpha)
+    {
+        if (Renderer.AcrylicBackdrop is not { } backdrop
+            || !Renderer.TryCanvasToBackdrop(sampleRect, out SKRect src)) return false;
+        _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
+        canvas.DrawImage(backdrop, src, drawRect, _panelImagePaint);
+        return true;
     }
 
     private static bool DrawBubbleMaterial(SKCanvas canvas, SKRect rect, float cx, float cy, float r, float alpha)

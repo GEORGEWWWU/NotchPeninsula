@@ -61,7 +61,7 @@ namespace NotchPeninsula
             _selectedToastModeIndex = modeIndex;
         }
 
-        private static bool GlassParameterAvailable(int index) => index != GlassMaterial.Blur || (NativeAcrylic.IsSupported && !GlassMaterial.BlurUnavailable);
+        private static bool GlassParameterAvailable(int index) => (uint)index < GlassMaterial.Keys.Length;
 
         private static void ApplyGlassLevel(int index, int level)
         {

@@ -313,7 +313,7 @@ namespace NotchPeninsula
             primed = false;
             if (dst.Width < 4f || dst.Height < 4f) return false;
 
-            if (material != 1)
+            if (material == 0 || (material == 2 && backdrop == null))
             {
                 float lum = Luminance(_bgPaint.Color);
                 for (int i = 0; i < grid.Length; i++)

@@ -4,16 +4,16 @@ namespace NotchPeninsula;
 
 internal static class GlassMaterial
 {
-    internal const int Blur = 0, Rim = 1, Thickness = 2, Tint = 3, FrameRate = 4;
+    internal const int Blur = 0, Rim = 1, Thickness = 2, Tint = 3, FrameRate = 4, Refraction = 5, CaptureRate = 6;
     internal static readonly string[] Keys =
-        ["LiquidGlassBlur", "LiquidGlassRim", "LiquidGlassThickness", "LiquidGlassFrost", "LiquidGlassFps"];
-    internal static readonly string[] Labels = ["模糊", "高光", "厚度", "色调", "帧率"];
+        ["LiquidGlassBlur", "LiquidGlassRim", "LiquidGlassThickness", "LiquidGlassFrost", "LiquidGlassFps",
+         "LiquidGlassRefraction", "LiquidGlassCaptureMs"];
+    internal static readonly string[] Labels = ["模糊", "高光", "厚度", "色调", "帧率", "折射", "刷新"];
     internal static readonly string[] Levels = ["最低", "偏低", "标准", "偏高", "最高"];
     internal static readonly string[] FpsLabels = ["30", "60", "90", "120", "144", "自动"];
-    private static readonly int[] DefaultLevels = [1, 4, 1, 1, 5];
+    private static readonly int[] DefaultLevels = [1, 4, 1, 1, 5, 2, 2];
     private static readonly int[] Settings = (int[])DefaultLevels.Clone();
     internal static readonly string[] BlurLabels = ["关", "轻", "中", "强", "最强"];
-    private static readonly float[] BlurAmounts = [0f, 0.75f, 7f, 12f, 18f];
     private static readonly byte[] TintAlphas = [2, 6, 14, 26, 44];
     // The layered HWND uses its foreground alpha for mouse hit testing. Leave
     // headroom for antialias coverage and the transition layer's alpha rounding.
@@ -27,6 +27,18 @@ internal static class GlassMaterial
     internal static void SetLevel(int index, int level) =>
         Volatile.Write(ref Settings[index], Math.Clamp(level, 0, MaxLevel(index)));
 
+    // The old compositor owns native bitmaps. Only the render thread may
+    // change its levels, because doing so invalidates those bitmaps.
+    internal static void SyncCaptureSettings()
+    {
+        LiquidGlass.SetLevel(LiquidGlass.P_Blur, GetLevel(Blur));
+        LiquidGlass.SetLevel(LiquidGlass.P_Rim, GetLevel(Rim));
+        LiquidGlass.SetLevel(LiquidGlass.P_Thickness, GetLevel(Thickness));
+        LiquidGlass.SetLevel(LiquidGlass.P_Frost, GetLevel(Tint));
+        LiquidGlass.SetLevel(LiquidGlass.P_Refraction, GetLevel(Refraction));
+        LiquidGlass.SetLevel(LiquidGlass.P_CaptureHz, GetLevel(CaptureRate));
+    }
+
     // Composition refreshes the backing independently of the app's foreground frame limiter.
     internal static int GetForegroundFps(bool active, bool hidden)
     {
@@ -34,23 +46,8 @@ internal static class GlassMaterial
         int level = GetLevel(FrameRate);
         return level == AutomaticFrameRateLevel ? (active ? 60 : 30) : FrameRates[level];
     }
-    internal const float BackdropOpacity = 0.46f;
-    internal static float BlurAmount => BlurAmounts[GetLevel(Blur)];
-    internal static volatile bool BlurUnavailable;
     internal static volatile bool BackdropReady;
-    internal static bool LiveBackdropReady { get; set; }
-
-    // All drawing and region collection takes place on the render thread.
-    internal readonly record struct Region(SKRect Rect, float Radius, float InnerRadius, float Opacity);
-    private static readonly Region[] Regions = new Region[LiveWindowHost.MaxItems + 1];
-    private static int _regionCount;
-    internal static ReadOnlySpan<Region> LiveRegions => Regions.AsSpan(0, _regionCount);
-    internal static void BeginFrame() => _regionCount = 0;
-    internal static void AddRegion(SKRect rect, float radius, float innerRadius, float opacity)
-    {
-        if (_regionCount < Regions.Length && rect.Width >= 1f && rect.Height >= 1f)
-            Regions[_regionCount++] = new(rect, radius, innerRadius, opacity);
-    }
+    internal static int BackdropVersion { get; set; }
 
     private static readonly SKPaint TintPaint = new() { IsAntialias = true };
     private static readonly SKPaint RimPaint = new()

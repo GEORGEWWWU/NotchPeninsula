@@ -258,9 +258,11 @@ namespace NotchPeninsula
                 sb.AppendLine($"岛体帧率: {GlassMaterial.FpsLabels[GlassMaterial.GetLevel(GlassMaterial.FrameRate)]}");
                 if (Renderer.IslandLiquidGlass)
                 {
-                    sb.AppendLine($"玻璃背板: {(GlassMaterial.BackdropReady ? "Windows Composition" : "半透明色调")}");
-                    for (int i = 0; i < GlassMaterial.FrameRate; i++)
-                        sb.AppendLine($"  {GlassMaterial.Labels[i]}={GlassMaterial.GetLevel(i)}/{GlassMaterial.MaxLevel(i)}");
+                    sb.AppendLine($"玻璃背板: {(GlassMaterial.BackdropReady ? (IslandBackdrop.UsingDxgi ? "DXGI" : "GDI") : "等待抓屏／半透明色调")}");
+                    sb.AppendLine(IslandBackdrop.DebugState);
+                    for (int i = 0; i < GlassMaterial.Keys.Length; i++)
+                        if (i != GlassMaterial.FrameRate)
+                            sb.AppendLine($"  {GlassMaterial.Labels[i]}={GlassMaterial.GetLevel(i)}/{GlassMaterial.MaxLevel(i)}");
                 }
                 else if (Renderer.IslandAcrylic && !NativeAcrylic.IsSupported)
                 {

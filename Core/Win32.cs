@@ -334,24 +334,6 @@ namespace NotchPeninsula
             IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize,
             IntPtr hdcSrc, ref POINT pprSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
 
-        [StructLayout(LayoutKind.Sequential)]
-        internal unsafe struct LayeredWindowUpdate
-        {
-            internal uint Size;
-            internal IntPtr DestinationDc;
-            internal POINT* Destination;
-            internal SIZE* WindowSize;
-            internal IntPtr SourceDc;
-            internal POINT* Source;
-            internal uint ColorKey;
-            internal BLENDFUNCTION* Blend;
-            internal uint Flags;
-            internal RECT* Dirty;
-        }
-
-        [DllImport("user32.dll", SetLastError = true)]
-        internal static extern bool UpdateLayeredWindowIndirect(IntPtr hwnd, ref LayeredWindowUpdate info);
-
         [DllImport("msimg32.dll", SetLastError = true)]
         public static extern bool AlphaBlend(
             IntPtr hdcDest, int xoriginDest, int yoriginDest, int wDest, int hDest,
@@ -429,6 +411,12 @@ namespace NotchPeninsula
         public const int HALFTONE = 4;
 
         public const uint SRCCOPY = 0x00CC0020;
+
+        public const uint WDA_NONE = 0;
+        public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
 
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr hObject);
