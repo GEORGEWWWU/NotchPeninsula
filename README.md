@@ -290,6 +290,7 @@ dotnet publish -c Release -r win-x64 --self-contained false     # 发布
 
 - Windows 11 原生亚克力通过独立背板窗口和 Windows Composition `CreateHostBackdropBrush` 合成。渲染优化、动画修改、材质重构和合并冲突处理都必须保留这条路径及刘海、灵动岛的轮廓裁切。**禁止用 GDI、DXGI 或其他屏幕抓取替代原生背板，也禁止将抓屏作为原生路径失败时的兜底。** 宿主或裁切初始化失败时只保留亚克力色调并记录异常。Windows 10 的亚克力继续使用旧版兼容背板。
 - 仅选中「液态玻璃」时启用旧版液态玻璃桌面采集，优先 DXGI、必要时用 GDI。主岛使用原折射与高斯模糊合成，实况窗复用抓屏背板。切换材质时释放旧图，Windows 11 原生亚克力从不消费抓屏背板。
+- NVIDIA App / GeForce Experience 的录制浮窗进程运行期间，液态玻璃不再临时对主岛设置捕获排除，改用既有的遮罩擦除来防止玻璃采到自身。只近似填补被遮挡的区域，模糊和折射仍保留；关闭 NVIDIA 浮窗功能后自动恢复原有取样。该兼容机制不改窗口置顶、自动隐藏或 OBS 独立窗口捕获。
 - Windows 11 当前材质为「亚克力」时，普通发布和 Visual Studio 的 F5 调试都使用原生背板。普通打包按已保存的材质启动。只有显式使用 `build.ps1 -NativeAcrylicPreview`、`-p:NativeAcrylicPreview=true` 或启动参数 `--native-acrylic` 才临时选中亚克力，保留原先的刘海或灵动岛形态。
 - 核对原生材质时，以实际运行的 EXE、启动参数及同一次运行的日志为准。宿主建立会记录「已建立 Windows Composition 背板宿主」，液态玻璃会单独记录 DXGI 或 GDI 抓屏后端。日志中的「[亚克力/原分辨率] 抓屏 ok」只应来自 Windows 10 的亚克力兼容路径。
 

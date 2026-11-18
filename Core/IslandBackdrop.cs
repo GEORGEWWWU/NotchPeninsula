@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 using static NotchPeninsula.Logger;
@@ -737,6 +739,37 @@ namespace NotchPeninsula
 
         private static int _suspicious;
 
+        private const int NvidiaOverlayProbeMs = 1000;
+        private static long _nextNvidiaOverlayProbeMs;
+        private static bool _nvidiaOverlayPresent;
+
+        private static bool UseNvidiaCaptureCompatibility(long nowMs)
+        {
+            if (nowMs < _nextNvidiaOverlayProbeMs) return _nvidiaOverlayPresent;
+            _nextNvidiaOverlayProbeMs = nowMs + NvidiaOverlayProbeMs;
+
+            bool useCompatibility;
+            try
+            {
+                useCompatibility = IsProcessRunning("NVIDIA Overlay") || IsProcessRunning("NVIDIA Share");
+            }
+            catch (Win32Exception)
+            {
+                useCompatibility = true;
+            }
+
+            if (_nvidiaOverlayPresent != useCompatibility)
+                Info($"[IslandBackdrop] NVIDIA 录制兼容模式：{(useCompatibility ? "启用" : "停用")}");
+            return _nvidiaOverlayPresent = useCompatibility;
+        }
+
+        private static bool IsProcessRunning(string name)
+        {
+            var processes = Process.GetProcessesByName(name);
+            foreach (var process in processes) process.Dispose();
+            return processes.Length != 0;
+        }
+
         private static unsafe void SampleRing(int sw, int sh, int x0, int y0, int x1, int y1, float[] buf)
         {
             // 12px：岛体自己的阴影 / 抗锯齿不超过这个宽度，再往里会采到岛体本身，
@@ -927,6 +960,7 @@ namespace NotchPeninsula
             if (!GrabOnce()) return false;
 
             bool hidNow = false;
+            bool nvidiaCaptureCompatibility = false;
             if (glassMode)
             {
                 long nowMs = Environment.TickCount64;
@@ -974,7 +1008,8 @@ namespace NotchPeninsula
                 // ── ② 桌面变了才临时隐身，等 DWM 重新合成一帧再读 ──
                 // 隐身只持续这几十毫秒，屏幕上没有任何变化（WDA 只影响捕获，不影响显示）。
                 // 亲和性没贴上就别跳过擦除 —— 那帧里岛体还在，直接发布就是双灵动岛
-                bool hideApplied = Renderer.SetCaptureHide(true);
+                nvidiaCaptureCompatibility = UseNvidiaCaptureCompatibility(nowMs);
+                bool hideApplied = !nvidiaCaptureCompatibility && Renderer.SetCaptureHide(true);
                 try
                 {
                     if (hideApplied)
@@ -1022,7 +1057,7 @@ namespace NotchPeninsula
                 }
                 finally
                 {
-                    Renderer.SetCaptureHide(false);
+                    if (!nvidiaCaptureCompatibility) Renderer.SetCaptureHide(false);
                 }
             }
 
@@ -1061,6 +1096,13 @@ namespace NotchPeninsula
                         return Fail(CapFailErase, $"erase extra#{i}=({rx0},{ry0})-({rx1},{ry1})");
                 }
                 lumAfter = SampleLuminance((byte*)_pBits, sw * 4, sw, sh, mx0, my0, mx1, my1, out rangeAfter);
+            }
+
+            if (nvidiaCaptureCompatibility)
+            {
+                Array.Copy(_ringNow, _ringPrev, _ringNow.Length);
+                _ringValid = true;
+                _suspicious = 0;
             }
 
             if (glassMode) TrackContent(lumAfter, rangeAfter);
