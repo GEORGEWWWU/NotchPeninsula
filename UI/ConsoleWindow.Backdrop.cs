@@ -90,7 +90,7 @@ namespace NotchPeninsula
                         {
                             if (Windows.System.DispatcherQueue.GetForCurrentThread() == null)
                                 _consoleBackdropDispatcher = NativeAcrylic.CreateDispatcher();
-                            _nativeConsoleBackdrop = new NativeAcrylic();
+                            _nativeConsoleBackdrop = new NativeAcrylic(_hwnd);
                         }
 
                         float radius = 8f * _dpiScale;

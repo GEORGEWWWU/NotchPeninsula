@@ -41,7 +41,7 @@ internal sealed class NativeAcrylic : IDisposable
     private float _opacity = 1f;
     private bool _visible;
 
-    internal NativeAcrylic()
+    internal NativeAcrylic(IntPtr foreground)
     {
         try
         {
@@ -53,8 +53,10 @@ internal sealed class NativeAcrylic : IDisposable
                 lpszClassName = WindowClass
             };
             Win32.RegisterClass(ref wc);
+            int style = NoRedirectionBitmap | Transparent | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE;
+            if (IsTopmost(foreground)) style |= Win32.WS_EX_TOPMOST;
             _window = Win32.CreateWindowEx(
-                NoRedirectionBitmap | Transparent | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
+                style,
                 WindowClass, "NotchPeninsula Acrylic", Win32.WS_POPUP | Win32.WS_DISABLED,
                 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, module, IntPtr.Zero);
             if (_window == IntPtr.Zero)
@@ -118,9 +120,15 @@ internal sealed class NativeAcrylic : IDisposable
             _visual!.Opacity = opacity;
             _opacity = opacity;
         }
-        // This HWND only renders the backdrop. Keep it behind the input HWND,
-        // without resetting its Z-order on each animated size/position update.
-        bool needsRestack = !_visible || GetWindow(foreground, NextWindow) != _window;
+        // Match the foreground's topmost band before placing the backdrop behind it.
+        // Inserting after the last topmost window alone can leave the backdrop in the normal band.
+        bool foregroundTopmost = IsTopmost(foreground);
+        bool bandChanged = foregroundTopmost != IsTopmost(_window);
+        if (bandChanged && !Win32.SetWindowPos(_window, foregroundTopmost ? Win32.HWND_TOPMOST : Win32.HWND_NOTOPMOST,
+            0, 0, 0, 0, Win32.SWP_NOACTIVATE | Win32.SWP_NOMOVE_NOSIZE))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+        bool needsRestack = bandChanged || !_visible || GetWindow(foreground, NextWindow) != _window;
         if (needsRestack || bounds != _bounds)
         {
             uint flags = Win32.SWP_NOACTIVATE;
@@ -190,6 +198,9 @@ internal sealed class NativeAcrylic : IDisposable
     private static IntPtr ProcessWindowMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         => msg == Win32.WM_NCHITTEST ? (IntPtr)Win32.HTTRANSPARENT
             : Win32.DefWindowProc(hwnd, msg, wParam, lParam);
+
+    private static bool IsTopmost(IntPtr hwnd)
+        => (Win32.GetWindowLongPtr(hwnd, Win32.GWL_EXSTYLE).ToInt64() & Win32.WS_EX_TOPMOST) != 0;
 
     private static unsafe DesktopWindowTarget CreateDesktopTarget(Compositor compositor, IntPtr window)
     {

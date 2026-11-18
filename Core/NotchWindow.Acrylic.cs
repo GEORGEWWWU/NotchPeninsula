@@ -41,7 +41,7 @@ namespace NotchPeninsula
             {
                 bool newHost = _nativeAcrylic == null;
                 _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
-                _nativeAcrylic ??= new NativeAcrylic();
+                _nativeAcrylic ??= new NativeAcrylic(_hwnd);
 
                 // 与 Renderer.Draw 的胶囊使用同一帧尺寸和逻辑坐标。
                 var outline = IslandOutline.Create(_currentHeight, _currentStyleProgress);
