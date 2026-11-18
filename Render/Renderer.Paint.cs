@@ -550,6 +550,7 @@ namespace NotchPeninsula
         // 全局复用池 (彻底实现 60FPS 零 GC 分配)
 
         private static readonly SKPaint _bgPaint = new() { Color = SKColors.Black, IsAntialias = true };
+        private static readonly SKPaint _nativeAcrylicHitPaint = new() { Color = SKColors.Black.WithAlpha(1), IsAntialias = true };
 
         // 亚克力背板画笔。
         // 这里**故意不带 ImageFilter** —— 每帧带高斯画一次会让 Skia 每帧开临时缓冲，帧率和内存都会崩。

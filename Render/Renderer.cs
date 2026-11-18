@@ -383,7 +383,8 @@ namespace NotchPeninsula
                 _bgPath.Close();
 
                 bool glass = IslandLiquidGlass;
-                var backdrop = IslandAcrylic || glass ? AcrylicBackdrop : null;
+                bool acrylic = IslandAcrylic;
+                var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
                 UpdateBackdropCanvasMapping(backdrop != null, islandLeft, currentWidth, currentHeight, source);
@@ -440,7 +441,12 @@ namespace NotchPeninsula
                 else if (glass && ThemeMode != 2)
                     GlassMaterial.DrawManualThemeTint(canvas, _bgPath, _paletteIsLight);
                 else if (!glass)
-                    canvas.DrawPath(_bgPath, _bgPaint);
+                {
+                    // DWM 背板与前景 HWND 分开合成。零色调时给前景保留最小的命中 alpha。
+                    bool needsAcrylicHitArea = acrylic && NativeAcrylic.IsSupported && _bgPaint.Color.Alpha == 0
+                        && FullHideAlpha >= 0.99f && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake);
+                    canvas.DrawPath(_bgPath, needsAcrylicHitArea ? _nativeAcrylicHitPaint : _bgPaint);
+                }
 
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
