@@ -17,18 +17,19 @@ namespace NotchPeninsula
 
         private void PresentNativeBackdrop(int x, int y)
         {
-            float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
+            if (!NativeAcrylic.IsSupported) return;
+
             int material = Renderer.IslandMaterialIndex;
             if (_lastNativeMaterial != material)
             {
                 _lastNativeMaterial = material;
-                if (_nativeAcrylicFailed)
-                {
-                    _nativeAcrylic = null;
-                    _nativeAcrylicFailed = false;
-                }
+                // 切回亚克力时重新建立 DWM 背板，包括宿主创建成功但没有出图的情况。
+                ReleaseNativeBackdrop();
+                _nativeAcrylicFailed = false;
             }
-            if (!NativeAcrylic.IsSupported || material != 1 || _nativeAcrylicFailed || opacity <= 0.001f
+
+            float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha * (Renderer.AcrylicBgOpacity / 4f);
+            if (material != 1 || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
                 HideNativeBackdrop();
@@ -37,12 +38,9 @@ namespace NotchPeninsula
 
             try
             {
-                if (_nativeAcrylic == null)
-                {
-                    _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
-                    _nativeAcrylic = new NativeAcrylic();
-                    Logger.Info("[亚克力] 已建立 Windows Composition 背板宿主");
-                }
+                bool newHost = _nativeAcrylic == null;
+                _acrylicDispatcher ??= NativeAcrylic.CreateDispatcher();
+                _nativeAcrylic ??= new NativeAcrylic();
 
                 // 与 Renderer.Draw 的胶囊使用同一帧尺寸和逻辑坐标。
                 var outline = IslandOutline.Create(_currentHeight, _currentStyleProgress);
@@ -58,17 +56,24 @@ namespace NotchPeninsula
                 var scaledOutline = new IslandOutline(outline.TopX * _dpiScale, outline.TopY * _dpiScale, outline.Bottom * _dpiScale);
                 _nativeAcrylic.Present(_hwnd, x + leftPx, y + topPx, rightPx - leftPx, bottomPx - topPx,
                     offset, size, scaledOutline, _currentStyleProgress == 1f, opacity);
+                if (newHost) Logger.Info("[亚克力] 已建立 Windows Composition 背板宿主");
             }
             catch (Exception ex)
             {
                 _nativeAcrylicFailed = true;
-                var failedHost = _nativeAcrylic;
-                _nativeAcrylic = null;
                 Logger.Error("[背景材质] Windows Composition 宿主失败，使用色调兜底", ex);
-                try { failedHost?.Dispose(); }
-                catch (Exception disposeError) { Logger.Error("[背景材质] 释放 Composition 宿主失败", disposeError); }
+                ReleaseNativeBackdrop();
             }
         }
+
+        private void ReleaseNativeBackdrop()
+        {
+            var backdrop = _nativeAcrylic;
+            _nativeAcrylic = null;
+            try { backdrop?.Dispose(); }
+            catch (Exception ex) { Logger.Error("[背景材质] 释放 Composition 宿主失败", ex); }
+        }
+
         private void HideNativeBackdrop()
         {
             _nativeAcrylic?.Hide();

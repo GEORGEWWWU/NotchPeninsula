@@ -574,7 +574,7 @@ namespace NotchPeninsula
             try { RunRenderThread(); }
             finally
             {
-                _nativeAcrylic?.Dispose();
+                ReleaseNativeBackdrop();
                 Renderer.AcrylicBackdrop = null;
                 _acrylicOwned?.Dispose();
                 GlassMaterial.BackdropReady = false;

@@ -203,9 +203,17 @@ namespace NotchPeninsula
             }
 
             bool mica = _backdropMode == BackdropMaterialMode.Mica;
-            _bgPaint.Color = light
-                ? (mica ? new SKColor(248, 248, 248, 164) : new SKColor(245, 245, 245, 112))
-                : (mica ? new SKColor(22, 22, 22, 164) : new SKColor(18, 18, 18, 112));
+            if (!mica && _nativeConsoleBackdrop != null)
+            {
+                // 合并旧 Accent 亚克力色调（140/255）和前景底色（112/255）。
+                _bgPaint.Color = light ? new SKColor(244, 244, 244, 191) : new SKColor(19, 19, 19, 191);
+            }
+            else
+            {
+                _bgPaint.Color = light
+                    ? (mica ? new SKColor(248, 248, 248, 164) : new SKColor(245, 245, 245, 112))
+                    : (mica ? new SKColor(22, 22, 22, 164) : new SKColor(18, 18, 18, 112));
+            }
             _titleBarPaint.Color = SKColors.Transparent;
             _cardBg.Color = Overlay(mica ? (byte)18 : (byte)22);
             _cardBorder.Color = Overlay(mica ? (byte)30 : (byte)38);
