@@ -28,7 +28,8 @@ namespace NotchPeninsula
                 _nativeAcrylicFailed = false;
             }
 
-            float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha * (Renderer.AcrylicBgOpacity / 4f);
+            // 透明度档位只调整前景色调，原生背板随岛体的隐藏和穿透动画淡出。
+            float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
             if (material != 1 || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
