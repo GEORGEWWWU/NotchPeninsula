@@ -412,6 +412,7 @@ namespace NotchPeninsula
             if (_ctx != IntPtr.Zero) { Marshal.Release(_ctx); _ctx = IntPtr.Zero; }
             if (_device != IntPtr.Zero) { Marshal.Release(_device); _device = IntPtr.Zero; }
             _inited = false;
+            _everFrame = false;
         }
 
         /// <summary>
@@ -424,7 +425,6 @@ namespace NotchPeninsula
         {
             Release();
             _failed = false;
-            _everFrame = false;
         }
 
         // ================= 抓取 =================

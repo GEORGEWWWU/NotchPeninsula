@@ -554,11 +554,12 @@ namespace NotchPeninsula
 
         private static void ThreadLoop()
         {
+            bool idle = false;
             while (_run)
             {
                 // 等待上限 = 检查节拍（DXGI 10ms / GDI 80ms）：醒得勤只是去问一句"有新帧吗"，
                 // 真正抓不抓仍由下面的 checkGap 把关，不会因为醒得勤就抓得勤。
-                _work.WaitOne(Math.Min(CaptureGap, DxgiLive ? DxgiCheckMs : MinCaptureMs));   // GDI 模式下 MinCaptureMs 只是等待上限
+                _work.WaitOne(idle ? Timeout.Infinite : Math.Min(CaptureGap, DxgiLive ? DxgiCheckMs : MinCaptureMs));
                 if (!_run) break;
 
                 if (_expire)
@@ -578,7 +579,17 @@ namespace NotchPeninsula
                     DxgiBackdrop.Reinitialize();
                 }
 
-                if (_disabled || _tw < 16 || _th < 16 || !IsCaptureAllowed(_glass)) continue;
+                idle = _tw < 16 || _th < 16;
+                if (idle)
+                {
+                    // 原生亚克力或隐藏状态不再用抓屏，由抓屏线程关闭桌面复制会话。
+                    // SetTarget 会唤醒线程，下次需要背景时重新建立会话。
+                    DxgiBackdrop.Release();
+                    _dxgiUsed = false;
+                    FreeBuffer();
+                    continue;
+                }
+                if (_disabled || !IsCaptureAllowed(_glass)) continue;
 
                 long now = Environment.TickCount64;
                 int gap = CaptureGap;
@@ -626,6 +637,8 @@ namespace NotchPeninsula
 
                 DiagTick();
             }
+            DxgiBackdrop.Release();
+            FreeBuffer();
         }
 
         // 每 10s 一行体检（只在亚克力/玻璃下打）：见 _statOk 那段的说明。
