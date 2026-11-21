@@ -399,6 +399,24 @@ namespace NotchPeninsula
             return InZone(x, z.MediaL, z.MediaR);
         }
 
+        /// <summary>
+        /// 岛内这一帧是否真的画了折叠态媒体控件（上一首 / 播放 / 下一首）。
+        ///
+        /// <para>媒体被左侧实况窗接管、待机显示别的内容、通知顶替、组合布局关掉媒体模块时，
+        /// 岛内**没有**这三个按钮，但 <see cref="MediaController.IsActive"/> 仍是 true。
+        /// 以前点击判定只看 IsActive，外加 <c>GetMediaRight</c> 里的旧锚点，就会在岛右边缘
+        /// 命中「看不见的下一首」—— 双击切待机时第一下被它吃掉，正是这个来源。
+        /// 门禁必须跟绘制同一份登记（MediaBlock 只在 DrawMediaInline 里写，帧首会清空）。</para>
+        /// </summary>
+        public static bool MediaInlineControlsShown
+        {
+            get
+            {
+                var z = HitZones;
+                return z.MediaBlockL >= 0f && z.MediaBlockR > z.MediaBlockL;
+            }
+        }
+
         public static bool HitMediaLaunchZone(float x, float y) => HitMediaLaunchZone(HitZones, x, y);
 
         private static bool HitMediaLaunchZone(NativeHitZones z, float x, float y)

@@ -9,9 +9,86 @@ namespace NotchPeninsula
         // 文字区右界都改用【真裁切】（见下），不再需要「渐隐幕布 + 纯色片」那套常量
         private const float BUTTON_BLOCK_LEFT = 79f;    // 组件右端 − 79 = 第一个图标左缘
 
+        // 展开态封面在媒体面板里的几何（相对面板左缘）。岛内展开面板与实况窗详情页共用：
+        // 双击封面跳转既要画得对，也要点得中，不能再各写一套 20 / 50。
+        internal const float MediaPanelCoverLeft = 20f;
+        internal const float MediaPanelCoverTop = 20f;
+        internal const float MediaPanelCoverSize = 50f;
+
+        internal static SKRect MediaPanelCoverRect(float panelLeft)
+            => new(panelLeft + MediaPanelCoverLeft, MediaPanelCoverTop,
+                panelLeft + MediaPanelCoverLeft + MediaPanelCoverSize, MediaPanelCoverTop + MediaPanelCoverSize);
+
+        /// <summary>
+        /// 实况窗展开面板里的封面双击命中（面板局部坐标）。
+        /// 横向沿用主岛 <see cref="HitMediaLaunchZone"/> 的 ±5px 容差，别让用户觉得「明明点到封面却没反应」。
+        /// </summary>
+        internal static bool HitMediaPanelCover(float x, float y)
+        {
+            var r = MediaPanelCoverRect(0f);
+            return x >= r.Left - 5f && x <= r.Right + 5f && y >= r.Top && y <= r.Bottom;
+        }
+
         // 播放三角的光学补偿（逻辑像素，scale=1.6 下量出来的）：三角面积重心在包围盒左侧
         // 1/6 宽处，几何居中看着偏左，右移这一档才「看着」居中。暂停的两根竖条对称，不需要。
         private const float PlayOpticalDx = 2f;
+
+        // ---- 展开态标题超长自动滚动 ----
+        // 岛内展开面板和实况窗详情页共用这一段绘制：两处共用同一条时间轴，
+        // 不会出现「主岛滚到一半、浮层从头发车」。速度取偏慢的 34px/s，长标题读起来才不晕。
+        private const float TITLE_MARQUEE_SPEED = 34f;
+        // 滚完一整条标题后空出来的间隔，按「几个空格」的宽度算：换字体时比例也不会突然变窄。
+        private const string TITLE_MARQUEE_GAP = "     ";
+
+        private static string _titleMarqueeText = "";
+        private static DateTime _titleMarqueeTick;
+        private static float _titleMarqueeOffset;
+
+        private static string _titleMeasureText = "";
+        private static SKTypeface? _titleMeasureFace;
+        private static float _titleMeasureWidth;
+
+        private static float MeasureMediaTitleWidth(string text)
+        {
+            var face = _titlePaint.Typeface;
+            if (_titleMeasureText == text && ReferenceEquals(_titleMeasureFace, face)) return _titleMeasureWidth;
+            BuildTextRuns(text, _titlePaint, face, _measureRuns, out _titleMeasureWidth);
+            _titleMeasureText = text;
+            _titleMeasureFace = face;
+            return _titleMeasureWidth;
+        }
+
+        /// <summary>标题超出可视宽度后的横向偏移（逻辑像素）；放得下就是 0。</summary>
+        private static float MediaTitleScrollOffset(string title, float titleWidth, float viewWidth)
+        {
+            if (string.IsNullOrEmpty(title) || titleWidth <= viewWidth)
+            {
+                _titleMarqueeText = title;
+                _titleMarqueeOffset = 0f;
+                return 0f;
+            }
+
+            var now = DateTime.Now;
+            if (_titleMarqueeText != title)
+            {
+                // 换曲 / 换标题从 0 开始，别接着上一首的位置滚。
+                _titleMarqueeText = title;
+                _titleMarqueeOffset = 0f;
+                _titleMarqueeTick = now;
+                return 0f;
+            }
+
+            double dt = (now - _titleMarqueeTick).TotalSeconds;
+            _titleMarqueeTick = now;
+            if (dt > 0d) _titleMarqueeOffset += (float)(dt * TITLE_MARQUEE_SPEED);
+
+            float gap = Math.Max(_titlePaint.MeasureText(TITLE_MARQUEE_GAP), 16f);
+            float period = titleWidth + gap;
+            if (period <= 0f) return 0f;
+            _titleMarqueeOffset %= period;
+            if (_titleMarqueeOffset < 0f) _titleMarqueeOffset = 0f;
+            return _titleMarqueeOffset;
+        }
 
         private readonly record struct MediaBlockGeometry(float ZoneLeft, float ContentLeft, float AnchorRight);
 
@@ -128,12 +205,12 @@ namespace NotchPeninsula
             _hitDraft.MediaL = left;
             _hitDraft.MediaR = right;
 
-            float coverSize = 50f; // 1. 封面缩小 10px
-            float coverX = left + 20f;
-            float coverY = 20f;    // 封面微调光学居中
+            float coverSize = MediaPanelCoverSize; // 1. 封面缩小 10px
+            float coverX = left + MediaPanelCoverLeft;
+            float coverY = MediaPanelCoverTop;    // 封面微调光学居中
 
             // 封面
-            var coverRect = new SKRect(coverX, coverY, coverX + coverSize, coverY + coverSize);
+            var coverRect = MediaPanelCoverRect(left);
             RegisterMediaCover(coverRect);
             var cover = media.Thumbnail;
             if (cover != null)
@@ -150,14 +227,34 @@ namespace NotchPeninsula
                 canvas.DrawRoundRect(coverRect, 8f, 8f, _fallbackIconPaint);
             }
 
-            // 双行文字（裁切到频谱左侧：超长直接切掉，不盖任何遮罩 / 底色层）
+            // 双行文字：左右都用真裁切收口（右侧让给频谱，左侧挡住跑马灯，别让标题滚到封面上）。
             float textStartX = coverX + coverSize + 12f;
+            float titleViewRight = right - 55f;
             canvas.Save();
-            canvas.ClipRect(new SKRect(0, 0, right - 55f, currentHeight), SKClipOperation.Intersect, true);
+            canvas.ClipRect(new SKRect(textStartX, 0, titleViewRight, currentHeight), SKClipOperation.Intersect, true);
 
             _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
             _titlePaint.TextSize = 14.5f;
-            DrawKaraoke(canvas, _lastMediaTitle, textStartX, coverY + 18f, _titlePaint, alpha, 0f, false); // 歌名也做 emoji/多语言回退
+
+            // 标题超长：向左匀速滚，滚完整条 + 几个空格后接下一轮。
+            // 可视宽度与上面的裁切线同源，避免文字滚到频谱底下才被切掉的观感。
+            string title = _lastMediaTitle;
+            float titleWidth = MeasureMediaTitleWidth(title);
+            float titleViewWidth = Math.Max(0f, titleViewRight - textStartX);
+            float titleScroll = MediaTitleScrollOffset(title, titleWidth, titleViewWidth);
+            if (titleScroll <= 0f)
+            {
+                DrawKaraoke(canvas, title, textStartX, coverY + 18f, _titlePaint, alpha, 0f, false); // 歌名也做 emoji/多语言回退
+            }
+            else
+            {
+                // 两段就够：标题宽 + 空格间隔 = period ≥ 可视宽度，第二段正好在滚完时接上。
+                float gap = Math.Max(_titlePaint.MeasureText(TITLE_MARQUEE_GAP), 16f);
+                float period = titleWidth + gap;
+                float x = textStartX - titleScroll;
+                DrawKaraoke(canvas, title, x, coverY + 18f, _titlePaint, alpha, 0f, false);
+                DrawKaraoke(canvas, title, x + period, coverY + 18f, _titlePaint, alpha, 0f, false);
+            }
 
             _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
             _bodyPaint.TextSize = 12.5f;

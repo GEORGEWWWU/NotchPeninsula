@@ -1229,9 +1229,44 @@ namespace NotchPeninsula
             catch (Exception ex) { Logger.Warn($"[媒体] 上一首失败：{ex.Message}"); }
         }
 
+        // 外部源自己打开应用时会回头调宿主兜底（HostTransport.OpenApp），
+        // 用这个标记把「插件 → 宿主」那一步直接接到通用拉起，避免无限递归。
+        [ThreadStatic] private static bool _openingAppFromSource;
+
         public void OpenCurrentApp()
         {
             if (!IsAppLaunchEnabled) return;
+
+            if (_openingAppFromSource)
+            {
+                MediaAppLauncher.OpenCurrentSessionApp();
+                return;
+            }
+
+            // 当前播放器有对应的外部媒体源（B 站 / 网易云 / 酷狗这类插件）时，优先用插件自己的拉起路径：
+            // 宿主按 SMTC appId 反查 exe 名对 Electron 客户端不可靠，最终会退化成 shell:AppsFolder，
+            // 表现就是「双击封面没反应」。插件的拉起失败时会自己回调本方法走通用兜底。
+            string appId = _currentAppId;
+            var source = FindExternalSourceForApp(appId);
+            if (source != null)
+            {
+                try
+                {
+                    _openingAppFromSource = true;
+                    source.OpenApp();
+                    Logger.Info($"[媒体跳转] 已交由外部媒体源 {source.SourceId} 打开「{appId}」");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[媒体跳转] 外部媒体源 {source.SourceId} 打开应用失败，回退宿主通用路径：{ex.Message}");
+                }
+                finally
+                {
+                    _openingAppFromSource = false;
+                }
+            }
+
             MediaAppLauncher.OpenCurrentSessionApp();
         }
 

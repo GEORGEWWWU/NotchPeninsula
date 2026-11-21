@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using Windows.Media.Control;
 
 namespace NotchPeninsula
@@ -125,7 +126,21 @@ namespace NotchPeninsula
                 }
             }
 
-            // 第 2 步：按可执行文件名精确找窗口
+            // 第 2 步：按窗口的 AppUserModelID 精确找
+            // SMTC 的 SourceAppUserModelId 本身就是窗口上的 PKEY_AppUserModel_ID，比拿 appId 猜
+            // exe 名可靠得多：B 站（com.bilibili.bilibiliPC）、QQ 音乐这类 Electron / 托盘客户端
+            // 都靠它一次命中，不用为每个播放器写死进程名。
+            if (TryFindWindowByAumid(appId, out IntPtr aumidHwnd, out uint aumidPid))
+            {
+                if (ActivateWindow(aumidHwnd))
+                {
+                    Logger.Info($"媒体跳转：已按 AppUserModelID 定位并激活「{appId}」的窗口（PID {aumidPid}）");
+                    return;
+                }
+                Logger.Warn($"媒体跳转：「{appId}」按 AppUserModelID 定位到的窗口激活被系统拒绝，改按进程名找");
+            }
+
+            // 第 3 步：按可执行文件名精确找窗口（appId 是 exe 路径 / 进程名时走这条）
             string exeName = ExeNameOf(appId);
             if (TryFindAppWindow(exeName, out IntPtr found, out uint foundPid))
             {
@@ -137,7 +152,7 @@ namespace NotchPeninsula
                 Logger.Warn($"媒体跳转：「{appId}」定位到的窗口激活被系统拒绝");
             }
 
-            // 第 3 步：把应用本体拉起来
+            // 第 4 步：把应用本体拉起来
             // 现在按可靠性排序：
             if (TryGetExePath(appId, exeName, out string? exePath))
             {
@@ -297,26 +312,152 @@ namespace NotchPeninsula
 
         private static IntPtr FindTopLevelWindow(uint pid)
         {
-            IntPtr found = IntPtr.Zero;
-            IntPtr fallback = IntPtr.Zero;
+            IntPtr best = IntPtr.Zero;
+            int bestScore = -1;
 
             Win32.EnumWindows((hwnd, _) =>
             {
                 if (Win32.GetWindowThreadProcessId(hwnd, out uint owner) == 0 || owner != pid) return true;
-                if (!Win32.IsWindowVisible(hwnd)) return true;
                 if (!IsUsableWindow(hwnd)) return true;
 
-                if (Win32.GetWindowTextLength(hwnd) > 0)
-                {
-                    found = hwnd;
-                    return false; // 有标题的窗口就是它了，停止枚举
-                }
+                // 托盘里的主窗口是隐藏的（B 站 / QQ 音乐关闭到托盘就是这样）：
+                // 不能像旧实现那样只认 IsWindowVisible，否则「按进程找窗口」对它们恒失败。
+                int score = WindowScore(hwnd);
+                if (score <= bestScore) return true;
 
-                if (fallback == IntPtr.Zero) fallback = hwnd;
+                bestScore = score;
+                best = hwnd;
                 return true;
             }, IntPtr.Zero);
 
-            return found != IntPtr.Zero ? found : fallback;
+            return best;
+        }
+
+        /// <summary>顶层窗口打分：标题（主窗口）/ 可见性 / 有尺寸，越大越像主窗口。</summary>
+        private static int WindowScore(IntPtr hwnd)
+        {
+            int score = 0;
+            if (Win32.GetWindowTextLength(hwnd) > 0) score += 2;
+            if (Win32.IsWindowVisible(hwnd)) score += 1;
+            if (Win32.GetWindowRect(hwnd, out var rect) && rect.Right > rect.Left && rect.Bottom > rect.Top) score += 1;
+            return score;
+        }
+
+        // ---- 窗口的 AppUserModelID ----
+        // SMTC 的 SourceAppUserModelId 就是窗口上的 PKEY_AppUserModel_ID：拿它找窗口，
+        // 不依赖「appId → exe 名」的猜测，B 站 / QQ 音乐 / 网易云这类 Electron 客户端全都能命中。
+        // （实现方式与 NPS 插件 BilibiliCdp 的 BilibiliAppLauncher 同源：EnumWindows + 自己抢前台。）
+
+        private static readonly Guid IID_IPropertyStore = new("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99");
+
+        private static readonly PROPERTYKEY PKEY_AppUserModel_ID = new()
+        {
+            fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
+            pid = 5,
+        };
+
+        private const ushort VT_LPWSTR = 31;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROPERTYKEY
+        {
+            public Guid fmtid;
+            public uint pid;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROPVARIANT
+        {
+            public ushort vt;
+            public ushort wReserved1;
+            public ushort wReserved2;
+            public ushort wReserved3;
+            public IntPtr p;
+        }
+
+        [ComImport]
+        [Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IPropertyStore
+        {
+            int GetCount(out uint cProps);
+            int GetAt(uint iProp, out PROPERTYKEY pkey);
+            int GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
+            int SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
+            int Commit();
+        }
+
+        [DllImport("shell32.dll")]
+        private static extern int SHGetPropertyStoreForWindow(
+            IntPtr hwnd, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IPropertyStore propertyStore);
+
+        [DllImport("ole32.dll")]
+        private static extern int PropVariantClear(ref PROPVARIANT pvar);
+
+        private static string GetWindowAumid(IntPtr hwnd)
+        {
+            IPropertyStore? store = null;
+            try
+            {
+                var iid = IID_IPropertyStore;
+                if (SHGetPropertyStoreForWindow(hwnd, ref iid, out store) < 0 || store == null) return "";
+
+                var key = PKEY_AppUserModel_ID;
+                if (store.GetValue(ref key, out var pv) < 0) return "";
+                try
+                {
+                    if (pv.vt != VT_LPWSTR || pv.p == IntPtr.Zero) return "";
+                    return Marshal.PtrToStringUni(pv.p) ?? "";
+                }
+                finally
+                {
+                    PropVariantClear(ref pv);
+                }
+            }
+            catch
+            {
+                return "";
+            }
+            finally
+            {
+                if (store != null)
+                {
+                    try { Marshal.FinalReleaseComObject(store); } catch { }
+                }
+            }
+        }
+
+        private static bool TryFindWindowByAumid(string appId, out IntPtr found, out uint foundPid)
+        {
+            found = IntPtr.Zero;
+            foundPid = 0;
+            if (string.IsNullOrEmpty(appId)) return false;
+
+            IntPtr best = IntPtr.Zero;
+            uint bestPid = 0;
+            int bestScore = -1;
+
+            Win32.EnumWindows((hwnd, _) =>
+            {
+                if (!IsUsableWindow(hwnd)) return true;
+
+                string aumid = GetWindowAumid(hwnd);
+                if (aumid.Length == 0 || !string.Equals(aumid, appId, StringComparison.OrdinalIgnoreCase)) return true;
+
+                int score = WindowScore(hwnd);
+                if (score <= bestScore) return true;
+
+                if (Win32.GetWindowThreadProcessId(hwnd, out uint pid) == 0) return true;
+                bestScore = score;
+                best = hwnd;
+                bestPid = pid;
+                return true;
+            }, IntPtr.Zero);
+
+            if (best == IntPtr.Zero) return false;
+            found = best;
+            foundPid = bestPid;
+            return true;
         }
 
         private static void PruneDeadTargets()

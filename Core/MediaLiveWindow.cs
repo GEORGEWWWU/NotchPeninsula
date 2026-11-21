@@ -101,6 +101,16 @@ internal sealed class MediaLiveWindow : ILiveWindow
         // 和岛内媒体面板同一口径：3 秒没有鼠标动作就自动收起（宿主鼠标停在面板上会取消计时）。
         public TimeSpan AutoCollapseDelay => TimeSpan.FromSeconds(3);
 
+        // 左键双击封面 → 跳回正在放媒体的那个应用。开关与主岛「双击封面跳转应用」同一个，
+        // 关掉时连双击都不声明，宿主照旧把这一下消费掉（不会漏到待机模式切换）。
+        public bool AcceptsDoubleClick => MediaController.IsAppLaunchEnabled;
+
+        public void OnLeftDoubleClick(float x, float y)
+        {
+            if (!Renderer.HitMediaPanelCover(x, y)) return;
+            _media.OpenCurrentApp();
+        }
+
         public void Draw(SKCanvas canvas, SKRect rect, WidgetFrame frame)
             // alpha 传满：淡入淡出已由 LiveWindowRenderer 的合成层统一处理，这里再乘一次会变成双重衰减。
             => Renderer.DrawMediaFloatingPanel(canvas, rect, _media, 255);

@@ -1052,6 +1052,35 @@ namespace NotchPeninsula
                 if (dll.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)
                     || dll.Contains("media-cdp", StringComparison.OrdinalIgnoreCase)) return true;
             }
+
+            // 插件是分批加载的：媒体先响起来时对应插件可能还没进 Entries，推荐会误弹。
+            // 「装过了就不用推荐」按磁盘为准 —— 扫插件目录的 dll 文件名（跳过回收站，那里是已卸载的）。
+            try
+            {
+                string root = PluginManager.Instance.PluginsRoot;
+                if (System.IO.Directory.Exists(root))
+                {
+                    foreach (string path in System.IO.Directory.EnumerateFiles(root, "*.dll", System.IO.SearchOption.AllDirectories))
+                    {
+                        if (path.Contains("_recycle", StringComparison.OrdinalIgnoreCase)) continue;
+                        string name = System.IO.Path.GetFileNameWithoutExtension(path);
+                        if (bilibili)
+                        {
+                            if (name.Contains("bilibilicdp", StringComparison.OrdinalIgnoreCase)) return true;
+                        }
+                        else if (name.Contains("mediacdp", StringComparison.OrdinalIgnoreCase)
+                                 || name.Contains("media-cdp", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // 目录读不到就维持「没装」：最坏也只是多弹一次推荐，不能影响播放主流程。
+            }
+
             return false;
         }
 
@@ -2140,9 +2169,13 @@ namespace NotchPeninsula
                         {
                             if (Renderer.IsMediaExpanded)
                             {
-                                int hoveredBtn = Renderer.HitExpandedButton(mx, my - hitTopY, _currentHeight);
+                                // 只有面板真的画着时才判按钮：展开动画 / 被实况窗接管期间没有可见控件。
+                                int hoveredBtn = Renderer.IsMediaPanelShowing(_media)
+                                    ? Renderer.HitExpandedButton(mx, my - hitTopY, _currentHeight)
+                                    : -1;
                                 Renderer.HoveredExpandedButton = hoveredBtn;
-                                SetIslandCursor(hoveredBtn != -1 || Renderer.HitTimeline(mx, my - hitTopY));
+                                SetIslandCursor(hoveredBtn != -1
+                                    || (Renderer.IsMediaPanelShowing(_media) && Renderer.HitTimeline(mx, my - hitTopY)));
                             }
                             else
                             {
@@ -2160,7 +2193,8 @@ namespace NotchPeninsula
                                 else
                                 {
                                     float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
-                                    SetIslandCursor(Renderer.HitInlineButton(mx, my - hitTopY, right, _currentHeight) != -1);
+                                    SetIslandCursor(Renderer.MediaInlineControlsShown
+                                        && Renderer.HitInlineButton(mx, my - hitTopY, right, _currentHeight) != -1);
                                 }
                             }
                         }
@@ -2409,22 +2443,32 @@ namespace NotchPeninsula
                             // 「不提供展开入口」的口径一致。
                             if (Renderer.IsMediaExpanded)
                             {
-                                switch (Renderer.HitExpandedButton(cx, cy - hitTopY, _currentHeight))
+                                // 面板没画出来时（高度还没长够 / 已被实况窗接管）不能命中不可见的按钮。
+                                if (Renderer.IsMediaPanelShowing(_media))
                                 {
-                                    case 0: _media.Previous(); break;
-                                    case 1: _media.TogglePlayPause(); break;
-                                    case 2: _media.Next(); break;
+                                    switch (Renderer.HitExpandedButton(cx, cy - hitTopY, _currentHeight))
+                                    {
+                                        case 0: _media.Previous(); break;
+                                        case 1: _media.TogglePlayPause(); break;
+                                        case 2: _media.Next(); break;
+                                    }
                                 }
                             }
                             else if (Renderer.MediaInteractionMode == 0)
                             {
-                                // 与「悬停不显示控件」保持一致。
-                                float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
-                                switch (Renderer.HitInlineButton(cx, cy - hitTopY, right, _currentHeight))
+                                // 与绘制共用门禁：折叠态按钮只在岛内真的画着时才能点。
+                                // 媒体收进左侧实况窗 / 待机显示别的内容 / 通知顶替时岛内没有按钮，
+                                // 以前这里仍按旧锚点判命中 —— 双击切待机的第一下会落到「看不见的下一首」。
+                                if (Renderer.MediaInlineControlsShown)
                                 {
-                                    case 0: _media.Previous(); break;
-                                    case 1: _media.TogglePlayPause(); break;
-                                    case 2: _media.Next(); break;
+                                    // 与「悬停不显示控件」保持一致。
+                                    float right = Renderer.GetMediaRight(Renderer.WINDOW_WIDTH, _currentWidth, _currentToast != null);
+                                    switch (Renderer.HitInlineButton(cx, cy - hitTopY, right, _currentHeight))
+                                    {
+                                        case 0: _media.Previous(); break;
+                                        case 1: _media.TogglePlayPause(); break;
+                                        case 2: _media.Next(); break;
+                                    }
                                 }
                             }
                             else if (Renderer.MediaExpandByLeftClick && Renderer.HitMediaZone(cx))
