@@ -167,6 +167,9 @@ namespace NotchPeninsula
                     bool glass = legacyGlass || (int)key.GetValue("IslandLiquidGlass", 0) != 0;
                     bool acrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;
                     Renderer.IslandMaterialIndex = glass ? 2 : acrylic ? 1 : 0;
+                    // 液态玻璃下主题固定「自动」（见 Renderer.ThemeMode / IslandMaterialIndex）：
+                    // 注册表里的旧值顺手改写，下次启动读到的就是钳制后的结果。
+                    if (glass) SaveSetting("ThemeMode", 2);
                     if (legacyGlass)
                     {
                         SaveSetting("IslandLiquidGlass", 1);

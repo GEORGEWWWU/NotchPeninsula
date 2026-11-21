@@ -106,7 +106,7 @@ namespace NotchPeninsula
             ? GLASS_CARD_Y + GlassCardH + CARD_GAP
             : OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP;
 
-        private const float GLASS_ROW0_Y = 36f;
+        private const float GLASS_ROW0_Y = 42f;
         private const float GLASS_ROW_H = 32f;
         private const float GLASS_COL_X = CONTENT_TEXT_X;
         private const float GLASS_COL_GAP = 8f;
@@ -118,9 +118,12 @@ namespace NotchPeninsula
         private const float GLASS_RESET_W = 96f;
         private const float GLASS_RESET_H = 26f;
         private const float GLASS_RESET_X = WIDTH - CONTENT_TEXT_RM - GLASS_RESET_W;
+        // 「恢复默认参数」上移到卡片右上角、和说明文字同一行：
+        // 原来压在最后一行滑轨下面，既多占一条卡高，又容易在拖完最后一根滑轨时顺手点到。
+        private const float GLASS_RESET_TOP_Y = 8f;
         private static int GlassRowCount => (GlassMaterial.Keys.Length + 2) / 3;
-        private static float GlassResetTopY => GLASS_ROW0_Y + GlassRowCount * GLASS_ROW_H + 4f;
-        private static float GlassCardH => GlassResetTopY + GLASS_RESET_H + 12f;
+        private static float GlassResetTopY => GLASS_RESET_TOP_Y;
+        private static float GlassCardH => GLASS_ROW0_Y + GlassRowCount * GLASS_ROW_H + 12f;
 
         private const float OPACITY_SLIDER_DY = 44f;
 

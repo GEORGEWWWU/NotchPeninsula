@@ -536,6 +536,9 @@ namespace NotchPeninsula
                     break;
 
                 case ACT_THEME:
+                    // 液态玻璃下主题恒为自动（Renderer 也会钳制），这里干脆不让选，
+                    // 免得用户点完「黑」发现岛还是跟着玻璃背景走。
+                    if (Renderer.IslandLiquidGlass) break;
                     _theme = val;
                     Renderer.ThemeMode = _theme;          // setter 内部会失效系统主题缓存
                     Program.SaveSetting("ThemeMode", _theme);
@@ -548,6 +551,9 @@ namespace NotchPeninsula
                     if (val == _material) break;
                     _material = val;
                     Renderer.IslandMaterialIndex = _material;
+                    // 切到玻璃会把 ThemeMode 钳成自动，界面上的分段控件跟着回到第 3 格。
+                    _theme = Renderer.ThemeMode;
+                    Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                     Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
                     break;
@@ -898,7 +904,11 @@ namespace NotchPeninsula
             DrawPreview(c, pv);
 
             Row(c, BODY_TOP, "形态", ["经典刘海", "悬浮灵动岛"], _style, ACT_STYLE, CTRL_X, CTRL_W);
-            Row(c, BODY_TOP + ROW_GAP, "主题配色", ["黑", "白", "跟随系统"], _theme, ACT_THEME, CTRL_X, CTRL_W);
+            // 液态玻璃下主题固定自动：第三格换成「自动」，整排只读（act = -1 既不吃 hover 也不吃点击）。
+            bool themeLocked = _material == 2;
+            Row(c, BODY_TOP + ROW_GAP, "主题配色",
+                themeLocked ? ["黑", "白", "自动"] : ["黑", "白", "跟随系统"],
+                _theme, themeLocked ? -1 : ACT_THEME, CTRL_X, CTRL_W);
             Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力", "液态玻璃"], _material, ACT_MATERIAL, CTRL_X, CTRL_W);
         }
 
