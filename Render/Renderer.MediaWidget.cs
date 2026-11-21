@@ -262,22 +262,28 @@ namespace NotchPeninsula
             string displaySubTrans = string.IsNullOrEmpty(_lastLyric) ? "" : _lastLyricTrans;
 
             // 展开模式下的平滑叠化渲染 (带卡拉OK)
+            // 展开态面板宽度固定、歌词可能比可视区宽：把「正在唱的位置」滚到左侧 40% 处，
+            // 翻译按同一进度、按自身宽度跟着滚；滚到底就停（逐字没走完也不再滚）。
+            // 没有逐字歌词时 CurrentLyricProgress 本身就是「按本行时长」的线性进度（见 ComputeScanProgress）。
+            float lyricViewWidth = Math.Max(0f, titleViewRight - textStartX);
             bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+            // 连续进度：250ms 的采样值只做基准，帧间由本地时钟补间 —— 否则滚动是一跳一跳的。
+            float lyricProgress = SmoothLyricProgress(media, media.CurrentLyricProgress);
             if (_lyricAnimProgress < 1f && isLyricDisplay)
             {
                 float easeOut = 1f - (float)Math.Pow(1f - _lyricAnimProgress, 3);
                 if (!string.IsNullOrEmpty(_prevLyric))
                 {
                     // 旧歌词淡出时进度直接锁定 100% (1f)
-                    DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textStartX, coverY + 42f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true);
+                    DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textStartX, coverY + 46f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true, lyricViewWidth);
                 }
-                // 新歌词套用当前进度
-                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), media.CurrentLyricProgress, true);
+                // 新歌词套用连续进度
+                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 46f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), lyricProgress, true, lyricViewWidth);
                 _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
             }
             else
             {
-                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 42f, _bodyPaint, alpha, media.CurrentLyricProgress, isLyricDisplay);
+                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 46f, _bodyPaint, alpha, lyricProgress, isLyricDisplay, lyricViewWidth);
             }
 
             canvas.Restore();   // 结束文字裁切

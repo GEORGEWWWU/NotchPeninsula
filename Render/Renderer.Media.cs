@@ -340,25 +340,142 @@ namespace NotchPeninsula
         }
 
         private static void DrawLyricLine(SKCanvas canvas, string text, string translation, float x, float y,
-            SKPaint paint, byte targetAlpha, float progress, bool isLyric)
+            SKPaint paint, byte targetAlpha, float progress, bool isLyric, float viewWidth = 0f)
         {
             if (string.IsNullOrEmpty(text)) return;
 
             bool twoLines = isLyric && !string.IsNullOrEmpty(translation) && MediaController.IsTranslationEnabled;
             float mainY = twoLines ? y - LYRIC_TRANS_LINE_STEP * 0.5f : y;
-            DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
+
+            // 展开态歌词横向滚动：把「正在唱的位置」对到可视区左侧 40%，滚到底就停（逐字没走完也不再滚）。
+            float mainScroll = LyricScrollOffset(paint.MeasureText(text), viewWidth, progress);
+            if (mainScroll > 0.01f)
+            {
+                canvas.Save();
+                canvas.Translate(-mainScroll, 0f);
+                DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
+                canvas.Restore();
+            }
+            else
+            {
+                DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
+            }
 
             if (!twoLines) return;
 
             byte transAlpha = (byte)(targetAlpha * 0.88f);
             var savedColor = paint.Color;
             paint.Color = _currentSubTextColor.WithAlpha(transAlpha);
+
+            // 翻译：不跟逐字锚点，就按行进度「匀速」从 0 滚到底（到底即停）——
+            // 它比主歌词短，跟着 40% 锚点走会显得乱跳，匀速更稳。
+            float transScreenW = paint.MeasureText(translation) * LYRIC_TRANS_SCALE;
+            float transScroll = viewWidth > 1f && transScreenW > viewWidth + 0.5f
+                ? MathF.Round((transScreenW - viewWidth) * Math.Clamp(progress, 0f, 1f) * 2f) * 0.5f
+                : 0f;
+
             canvas.Save();
-            canvas.Translate(x, y + LYRIC_TRANS_LINE_STEP * 0.5f);
+            canvas.Translate(x - transScroll / LYRIC_TRANS_SCALE, y + LYRIC_TRANS_LINE_STEP * 0.5f);
             canvas.Scale(LYRIC_TRANS_SCALE, LYRIC_TRANS_SCALE);
             DrawKaraoke(canvas, translation, 0f, 0f, paint, transAlpha, 1f, false);
             canvas.Restore();
             paint.Color = savedColor;
+        }
+
+        /// <summary>
+        /// 歌词横向滚动量（屏幕像素）：把「progress 对应的那个字」放在可视区 40% 处，
+        /// 并夹在 [0, 文字宽 - 可视宽] —— 滚到底之后即使逐字还没走完也不再滚。
+        /// <paramref name="viewWidth"/> ≤ 1 表示不滚（折叠态走这条）。
+        /// </summary>
+        private static float LyricScrollOffset(float textWidth, float viewWidth, float progress)
+        {
+            if (viewWidth <= 1f || textWidth <= viewWidth + 0.5f) return 0f;
+            float maxScroll = textWidth - viewWidth;
+            float want = textWidth * Math.Clamp(progress, 0f, 1f) - viewWidth * LyricScrollAnchor;
+            // 半像素量化：亚像素位移每帧都在变，字形边缘会「闪」；对齐到 0.5px 后肉眼几乎看不出台阶。
+            return MathF.Round(Math.Clamp(want, 0f, maxScroll) * 2f) * 0.5f;
+        }
+
+        /// <summary>正在唱的位置停在可视区左侧 40% 处。</summary>
+        private const float LyricScrollAnchor = 0.4f;
+
+        // ---- 歌词滚动的连续性：媒体位置每 250ms 才更新一次，直接画会一跳一跳 ----
+        private static float _lyricProgRaw, _lyricProgOut, _lyricProgRate;
+        private static long _lyricProgRawTs, _lyricProgOutTs;
+
+        // ---- 行内连续进度：媒体位置每 250ms 才刷新，靠本地时钟补间才对得平 ----
+        private static double _lineElapsedRaw;
+        private static long _lineElapsedTs;
+
+        /// <summary>
+        /// 展开态歌词的连续进度：用 <see cref="MediaController.CurrentLyricLineElapsedMs"/> 作基准，
+        /// 两次刷新之间由本地时钟推进，再除以「本行总时长」。
+        /// 总时长取逐字表最后一段的 endMs；没有逐字时用「已播放 / 当前进度」反推。
+        /// 这样偏移是单调匀速变化的，不会像用 250ms 采样值那样一跳一跳。
+        /// </summary>
+        internal static float SmoothLyricProgress(MediaController media, float fallback)
+        {
+            long now = Environment.TickCount64;
+            double rawMs = media.CurrentLyricLineElapsedMs;
+
+            if (Math.Abs(rawMs - _lineElapsedRaw) > 0.5)
+            {
+                // 新采样：换行 / seek 时 rawMs 会跳，直接以它为准重置基准。
+                _lineElapsedRaw = rawMs;
+                _lineElapsedTs = now;
+            }
+            if (_lineElapsedTs == 0) { _lineElapsedTs = now; return fallback; }
+
+            double elapsed = _lineElapsedRaw + (now - _lineElapsedTs);
+
+            double totalMs = 0;
+            var ends = media.CurrentLyricWordEndMs;
+            if (ends.Length > 0) totalMs = ends[^1];
+            if (totalMs <= 1)
+            {
+                float p = media.CurrentLyricProgress;
+                if (p > 0.02f && rawMs > 1) totalMs = rawMs / p;
+            }
+            if (totalMs <= 1) return fallback;
+
+            return Math.Clamp((float)(elapsed / totalMs), 0f, 1f);
+        }
+
+        /// <summary>
+        /// 把「阶梯状」的行内进度变成连续值：采样之间按上次速率外推，输出再做一次时间常数约 40ms 的平滑。
+        /// 行切换 / 拖动进度条时进度会突降，这时不做外推（速率为 0），直接跟随新值。
+        /// </summary>
+        internal static float AdvanceLyricProgress(float raw)
+        {
+            long now = Environment.TickCount64;
+            if (_lyricProgRawTs == 0)
+            {
+                _lyricProgRaw = _lyricProgOut = raw;
+                _lyricProgRawTs = _lyricProgOutTs = now;
+                return raw;
+            }
+
+            if (Math.Abs(raw - _lyricProgRaw) > 0.001f)
+            {
+                double dt = Math.Max(0.001, (now - _lyricProgRawTs) / 1000.0);
+                float rate = (float)((raw - _lyricProgRaw) / dt);
+                // 只接受「往前推进」的速率：往回跳说明换行 / seek，直接归零避免反向冲刺。
+                _lyricProgRate = rate > 0f ? Math.Min(rate, 2.5f) : 0f;
+                _lyricProgRaw = raw;
+                _lyricProgRawTs = now;
+            }
+
+            double elapsed = (now - _lyricProgRawTs) / 1000.0;
+            float predicted = Math.Clamp(_lyricProgRaw + _lyricProgRate * (float)elapsed, 0f, 1f);
+
+            float dtOut = (float)Math.Max(0.001, (now - _lyricProgOutTs) / 1000.0);
+            float error = predicted - _lyricProgOut;
+            // 落后太多（换行 / 拖进度 / 掉帧）就直接对上，别慢慢追 —— 追的过程看起来就是「滚得慢」。
+            _lyricProgOut = Math.Abs(error) > 0.08f
+                ? predicted
+                : _lyricProgOut + error * Math.Min(1f, 18f * dtOut);
+            _lyricProgOutTs = now;
+            return Math.Clamp(_lyricProgOut, 0f, 1f);
         }
 
         private static float MeasureHardwareBlockWidth()
