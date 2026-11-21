@@ -110,6 +110,20 @@ namespace NotchPeninsula
 
         public static float Zoom => ZoomTable[_levels[P_Zoom]];
 
+        /// <summary>
+        /// 当前「模糊」档位对应的 sigma（半径 / 2.7，与渲染管线同一口径）。
+        /// 实况窗面板 / 气泡自己糊背景时用它，保证跟着用户在设置里调的那一档走。
+        /// </summary>
+        public static float BlurSigma
+        {
+            get
+            {
+                int level = _levels[P_Blur];
+                int r = BlurRadiusTable[Math.Clamp(level, 0, BlurRadiusTable.Length - 1)];
+                return r <= 0 ? 0f : r / 2.7f;
+            }
+        }
+
         public static float RefractionAmount => _levels[P_Refraction] * 6f;      // 0 / 6 / 12 / 18 / 24
 
         public static float Dispersion => _levels[P_Dispersion] * 0.09f;         // 0 .. 0.36

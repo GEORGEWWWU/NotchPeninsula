@@ -407,6 +407,25 @@ namespace NotchPeninsula
 
         private static float MeasureCompositeWidth(MediaController media, bool includePlugins)
         {
+            if (SilentActive)
+            {
+                // 静默模式没有原生模块，宽度全留给「勾选了 + 有重要信息」的插件行。
+                // 第一趟（只量原生）返回 0：预算整块给插件，否则插件会被自己的预算挡掉。
+                if (!includePlugins) return 0f;
+
+                var ids = Plugins.PluginManager.Instance.SilentImportantPluginIds;
+                float own = 0f;
+                for (int i = 0; i < ids.Count; i++)
+                {
+                    float w = SumPluginRowWidth(ids[i]);
+                    if (w <= 0f) continue;
+                    own = own > 0f ? own + 16f + w : w;
+                }
+
+                // 没有插件内容但实况窗算重要信息时，岛用空白胶囊兜底（气泡要在屏上，岛得回来陪它）。
+                return own > 0f ? 16f + own + 16f : STANDBY_BLANK_WIDTH;
+            }
+
             if (StandbyActive)
             {
                 string scene = StandbySceneKey;

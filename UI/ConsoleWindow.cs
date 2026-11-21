@@ -141,9 +141,11 @@ namespace NotchPeninsula
         // 之前用 WIDTH - CONTENT_RM（顶着卡片边线），比开关 / 列表箭头凸出一截，整行看起来偏右。
         private const float DISPLAY_CTRL_RIGHT = WIDTH - CONTENT_TEXT_RM;
 
-        private const float MODE_SEG_W = 184f;                                  // 2 段 × 92
+        // 三段：待机 / 普通 / 静默（新增静默模式后从 2×92 扩到 3×92）。
+        // 左缘 296 落在「显示模式」标签（202 起，约 250 终）右侧，仍留 46px 呼吸。
+        private const float MODE_SEG_W = 276f;                                  // 3 段 × 92
 
-        private const float MODE_SEG_X = DISPLAY_CTRL_RIGHT - MODE_SEG_W;       // 388
+        private const float MODE_SEG_X = DISPLAY_CTRL_RIGHT - MODE_SEG_W;       // 296
 
         private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 228
 
@@ -208,8 +210,9 @@ namespace NotchPeninsula
         // ---- 侧边栏页签：几何 + 滑动动画 ----
 
         /// <summary>页签行首（相对标题栏），**按页签号索引**——顺序与侧边栏视觉顺序不同，
-        ///    绘制顺序见 RenderSidebar。绘制 / 命中 / 滑动动画三处都从这里取，别再写死数字。</summary>
-        private static readonly float[] SidebarTabY = { 60f, 100f, 180f, 220f, 360f, 10f, 270f, 310f, 140f };
+        ///    绘制顺序见 RenderSidebar。绘制 / 命中 / 滑动动画三处都从这里取，别再写死数字。
+        ///    9 = 静默模式设置（插在显示设置下面，实况窗管理及其后整体下移 40）。</summary>
+        private static readonly float[] SidebarTabY = { 60f, 100f, 220f, 260f, 400f, 10f, 310f, 350f, 180f, 140f };
 
         private const float TAB_ROW_H = 36f;          // 页签行高
 
@@ -457,6 +460,12 @@ namespace NotchPeninsula
 
         private const float ISLAND_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;               // 76
 
+        // 「切换静默模式」快捷键：紧贴「唤出灵动岛」卡，结构与它同源（标题 + 开关 + 一行键位框）。
+        // 572 + 76 + 32（标题栏）= 680，窗口高 692，底部还剩 12px，正好放得下。
+        private const float SILENT_HOTKEY_CARD_Y = ISLAND_HOTKEY_CARD_Y + ISLAND_HOTKEY_CARD_H + CARD_GAP;  // 572
+
+        private const float SILENT_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;               // 76
+
         // 媒体设置页卡片顺序（合并后）：
 
         private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + CARD_TOP_Y + TOGGLE_CARD_H + MEDIA_LIVE_ROW_DY + CARD_GAP;   // 合并卡片顶部
@@ -690,6 +699,16 @@ namespace NotchPeninsula
 
         private string _islandHotkeyHint = "";
 
+        // ---- 交互设置页「静默模式」卡片（单键位，与上面那张同源） ----
+
+        private bool _silentHotkeyToggleHovered = false;
+
+        private bool _silentHotkeyHovered = false;
+
+        private bool _silentHotkeyRecording = false;
+
+        private string _silentHotkeyHint = "";
+
         // 关于页交互状态
 
         private int _hoveredLinkIndex = -1;
@@ -781,13 +800,20 @@ namespace NotchPeninsula
 
         private int _tabSlideDst = -1;                // 已经为哪个页签起过滑
 
+        /// <summary>
+        /// 显示设置页（tab 1）的「显示内容」数据源：永远是常驻清单。
+        /// 静默模式那份清单在独立的「静默模式设置」页（tab 9），两页各用各的。
+        /// </summary>
+        private static IReadOnlyList<PluginManager.DisplayItem> CurrentDisplayList
+            => PluginManager.Instance.DisplayItems;
+
         private void GetDisplayListLayout(out int visibleRows, out int maxFirstRow)
         {
             // 可视行数按**卡片实际高度**算，而不是写死 MAX_ROWS ——
             // 卡片被限制在窗口剩余空间里，行数超出的部分交给列表内部滚动。
             int fitRows = Math.Max(1, (int)((DISPLAY_CARD_H - DISPLAY_FIRST_ROW_Y) / DISPLAY_ROW_H));
             int maxRows = Math.Min(fitRows, DISPLAY_MAX_ROWS);
-            int total = PluginManager.Instance.DisplayItems.Count;
+            int total = CurrentDisplayList.Count;
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
         }
@@ -830,6 +856,22 @@ namespace NotchPeninsula
         private bool _listScrollbarHovered;
 
         private int _hoveredDisplayModeIndex = -1;
+
+        // 静默模式设置页（tab 9）列表的悬停项：行本体 / ∧ / ∨
+        private int _hoveredSilentRow = -1;
+
+        private int _hoveredSilentMoveUp = -1;
+
+        private int _hoveredSilentMoveDown = -1;
+
+        // 静默模式设置页右上角「去切换」按钮（点了跳到显示设置去换模式）
+        private bool _silentSwitchHovered;
+
+        // 静默模式设置页「消息通知」卡（整卡可点，跳到通用设置）
+        private bool _silentToastHovered;
+
+        // 显示模式分段器的标签：下标与 IslandDisplayMode 一一对应（0 待机 / 1 普通 / 2 静默）。
+        private static readonly string[] DisplayModeLabels = ["待机模式", "普通模式", "静默模式"];
 
         // ---- 待机显示内容下拉（空白 + 内置项 + 插件按名称排序）----
         private bool _sceneDropdownOpen;
@@ -982,7 +1024,8 @@ namespace NotchPeninsula
             else if (_selectedTab == 1)
             {
                 if (HitMonitorDropdownBox(x, y)) return DropdownKind.Monitor;
-                if (HitSceneDropdownBox(x, y)) return DropdownKind.Scene;
+                // 待机显示内容下拉只在待机模式可点（普通 / 静默模式下是置灰状态）。
+                if (Renderer.StandbyModeOnly && HitSceneDropdownBox(x, y)) return DropdownKind.Scene;
             }
             else if (_selectedTab == 2)
             {
@@ -1434,6 +1477,7 @@ namespace NotchPeninsula
                         //    收工并保留原键位 —— 别把半截状态挂在那儿。
                         if (_hotkeyRecordingIndex >= 0) CancelHotkeyRecording();
                         if (_islandHotkeyRecording) CancelIslandHotkeyRecording();
+                        if (_silentHotkeyRecording) CancelSilentHotkeyRecording();
                     }
                     break;
 
@@ -1673,6 +1717,7 @@ namespace NotchPeninsula
                 case Win32.WM_KEYDOWN:
                     if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     if (HandleIslandHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
+                    if (HandleSilentHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     if (HandleMarketSearchKey(Win32.Low32(wParam), '\0')) return IntPtr.Zero;
                     break;
 
@@ -1684,7 +1729,7 @@ namespace NotchPeninsula
 
                 // 只按了修饰键：把「Ctrl + …」实时画到录制框里（不改键位，也不结束录制）。
                 case KeyboardCapture.WM_CAPTURE_STATE:
-                    if (_hotkeyRecordingIndex >= 0 || _islandHotkeyRecording)
+                    if (_hotkeyRecordingIndex >= 0 || _islandHotkeyRecording || _silentHotkeyRecording)
                     {
                         _captureLiveMods = (uint)Win32.Low32(lParam);
                         Render();
@@ -1694,10 +1739,11 @@ namespace NotchPeninsula
 
                 // 钩子自身到期被释放：录制态必须一起收掉，不然界面停在那儿按什么都没反应。
                 case KeyboardCapture.WM_CAPTURE_ABORT:
-                    if (_hotkeyRecordingIndex >= 0 || _islandHotkeyRecording)
+                    if (_hotkeyRecordingIndex >= 0 || _islandHotkeyRecording || _silentHotkeyRecording)
                     {
                         if (_hotkeyRecordingIndex >= 0) CancelHotkeyRecording();
                         if (_islandHotkeyRecording) CancelIslandHotkeyRecording();
+                        if (_silentHotkeyRecording) CancelSilentHotkeyRecording();
                         _hotkeyHint = "录制超时，请重新点按键框";
                         Render();
                         return IntPtr.Zero;
@@ -1707,6 +1753,7 @@ namespace NotchPeninsula
                 case Win32.WM_SYSKEYDOWN:
                     if (HandleHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     if (HandleIslandHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
+                    if (HandleSilentHotkeyRecording(Win32.Low32(wParam))) return IntPtr.Zero;
                     break;
                 case WM_ASYNC_RERENDER:
                     // 拖动中不重绘（EndDragMove 收尾时会补一帧，这里丢了不会留下过期画面）。
@@ -1832,6 +1879,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 6) RenderTabPlugins(canvas);
             else if (_selectedTab == 7) RenderTabMarket(canvas);
             else if (_selectedTab == 8) RenderTabLiveWindows(canvas);
+            else if (_selectedTab == 9) RenderTabSilentMode(canvas);
 
             // 弹窗统一画在页内容之上，不分页签：只画在 6、7 会变成
             // 「模态已经拦下所有点击、画面上却什么都没有」的假死。

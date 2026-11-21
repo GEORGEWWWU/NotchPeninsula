@@ -9,6 +9,7 @@ public static class BuiltinWidgets
     public const string Clock = "builtin.clock";        // 时间日期
     public const string Hardware = "builtin.hardware";  // CPU / RAM 占用
     public const string Media = "builtin.media";        // 媒体控制器
+    public const string Toast = "builtin.toast";        // 消息通知（只出现在静默模式设置里，不参与岛内顺序）
 
     public static readonly string[] Default = { Clock, Hardware, Media };
 
@@ -221,6 +222,41 @@ public sealed class PluginHost
             catch (Exception ex)
             {
                 Logger.Error($"[PluginHost] 读取组件详情页失败（实况窗复用）: {w.Id}", ex);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 静默模式的「自定义页面」展示用：取该插件第一个**带详情页**的组件 Id。
+    /// 没有详情页就返回 null —— 调用方退回折叠态（等同于 useImportantPresentation = false 的效果）。
+    /// </summary>
+    public string? FindPrimaryDetailWidgetId(string pluginId)
+    {
+        if (string.IsNullOrEmpty(pluginId)) return null;
+
+        List<IWidget>? candidates = null;
+        lock (_lock)
+        {
+            foreach (var w in _widgets)
+            {
+                if (_widgetPluginMap.TryGetValue(w.Id, out var p)
+                    && string.Equals(p, pluginId, StringComparison.OrdinalIgnoreCase))
+                    (candidates ??= new List<IWidget>(1)).Add(w);
+            }
+        }
+        if (candidates == null) return null;
+
+        // 锁外读插件属性（DetailPage 是插件代码，不能占着宿主锁调）。
+        foreach (var w in candidates)
+        {
+            try
+            {
+                if (w.DetailPage != null) return w.Id;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[PluginHost] 读取组件详情页失败（静默模式自定义页面）: {w.Id}", ex);
             }
         }
         return null;
@@ -637,6 +673,10 @@ public sealed class PluginHost
             }
         }
 
+        // 卸载的插件不再有资格让岛出现：残留的「重要信息」必须当场清掉，
+        // 否则静默模式下岛会被一个已经不存在的插件永远钉在屏上。
+        SilentMode.Clear(pluginId);
+
         if (refreshes != null)
             foreach (var r in refreshes)
                 try { r.Dispose(); } catch { }
@@ -755,9 +795,34 @@ public sealed class PluginHost
 
     public bool HasActiveDetailPage { get { lock (_lock) return _activeDetailPage != null; } }
 
+    /// <summary>
+    /// 启动宽限期内、且当前不是普通模式时，忽略插件主动打开详情页的请求。
+    ///
+    /// <para>原因：待机 / 静默模式下岛体是「胶囊态」，插件在 Initialize 里自动弹详情页会把岛撑成大面板，
+    /// 把静默模式顶开（用户看到的是「一启动岛就杵在那里、不隐藏」）。宽限期很短（3 秒），
+    /// 之后插件自己开、用户点开都照常。</para>
+    /// </summary>
+    private static bool AutoDetailSuppressed
+    {
+        get
+        {
+            if (Renderer.RegularActive) return false;
+            // 静默模式自己声明了「用自定义页面展示」的，走 SyncSilentPresentation 那条路要放行。
+            if (NotchWindow.InStartupGrace) return true;
+            // 待机 / 静默模式下，插件自己弹的详情页一律压掉；只有紧挨用户手势（点击 / 右键）的那次放行。
+            return Environment.TickCount - Renderer.LastUserInputMs > 600;
+        }
+    }
+
     public bool OpenDetailPage(string widgetId)
     {
         if (string.IsNullOrEmpty(widgetId)) return false;
+
+        if (AutoDetailSuppressed)
+        {
+            Logger.Info($"[PluginHost] 待机 / 静默模式，忽略插件自动展开详情页: {widgetId}");
+            return false;
+        }
 
         IWidget? target;
         lock (_lock)
@@ -990,4 +1055,8 @@ public sealed class ScopedPluginHost : IPluginHost
     public IDisposable DeclareMspSignal(string action, string description)
         => _host.DeclareMspSignal(_pluginId, action, description);
     public void PublishMspSignal(string path, object? payload) => _host.PublishMspSignal(path, payload);
+
+    // 静默模式：插件 Id 由这里绑定，插件只报「有没有重要信息」。
+    public void SetImportantInformation(bool hasImportant, bool useImportantPresentation = false)
+        => SilentMode.Report(_pluginId, hasImportant, useImportantPresentation);
 }

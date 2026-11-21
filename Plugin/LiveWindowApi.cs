@@ -96,6 +96,18 @@ public interface ILiveWindow
     bool SpinWhenNoProgress => false;
 
     /// <summary>
+    /// 本实况窗是否代表「重要信息」。
+    ///
+    /// <para>静默模式下岛平时整块退场，而实况窗气泡挂在岛左侧 —— 岛退场它也会跟着出画面。
+    /// 这里返回 <c>true</c> 的气泡只要在屏上，宿主就会把岛叫回来陪它（气泡显示 = 岛显示）。
+    /// 下载进度这类「用户必须看见」的气泡应返回 true；装饰性 / 常驻信息类返回 false（默认）。</para>
+    ///
+    /// <para>带默认实现，旧插件二进制不用重新编译（宿主按 false 处理）。
+    /// 渲染线程每帧读一次，实现方自己保证线程安全（建议 volatile 字段）。</para>
+    /// </summary>
+    bool CountsAsImportantInfo => false;
+
+    /// <summary>
     /// 「设置 → 实况窗管理」里的插件级开关变化：<c>true</c> = 重新启用，<c>false</c> = 已被禁用。
     /// <para>
     /// 禁用时宿主立刻挂起该插件的全部气泡：不再绘制、不再命中，也不再调用 <see cref="GetVisual"/> /

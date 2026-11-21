@@ -36,6 +36,9 @@ namespace NotchPeninsula
 
         public static bool IsBound => _vk != 0;
 
+        /// <summary>当前键位（给别的全局快捷键做冲突检测用；空键位 = vk 0）。</summary>
+        internal static (uint Mods, int Vk) Binding => (_mods, _vk);
+
         public static void Load(Microsoft.Win32.RegistryKey key)
         {
             _enabled = (int)key.GetValue(EnabledKey, 0) != 0;

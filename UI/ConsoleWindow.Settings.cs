@@ -316,6 +316,7 @@ namespace NotchPeninsula
             {
                 const string fallback = "键盘钩子不可用：只能在设置窗内录制，系统组合（Win / Alt+Tab）录不到";
                 if (_hotkeyRecordingIndex >= 0) _hotkeyHint = fallback;
+                else if (_silentHotkeyRecording) _silentHotkeyHint = fallback;
                 else _islandHotkeyHint = fallback;
             }
         }
@@ -326,6 +327,7 @@ namespace NotchPeninsula
         {
             if (_hotkeyRecordingIndex >= 0) return HandleHotkeyRecording(vk, mods);
             if (_islandHotkeyRecording) return HandleIslandHotkeyRecording(vk, mods);
+            if (_silentHotkeyRecording) return HandleSilentHotkeyRecording(vk, mods);
             return false;
         }
 
@@ -392,6 +394,7 @@ namespace NotchPeninsula
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
+            SilentHotkey.ResumeRegistration();
             // 键位存下来了 ≠ 立刻生效：总开关关着时一个都不注册。
             // 这正是「设好快捷键按下去没反应」最常见的成因，所以宁可挂一句提示。
             _hotkeyHint = edited >= 0 && MediaHotkeys.LastErrorIndex == edited ? MediaHotkeys.LastError
@@ -409,6 +412,7 @@ namespace NotchPeninsula
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
+            SilentHotkey.ResumeRegistration();
             Render();
         }
 
@@ -463,6 +467,7 @@ namespace NotchPeninsula
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
+            SilentHotkey.ResumeRegistration();
             // 同媒体验收：存下来但开关没开时并不生效，得说一声。
             _islandHotkeyHint = IslandHotkey.LastError.Length > 0 ? IslandHotkey.LastError
                 : (!IslandHotkey.IsEnabled && IslandHotkey.IsBound
@@ -479,6 +484,77 @@ namespace NotchPeninsula
             KeyboardCapture.Stop();
             MediaHotkeys.ResumeRegistration();
             IslandHotkey.ResumeRegistration();
+            SilentHotkey.ResumeRegistration();
+            Render();
+        }
+
+        // ---- 交互设置页「静默模式」的录制（单键位，逻辑与上面那套同源） ----
+
+        private bool HandleSilentHotkeyRecording(int vk) => HandleSilentHotkeyRecording(vk, ReadModsNow());
+
+        private bool HandleSilentHotkeyRecording(int vk, uint mods)
+        {
+            if (!_silentHotkeyRecording) return false;
+
+            if (vk is Win32.VK_SHIFT or Win32.VK_CONTROL or Win32.VK_MENU
+                or Win32.VK_LWIN or Win32.VK_RWIN
+                or Win32.VK_LSHIFT or Win32.VK_RSHIFT
+                or Win32.VK_LCONTROL or Win32.VK_RCONTROL
+                or Win32.VK_LMENU or Win32.VK_RMENU)
+            {
+                _captureLiveMods = mods;
+                Render();
+                return true;
+            }
+
+            if (vk == Win32.VK_ESCAPE) { CancelSilentHotkeyRecording(); return true; }
+
+            if (vk == Win32.VK_BACK)
+            {
+                SilentHotkey.ClearBinding();
+                _silentHotkeyHint = "";
+                EndSilentHotkeyRecording();
+                return true;
+            }
+
+            string error = SilentHotkey.SetBinding(mods, vk);
+            if (error.Length > 0)
+            {
+                _silentHotkeyHint = error;
+                Render();
+                return true;
+            }
+
+            _silentHotkeyHint = "";
+            EndSilentHotkeyRecording();
+            return true;
+        }
+
+        private void EndSilentHotkeyRecording()
+        {
+            _silentHotkeyRecording = false;
+            _captureLiveMods = 0;
+            KeyboardCapture.Stop();
+            MediaHotkeys.ResumeRegistration();
+            IslandHotkey.ResumeRegistration();
+            SilentHotkey.ResumeRegistration();
+            // 存下来但开关没开时并不生效，得说一声。
+            _silentHotkeyHint = SilentHotkey.LastError.Length > 0 ? SilentHotkey.LastError
+                : (!SilentHotkey.IsEnabled && SilentHotkey.IsBound
+                    ? "已保存，打开右上角开关后生效" : "");
+            Render();
+        }
+
+        private void CancelSilentHotkeyRecording()
+        {
+            if (!_silentHotkeyRecording) return;
+            _silentHotkeyRecording = false;
+            _captureLiveMods = 0;
+            _silentHotkeyHint = "";
+            KeyboardCapture.Stop();
+            MediaHotkeys.ResumeRegistration();
+            IslandHotkey.ResumeRegistration();
+            SilentHotkey.ResumeRegistration();
             Render();
         }
     }

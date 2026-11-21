@@ -38,7 +38,7 @@ NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基
 - 实时音频频谱，以及时间日期与 CPU / 内存占用
 - Windows Toast 通知与可选提示音
 - 可安装第三方插件的自定义组件
-- 待机模式、自动隐藏、窗口置顶、鼠标穿透与自动更新检测
+- 待机模式 / 静默模式、自动隐藏、窗口置顶、鼠标穿透与自动更新检测
 - 首次启动引导向导，常用项一次配好
 - MSP 接入（实验性）：外部程序可弹通知、查询并控制媒体
 
@@ -46,19 +46,18 @@ NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基
 
 | 模块 | 说明 |
 | --- | --- |
-| **媒体控制** | 自动接管系统媒体会话（浏览器 / 网易云 / QQ 音乐 / 酷狗 / Spotify / Apple Music / Echo Music / LX Music 等），支持播放暂停、上下曲与时间轴拖动。**系统同时给出歌名与歌手**即为音乐模式：联网取歌词与封面；否则按视频模式处理——不联网，封面取系统会话自带的缩略图（无则用应用图标；PotPlayer 放视频时缩略图是画面截图，直接改用应用图标） |
-| **实况窗（Live Window）** | 主岛左侧的圆形进度气泡；媒体可收进实况窗（封面旋转、进度环），右键从气泡展开原有面板。插件也能注册，在「设置 → 实况窗管理」逐个开关（插件默认启用；媒体默认关闭，开关在「媒体设置」） |
-| **灵动岛歌词** | 支持**译文**与**逐字歌词**（无逐字源自动回退软件模拟卡拉 OK 效果），岛体宽度随歌词自适应；多源获取链与各播放器的差异见下文 |
+| **媒体控制** | 自动接管系统媒体会话（浏览器 / 网易云 / QQ 音乐 / 酷狗 / Spotify 等），支持播放暂停、上下曲与拖动时间轴；音乐模式联网取歌词封面，视频模式不联网 |
+| **实况窗（Live Window）** | 主岛左侧的圆形进度气泡；媒体可收进实况窗（封面旋转、进度环），左右键从气泡展开原有面板。插件也能注册，在「设置 → 实况窗管理」逐个开关 |
+| **歌词** | 支持**译文**与**逐字歌词**，岛体宽度随歌词自适应；接入 Just Solo LyricServer 可拿到带时间轴歌词与服务端频谱，获取顺序见下文 |
 | **实时音频可视化** | WASAPI Loopback 捕获系统输出，分析为 5 组频段并平滑渲染；未播放媒体时保留音量动态效果，自动跟随系统默认输出设备 |
-| **Windows 通知** | 监听 Toast 通知，**缩略 / 紧凑 / 完整**三档呈现，可整体关闭；通知图标自动取应用自身 logo，展示结束即释放，点击通知可唤回对应应用；可选消息提示音（内置 14 个音源或本地音频） |
+| **Windows 通知** | 监听 Toast 通知，**缩略 / 紧凑 / 完整**三档呈现，可整体关闭；图标自动取应用自身 logo，点击通知可唤回应用；可选消息提示音 |
 | **时间日期与硬件监测** | 内置时间日期与 CPU / 内存占用监测，在**显示设置**中统一控制显示与排序 |
-| **全局快捷键** | 媒体五动作（播放暂停 / 上下曲 / 快进快退 3 秒）与「唤出 / 隐藏灵动岛」各绑一组全局热键；按键必须搭配 Ctrl / Alt / Shift / Win，被其他程序占用时会说明哪一条没生效。**出厂全部关闭**（不注册任何热键）；录制键位期间自动挂起已注册热键，避免「按一下看看录成什么」变成真的切歌 |
-| **Just Solo 歌词** | 接入 Just Solo LyricServer，获取带时间轴歌词与服务端推送频谱；音量操作单一出口——连上走播放器音量，否则走系统主音量 |
-| **插件系统** | 独立 DLL 放入程序同级 `plugins` 目录即自动加载，支持热重载；开放组件、详情页、定时刷新、提醒、自定义窗口五类扩展点。插件还可以**把自己暴露成 MSP 工具与信号**（`[MspTool]` 一行注册，对端看到 `notchpeninsula_<插件id>_<工具名>`；schema 由方法签名生成，带默认值的参数自动可选）。插件窗口与详情页均支持**双向文件拖放**（可拖入文件 / 文件夹，也可拖出到资源管理器，组件还可声明「收起态也收文件」）；组件与详情页支持**双击 / 右键事件透传**（各有独立开关，默认全关，不影响已有插件）。另支持 **AutoWidth**：宽度由宿主测量分配，老插件零改动。[详见开发文档](./NPS_PluginsAPI.md) |
-| **外观与个性化** | 主题（深色 / 浅色 / 跟随系统）、背景材质（实体 / 亚克力 / 液态玻璃）、背景不透明度、刘海样式、底部圆角、各状态尺寸与全局 DPI 缩放，岛体宽度上限跟随显示器工作区；字体可整体替换（缺字自动回退）；窗口置顶、鼠标穿透、多显示器指定 |
-| **自动隐藏** | 总开关下三种模式**互相独立、可任意组合**：焦点离开时 / 暂停播放后 / 全屏应用时。**穿透模式下同样生效**（隐藏后点屏幕顶部那条细边即可唤回，也可用托盘菜单「唤回灵动岛」）；通知、媒体展开面板、插件详情页期间一律不隐藏 |
-| **待机模式** | 一键把岛体收成小胶囊，内容三选一：仅时间 / 空白 / 折叠媒体控制（选了媒体控制但当前没在播放时自动退化为空白）；可在**显示设置**手动切换，也可开启「双击空白切换」后在岛上双击进出。待机是运行时状态，重启后回到普通模式 |
-| **MSP 接入（实验性）** | 把灵动岛注册为本机 MSP 节点 `notchpeninsula`：外部程序可 ping、弹通知、查询媒体状态、控制播放；岛体同时广播本机事件、订阅对端通知。**插件注册的工具与信号也挂在同一个节点上**，对端看到的就是一棵完整的工具树。开关在**通用设置**，**默认关闭**、开启即时生效 |
+| **全局快捷键** | 媒体五动作、「唤出 / 隐藏灵动岛」与「切换静默模式」各绑一组全局热键；按键需搭配 Ctrl / Alt / Shift / Win，被占用时会说明。**出厂全部关闭**；录制期间自动挂起已注册热键 |
+| **插件系统** | 插件 DLL 放进程序同级 `plugins` 目录即自动加载；开放组件、详情页、定时刷新、提醒、自定义窗口五类扩展点，窗口与详情页支持双向文件拖放与双击 / 右键透传，并支持 **AutoWidth**（宽度由宿主测量分配，老插件零改动）。可[暴露成 MSP 工具与信号](https://github.com/GEORGEWWWU/NotchPeninsula/wiki/MSP-%E6%8E%A5%E5%85%A5%E6%96%87%E6%A1%A3)，详见[开发文档](./NPS_PluginsAPI.md) |
+| **外观与个性化** | 主题（深色 / 浅色 / 跟随系统）、背景材质（实体 / 亚克力 / 液态玻璃）、不透明度、刘海样式、底部圆角、各状态尺寸与全局 DPI 缩放；字体可整体替换；窗口置顶、鼠标穿透、多显示器指定 |
+| **自动隐藏** | 焦点离开 / 暂停播放 / 全屏应用三种模式可自由组合；**穿透模式下同样生效**（隐藏后点屏幕顶部细边或用托盘菜单唤回）；通知、展开面板、插件详情页期间不隐藏 |
+| **待机 / 静默** | 待机：收成小胶囊，内容为时间 / 空白 / 折叠媒体控制，可双击空白进出；静默：平时完全隐藏，只有插件上报**重要信息**时才从屏幕中间弹出来，信息结束即消失，可绑快捷键在「静默 ↔ 之前的模式」间切换 |
+| **MSP 接入（实验性）** | 把灵动岛注册为本机 MSP 节点 `notchpeninsula`：外部程序可 ping、弹通知、查询媒体状态、控制播放，[详见MSP文档](https://github.com/GEORGEWWWU/NotchPeninsula/wiki/MSP-%E6%8E%A5%E5%85%A5%E6%96%87%E6%A1%A3) |
 | **交互** | 双击封面切回正在播放的应用（默认关闭，可在交互设置开启）；岛内右键按区域直达对应设置页；托盘菜单快捷控制 |
 
 ### 歌词 / 译文 / 封面获取顺序
@@ -102,10 +101,10 @@ NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基
 
 - **个性化中心** —— 可选黑、白或系统主题，切换实体、亚克力和液态玻璃，调整折叠态高度、底部圆角、通知尺寸和视觉比例。液态玻璃使用桌面抓屏背板，可调模糊、折射、高光、厚度、色调、刷新周期和前景帧率。帧率「自动」在空闲时用 30 FPS，动态时用 60 FPS。
 - **通用设置** —— 开机自启、窗口置顶、系统消息通知与提示音、**MSP 接入（实验性）**、灵动岛字体
-- **显示设置** —— 显示形态（刘海 / 灵动岛）、目标显示器、显示模式（待机 / 普通 + 双击空白切换）、待机内容三选一、**显示内容**（勾选显示项并调整先后次序）
+- **显示设置** —— 显示形态（刘海 / 灵动岛）、目标显示器、显示模式（待机 / 普通 / 静默）、待机内容 / 静默模式设置、**显示内容**（勾选并排序）
 - **实况窗管理** —— 控制哪些插件可以使用主岛左侧的实况窗（插件逐个开关，**默认全部启用**；关掉后该插件的内容只留在主岛，不会出现左侧气泡）。「媒体」一行只做状态提示，开关在「媒体设置」里（媒体实况窗**默认关闭**）
 - **媒体设置** —— 媒体控制、目标媒体平台与匹配方式、**使用实况窗展示媒体**、歌词与译文、逐字歌词、歌词延迟补偿、**全局快捷键**
-- **交互设置** —— 自动隐藏、媒体交互方式、双击封面跳转应用、鼠标穿透、**唤出灵动岛快捷键**
+- **交互设置** —— 自动隐藏、媒体交互方式、双击封面跳转应用、鼠标穿透、**唤出灵动岛快捷键**、**切换静默模式快捷键**
 - **我的插件** —— 导入 / 启用 / 禁用 / 热重载 / 卸载插件（二次确认）、打开插件目录、拖入 DLL / ZIP 直接安装（**在设置窗任意页面拖入会自动跳到本页**；导入只接受 `.dll` / `.zip`）
 - **插件市场** —— 按分类（全部插件 / 主题外观 / 媒体增强 / 效率工具 / 开发者）浏览，搜索与「只看已安装」筛选，排序（最热 / 评分 / 最新 / 名称，默认最热，官方插件恒置顶），下载 / 更新 / 重装 / 卸载（二次确认）；插件声明的最低 NPS 版本高于当前版本时，单个下载 / 更新前会弹窗提示确认，**一键更新会跳过这类插件**；存在可更新插件时列表底部出现**「一键更新全部插件」**（逐个排队安装、显示进度），侧栏「插件市场」右上角的黄色角标同步显示待更新数（超过 9 显示 9+）
 - **关于软件** —— 版本信息与相关链接（检测更新 / 项目仓库 / 开发者）
@@ -178,89 +177,91 @@ NotchPeninsula 是面向 Win 10/11 的「刘海屏」风格桌面小组件，基
 
 ```text
 NotchPeninsula/
-├── Core/                             # 程序骨架与系统底层
-│   ├── Program.cs                    # 程序入口，单例启动与配置读写
-│   ├── NotchWindow.cs                # 主窗口逻辑、动画、托盘、消息队列调度
-│   ├── LiveWindowHost.cs             # 实况窗宿主：注册、布局、动画、命中、右键展开态
-│   ├── MediaLiveWindow.cs            # 内置媒体实况窗：3 秒预览 → 收进左侧、封面旋转
-│   ├── NotchWindow.Acrylic.cs        # 原生背板同步及 Windows 10 亚克力兼容路径
-│   ├── Win32.cs                      # Win32 API 封装
-│   ├── HotkeyText.cs                 # 快捷键键名格式化与合法性校验（两组全局热键共用）
-│   ├── IslandHotkey.cs               # 「隐藏 / 唤出灵动岛」全局快捷键（单键位）
-│   ├── SystemSettingManager.cs       # 系统音量控制
-│   ├── brightness.cs                 # 屏幕亮度控制
-│   ├── IslandBackdrop.cs             # Windows 10 亚克力的 GDI 兼容背板
-│   ├── NativeAcrylic.cs              # Windows Composition 宿主及岛体轮廓裁切
-│   ├── DxgiBackdrop.cs               # 液态玻璃的 DXGI 桌面采集
-│   ├── IslandDropTarget.cs           # 岛体 OLE 拖入目标（让插件详情页也能接文件拖放）
-│   ├── DataResources.cs              # data\ 内置资源解析（磁盘优先、嵌入兜底）
-│   ├── UpdateManager.cs              # GitHub 版本检测与更新弹窗
-│   └── Logger.cs                     # 日志
-├── Render/                           # 渲染与字体
-│   ├── Renderer.cs                   # 岛体渲染主流程：尺寸/主题/模式参数 + Draw() 主流程
-│   ├── Renderer.Layout.cs            # 岛体内容布局：按「显示内容」顺序表混排 / 穿透唤醒按钮
-│   ├── Renderer.Plugin.cs            # 插件行绘制与详情页（命中、预算、顺序表）
-│   ├── Renderer.Toast.cs             # 通知 Toast 绘制
-│   ├── Renderer.Media.cs             # 媒体/歌词/逐字/时间轴/硬件统计
-│   ├── Renderer.MediaWidget.cs       # 媒体控制模块绘制：折叠态内联行、展开面板、歌词与按钮
+├── Core/                              # 程序骨架与系统底层
+│   ├── Program.cs                     # 程序入口，单例启动与配置读写
+│   ├── NotchWindow.cs                 # 主窗口逻辑、动画、托盘、消息队列调度
+│   ├── LiveWindowHost.cs              # 实况窗宿主：注册、布局、动画、命中、右键展开态
+│   ├── MediaLiveWindow.cs             # 内置媒体实况窗：3 秒预览 → 收进左侧、封面旋转
+│   ├── NotchWindow.Acrylic.cs         # 原生背板同步及 Windows 10 亚克力兼容路径
+│   ├── Win32.cs                       # Win32 API 封装
+│   ├── HotkeyText.cs                  # 快捷键键名格式化与合法性校验（三组全局热键共用）
+│   ├── IslandHotkey.cs                # 「隐藏 / 唤出灵动岛」全局快捷键（单键位）
+│   ├── SilentHotkey.cs                # 「切换静默模式」全局快捷键（单键位，出厂未绑定）
+│   ├── SilentMode.cs                  # 静默模式的重要信息登记表 + 显示模式三态枚举
+│   ├── SystemSettingManager.cs        # 系统音量控制
+│   ├── brightness.cs                  # 屏幕亮度控制
+│   ├── IslandBackdrop.cs              # Windows 10 亚克力的 GDI 兼容背板
+│   ├── NativeAcrylic.cs               # Windows Composition 宿主及岛体轮廓裁切
+│   ├── DxgiBackdrop.cs                # 液态玻璃的 DXGI 桌面采集
+│   ├── IslandDropTarget.cs            # 岛体 OLE 拖入目标（让插件详情页也能接文件拖放）
+│   ├── DataResources.cs               # data\ 内置资源解析（磁盘优先、嵌入兜底）
+│   ├── UpdateManager.cs               # GitHub 版本检测与更新弹窗
+│   └── Logger.cs                      # 日志
+├── Render/                            # 渲染与字体
+│   ├── Renderer.cs                    # 岛体渲染主流程：尺寸/主题/模式参数 + Draw() 主流程
+│   ├── Renderer.Layout.cs             # 岛体内容布局：按「显示内容」顺序表混排 / 穿透唤醒按钮
+│   ├── Renderer.Plugin.cs             # 插件行绘制与详情页（命中、预算、顺序表）
+│   ├── Renderer.Toast.cs              # 通知 Toast 绘制
+│   ├── Renderer.Media.cs              # 媒体/歌词/逐字/时间轴/硬件统计
+│   ├── Renderer.MediaWidget.cs        # 媒体控制模块绘制：折叠态内联行、展开面板、歌词与按钮
 │   ├── Renderer.MediaFloatingPanel.cs # 实况窗里复用原有媒体展开面板的浮层桥
-│   ├── LiveWindowRenderer.cs         # 实况窗绘制：气泡/进度环/细胞分裂/展开面板
-│   ├── Renderer.Paint.cs             # 画笔池、字体、矢量路径与图标资源
-│   ├── GlassMaterial.cs              # 液态玻璃色调、高光与前景帧率设置
-│   ├── FontConfig.cs                 # 灵动岛字体统一配置中心
-│   └── LyricsFont.cs                 # 歌词字体
-├── Media/                            # 媒体、音频与歌词
-│   ├── MediaController.cs            # 媒体会话识别、歌词 / 译文 / 封面获取与逐字歌词
-│   ├── MediaLogoProvider.cs          # 媒体平台身份判定（AUMID 关键字归类）
-│   ├── SessionValidity.cs            # 僵尸会话判定（客户端关掉视频却不注销 SMTC 时判它失效）
-│   ├── AppIconProvider.cs            # 按会话 AUMID 取应用自身图标（视频模式封面 / 音乐模式兜底）
-│   ├── MediaAppLauncher.cs           # 双击媒体控制 → 跳回对应应用（窗口激活 + AUMID 兜底）
-│   ├── MediaHotkey.cs                # 全局快捷键：注册 / 注销、键位持久化、录制期挂起
-│   ├── JustSoloLyricClient.cs        # Just Solo LyricServer 歌词客户端
-│   ├── AudioAnalyzer.cs              # WASAPI Loopback 音频频谱分析
-│   ├── Audio.cs                      # NAudio 音频底层适配
-│   ├── ToastSoundConfig.cs           # 通知提示音配置与校验（动态扫描 data\sound）
-│   └── ToastSoundPlayer.cs           # 通知提示音播放队列
-├── UI/                               # 自绘窗口
-│   ├── ConsoleWindow.cs              # 设置窗口：状态字段、构造、窗口生命周期、消息泵、渲染主流程
-│   ├── ConsoleWindow.Render.cs       # 设置窗口绘制：侧边栏、各页签、下拉浮层与控件绘制
-│   ├── ConsoleWindow.WndProc.cs      # 设置窗口悬停命中（整窗热区）
-│   ├── ConsoleWindow.Click.cs        # 设置窗口点击分派（顺序敏感的 if/else 链）
-│   ├── ConsoleWindow.Backdrop.cs     # 亚克力/云母材质与窗口壳（材质窗、圆角、最小化）
-│   ├── ConsoleWindow.Plugin.cs       # 我的插件页与设置项辅助逻辑
-│   ├── ConsoleWindow.PluginDrop.cs   # 我的插件页：把 DLL / ZIP 直接拖进来即导入
-│   ├── ConsoleWindow.Market.cs       # 插件市场：API 拉取、分类/搜索过滤、下载安装、详情
-│   ├── ConsoleWindow.Settings.cs     # 尺寸/通知内容/字体等设置项的读写
-│   ├── ConsoleWindow.Paint.cs        # 设置窗口画笔池
-│   ├── OnboardingWindow.cs           # 首次启动引导向导（独立 STA 线程 + 看门狗，写同一份设置）
-│   └── TrayMenuWindow.cs             # 托盘菜单
-├── Notify/                           # 消息通知通道
-│   ├── Toast.cs                      # 系统 Toast 监听 + 本地 HTTP 推送接口
-│   ├── ToastIconProvider.cs          # 通知图标解析（内置别名 / 链接 / base64 / 本地路径）
-│   └── AppActivator.cs               # 通过 AUMID 激活应用
-├── Plugin/                           # 插件系统
-│   ├── PluginApi.cs                  # 插件 API 契约（接口与数据模型，只定义不实现）
-│   ├── LiveWindowApi.cs              # 实况窗注册契约（ILiveWindow / LiveWindowVisual / 默认三行文字）
-│   ├── PluginLoader.cs               # 插件来源发现（扫描 plugins 目录与 plugin.json）
-│   ├── PluginManager.cs              # 插件生命周期：加载 / 卸载 / 热重载 / 启用禁用 / 影子拷贝
-│   ├── PluginHost.cs                 # 宿主能力实现：注册表、刷新调度、详情页、设置持久化、内置内容伪 Id
-│   ├── PluginWindow.cs               # 插件自有窗口（分层窗口 + SkiaSharp + 鼠标键盘 + 文件拖放）
-│   ├── WidgetLayout.cs               # 布局引擎：测量 → 排列 → 产出 rect 快照
-│   ├── DropPayload.cs                # 从 OLE IDataObject 读出拖入的文件路径
-│   └── PluginDataBridge.cs           # 插件只读数据桥（媒体状态快照 / 系统通知 → 插件）
-├── Msp/                              # MSP（Model Sensing Protocol）原生接入
-│   └── MspNotchBridge.cs             # 把灵动岛暴露为本机 MSP 节点（被调用 + 广播 + 订阅对端通知）
-├── data/image/                       # 通知内置图标（qq / windows）
-├── data/sound/                       # 内置提示音（*.wav + sound.json 显示名覆盖）
-├── NPS_PluginsAPI.md                 # 插件开发文档
-├── build.ps1                         # 一键发布为单文件 exe
-├── NPS_NotchPeninsula-logo.ico       # 应用图标
-├── NotchPeninsula.csproj             # .NET 项目配置
-├── NotchPeninsula.slnx               # 解决方案文件
-├── msvcp140.dll                      # VC++ 运行库（随程序分发）
-├── vcruntime140.dll                  # VC++ 运行库（随程序分发）
-├── LICENSE                           # Apache 2.0
-└── README.md                         # 项目说明
+│   ├── LiveWindowRenderer.cs          # 实况窗绘制：气泡/进度环/细胞分裂/展开面板
+│   ├── Renderer.Paint.cs              # 画笔池、字体、矢量路径与图标资源
+│   ├── GlassMaterial.cs               # 液态玻璃色调、高光与前景帧率设置
+│   ├── FontConfig.cs                  # 灵动岛字体统一配置中心
+│   └── LyricsFont.cs                  # 歌词字体
+├── Media/                             # 媒体、音频与歌词
+│   ├── MediaController.cs             # 媒体会话识别、歌词 / 译文 / 封面获取与逐字歌词
+│   ├── MediaLogoProvider.cs           # 媒体平台身份判定（AUMID 关键字归类）
+│   ├── SessionValidity.cs             # 僵尸会话判定（客户端关掉视频却不注销 SMTC 时判它失效）
+│   ├── AppIconProvider.cs             # 按会话 AUMID 取应用自身图标（视频模式封面 / 音乐模式兜底）
+│   ├── MediaAppLauncher.cs            # 双击媒体控制 → 跳回对应应用（窗口激活 + AUMID 兜底）
+│   ├── MediaHotkey.cs                 # 全局快捷键：注册 / 注销、键位持久化、录制期挂起
+│   ├── JustSoloLyricClient.cs         # Just Solo LyricServer 歌词客户端
+│   ├── AudioAnalyzer.cs               # WASAPI Loopback 音频频谱分析
+│   ├── Audio.cs                       # NAudio 音频底层适配
+│   ├── ToastSoundConfig.cs            # 通知提示音配置与校验（动态扫描 data\sound）
+│   └── ToastSoundPlayer.cs            # 通知提示音播放队列
+├── UI/                                # 自绘窗口
+│   ├── ConsoleWindow.cs               # 设置窗口：状态字段、构造、窗口生命周期、消息泵、渲染主流程
+│   ├── ConsoleWindow.Render.cs        # 设置窗口绘制：侧边栏、各页签、下拉浮层与控件绘制
+│   ├── ConsoleWindow.WndProc.cs       # 设置窗口悬停命中（整窗热区）
+│   ├── ConsoleWindow.Click.cs         # 设置窗口点击分派（顺序敏感的 if/else 链）
+│   ├── ConsoleWindow.Backdrop.cs      # 亚克力/云母材质与窗口壳（材质窗、圆角、最小化）
+│   ├── ConsoleWindow.Plugin.cs        # 我的插件页与设置项辅助逻辑
+│   ├── ConsoleWindow.PluginDrop.cs    # 我的插件页：把 DLL / ZIP 直接拖进来即导入
+│   ├── ConsoleWindow.Market.cs        # 插件市场：API 拉取、分类/搜索过滤、下载安装、详情
+│   ├── ConsoleWindow.Settings.cs      # 尺寸/通知内容/字体等设置项的读写
+│   ├── ConsoleWindow.Paint.cs         # 设置窗口画笔池
+│   ├── OnboardingWindow.cs            # 首次启动引导向导（独立 STA 线程 + 看门狗，写同一份设置）
+│   └── TrayMenuWindow.cs              # 托盘菜单
+├── Notify/                            # 消息通知通道
+│   ├── Toast.cs                       # 系统 Toast 监听 + 本地 HTTP 推送接口
+│   ├── ToastIconProvider.cs           # 通知图标解析（内置别名 / 链接 / base64 / 本地路径）
+│   └── AppActivator.cs                # 通过 AUMID 激活应用
+├── Plugin/                            # 插件系统
+│   ├── PluginApi.cs                   # 插件 API 契约（接口与数据模型，只定义不实现）
+│   ├── LiveWindowApi.cs               # 实况窗注册契约（ILiveWindow / LiveWindowVisual / 默认三行文字）
+│   ├── PluginLoader.cs                # 插件来源发现（扫描 plugins 目录与 plugin.json）
+│   ├── PluginManager.cs               # 插件生命周期：加载 / 卸载 / 热重载 / 启用禁用 / 影子拷贝
+│   ├── PluginHost.cs                  # 宿主能力实现：注册表、刷新调度、详情页、设置持久化、内置内容伪 Id
+│   ├── PluginWindow.cs                # 插件自有窗口（分层窗口 + SkiaSharp + 鼠标键盘 + 文件拖放）
+│   ├── WidgetLayout.cs                # 布局引擎：测量 → 排列 → 产出 rect 快照
+│   ├── DropPayload.cs                 # 从 OLE IDataObject 读出拖入的文件路径
+│   └── PluginDataBridge.cs            # 插件只读数据桥（媒体状态快照 / 系统通知 → 插件）
+├── Msp/                               # MSP（Model Sensing Protocol）原生接入
+│   └── MspNotchBridge.cs              # 把灵动岛暴露为本机 MSP 节点（被调用 + 广播 + 订阅对端通知）
+├── data/image/                        # 通知内置图标（qq / windows）
+├── data/sound/                        # 内置提示音（*.wav + sound.json 显示名覆盖）
+├── NPS_PluginsAPI.md                  # 插件开发文档
+├── build.ps1                          # 一键发布为单文件 exe
+├── NPS_NotchPeninsula-logo.ico        # 应用图标
+├── NotchPeninsula.csproj              # .NET 项目配置
+├── NotchPeninsula.slnx                # 解决方案文件
+├── msvcp140.dll                       # VC++ 运行库（随程序分发）
+├── vcruntime140.dll                   # VC++ 运行库（随程序分发）
+├── LICENSE                            # Apache 2.0
+└── README.md                          # 项目说明
 ```
 
 > 目录只是物理分类，**所有源码仍在 `namespace NotchPeninsula` 下**（C# 命名空间与文件夹无关）。
@@ -268,13 +269,18 @@ NotchPeninsula/
 
 ## 构建与运行
 
-**环境要求**：Windows 10 / 11，.NET 10 SDK。
+**环境要求**：Windows 10 / 11（Win7不做专门适配/测试，可能存在兼容性问题），.NET 10 SDK。
+**原生亚克力支持**：Windows 11。
+
+### .NET 原生命令：
 
 ```bash
-dotnet restore
+dotnet restore                                                 # 恢复依赖
 dotnet build -c Release                                        # 本地构建
-dotnet publish -c Release -r win-x64 --self-contained false     # 发布
+dotnet publish -c Release -r win-x64 --self-contained false    # 发布
 ```
+
+### 打包脚本：
 
 推荐用仓库自带的打包脚本：先清理 `bin` / `obj` / `publish`，再发布为单文件 exe
 
@@ -303,4 +309,4 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:SelfContained=fal
 ## 兼容性与说明
 
 - 仅支持 Windows 10 / 11（依赖 Windows 通知管理 API），不支持 macOS / Linux。
-- 若系统未安装音频输出设备，音频频谱可能显示为空白或保持静止。
+- 若系统未安装音频输出设备，或其他软件启用WASAPI独占模式，音频频谱可能显示为空白或保持静止。
