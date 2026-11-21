@@ -130,6 +130,35 @@ namespace NotchPeninsula
         }
 
         /// <summary>
+        /// 找「当前会话归谁管」的外部源，<b>不看时间轴能不能接管</b> —— 只用于把「打开应用」交给插件。
+        ///
+        /// <para>
+        /// 宿主通用的 <see cref="MediaAppLauncher"/> 按 SMTC appId 反查进程名：Electron 客户端
+        /// （B 站 <c>com.bilibili.bilibiliPC</c>、QQ 音乐等）反查不到，最后退化成
+        /// <c>explorer.exe shell:AppsFolder\…</c>，对 Win32 客户端常常点了没反应。
+        /// 插件已经写过可靠的拉起路径（进程名 / 托盘窗口 / 注册表安装目录），优先交给它。
+        /// </para>
+        /// </summary>
+        private static IMediaSessionSource? FindExternalSourceForApp(string? appId)
+        {
+            if (string.IsNullOrEmpty(appId)) return null;
+
+            IMediaSessionSource? best = null;
+            lock (_externalSources)
+            {
+                for (int i = 0; i < _externalSources.Count; i++)
+                {
+                    var s = _externalSources[i];
+                    try { if (!s.IsActive) continue; }
+                    catch { continue; }
+                    if (!SourceDrivesApp(s, appId)) continue;
+                    if (best == null || s.Priority > best.Priority) best = s;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
         /// 旧插件的推荐提示文案用：网易云（cloudmusic.exe / netease cloud music）与酷狗（KuGou.exe）。
         /// 只服务于 <c>NotchWindow.TickTimelinePluginTip()</c>；<b>不再</b>参与外部源接管判定
         /// （接管白名单由插件通过 <see cref="IMediaSessionSource.AppIdKeywords"/> 上报）。
