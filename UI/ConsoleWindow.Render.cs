@@ -1427,7 +1427,7 @@ namespace NotchPeninsula
             canvas.DrawText(displayVersion, centerX, startY, _dynamicTextPaint);
             startY += 35f;
 
-            string[] links = ["检测更新", "项目仓库", "开发者", "项目主页"];
+            string[] links = ["检测更新", "项目主页", "项目仓库", "开发者"];
             _dynamicTextPaint.TextAlign = SKTextAlign.Left;
 
             const float spacing = 15f;
@@ -1527,11 +1527,17 @@ namespace NotchPeninsula
 
             canvas.DrawText("刘海 / 灵动岛主题", CONTENT_TEXT_X, themeY + 26, _uiTextPaint);
             // 「副标题」专指主标题下面这一行，统一灰色；它不属于状态说明。
-            canvas.DrawText(Renderer.IslandLiquidGlass ? "自动按玻璃背景亮度切换文字颜色" : "可固定黑白或跟随系统主题",
+            // 液态玻璃下主题恒为自动：控件置灰，副标题把「为什么不能选」说清楚，
+            // 否则用户只会看到一组点不动的按钮。
+            canvas.DrawText(Renderer.IslandLiquidGlass
+                    ? "自动跟随玻璃背景亮度 · 不可手动修改"
+                    : "可固定黑白或跟随系统主题",
                 CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
+            bool themeLocked = Renderer.IslandLiquidGlass;
             DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
-                ["黑", "白", Renderer.IslandLiquidGlass ? "自动" : "系统"], Renderer.ThemeMode, _hoveredThemeIndex);
+                ["黑", "白", themeLocked ? "自动" : "系统"], Renderer.ThemeMode,
+                themeLocked ? -1 : _hoveredThemeIndex, disabled: themeLocked);
 
             // 第二行：背景材质（独立选项，与主题配色互不影响）
             canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + MAT_TITLE_DY, _uiTextPaint);
@@ -1662,7 +1668,13 @@ namespace NotchPeninsula
                 _ => GlassMaterial.Levels
             };
             string value = available ? values[level] : "—";
-            canvas.DrawText(value, colX + GLASS_VALUE_RIGHT - _subTextPaint.MeasureText(value), textY, _subTextPaint);
+            float valueW = _subTextPaint.MeasureText(value);
+            // 纯右对齐时，像「60ms」这种较长的值会顶到滑轨末端的圆点上。
+            // 给它一个「离滑轨末端至少 10px」的下限，短值仍然保持右对齐，列与列之间不会错位。
+            float valueX = Math.Max(
+                colX + GLASS_VALUE_RIGHT - valueW,
+                colX + GLASS_SLIDER_DX + GLASS_SLIDER_W + 10f);
+            canvas.DrawText(value, valueX, textY, _subTextPaint);
             _subTextPaint.TextSize = 12f;
             _subTextPaint.Color = Neutral(170);
         }

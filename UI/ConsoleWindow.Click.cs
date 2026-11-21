@@ -158,6 +158,10 @@ namespace NotchPeninsula
             }
         }
 
+        // 手动检测更新：点下去由 UpdateManager 立刻弹窗，结论直接写进那个窗。
+        // 连点时第二次直接忽略（上一次还在跑，窗已经在那儿了）。
+        private void StartManualUpdateCheck() => UpdateManager.StartManualCheck();
+
         // 切页签：所有页内瞬时提示都在这里清掉。
         // 提示是「这一次操作的结论」，离开这一页再回来还挂着，会让人以为刚才又失败了一次。
         private void SwitchTab(int tab)
@@ -510,6 +514,8 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 5 && _hoveredThemeIndex != -1)
             {
+                // 液态玻璃下主题恒为自动：控件已置灰，这里再兜一道，避免旧 hover 状态漏进来。
+                if (Renderer.IslandLiquidGlass) return;
                 Renderer.ThemeMode = _hoveredThemeIndex;
                 Renderer.ApplyThemeColors(); // 立即反转画笔颜色
                 Program.SaveSetting("ThemeMode", _hoveredThemeIndex);
@@ -522,6 +528,8 @@ namespace NotchPeninsula
                 Renderer.ApplyThemeColors();
                 Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                 Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                // 切到玻璃时 ThemeMode 已被钳成自动：把钳制结果写回，注册表里不留旧的黑/白。
+                Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
                 NotchWindow.RequestAcrylicRebuild();
                 _hoveredGlassParamIndex = _hoveredGlassParamLevel = -1;
                 _hoveredGlassReset = false;
@@ -555,21 +563,30 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
             {
-                string[] urls = [
-                    "https://github.com/GEORGEWWWU/NotchPeninsula/releases", // 0: 检测更新
-                    "https://github.com/GEORGEWWWU/NotchPeninsula",          // 1: 仓库地址
-                    "https://georgewu.top/",                                 // 2: Ryen主页
-                    "https://nps.georgewu.top"                               // 3: 项目主页
-                ];
-                try
+                if (_hoveredLinkIndex == 0)
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = urls[_hoveredLinkIndex],
-                        UseShellExecute = true
-                    });
+                    // 「检测更新」不再直接甩浏览器：真的去查一次，结果照「发现新版本」那套弹窗说话
+                    // （有新版 = 前往下载；已最新 / 查不到 = 同样式的小弹窗给结论）。
+                    StartManualUpdateCheck();
                 }
-                catch { /* 防止没装浏览器的极端环境崩溃 */ }
+                else
+                {
+                    string[] urls = [
+                        "",                                                      // 0: 检测更新（走后台检测，不跳转）
+                        "https://nps.georgewu.top",                              // 1: 项目主页
+                        "https://github.com/GEORGEWWWU/NotchPeninsula",          // 2: 仓库地址
+                        "https://georgewu.top/"                                  // 3: 开发者主页
+                    ];
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = urls[_hoveredLinkIndex],
+                            UseShellExecute = true
+                        });
+                    }
+                    catch { /* 防止没装浏览器的极端环境崩溃 */ }
+                }
             }
             else if (_toggleHovered)
             {

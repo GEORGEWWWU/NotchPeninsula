@@ -65,6 +65,9 @@ namespace NotchPeninsula
             get => _themeMode;
             set
             {
+                // 液态玻璃下主题恒为「自动」：玻璃上的文字黑白必须跟着玻璃背景亮度走，
+                // 手选黑/白只会让玻璃上出现和背景完全无关的固定色（用户看到的正是「设了不生效」）。
+                if (IslandLiquidGlass) value = 2;
                 if (_themeMode == value) return;
                 _themeMode = value;
                 InvalidateSystemThemeCache();
@@ -139,7 +142,12 @@ namespace NotchPeninsula
         public static int IslandMaterialIndex
         {
             get => _materialIndex;
-            set => _materialIndex = Math.Clamp(value, 0, 2);
+            set
+            {
+                _materialIndex = Math.Clamp(value, 0, 2);
+                // 切到液态玻璃的同时把主题钉死为「自动」（设置页里该控件也随之置灰）。
+                if (_materialIndex == 2) ThemeMode = 2;
+            }
         }
 
         public static bool IslandAcrylic => IslandMaterialIndex == 1;

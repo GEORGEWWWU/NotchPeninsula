@@ -86,7 +86,9 @@ namespace NotchPeninsula
             if (_selectedTab == 5)
             {
                 float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
-                if (y >= themeSegY && y <= themeSegY + SEG_H
+                // 液态玻璃下主题恒为自动，这一排是只读的：不给悬停高亮，点击也就不可能命中。
+                if (!Renderer.IslandLiquidGlass
+                    && y >= themeSegY && y <= themeSegY + SEG_H
                     && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
                     newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
 
@@ -155,7 +157,7 @@ namespace NotchPeninsula
                         break;
                     }
 
-                    // 恢复默认按钮位于滑轨下方。
+                    // 恢复默认按钮在卡片右上角（与说明文字同一行，见 GLASS_RESET_TOP_Y）。
                     float grY = gCardY + GlassResetTopY;
                     if (x >= GLASS_RESET_X && x <= GLASS_RESET_X + GLASS_RESET_W
                         && y >= grY && y <= grY + GLASS_RESET_H)
