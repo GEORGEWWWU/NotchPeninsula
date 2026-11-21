@@ -205,6 +205,11 @@ namespace NotchPeninsula
             int newHoveredDisplayMoveUp = -1;     // 该行 ∧ 的悬停
             int newHoveredDisplayMoveDown = -1;   // 该行 ∨ 的悬停
             int newHoveredDisplayDrag = -1;       // 该行 ≡ 拖动把手的悬停
+            int newHoveredSilentRow = -1;         // 静默模式设置页（tab 9）：行本体
+            int newHoveredSilentMoveUp = -1;      // 同上：∧
+            int newHoveredSilentMoveDown = -1;    // 同上：∨
+            bool newSilentSwitchHovered = false;  // 静默页右上角「去切换」按钮
+            bool newSilentToastHovered = false;   // 静默页「消息通知」卡
             bool newToggleHovered = false;
             bool newToastToggleHovered = false;
             bool newTopmostToggleHovered = false;
@@ -225,6 +230,8 @@ namespace NotchPeninsula
             bool newPassToggleHovered = false;
             bool newIslandHotkeyHovered = false;       // 交互页「唤出灵动岛」的键位框
             bool newIslandHotkeyToggleHovered = false; // 同一张卡的总开关
+            bool newSilentHotkeyHovered = false;       // 交互页「静默模式」的键位框
+            bool newSilentHotkeyToggleHovered = false; // 同一张卡的总开关
             bool newMspToggleHovered = false; // 「MSP 接入（实验性）」
             bool newMspWikiHovered = false;   // 「实验性」标签右边的外链图标
             bool newMonitorDropdownHovered = false;
@@ -378,11 +385,12 @@ namespace NotchPeninsula
                 float modeSegY = TITLE_BAR_HEIGHT + MODE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
                 if (!monitorListOpen && !_sceneDropdownOpen
                     && y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
-                    newHoveredDisplayModeIndex = Math.Min(1, (int)((x - MODE_SEG_X) / (MODE_SEG_W / 2f)));
+                    newHoveredDisplayModeIndex = Math.Min(2, (int)((x - MODE_SEG_X) / (MODE_SEG_W / 3f)));
 
-                // 待机显示内容下拉框：展开期间框本体不再吃悬停，交给下面的列表项
+                // 待机显示内容下拉框：展开期间框本体不再吃悬停，交给下面的列表项。
+                // 只有待机模式可点（普通 / 静默置灰）。
                 float sceneBoxY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f + page;
-                if (!monitorListOpen && !_sceneDropdownOpen
+                if (!monitorListOpen && !_sceneDropdownOpen && Renderer.StandbyModeOnly
                     && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W
                     && y >= sceneBoxY && y <= sceneBoxY + SCENE_DD_H)
                     newSceneDropdownHovered = true;
@@ -399,13 +407,15 @@ namespace NotchPeninsula
                 bool sceneListOpen = _sceneDropdownOpen;
 
                 float modeToggleCy = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
-                if (!monitorListOpen && !sceneListOpen && x >= WIDTH - 80 && x <= WIDTH - 30
+                // 静默模式下这一整行置灰（岛本来就退场，双击切换没有意义）。
+                if (!monitorListOpen && !sceneListOpen && !Renderer.SilentActive
+                    && x >= WIDTH - 80 && x <= WIDTH - 30
                     && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
                     newStandbyToggleHovered = true;
 
                 // 整行悬停只服务右侧那句蓝字提示（悬浮才显示，点击仍只认开关本体）。
                 float standbyRowTop = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page;
-                if (!monitorListOpen && !sceneListOpen
+                if (!monitorListOpen && !sceneListOpen && !Renderer.SilentActive
                     && x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_RM
                     && y >= standbyRowTop && y <= standbyRowTop + ROW_H)
                     newStandbyRowHovered = true;
@@ -414,7 +424,8 @@ namespace NotchPeninsula
                 _displayScroll = Math.Clamp(_displayScroll, 0, displayMaxFirstRow);
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
                 float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
-                if (!Renderer.StandbyActive && !monitorListOpen && !sceneListOpen
+                // 待机 / 静默模式下这张卡不控制任何东西（静默清单在 tab 9），整卡不吃悬停。
+                if (!Renderer.StandbyModeOnly && !Renderer.SilentActive && !monitorListOpen && !sceneListOpen
                     && x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
@@ -534,17 +545,19 @@ namespace NotchPeninsula
             else if (_selectedTab == 3) // 交互设置
             {
                 // 本段的 y 值必须与下面 tab 3 的渲染保持同步
+                // 静默模式：自动隐藏整块 + 唤出灵动岛整卡一起置灰，所以这里一个 hover 都不置。
+                bool silent = Renderer.SilentActive;
                 // 行 1：自动隐藏总开关
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newAutoHideToggleHovered = true;
                 // 行 2：当焦点离开时自动隐藏岛
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
+                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
                     newFocusHideToggleHovered = true;
                 // 行 3：暂停播放后自动隐藏
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
+                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
                     newPauseHideToggleHovered = true;
                 // 行 4：全屏自动隐藏
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
+                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
                     newFsHideToggleHovered = true;
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 290 && y <= TITLE_BAR_HEIGHT + 310)
                     newMediaExpToggleHovered = true;
@@ -555,8 +568,13 @@ namespace NotchPeninsula
 
                 // 「唤出灵动岛」：总开关在卡片头部右侧，键位框在下面那行
                 //（y 值与 DrawIslandHotkeyCard 严格同源）
-                newIslandHotkeyToggleHovered = HitIslandHotkeyToggle(x, y);
-                newIslandHotkeyHovered = HitIslandHotkeyBox(x, y);
+                newIslandHotkeyToggleHovered = !silent && HitIslandHotkeyToggle(x, y);
+                newIslandHotkeyHovered = !silent && HitIslandHotkeyBox(x, y);
+
+                // 「静默模式」快捷键卡：静默模式下也能用（正是靠它进出），所以这里不加 silent 条件，
+                // 只受「唤出灵动岛」卡被禁用时那层视觉影响 —— 两张卡物理上不重叠。
+                newSilentHotkeyToggleHovered = HitSilentHotkeyToggle(x, y);
+                newSilentHotkeyHovered = HitSilentHotkeyBox(x, y);
             }
             else if (_selectedTab == 7) // 插件市场
             {
@@ -752,6 +770,35 @@ namespace NotchPeninsula
                     }
                 }
             }
+            else if (_selectedTab == 9) // 静默模式设置
+            {
+                // 右上角「去切换」：始终存在（静默模式下去显示设置切回来）。
+                if (x >= SilentSwitchLeft && x <= DISPLAY_CTRL_RIGHT
+                    && y >= SilentSwitchTop && y <= SilentSwitchTop + SILENT_SWITCH_H)
+                    newSilentSwitchHovered = true;
+
+                if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM
+                    && y >= SilentToastTop && y <= SilentToastTop + SILENT_TOAST_CARD_H)
+                    newSilentToastHovered = true;
+
+                var items = NotchPeninsula.Plugins.PluginManager.Instance.SilentDisplayItems;
+                int visibleRows = SilentListVisibleRows();
+                _silentListScroll = Math.Clamp(_silentListScroll, 0, Math.Max(0, items.Count - visibleRows));
+
+                float rowTop = TITLE_BAR_HEIGHT + SilentListCardY + SILENT_LIST_FIRST_ROW_Y;
+                float rowBottom = TITLE_BAR_HEIGHT + SilentListCardY + SilentListCardH;
+                if (items.Count > 0 && x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= rowTop && y <= rowBottom)
+                {
+                    int idx = _silentListScroll + (int)((y - rowTop) / SILENT_LIST_ROW_H);
+                    if (idx < items.Count && idx < _silentListScroll + visibleRows)
+                    {
+                        // 列表里只有已声明重要信息的插件，全部可交互。
+                        if (x >= DISPLAY_MOVE_UP_X && x <= DISPLAY_MOVE_UP_X + SORT_TRI_W) newHoveredSilentMoveUp = idx;
+                        else if (x >= DISPLAY_MOVE_DOWN_X && x <= DISPLAY_MOVE_DOWN_X + SORT_TRI_W) newHoveredSilentMoveDown = idx;
+                        else newHoveredSilentRow = idx;
+                    }
+                }
+            }
 
             int newHoveredLinkIndex = -1;
             if (_selectedTab == 4) // 关于页
@@ -818,6 +865,11 @@ namespace NotchPeninsula
                 newHoveredDisplayMoveUp != _hoveredDisplayMoveUp ||
                 newHoveredDisplayMoveDown != _hoveredDisplayMoveDown ||
                 newHoveredDisplayDrag != _hoveredDisplayDrag ||
+                newHoveredSilentRow != _hoveredSilentRow ||
+                newHoveredSilentMoveUp != _hoveredSilentMoveUp ||
+                newHoveredSilentMoveDown != _hoveredSilentMoveDown ||
+                newSilentSwitchHovered != _silentSwitchHovered ||
+                newSilentToastHovered != _silentToastHovered ||
                 newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                 newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
@@ -843,6 +895,8 @@ namespace NotchPeninsula
                 newPassToggleHovered != _passToggleHovered ||
                 newIslandHotkeyHovered != _islandHotkeyHovered ||
                 newIslandHotkeyToggleHovered != _islandHotkeyToggleHovered ||
+                newSilentHotkeyHovered != _silentHotkeyHovered ||
+                newSilentHotkeyToggleHovered != _silentHotkeyToggleHovered ||
                 newMspToggleHovered != _mspToggleHovered ||
                 newMspWikiHovered != _mspWikiHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
@@ -890,6 +944,11 @@ namespace NotchPeninsula
                 _hoveredDisplayMoveUp = newHoveredDisplayMoveUp;
                 _hoveredDisplayMoveDown = newHoveredDisplayMoveDown;
                 _hoveredDisplayDrag = newHoveredDisplayDrag;
+                _hoveredSilentRow = newHoveredSilentRow;
+                _hoveredSilentMoveUp = newHoveredSilentMoveUp;
+                _hoveredSilentMoveDown = newHoveredSilentMoveDown;
+                _silentSwitchHovered = newSilentSwitchHovered;
+                _silentToastHovered = newSilentToastHovered;
                 _hoveredStyleIndex = newHoveredStyleIndex;
                 _hoveredDisplayModeIndex = newHoveredDisplayModeIndex;
                 _hoveredSceneIndex = newHoveredStandbySceneIndex;
@@ -924,6 +983,8 @@ namespace NotchPeninsula
                 _passToggleHovered = newPassToggleHovered;
                 _islandHotkeyHovered = newIslandHotkeyHovered;
                 _islandHotkeyToggleHovered = newIslandHotkeyToggleHovered;
+                _silentHotkeyHovered = newSilentHotkeyHovered;
+                _silentHotkeyToggleHovered = newSilentHotkeyToggleHovered;
                 _mspToggleHovered = newMspToggleHovered;
                 _mspWikiHovered = newMspWikiHovered;
                 _hoveredPluginAction = newHoveredPluginAction;

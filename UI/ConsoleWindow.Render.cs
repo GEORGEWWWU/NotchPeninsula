@@ -668,6 +668,7 @@ namespace NotchPeninsula
             canvas.DrawLine(20, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, 160, TITLE_BAR_HEIGHT + TabRowY(5) + 42f, _separatorPaint);
             DrawTab(canvas, "通用设置", TabRowY(0));
             DrawTab(canvas, "显示设置", TabRowY(1));
+            DrawTab(canvas, "静默模式设置", TabRowY(9));
             DrawTab(canvas, "实况窗管理", TabRowY(8));
             DrawTab(canvas, "媒体设置", TabRowY(2));
             DrawTab(canvas, "交互设置", TabRowY(3));
@@ -976,37 +977,40 @@ namespace NotchPeninsula
             DrawDropdownBox(canvas, mdX, mdY, MONITOR_DD_W, MONITOR_DD_H, mName,
                 _monitorDropdownHovered, enabled: true, open: _monitorDropdownOpen);
 
-            // ── 显示模式（单行分段器）：待机 / 普通 ──
+            // ── 显示模式（单行分段器）：待机 / 普通 / 静默 ──
             float modeRowY = TITLE_BAR_HEIGHT + MODE_ROW_Y + page;
             canvas.DrawText("显示模式", CONTENT_TEXT_X, modeRowY + ROW_LABEL_DY, _uiTextPaint);
             DrawSegmented(canvas, MODE_SEG_X, modeRowY + (ROW_H - SEG_H) / 2f, MODE_SEG_W, SEG_H,
-                ["待机模式", "普通模式"], Renderer.StandbyActive ? 0 : 1, _hoveredDisplayModeIndex);
+                DisplayModeLabels, (int)Renderer.DisplayMode, _hoveredDisplayModeIndex);
 
             float sceneRowY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + page;
             canvas.DrawText("待机显示内容", CONTENT_TEXT_X, sceneRowY + ROW_LABEL_DY, _uiTextPaint);
+            // 这一行永远是「待机显示内容」：只有待机模式可点，普通 / 静默模式一律置灰（形态不变）。
             // 选中的第三方插件没加载起来时：左边照常显示插件名（缓存名兜底，不再是裸 DLL 文件名），
             // 右边红字写明「加载失败」；同一时刻待机岛是空白（见 Renderer.ResolveStandbyPluginId）。
-            // 不这么说的话，用户只会看到「选了个插件，岛体却什么都不显示」。
             bool sceneFailed = TryGetStandbySceneFailure(out string sceneName);
-            // 「加载失败」只属于右侧红字；主文案永远给名字，连友好名都拿不到时才退回原 Key。
             string sceneText = sceneFailed && sceneName.Length > 0 ? sceneName : CurrentStandbySceneName();
             DrawDropdownBox(canvas, SCENE_SEG_X, sceneRowY + (ROW_H - SCENE_DD_H) / 2f, SCENE_SEG_W, SCENE_DD_H,
-                sceneText, _sceneDropdownHovered, enabled: true,
+                sceneText, _sceneDropdownHovered, enabled: Renderer.StandbyModeOnly,
                 open: _sceneDropdownOpen, builtinTag: BuiltinWidgets.IsBuiltin(Renderer.StandbySceneKey),
                 warn: sceneFailed ? StandbySceneFailText : null);
 
             //（见 Core/NotchWindow 的双击分支）。
+            // 静默模式下双击切换毫无意义（岛本来就退场了），整行跟着置灰。
             DrawToggleRow(canvas, TOGGLE_ROW_Y + page,
                 "双击空白切换待机模式", "",
                 Renderer.StandbyToggleByDoubleClick, _standbyToggleHovered,
-                rightHint: "主岛空白处双击，实况窗双击无效",
+                disabled: Renderer.SilentActive,
+                rightHint: Renderer.SilentActive ? "静默模式下不支持" : "主岛空白处双击，实况窗双击无效",
                 rowHovered: _standbyRowHovered);
 
             // ── 显示内容列表 ──
             // 靠「悬停才亮的那层底」表达可点，视觉上跟整页连成一体。
+            // 待机模式禁用它（待机只看单一场景）；普通模式用常驻清单；静默模式用独立的静默清单，
+            // 里面内置项没有「重要信息」概念 → 行内勾选框置灰。
             float contentCardY = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page;
-            bool listEnabled = !Renderer.StandbyActive;
-
+            // 静默模式那份清单已经独立成「静默模式设置」页（tab 9），这一页只管普通模式的常驻内容。
+            bool listEnabled = !Renderer.StandbyModeOnly && !Renderer.SilentActive;
             var displayItems = PluginManager.Instance.DisplayItems;
             GetDisplayListLayout(out int visibleRows, out int maxFirstRow);
             _displayScroll = Math.Clamp(_displayScroll, 0, maxFirstRow);
@@ -1018,14 +1022,15 @@ namespace NotchPeninsula
                 int i = _displayScroll + slot;
                 var item = displayItems[i];
                 float rowY = contentCardY + DISPLAY_FIRST_ROW_Y + slot * DISPLAY_ROW_H;
+                bool rowEnabled = listEnabled;
 
                 DrawDisplayItem(canvas, rowY, item.Name, item.IsBuiltin, item.IsShown,
-                    listEnabled ? GetDisplayHoverProgress(slot) : 0f, listEnabled,
+                    rowEnabled ? GetDisplayHoverProgress(slot) : 0f, rowEnabled,
                     _hoveredDisplayMoveUp == i, _hoveredDisplayMoveDown == i,
                     _hoveredDisplayDrag == i,
                     (_displayDragActive && _displayDragRow == i) || _displayDragPendingRow == i,
-                    PluginManager.Instance.CanMoveDisplay(item.Key, -1),
-                    PluginManager.Instance.CanMoveDisplay(item.Key, 1));
+                    rowEnabled && PluginManager.Instance.CanMoveDisplay(item.Key, -1),
+                    rowEnabled && PluginManager.Instance.CanMoveDisplay(item.Key, 1));
             }
 
             if (maxFirstRow > 0 && visibleRows > 0)
@@ -1042,6 +1047,135 @@ namespace NotchPeninsula
                 float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f;
                 DrawScrollBar(canvas, WIDTH - 8, pageTrackTop, pageTrackH,
                     HEIGHT / contentH, _displayPageScroll / pageMaxScroll, minThumbH: 24f);
+            }
+        }
+
+        // 页签：静默模式设置（左侧栏「显示设置」下面一项，从 2.3.0 起独立成页）
+        private const float SILENT_INTRO_CARD_Y = CARD_TOP_Y;
+
+        private const float SILENT_INTRO_CARD_H = 92f;
+
+        // 消息通知卡（一行入口，样式同「实况窗管理」里的媒体卡）：状态跟随通用设置，不放进列表。
+        private const float SILENT_TOAST_CARD_Y = SILENT_INTRO_CARD_Y + SILENT_INTRO_CARD_H + CARD_GAP;
+
+        private const float SILENT_TOAST_CARD_H = 62f;
+
+        private static float SilentToastTop => TITLE_BAR_HEIGHT + SILENT_TOAST_CARD_Y;
+
+        private static float SilentListCardY => SILENT_TOAST_CARD_Y + SILENT_TOAST_CARD_H + CARD_GAP;
+
+        private static float SilentListCardH => HEIGHT - 6f - (TITLE_BAR_HEIGHT + SilentListCardY);
+
+        // 与显示设置页的列表同高，行内控件位置也完全复用 DrawDisplayItem。
+        private const float SILENT_LIST_ROW_H = 33f;
+
+        private const float SILENT_LIST_FIRST_ROW_Y = 9f;
+
+        // 说明卡右上角那颗「去切换」按钮（只在非静默模式出现）：几何与命中同源。
+        private const float SILENT_SWITCH_W = 78f;
+
+        private const float SILENT_SWITCH_H = 26f;
+
+        private static float SilentSwitchLeft => DISPLAY_CTRL_RIGHT - SILENT_SWITCH_W;
+
+        private static float SilentSwitchTop => TITLE_BAR_HEIGHT + SILENT_INTRO_CARD_Y + 8f;
+
+        private int _silentListScroll;
+
+        private static int SilentListVisibleRows()
+        {
+            int fit = Math.Max(1, (int)((SilentListCardH - SILENT_LIST_FIRST_ROW_Y) / SILENT_LIST_ROW_H));
+            return fit;
+        }
+
+        private void RenderTabSilentMode(SKCanvas canvas)
+        {
+            float introTop = TITLE_BAR_HEIGHT + SILENT_INTRO_CARD_Y;
+            var introRect = new SKRect(CONTENT_L, introTop, WIDTH - CONTENT_RM, introTop + SILENT_INTRO_CARD_H);
+            canvas.DrawRoundRect(introRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(introRect, 6, 6, _cardBorder);
+
+            canvas.DrawText("静默模式", CONTENT_TEXT_X, introTop + 26, _uiTextPaint);
+
+            // 右上角状态 + 「去切换」按钮：按钮不受模式影响，始终显示（静默时点了去显示设置切回来）。
+            var prevColor = _subTextPaint.Color;
+            float prevSize = _subTextPaint.TextSize;
+            _subTextPaint.TextSize = 12f;
+            _subTextPaint.Color = Renderer.SilentActive ? new SKColor(0, 140, 240) : Neutral(150);
+            string stateText = Renderer.SilentActive ? "当前：静默模式" : "当前不是静默模式";
+            float stateRight = SilentSwitchLeft - 10f;
+            canvas.DrawText(stateText, stateRight - _subTextPaint.MeasureText(stateText),
+                introTop + 26, _subTextPaint);
+            _subTextPaint.TextSize = prevSize;
+            _subTextPaint.Color = prevColor;
+
+            {
+                var btnRect = new SKRect(SilentSwitchLeft, SilentSwitchTop,
+                    DISPLAY_CTRL_RIGHT, SilentSwitchTop + SILENT_SWITCH_H);
+                _dynamicFillPaint.Color = _silentSwitchHovered ? Overlay(30) : Overlay(15);
+                canvas.DrawRoundRect(btnRect, 5f, 5f, _dynamicFillPaint);
+
+                _dynamicTextPaint.TextAlign = SKTextAlign.Center;
+                _dynamicTextPaint.TextSize = 12.5f;
+                _dynamicTextPaint.Color = _silentSwitchHovered ? new SKColor(0, 150, 255) : Neutral(220);
+                canvas.DrawText("去切换", btnRect.MidX, btnRect.MidY + 4.5f, _dynamicTextPaint);
+                _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+                _dynamicTextPaint.TextSize = 13f;
+            }
+
+            _subTextPaint.Color = Neutral(170);
+            float introTextMax = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
+            canvas.DrawText(TruncateText("平时整块隐藏，插件上报「重要信息」（如下载中）时才弹出来。",
+                    _subTextPaint, introTextMax), CONTENT_TEXT_X, introTop + 50, _subTextPaint);
+            canvas.DrawText(TruncateText("下面只列声明了重要信息的插件；勾选后仍需真有重要信息才显示。",
+                    _subTextPaint, introTextMax), CONTENT_TEXT_X, introTop + 72, _subTextPaint);
+
+            // ── 消息通知：系统内容里唯一能在静默模式出现的项，状态与通用设置双向跟随 ──
+            float toastTop = TITLE_BAR_HEIGHT + SILENT_TOAST_CARD_Y;
+            var toastRect = new SKRect(CONTENT_L, toastTop, WIDTH - CONTENT_RM, toastTop + SILENT_TOAST_CARD_H);
+            canvas.DrawRoundRect(toastRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(toastRect, 6, 6, _cardBorder);
+
+            canvas.DrawText("消息通知", CONTENT_TEXT_X, toastTop + 26, _uiTextPaint);
+            _subTextPaint.Color = Neutral(170);
+            canvas.DrawText(NotchWindow.IsToastEnabled ? "已启用（跟随「通用设置」）" : "已关闭（跟随「通用设置」）",
+                CONTENT_TEXT_X, toastTop + 46, _subTextPaint);
+
+            const string toastGo = "去「通用设置」修改";
+            _subTextPaint.Color = _silentToastHovered ? new SKColor(0, 150, 255) : new SKColor(0, 140, 240);
+            canvas.DrawText(toastGo, DISPLAY_CTRL_RIGHT - _subTextPaint.MeasureText(toastGo),
+                toastTop + 34, _subTextPaint);
+            _subTextPaint.Color = Neutral(170);
+
+            // ── 静默显示列表 ──
+            float cardY = TITLE_BAR_HEIGHT + SilentListCardY;
+            var listRect = new SKRect(CONTENT_L, cardY, WIDTH - CONTENT_RM, cardY + SilentListCardH);
+            canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
+
+            var items = PluginManager.Instance.SilentDisplayItems;
+            int visibleRows = SilentListVisibleRows();
+            int maxFirst = Math.Max(0, items.Count - visibleRows);
+            _silentListScroll = Math.Clamp(_silentListScroll, 0, maxFirst);
+
+            if (items.Count == 0)
+                canvas.DrawText("还没有插件声明「重要信息」", DISPLAY_ITEM_L + 10f, cardY + SILENT_LIST_FIRST_ROW_Y + 20, _subTextPaint);
+
+            for (int slot = 0; slot < Math.Min(visibleRows, items.Count); slot++)
+            {
+                int i = _silentListScroll + slot;
+                var item = items[i];
+                float rowY = cardY + SILENT_LIST_FIRST_ROW_Y + slot * SILENT_LIST_ROW_H;
+
+                // 列表里只有「声明过重要信息」的插件，全部可勾选 / 排序。
+                bool rowEnabled = true;
+
+                DrawDisplayItem(canvas, rowY, item.Name, item.IsBuiltin, item.IsShown,
+                    GetDisplayHoverProgress(slot), rowEnabled,
+                    _hoveredSilentMoveUp == i, _hoveredSilentMoveDown == i,
+                    false, false,
+                    PluginManager.Instance.CanMoveDisplay(item.Key, -1),
+                    PluginManager.Instance.CanMoveDisplay(item.Key, 1));
             }
         }
 
@@ -1258,14 +1392,18 @@ namespace NotchPeninsula
         // 页签：交互设置
         private void RenderTabInteraction(SKCanvas canvas)
         {
-            bool isAutoHideDisabled = false;
-            bool isModeDisabled = !NotchWindow.IsAutoHideEnabled;
+            // 静默模式：岛的显隐完全由「有没有重要信息」决定，自动隐藏那一套开关在这里没有意义
+            //（用户明确要求置灰）。唤出灵动岛同理 —— 静默模式不支持手动唤出。
+            bool silent = Renderer.SilentActive;
+            bool isAutoHideDisabled = silent;
+            bool isModeDisabled = !NotchWindow.IsAutoHideEnabled || silent;
+            const string silentSub = "静默模式下由重要信息驱动";
             var autoHideCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + AUTOHIDE_CARD_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBorder);
 
             // 行 1：总开关，关掉时下面三行一起置灰、不可点。
-            DrawToggleRow(canvas, 12, "自动隐藏", "允许灵动岛自动隐藏",
+            DrawToggleRow(canvas, 12, "自动隐藏", silent ? silentSub : "允许灵动岛自动隐藏",
                 NotchWindow.IsAutoHideEnabled, _autoHideToggleHovered, isAutoHideDisabled);
 
             canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 70, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + 70, _separatorPaint);
@@ -1273,7 +1411,7 @@ namespace NotchPeninsula
             // 三个模式行：总开关未开启时置灰、不可点，并显示为关闭。
             // 行 2：「焦点离开时自动隐藏岛」。
             DrawToggleRow(canvas, 74, "当焦点离开时自动隐藏岛",
-                !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "没有媒体会话时，焦点离开就收起",
+                silent ? silentSub : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "没有媒体会话时，焦点离开就收起"),
                 NotchWindow.IsFocusAutoHideEnabled,
                 !isModeDisabled && _focusHideToggleHovered,
                 isModeDisabled);
@@ -1281,7 +1419,7 @@ namespace NotchPeninsula
             canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 132, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + 132, _separatorPaint);
 
             DrawToggleRow(canvas, 136, "暂停播放后自动隐藏",
-                !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "媒体暂停播放时，也把刘海藏起来",
+                silent ? silentSub : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "媒体暂停播放时，也把刘海藏起来"),
                 NotchWindow.IsPauseAutoHideEnabled,
                 !isModeDisabled && _pauseHideToggleHovered,
                 isModeDisabled);
@@ -1289,7 +1427,7 @@ namespace NotchPeninsula
             canvas.DrawLine(CONTENT_TEXT_X, TITLE_BAR_HEIGHT + 194, WIDTH - CONTENT_TEXT_RM, TITLE_BAR_HEIGHT + 194, _separatorPaint);
 
             DrawToggleRow(canvas, 198, "全屏自动隐藏",
-                !NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "检测到全屏视频 / 游戏时隐藏",
+                silent ? silentSub : (!NotchWindow.IsAutoHideEnabled ? "需先开启上方总开关" : "检测到全屏视频 / 游戏时隐藏"),
                 NotchWindow.IsFullscreenAutoHideEnabled,
                 !isModeDisabled && _fsHideToggleHovered,
                 isModeDisabled);
@@ -1314,12 +1452,84 @@ namespace NotchPeninsula
 
             DrawToggleCard(canvas, PASS_CARD_Y, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered);
 
-            DrawIslandHotkeyCard(canvas);
+            DrawIslandHotkeyCard(canvas, Renderer.SilentActive);
+            DrawSilentHotkeyCard(canvas);
+        }
+
+        /// <summary>
+        /// 交互页最下面那张「静默模式」快捷键卡：结构与「唤出灵动岛」卡同源，只是没有禁用态
+        ///（静默模式下正是靠它进出，所以永远可点）。
+        /// </summary>
+        private void DrawSilentHotkeyCard(SKCanvas canvas)
+        {
+            float cardY = TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y;
+            var cardRect = new SKRect(CONTENT_L, cardY, WIDTH - CONTENT_RM, cardY + SILENT_HOTKEY_CARD_H);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+
+            canvas.DrawText("静默模式", CONTENT_TEXT_X, cardY + 23, _uiTextPaint);
+
+            // 总开关（出厂关）
+            float tW = 42f, tH = 20f;
+            float tX = WIDTH - CONTENT_RM - 16f - tW;
+            float tY = cardY + 16f;
+            var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
+            if (SilentHotkey.IsEnabled)
+            {
+                _dynamicFillPaint.Color = _silentHotkeyToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
+                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
+                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+            }
+            else
+            {
+                _dynamicStrokePaint.Color = _silentHotkeyToggleHovered ? Neutral(150) : Neutral(100);
+                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                _toggleCirclePaint.Color = _silentHotkeyToggleHovered ? Neutral(200) : Neutral(150);
+                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                _toggleCirclePaint.Color = SKColors.White;
+            }
+
+            // 优先级：错误提示 > 录制操作说明 > 未设置键位 > 未开启 > 平时说明。
+            string hint = _silentHotkeyHint.Length > 0 ? _silentHotkeyHint : SilentHotkey.LastError;
+            bool hasHint = hint.Length > 0;
+            string sub = hasHint ? hint
+                : _silentHotkeyRecording ? "按下按键录制 · Esc 取消 · Backspace 清空"
+                    : (!SilentHotkey.IsBound ? "先点下面的按键框录一个组合键（默认空）"
+                        : (!SilentHotkey.IsEnabled ? "已保存，打开右上角开关后生效"
+                                                   : "全局生效：按一下在静默与之前模式之间切换"));
+            _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
+            float subMax = (WIDTH - CONTENT_RM - 16f - tW) - 12f - CONTENT_TEXT_X;
+            DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 40);
+            _subTextPaint.Color = Neutral(170);
+
+            float rowY = cardY + HOTKEY_HEAD_H;
+            canvas.DrawText("快捷键", CONTENT_TEXT_X, rowY + 20, _subTextPaint);
+
+            var boxRect = new SKRect(HOTKEY_BOX_X, rowY + 4, HOTKEY_BOX_RIGHT, rowY + 4 + HOTKEY_BOX_H);
+
+            _dynamicFillPaint.Color = _silentHotkeyRecording ? new SKColor(0, 120, 212, 70)
+                : (_silentHotkeyHovered ? Overlay(30) : Overlay(15));
+            canvas.DrawRoundRect(boxRect, 4, 4, _dynamicFillPaint);
+            if (_silentHotkeyRecording)
+            {
+                float oldStroke = _dynamicStrokePaint.StrokeWidth;
+                _dynamicStrokePaint.Color = new SKColor(0, 140, 240);
+                _dynamicStrokePaint.StrokeWidth = 1f;
+                canvas.DrawRoundRect(boxRect, 4, 4, _dynamicStrokePaint);
+                _dynamicStrokePaint.StrokeWidth = oldStroke;
+            }
+
+            string text = _silentHotkeyRecording ? RecordingBoxText() : SilentHotkey.FormatKey();
+            _dynamicTextPaint.Color = _silentHotkeyRecording ? new SKColor(0, 150, 255)
+                : (SilentHotkey.IsBound ? _fgColor : Neutral(120));
+            DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
+                HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);
+            _dynamicTextPaint.Color = _fgColor;
         }
 
         // 交互页「唤出灵动岛」卡片：只有一个键位，结构与媒体页「全局快捷键」卡片同源
         //（标题 + 副标题 + 一行「名字 … [键位框]」）。
-        private void DrawIslandHotkeyCard(SKCanvas canvas)
+        private void DrawIslandHotkeyCard(SKCanvas canvas, bool disabled = false)
         {
             // ⚠️ 这里必须跟 DrawToggleCard 一样补上 TITLE_BAR_HEIGHT：
             // ISLAND_HOTKEY_CARD_Y 等常量都是「相对内容区顶部」的偏移，而画布用的是全窗口坐标。
@@ -1331,14 +1541,25 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
 
+            _uiTextPaint.Color = disabled ? Neutral(100) : _fgColor;
             canvas.DrawText("唤出灵动岛", CONTENT_TEXT_X, cardY + 23, _uiTextPaint);
+            _uiTextPaint.Color = _fgColor;
 
             // 总开关（出厂关，与媒体页那张卡的开关同一套画法）
             float tW = 42f, tH = 20f;
             float tX = WIDTH - CONTENT_RM - 16f - tW;
             float tY = cardY + 16f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-            if (IslandHotkey.IsEnabled)
+            if (disabled)
+            {
+                // 静默模式：整卡置灰，开关只画灰描边（同 DrawToggleRow 的 disabled 样式）。
+                _dynamicStrokePaint.Color = Neutral(80);
+                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
+                _toggleCirclePaint.Color = Neutral(100);
+                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
+                _toggleCirclePaint.Color = SKColors.White;
+            }
+            else if (IslandHotkey.IsEnabled)
             {
                 _dynamicFillPaint.Color = _islandHotkeyToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
                 canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
@@ -1357,24 +1578,28 @@ namespace NotchPeninsula
             // 注册失败（键被别的程序占着）在没录制时也要一直挂着，否则用户只会觉得「按了没反应」。
             string hint = _islandHotkeyHint.Length > 0 ? _islandHotkeyHint : IslandHotkey.LastError;
             bool hasHint = hint.Length > 0;
-            string sub = hasHint ? hint
+            string sub = disabled ? "静默模式下不支持手动唤出"
+                : hasHint ? hint
                 : (_islandHotkeyRecording ? "按下按键录制 · Esc 取消 · Backspace 清空"
                     : (!IslandHotkey.IsEnabled ? "开启后按下可隐藏 / 唤出灵动岛 · 点按键框可重录"
                                                : "全局生效 · 点按键框可重录"));
-            _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
+            _subTextPaint.Color = disabled ? Neutral(80) : hasHint ? new SKColor(230, 122, 92) : Neutral(170);
             float subMax = (WIDTH - CONTENT_RM - 16f - tW) - 12f - CONTENT_TEXT_X;
             DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, CONTENT_TEXT_X, cardY + 40);
             _subTextPaint.Color = Neutral(170);
 
             float rowY = cardY + HOTKEY_HEAD_H;
+            _subTextPaint.Color = disabled ? Neutral(80) : Neutral(170);
             canvas.DrawText("快捷键", CONTENT_TEXT_X, rowY + 20, _subTextPaint);
+            _subTextPaint.Color = Neutral(170);
 
             var boxRect = new SKRect(HOTKEY_BOX_X, rowY + 4, HOTKEY_BOX_RIGHT, rowY + 4 + HOTKEY_BOX_H);
 
-            _dynamicFillPaint.Color = _islandHotkeyRecording ? new SKColor(0, 120, 212, 70)
+            _dynamicFillPaint.Color = disabled ? Overlay(5)
+                : _islandHotkeyRecording ? new SKColor(0, 120, 212, 70)
                 : (_islandHotkeyHovered ? Overlay(30) : Overlay(15));
             canvas.DrawRoundRect(boxRect, 4, 4, _dynamicFillPaint);
-            if (_islandHotkeyRecording)
+            if (_islandHotkeyRecording && !disabled)
             {
                 float oldStroke = _dynamicStrokePaint.StrokeWidth;
                 _dynamicStrokePaint.Color = new SKColor(0, 140, 240);
@@ -1384,7 +1609,8 @@ namespace NotchPeninsula
             }
 
             string text = _islandHotkeyRecording ? RecordingBoxText() : IslandHotkey.FormatKey();
-            _dynamicTextPaint.Color = _islandHotkeyRecording ? new SKColor(0, 150, 255)
+            _dynamicTextPaint.Color = disabled ? Neutral(90)
+                : _islandHotkeyRecording ? new SKColor(0, 150, 255)
                 : (IslandHotkey.IsBound ? _fgColor : Neutral(120));
             DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
                 HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);

@@ -52,6 +52,12 @@ internal sealed class MediaLiveWindow : ILiveWindow
     /// </summary>
     public bool SpinWhenNoProgress => _media.IsPlaying;
 
+    /// <summary>
+    /// 静默模式：媒体实况窗开着就代表用户想看见它 —— 气泡显示时岛要回来陪它
+    ///（气泡挂在岛左侧，岛退场它也会跟着出画面）。这个开关本来就在「媒体设置」里默认关闭，是用户的显式选择。
+    /// </summary>
+    public bool CountsAsImportantInfo => true;
+
     public void DrawInner(SKCanvas canvas, SKRect rect, WidgetFrame frame)
     {
         // 用户要求封面大一点：直接铺满内圈（宿主已裁到内圈圆内），不再缩成圆角小方块。
@@ -222,7 +228,9 @@ internal static class MediaLiveWindowController
         lock (_gate) enabled = _enabled;
 
         // 待机时岛体只显示待机内容：媒体先留在岛内，退出待机后再重新走一遍 3 秒预览。
-        bool wantLive = enabled && media.IsActive && !Renderer.StandbyActive;
+        // 静默模式放行 —— 用户既然在「媒体设置」里打开了实况窗，静默模式下气泡就该照常出现
+        //（气泡算重要信息，岛会回来陪它，见 MediaLiveWindow.CountsAsImportantInfo）。
+        bool wantLive = enabled && media.IsActive && !Renderer.StandbyModeOnly;
         long now = Environment.TickCount64;
 
         // 气泡退场阶段：动画本身一点没改（还是原来那条「滑回岛体」），只是把它播完之前岛体先不展开。

@@ -95,7 +95,19 @@ namespace NotchPeninsula
                         Program.SaveSetting("StandbySceneKey", Renderer.StandbySceneKey);
                     Renderer.StandbyToggleByDoubleClick =
                         (int)key.GetValue("StandbyToggleByDoubleClick", 0) != 0;
-                    Renderer.StandbyActive = (int)key.GetValue("StandbyActive", 0) != 0;
+                    // 显示模式三态：新键 DisplayMode（0 待机 / 1 普通 / 2 静默）。
+                    // 老配置只有 StandbyActive（1 = 待机，0 = 普通）：没写过新键时按它迁移一次，
+                    // 之后一切以 DisplayMode 为准（静默模式是老版本没有的形态）。
+                    if (key.GetValue("DisplayMode") is int savedDisplayMode)
+                    {
+                        Renderer.DisplayMode = (IslandDisplayMode)Math.Clamp(savedDisplayMode, 0, 2);
+                    }
+                    else
+                    {
+                        Renderer.DisplayMode = (int)key.GetValue("StandbyActive", 0) != 0
+                            ? IslandDisplayMode.Standby
+                            : IslandDisplayMode.Regular;
+                    }
                     // 显示器拔插过之后注册表里可能留着越界下标（原来选的是第 2 块，现在只剩 1 块）。
                     // 旧版会就地夹紧并把 0 写回 TargetMonitorIndex —— 但显示器经常只是暂时不在
                     //（KVM/显示器 OSD 切走了输入源、重启后副屏还没唤醒），写回 0 会把用户选的屏
@@ -200,6 +212,11 @@ namespace NotchPeninsula
 
                     MediaHotkeys.Load(key);
                     IslandHotkey.Load(key);
+                    SilentHotkey.Load(key);
+
+                    // 「从哪切走就回哪」要跨重启：上次是待机进静默的，这次退出静默仍回待机。
+                    Renderer.SilentReturnMode = (IslandDisplayMode)Math.Clamp(
+                        (int)key.GetValue("SilentReturnMode", (int)IslandDisplayMode.Regular), 0, 2);
 
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }

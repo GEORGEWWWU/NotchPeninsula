@@ -115,18 +115,53 @@ namespace NotchPeninsula
         // 待机显示内容：空串 = 空白；内置项用 BuiltinWidgets.* 键；其余是插件 Key（设置页下拉里选的就是它）。
         public static string StandbySceneKey { get; set; } = Plugins.BuiltinWidgets.Clock;
 
-        public static bool StandbyActive
+        // ---- 显示模式（三态）----
+        //   Standby = 待机模式：岛体收成胶囊，只画「待机显示内容」选中的那一项；
+        //   Regular = 普通模式：按「显示内容」列表常驻；
+        //   Silent  = 静默模式：平时整块退场，只有插件上报「重要信息」时才出现（内容见 SilentMode）。
+        // 新键 DisplayMode 持久化；老配置只有 StandbyActive（0/1），Program 启动时迁移。
+        public static IslandDisplayMode DisplayMode
         {
-            get => _standbyActive;
+            get => _displayMode;
             set
             {
-                if (_standbyActive == value) return;
-                _standbyActive = value;
+                if (_displayMode == value) return;
+                // 「从哪切走就回哪」：进静默之前记下当时的模式，退出静默（快捷键）时回到它。
+                if (value == IslandDisplayMode.Silent && _displayMode != IslandDisplayMode.Silent)
+                    _silentReturnMode = _displayMode;
+                _displayMode = value;
                 try { StandbyActiveChanged?.Invoke(); }
                 catch (Exception ex) { Logger.Error("[Renderer] StandbyActiveChanged 事件处理异常", ex); }
             }
         }
-        private static bool _standbyActive;
+        private static IslandDisplayMode _displayMode = IslandDisplayMode.Regular;
+
+        /// <summary>进入静默模式之前的模式（退出静默时回到它）。启动时由 Program 从注册表还原。</summary>
+        public static IslandDisplayMode SilentReturnMode
+        {
+            get => _silentReturnMode == IslandDisplayMode.Silent ? IslandDisplayMode.Regular : _silentReturnMode;
+            set => _silentReturnMode = value == IslandDisplayMode.Silent ? IslandDisplayMode.Regular : value;
+        }
+        private static IslandDisplayMode _silentReturnMode = IslandDisplayMode.Regular;
+
+        /// <summary>
+        /// 岛体是否处于「胶囊态」—— 待机与静默都算，普通模式为 false。
+        /// 布局 / 尺寸 / 折叠渲染一律看它，所以静默模式和待机共享同一套胶囊外壳。
+        /// </summary>
+        public static bool StandbyActive
+        {
+            get => _displayMode != IslandDisplayMode.Regular;
+            set => DisplayMode = value ? IslandDisplayMode.Standby : IslandDisplayMode.Regular;
+        }
+
+        /// <summary>严格「待机模式」语义：按 <see cref="StandbySceneKey"/> 画单一场景、屏蔽实况窗。</summary>
+        public static bool StandbyModeOnly => _displayMode == IslandDisplayMode.Standby;
+
+        /// <summary>静默模式：内容由「勾选 + 重要信息」共同决定。</summary>
+        public static bool SilentActive => _displayMode == IslandDisplayMode.Silent;
+
+        /// <summary>普通模式：唯一允许「待机显示内容」下拉的形态。</summary>
+        public static bool RegularActive => _displayMode == IslandDisplayMode.Regular;
 
         // 诊断：背板为空只报一次（玻璃模式下背板为空 = 玻璃层整帧不画）
 
@@ -191,6 +226,60 @@ namespace NotchPeninsula
                 _backdropMapSrc.Top + canvasRect.Top * ky,
                 _backdropMapSrc.Left + (canvasRect.Right - _backdropMapCanvasLeft) * kx,
                 _backdropMapSrc.Top + canvasRect.Bottom * ky);
+            return src.Width >= 4f && src.Height >= 2f;
+        }
+
+        // ---- 实况窗面板的明暗快照 ----
+        // 抓屏线程会把「实况窗面板」这块从背板里抹掉（不然玻璃会采到自己的输出），
+        // 于是面板区域的背板像素是空的 —— 逐元素明暗在那里永远是同一个值（整片白 / 整片黑）。
+        // 所以面板展开期间改用「面板出现之前的最后一张背板」：那时这块还是纯桌面。
+        // 只在面板不可见时按 400ms 刷新一次，成本是 1.7MB 内存 + 一次像素拷贝。
+        public static SKImage? PanelToneBackdrop { get; private set; }
+        private static SKBitmap? _panelSnapBitmap;
+        private static SKRect _panelSnapSrc;
+        private static float _panelSnapCanvasLeft, _panelSnapCanvasW, _panelSnapCanvasH;
+        private static bool _panelSnapValid;
+        private static long _panelSnapMs = long.MinValue;
+
+        internal static void SnapshotPanelToneBackdrop(SKImage? image)
+        {
+            if (image == null || !_backdropMapValid) return;
+            long now = Environment.TickCount64;
+            if (now - _panelSnapMs < 400) return;
+            _panelSnapMs = now;
+
+            try
+            {
+                var info = new SKImageInfo(image.Width, image.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
+                var bmp = new SKBitmap(info);
+                if (!image.ReadPixels(info, bmp.GetPixels(), bmp.RowBytes, 0, 0)) { bmp.Dispose(); return; }
+
+                // SKImage.FromBitmap 会继续引用这块像素 → 位图必须一起存着，替换时先放 image 再放位图。
+                PanelToneBackdrop?.Dispose();
+                _panelSnapBitmap?.Dispose();
+                _panelSnapBitmap = bmp;
+                PanelToneBackdrop = SKImage.FromBitmap(bmp);
+                _panelSnapSrc = _backdropMapSrc;
+                _panelSnapCanvasLeft = _backdropMapCanvasLeft;
+                _panelSnapCanvasW = _backdropMapCanvasW;
+                _panelSnapCanvasH = _backdropMapCanvasH;
+                _panelSnapValid = true;
+            }
+            catch (Exception ex) { Logger.Error("[Renderer] 面板明暗快照失败", ex); }
+        }
+
+        /// <summary>用面板快照的映射把画布矩形换算成图像坐标（映射随快照一起冻结）。</summary>
+        internal static bool TryCanvasToPanelSnapshot(SKRect canvasRect, out SKRect src)
+        {
+            src = default;
+            if (!_panelSnapValid || _panelSnapCanvasW < 1f || _panelSnapCanvasH < 1f) return false;
+            float kx = _panelSnapSrc.Width / _panelSnapCanvasW;
+            float ky = _panelSnapSrc.Height / _panelSnapCanvasH;
+            src = new SKRect(
+                _panelSnapSrc.Left + (canvasRect.Left - _panelSnapCanvasLeft) * kx,
+                _panelSnapSrc.Top + canvasRect.Top * ky,
+                _panelSnapSrc.Left + (canvasRect.Right - _panelSnapCanvasLeft) * kx,
+                _panelSnapSrc.Top + canvasRect.Bottom * ky);
             return src.Width >= 4f && src.Height >= 2f;
         }
 
@@ -261,9 +350,24 @@ namespace NotchPeninsula
 
         public static float FullHideAlpha = 1.0f;
 
+        /// <summary>
+        /// 静默模式进出时的整体缩放（1 = 正常，0 = 缩到中心消失）。
+        ///
+        /// <para>静默模式的显隐不走「上下滑出」，而是<b>从岛体中心放大 / 缩回中心</b>：
+        /// 由 NotchWindow 用弹簧驱动（带 overshoot，所以出现时是「跳出」的手感），
+        /// 这里只承接结果 —— 渲染线程在整岛绘制前按它围绕中心缩放。其它模式恒为 1。</para>
+        /// </summary>
+        public static volatile float SilentScale = 1.0f;
+
         // 手动「隐藏灵动岛」（交互设置页的全局快捷键翻转）。只活在本次运行里：
         // 不落注册表 —— 万一那组键被别的程序占着，重启还能把岛找回来。
         public static volatile bool IslandHidden = false;
+
+        /// <summary>
+        /// 最近一次「用户真的按了鼠标」的时刻（TickCount64）。插件在待机 / 静默模式下自动展开详情页时，
+        /// 宿主用它区分「用户点开的」和「插件自己弹的」—— 只有紧挨着手势的那次才放行。
+        /// </summary>
+        public static volatile int LastUserInputMs;
 
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
@@ -359,6 +463,20 @@ namespace NotchPeninsula
                 canvas.Save();
                 // 整个画布向下平移，让内部所有元素自动完美适应居中
                 canvas.Translate(0, topY);
+
+                // 静默模式：整块岛围绕自身中心缩放（出现 = 从中心跳出放大，退场 = 缩回中心）。
+                // 缩放与上面的 Translate 同属这一层 Save，末尾那一次 Restore 会把两者一起回滚，
+                // 所以不需要新增 Save/Restore（新增反而会和 EndContents 的成对关系打架）。
+                float silentScale = SilentScale;
+                bool silentScaling = silentScale < 0.999f;
+                if (silentScaling)
+                {
+                    float scaleCx = (islandLeft + islandRight) / 2f;
+                    float scaleCy = currentHeight / 2f;
+                    canvas.Translate(scaleCx, scaleCy);
+                    canvas.Scale(silentScale, silentScale);
+                    canvas.Translate(-scaleCx, -scaleCy);
+                }
 
                 // 图层只在「整块岛要淡出」时才需要：透明组的作用就是给内部所有像素乘一个 alpha。
                 // 稳态 alpha=255 时这层是个恒等变换，但它仍然要为整张画布（2000×265，150% 缩放后

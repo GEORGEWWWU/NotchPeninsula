@@ -40,6 +40,8 @@ public static class LiveWindowRenderer
     private static readonly SKPath _lipPath = new();
     private static readonly SKPath _maskPath = new();
 
+    private static bool _panelToneLogged;
+
     public static void Draw(SKCanvas canvas)
     {
         var frame = LiveWindowHost.Frame;
@@ -482,9 +484,36 @@ public static class LiveWindowRenderer
                 //    文字在局部坐标里排版；用画布绝对坐标取网格会全部落在网格外 → 永远回落到主题色（截图里那种白字压亮底）。
                 var toneDst = new SKRect(0f, 0f, frame.PanelRect.Width, frame.PanelRect.Height);
                 SKRect toneSrc = default;
-                bool hasBackdrop = Renderer.AcrylicBackdrop != null
-                    && Renderer.TryCanvasToBackdrop(frame.PanelRect, out toneSrc);
-                Renderer.BeginPanelToneGrid(hasBackdrop ? Renderer.AcrylicBackdrop : null, toneDst, toneSrc);
+                // 面板区域在实时背板里是被抹掉的（防玻璃自采样）→ 优先用「面板出现前的快照」，
+                // 那份图里这块还是纯桌面，才能做到真正的逐元素明暗。
+                bool useSnap = Renderer.PanelToneBackdrop != null
+                    && Renderer.TryCanvasToPanelSnapshot(frame.PanelRect, out toneSrc);
+                bool hasBackdrop = useSnap;
+                if (!useSnap)
+                {
+                    hasBackdrop = Renderer.AcrylicBackdrop != null
+                        && Renderer.TryCanvasToBackdrop(frame.PanelRect, out toneSrc);
+                }
+                Renderer.BeginPanelToneGrid(useSnap ? Renderer.PanelToneBackdrop
+                    : (hasBackdrop ? Renderer.AcrylicBackdrop : null), toneDst, toneSrc);
+
+                // 面板明暗诊断：只在面板刚完全展开时打一行，方便对着日志判断「为什么字没反色」。
+                if (frame.PanelReveal >= 0.999f)
+                {
+                    long nowMs = Environment.TickCount64;
+                    if (!_panelToneLogged)
+                    {
+                        _panelToneLogged = true;
+                        Logger.Info($"[实况窗] 面板明暗：背板={(hasBackdrop ? (useSnap ? "快照" : "实时") : "无")}"
+                            + $" 材质={Renderer.IslandMaterialIndex} 主题={Renderer.ThemeMode}"
+                            + $" 面板={frame.PanelRect.Width:F0}x{frame.PanelRect.Height:F0}"
+                            + $" 可用={Plugins.PluginTone.IsAvailable}");
+                    }
+                }
+                else
+                {
+                    _panelToneLogged = false;
+                }
 
                 try
                 {
@@ -525,8 +554,17 @@ public static class LiveWindowRenderer
             return;
         }
 
-        if (Renderer.IslandAcrylic && Renderer.AcrylicBackdrop is { } backdrop
-            && Renderer.TryCanvasToBackdrop(rect, out SKRect src))
+        SKImage? acrylic = null;
+        SKRect acrylicSrc = default;
+        if (Renderer.IslandAcrylic)
+        {
+            if (Renderer.PanelToneBackdrop != null && Renderer.TryCanvasToPanelSnapshot(rect, out acrylicSrc))
+                acrylic = Renderer.PanelToneBackdrop;
+            else if (Renderer.AcrylicBackdrop != null && Renderer.TryCanvasToBackdrop(rect, out acrylicSrc))
+                acrylic = Renderer.AcrylicBackdrop;
+        }
+
+        if (acrylic is { } backdrop)
         {
             int depth = canvas.SaveCount;
             canvas.Save();
@@ -534,7 +572,7 @@ public static class LiveWindowRenderer
             {
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
                 _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
-                canvas.DrawImage(backdrop, src, rect, _panelImagePaint);
+                canvas.DrawImage(backdrop, acrylicSrc, rect, _panelImagePaint);
 
                 _fillPaint.Color = WithOpacity(Renderer.MaterialCoatColor, alpha);
                 canvas.DrawRoundRect(rect, radius, radius, _fillPaint);
@@ -550,12 +588,34 @@ public static class LiveWindowRenderer
         canvas.DrawRoundRect(rect, radius, radius, _fillPaint);
     }
 
+    /// <summary>
+    /// 面板 / 气泡的玻璃背景：优先用「面板展开前的桌面快照」（面板区域在实时背板里是被抹掉的），
+    /// 并按用户在设置里选的「模糊」档位做一次高斯模糊 —— 这样液态玻璃的参数才真正接管这块。
+    /// </summary>
     private static bool DrawGlassBackdrop(SKCanvas canvas, SKRect sampleRect, SKRect drawRect, float alpha)
     {
-        if (Renderer.AcrylicBackdrop is not { } backdrop
-            || !Renderer.TryCanvasToBackdrop(sampleRect, out SKRect src)) return false;
+        SKImage? img;
+        SKRect src;
+        if (Renderer.PanelToneBackdrop != null && Renderer.TryCanvasToPanelSnapshot(sampleRect, out src))
+            img = Renderer.PanelToneBackdrop;
+        else if (Renderer.AcrylicBackdrop is { } live && Renderer.TryCanvasToBackdrop(sampleRect, out src))
+            img = live;
+        else
+            return false;
+
         _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
-        canvas.DrawImage(backdrop, src, drawRect, _panelImagePaint);
+
+        // 模糊：跟岛体同一口径（半径表 0/2/4/6/10 → sigma = r / 2.7）。
+        float sigma = LiquidGlass.BlurSigma;
+        if (sigma > 0.05f)
+        {
+            using var blur = SKImageFilter.CreateBlur(sigma, sigma);
+            _panelImagePaint.ImageFilter = blur;
+        }
+
+        try { canvas.DrawImage(img, src, drawRect, _panelImagePaint); }
+        finally { _panelImagePaint.ImageFilter = null; }
+
         return true;
     }
 

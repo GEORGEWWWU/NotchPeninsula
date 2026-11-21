@@ -98,6 +98,7 @@ public sealed class PluginManager
     private const string DisabledListValue = "Plugins_Disabled";
     private const string OrderListValue = "Plugins_Order";
     private const string HiddenListValue = "Plugins_Hidden";
+    private const string SilentHiddenListValue = "Plugins_SilentHidden";
     private const string NameCacheValue = "Plugins_Names";
     private const string NoPluginError = "DLL 中未找到 INotchPlugin 的实现";
 
@@ -115,6 +116,10 @@ public sealed class PluginManager
     private readonly HashSet<string> _disabled = new(StringComparer.OrdinalIgnoreCase);
     // 插件照常运行（不卸载、不禁用），下次启动也保持不显示。
     private readonly HashSet<string> _hidden = new(StringComparer.OrdinalIgnoreCase);
+
+    // 静默模式的显示列表：这里存的是「静默模式下不显示」的插件 Key。
+    // 与 _hidden（普通模式的勾选）完全独立 —— 两套模式各有各的勾选，排序共用 _order。
+    private readonly HashSet<string> _silentHidden = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _order = new();
     private readonly List<string> _rawOrder = new();
     private bool _orderMigrated;
@@ -143,6 +148,14 @@ public sealed class PluginManager
     private readonly object _displayItemsLock = new();
     private IReadOnlyList<DisplayItem>? _displayItemsCache;
     private int _displayItemsVersion = -1;
+    private IReadOnlyList<DisplayItem>? _silentDisplayItemsCache;
+    private int _silentDisplayItemsVersion = -1;
+
+    // 静默模式聚合快照：按显示顺序列出「勾选了 + 正在上报重要信息」的插件 Id。
+    // 每次都重建数组（只在版本变化时），数组本身不再修改，所以渲染线程可以直接遍历。
+    private string[] _silentImportantIds = Array.Empty<string>();
+    private int _silentSnapshotRevision = -1;
+    private int _silentSnapshotChange = -1;
 
     public int ChangeVersion => System.Threading.Volatile.Read(ref _changeVersion);
     public string PluginsRoot { get; }
@@ -157,6 +170,7 @@ public sealed class PluginManager
         PluginsRoot = Path.Combine(GetAppDirectory(), "plugins");
         LoadDisabledList();
         LoadHiddenList();
+        LoadSilentHiddenList();
         LoadOrderList();
         LoadNameCache();
     }
@@ -331,55 +345,194 @@ public sealed class PluginManager
         public bool IsBuiltin { get; init; }
     }
 
-    public IReadOnlyList<DisplayItem> DisplayItems
+    public IReadOnlyList<DisplayItem> DisplayItems => BuildDisplayItems(silent: false);
+
+    /// <summary>
+    /// 静默模式设置里的列表（设置页「静默模式设置」下面那张卡片）。
+    ///
+    /// <para>顺序与普通模式共用 <see cref="_order"/>（排序当然是直接复用的），
+    /// 勾选状态来自独立的 <see cref="_silentHidden"/> —— 两套模式互不影响。</para>
+    ///
+    /// <para>内置项（时间日期 / 资源占用 / 媒体控制器）在静默模式下**恒为未勾选且不可交互**：
+    /// 它们没有「重要信息」的概念，勾了也永远不会显示，列出来只为让用户看到完整列表。</para>
+    /// </summary>
+    public IReadOnlyList<DisplayItem> SilentDisplayItems => BuildDisplayItems(silent: true);
+
+    private IReadOnlyList<DisplayItem> BuildDisplayItems(bool silent)
     {
-        get
+        int version = ChangeVersion;
+        lock (_displayItemsLock)
         {
-            int version = ChangeVersion;
-            lock (_displayItemsLock)
-            {
-                if (_displayItemsCache != null && _displayItemsVersion == version)
-                    return _displayItemsCache;
-            }
+            var cached = silent ? _silentDisplayItemsCache : _displayItemsCache;
+            int cachedVersion = silent ? _silentDisplayItemsVersion : _displayItemsVersion;
+            if (cached != null && cachedVersion == version) return cached;
+        }
 
-            IReadOnlyList<DisplayItem> built;
-            lock (_lock)
+        IReadOnlyList<DisplayItem> built;
+        lock (_lock)
+        {
+            var list = new List<DisplayItem>(_order.Count + BuiltinWidgets.Default.Length);
+            foreach (var key in _order)
             {
-                var list = new List<DisplayItem>(_order.Count + BuiltinWidgets.Default.Length);
-                foreach (var key in _order)
+                if (BuiltinWidgets.IsBuiltin(key))
                 {
-                    if (BuiltinWidgets.IsBuiltin(key))
-                    {
-                        list.Add(new DisplayItem { Key = key, Name = BuiltinName(key), IsShown = IsBuiltinDisplayed(key), IsBuiltin = true });
-                        continue;
-                    }
-
-                    var e = FindEntryByKeyOrId(key);
-                    if (e == null || string.IsNullOrEmpty(e.Key)) continue;
-                    if (e.State != PluginState.Loaded) continue;
-                    if (IgnoresDisplayOrder(e)) continue;
+                    // 静默模式只保留「消息通知」这一项系统内容（状态跟随通用设置的总开关），
+                    // 时间日期 / 资源占用 / 媒体控制器没有「重要信息」概念，不出现在这里。
+                    if (silent) continue;
                     list.Add(new DisplayItem
                     {
-                        Key = e.Key,
-                        Name = e.FriendlyName,
-                        IsShown = !_hidden.Contains(e.Key)
+                        Key = key,
+                        Name = BuiltinName(key),
+                        IsShown = IsBuiltinDisplayed(key),
+                        IsBuiltin = true
                     });
+                    continue;
                 }
 
-                foreach (var b in BuiltinWidgets.Default)
-                    if (!list.Any(x => string.Equals(x.Key, b, StringComparison.OrdinalIgnoreCase)))
-                        list.Add(new DisplayItem { Key = b, Name = BuiltinName(b), IsShown = IsBuiltinDisplayed(b), IsBuiltin = true });
-
-                built = list;
+                var e = FindEntryByKeyOrId(key);
+                if (e == null || string.IsNullOrEmpty(e.Key)) continue;
+                if (e.State != PluginState.Loaded) continue;
+                if (IgnoresDisplayOrder(e)) continue;
+                // 静默模式只列「声明过重要信息能力」的插件（调用过 SetImportantInformation 的），
+                // 普通插件（一言 / 天气 / 时间轴……）不会出现在这里。
+                if (silent && !SilentMode.IsDeclared(e.Id)) continue;
+                list.Add(new DisplayItem
+                {
+                    Key = e.Key,
+                    Name = e.FriendlyName,
+                    IsShown = silent ? !_silentHidden.Contains(e.Key) : !_hidden.Contains(e.Key)
+                });
             }
 
-            lock (_displayItemsLock)
+            // 消息通知不再进列表：它在静默模式设置页是一张单独的卡（跟随通用设置的总开关），
+            // 见 ConsoleWindow.RenderTabSilentMode。
+            if (!silent)
+            {
+                foreach (var b in BuiltinWidgets.Default)
+                    if (!list.Any(x => string.Equals(x.Key, b, StringComparison.OrdinalIgnoreCase)))
+                        list.Add(new DisplayItem
+                        {
+                            Key = b,
+                            Name = BuiltinName(b),
+                            IsShown = IsBuiltinDisplayed(b),
+                            IsBuiltin = true
+                        });
+            }
+
+            built = list;
+        }
+
+        lock (_displayItemsLock)
+        {
+            if (silent)
+            {
+                _silentDisplayItemsCache = built;
+                _silentDisplayItemsVersion = version;
+            }
+            else
             {
                 _displayItemsCache = built;
                 _displayItemsVersion = version;
             }
-            return built;
         }
+        return built;
+    }
+
+    /// <summary>
+    /// 静默模式下这个插件是否被勾选（允许在静默模式出现）。勾选 ≠ 一定显示：
+    /// 还要它当前上报了重要信息，见 <see cref="SilentImportantPluginIds"/>。
+    /// </summary>
+    public bool IsSilentShown(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return false;
+        if (BuiltinWidgets.IsBuiltin(key)) return false;   // 内置项在静默模式不适用
+        lock (_lock)
+        {
+            var e = FindEntryByKeyOrId(key);
+            if (e == null) return false;
+            return !_silentHidden.Contains(e.Key);
+        }
+    }
+
+    /// <summary>切换静默模式列表的勾选。内置项 / 未加载的插件直接忽略（列表里它们本来就置灰）。</summary>
+    public void SetSilentDisplayed(string key, bool shown)
+    {
+        if (string.IsNullOrEmpty(key) || BuiltinWidgets.IsBuiltin(key)) return;
+
+        PluginEntry? e;
+        lock (_lock) e = FindEntryByKeyOrId(key);
+        if (e == null || string.IsNullOrEmpty(e.Key)) return;
+        if (e.State != PluginState.Loaded) return;
+
+        bool changed;
+        lock (_lock)
+            changed = shown ? _silentHidden.Remove(e.Key) : _silentHidden.Add(e.Key);
+        if (!changed) return;
+
+        SaveSilentHiddenList();
+        RaiseChanged();   // 快照失效 → 静默模式下一帧按新勾选重算
+    }
+
+    /// <summary>
+    /// 静默模式当前要展示的插件 Id（按显示顺序），只含「勾选了 **且** 正在上报重要信息」的。
+    /// 返回的是不可变快照数组，渲染线程可以放心持有 / 遍历。
+    /// </summary>
+    public IReadOnlyList<string> SilentImportantPluginIds => BuildSilentSnapshot();
+
+    /// <summary>同上的数量：NotchWindow 每帧用它判断「岛该不该退场」，不产生分配。</summary>
+    public int SilentImportantCount => BuildSilentSnapshot().Length;
+
+    /// <summary>
+    /// 静默模式下要求「用自定义页面展示」的插件 Id（第一个满足条件的）。
+    /// 宿主据此自动展开该插件的详情页；没有就用折叠态（默认）。
+    /// </summary>
+    public string? SilentPresentationPluginId
+    {
+        get
+        {
+            var ids = BuildSilentSnapshot();
+            for (int i = 0; i < ids.Length; i++)
+                if (SilentMode.UsesPresentation(ids[i])) return ids[i];
+            return null;
+        }
+    }
+
+    private string[] BuildSilentSnapshot()
+    {
+        int revision = SilentMode.Revision;
+        int version = ChangeVersion;
+
+        lock (_displayItemsLock)
+        {
+            if (_silentSnapshotRevision == revision && _silentSnapshotChange == version)
+                return _silentImportantIds;
+        }
+
+        var list = new List<string>(4);
+        lock (_lock)
+        {
+            foreach (var key in _order)
+            {
+                if (BuiltinWidgets.IsBuiltin(key)) continue;
+
+                var e = FindEntryByKeyOrId(key);
+                if (e == null || string.IsNullOrEmpty(e.Id)) continue;
+                if (e.State != PluginState.Loaded) continue;
+                if (IgnoresDisplayOrder(e)) continue;
+                if (_silentHidden.Contains(e.Key)) continue;          // 没勾选
+                if (!SilentMode.IsImportant(e.Id)) continue;          // 没上报重要信息
+                list.Add(e.Id);
+            }
+        }
+
+        var snapshot = list.ToArray();
+        lock (_displayItemsLock)
+        {
+            _silentImportantIds = snapshot;
+            _silentSnapshotRevision = revision;
+            _silentSnapshotChange = version;
+        }
+        return snapshot;
     }
 
     private static bool IgnoresDisplayOrder(PluginEntry e)
@@ -1437,6 +1590,31 @@ public sealed class PluginManager
             key?.SetValue(HiddenListValue, string.Join(";", _hidden));
         }
         catch (Exception ex) { Logger.Error("[PluginManager] 保存插件隐藏清单失败", ex); }
+    }
+
+    // ---- 静默模式的显示清单（勾选状态，排序共用主清单） ----
+
+    private void LoadSilentHiddenList()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RegistryBase);
+            var raw = key?.GetValue(SilentHiddenListValue) as string;
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            foreach (var item in raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                _silentHidden.Add(item);
+        }
+        catch (Exception ex) { Logger.Error("[PluginManager] 读取静默模式显示清单失败", ex); }
+    }
+
+    private void SaveSilentHiddenList()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RegistryBase);
+            key?.SetValue(SilentHiddenListValue, string.Join(";", _silentHidden));
+        }
+        catch (Exception ex) { Logger.Error("[PluginManager] 保存静默模式显示清单失败", ex); }
     }
 
     private static string GetAppDirectory()

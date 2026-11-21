@@ -206,6 +206,8 @@ namespace NotchPeninsula
             // 实况窗（详情页面板 + 左侧气泡）也要计入遮罩，口径同样是屏幕物理像素。
             {
                 var liveFrame = LiveWindowHost.Frame;
+                // 面板没展开时先把「面板区域还是纯桌面」的这一帧背板存一份，供面板展开后做逐元素明暗。
+                if (!liveFrame.PanelVisible) Renderer.SnapshotPanelToneBackdrop(Renderer.AcrylicBackdrop);
                 var extra = _extraMaskScratch;
                 int n = 0;
                 if (liveFrame.PanelVisible && liveFrame.PanelRect.Width > 1f && liveFrame.PanelRect.Height > 1f)

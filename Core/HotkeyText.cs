@@ -22,6 +22,10 @@ namespace NotchPeninsula
         public static string Format(uint mods, int vk)
             => FormatMods(mods) + KeyName(vk);
 
+        /// <summary>两组键位是否同一个组合（任一侧空键位都不算冲突）。</summary>
+        public static bool SameCombo(uint aMods, int aVk, uint bMods, int bVk)
+            => aVk != 0 && bVk != 0 && aVk == bVk && aMods == bMods;
+
         // 只输出修饰键部分（"Ctrl + Shift + "），空组合返回空串。
         // 录制过程中用它把「已经按住的修饰键」实时画到框里 —— 只按 Ctrl 时界面上有反应，
         // 用户才不会以为「它根本不识别 Ctrl / Shift / Alt / Win」。

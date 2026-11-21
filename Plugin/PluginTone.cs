@@ -91,15 +91,9 @@ public static class PluginTone
     {
         byte a = alpha == 255 ? paint.Color.Alpha : alpha;
 
-        // 实况窗面板：整块面板用同一个明暗（面板平均亮度，已带滞回）。
-        // 逐元素在面板上会被封面 / 标题栏边缘带偏，出现「深底上个别字还是黑的」。
-        if (Renderer.PluginTonePanel)
-        {
-            paint.Color = Renderer.PanelToneText(a, sub);
-            canvas.DrawText(text, x, baseline, paint);
-            return;
-        }
-
+        // 面板内同样逐元素：按这段文字自己的包围盒取色。
+        // 旧做法是整块面板统一用平均亮度 —— 在渐变壁纸上会「整片白 / 整片黑」来回跳，
+        // 用户明确要求逐元素，所以这里不再走 PanelToneText 分支。
         if (!Renderer.PluginToneReady || string.IsNullOrEmpty(text))
         {
             // 没有亮度数据：保持调用方已经设好的颜色（旧行为），只同步一下 alpha

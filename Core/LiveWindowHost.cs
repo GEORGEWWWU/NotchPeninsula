@@ -260,6 +260,35 @@ public static class LiveWindowHost
     }
 
     /// <summary>
+    /// 静默模式专用：屏上是否挂着「重要信息」类实况窗（<see cref="ILiveWindow.CountsAsImportantInfo"/> = true）。
+    ///
+    /// <para>气泡挂在岛左侧，岛整块退场时它会跟着出画面 —— 所以这种气泡在屏上就等于「岛必须回来」。
+    /// 插件级开关关掉（Suppressed）、正在退场（Exiting）、渲染异常熔断（Broken）都不算。</para>
+    ///
+    /// <para>渲染线程每帧调用，只读几个 bool；插件属性放在 try 里，实现方抛异常不会拖垮整帧。</para>
+    /// </summary>
+    public static bool HasImportantLiveWindow
+    {
+        get
+        {
+            lock (_lock)
+            {
+                for (int i = 0; i < _entries.Count; i++)
+                {
+                    var e = _entries[i];
+                    if (e.Window == null || e.Exiting || e.Suppressed || e.Broken) continue;
+                    try
+                    {
+                        if (e.Window.CountsAsImportantInfo) return true;
+                    }
+                    catch { /* 插件属性异常：当它不声明重要信息 */ }
+                }
+            }
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 插件被真正卸载时调用：把它的开关记录从「实况窗管理」名单里删掉，那一行才会跟着消失。
     /// <para>
     /// **只在真卸载时调**：更新安装走的是「移除旧副本 → 加载同 Id 新版」的替换路径，

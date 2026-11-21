@@ -109,6 +109,13 @@ namespace NotchPeninsula
             var contentOrder = Plugins.PluginManager.Instance.Host.ContentOrder;
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;
 
+            // 静默模式：内容不由「待机显示内容」决定，而是「静默模式设置里勾选了 + 当前上报了重要信息」的插件。
+            if (SilentActive)
+            {
+                DrawSilentContent(canvas, left, currentWidth, currentHeight, topY, textOffsetY, alpha, bars);
+                return;
+            }
+
             if (StandbyActive)
             {
                 // 待机只显示「待机显示内容」下拉里选中的那一项；
@@ -182,6 +189,40 @@ namespace NotchPeninsula
             if (!hardwareHandled && CompShowHardware) DrawHardwareModule();
             if (!mediaHandled && CompShowMedia && media.IsActive && !SuppressMediaInIsland) DrawMediaModule();
             DrawPluginWidgets(canvas, null, currentX, currentHeight, alpha, textOffsetY, bars, _pluginMouseX, _pluginMouseY - topY);
+        }
+
+        /// <summary>
+        /// 静默模式的内容行：按「静默模式设置」的顺序，把**勾选了且正在上报重要信息**的插件组件排进去。
+        ///
+        /// <para>形态默认就是折叠态组件（和普通模式同一个 widget），插件声明 <c>useImportantPresentation</c>
+        /// 时由 NotchWindow 展开它的详情页（自定义页面），这里只负责胶囊态那一行。</para>
+        ///
+        /// <para>没有任何插件上报时岛本来就在退场（<see cref="SilentMode.ShouldHideIsland"/>），
+        /// 这里不画东西 —— 空胶囊只在「实况窗重要但没插件内容」时作为兜底出现。</para>
+        /// </summary>
+        private static void DrawSilentContent(SKCanvas canvas, float left, float currentWidth,
+            float currentHeight, float topY, float textOffsetY, byte alpha, float[]? bars)
+        {
+            var ids = Plugins.PluginManager.Instance.SilentImportantPluginIds;
+            if (ids.Count == 0) return;
+
+            // 先量总宽：岛宽有 60px 下限，内容整体居中才不至于偏左。
+            float total = 0f;
+            for (int i = 0; i < ids.Count; i++)
+            {
+                float w = SumPluginRowWidth(ids[i]);
+                if (w <= 0f) continue;
+                total = total > 0f ? total + 16f + w : w;
+            }
+            if (total <= 0f) return;
+
+            float x = left + MathF.Max(16f, (currentWidth - total) / 2f);
+            for (int i = 0; i < ids.Count; i++)
+            {
+                if (SumPluginRowWidth(ids[i]) <= 0f) continue;
+                x = DrawPluginWidgets(canvas, ids[i], x, currentHeight, alpha, textOffsetY, bars,
+                    _pluginMouseX, _pluginMouseY - topY);
+            }
         }
 
         private static void DrawNativeLayout(SKCanvas canvas, MediaController media, bool isHovered, float[]? bars,

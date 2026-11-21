@@ -571,9 +571,12 @@ namespace NotchPeninsula
                     _mode = val;
                     if (_mode == 0)
                     {
-                        if (!Renderer.StandbyActive)
+                        // 引导页只有「待机 / 普通」两态：DisplayMode 与旧键一起写，
+                        // 老用户重看引导时也能真正切换（只写旧键会被已有的 DisplayMode 盖掉）。
+                        if (Renderer.DisplayMode != IslandDisplayMode.Standby)
                         {
-                            Renderer.StandbyActive = true;
+                            Renderer.DisplayMode = IslandDisplayMode.Standby;
+                            Program.SaveSetting("DisplayMode", (int)IslandDisplayMode.Standby);
                             Program.SaveSetting("StandbyActive", 1);
                         }
                         // 待机模式下不给子选项：默认就是媒体控制器
@@ -582,9 +585,10 @@ namespace NotchPeninsula
                     }
                     else
                     {
-                        if (Renderer.StandbyActive)
+                        if (Renderer.DisplayMode != IslandDisplayMode.Regular)
                         {
-                            Renderer.StandbyActive = false;
+                            Renderer.DisplayMode = IslandDisplayMode.Regular;
+                            Program.SaveSetting("DisplayMode", (int)IslandDisplayMode.Regular);
                             Program.SaveSetting("StandbyActive", 0);
                         }
                     }

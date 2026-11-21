@@ -33,6 +33,18 @@ namespace NotchPeninsula
             return x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT && y >= top && y <= top + HOTKEY_BOX_H;
         }
 
+        // 「静默模式」快捷键卡（交互页最下面）：几何与 DrawSilentHotkeyCard 严格同源。
+        private static bool HitSilentHotkeyToggle(int x, int y)
+            => x >= WIDTH - 80 && x <= WIDTH - 30
+               && y >= TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y + 16
+               && y <= TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y + 36;
+
+        private static bool HitSilentHotkeyBox(int x, int y)
+        {
+            float top = TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
+            return x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT && y >= top && y <= top + HOTKEY_BOX_H;
+        }
+
         // 点击判定读的是 hover 状态，而 hover 只由 WM_MOUSEMOVE 维护：
         // 光标从别的窗口移进来、或窗口刚弹出就点，MOVE 可能压根没到过这里 ——
         // 命中项还是 -1，于是「点了录制框什么都没发生」。落点坐标就在手上，就地重算一次。
@@ -52,9 +64,14 @@ namespace NotchPeninsula
             {
                 bool toggle = HitIslandHotkeyToggle(x, y);
                 bool box = HitIslandHotkeyBox(x, y);
-                if (toggle == _islandHotkeyToggleHovered && box == _islandHotkeyHovered) return;
+                bool silentToggle = HitSilentHotkeyToggle(x, y);
+                bool silentBox = HitSilentHotkeyBox(x, y);
+                if (toggle == _islandHotkeyToggleHovered && box == _islandHotkeyHovered
+                    && silentToggle == _silentHotkeyToggleHovered && silentBox == _silentHotkeyHovered) return;
                 _islandHotkeyToggleHovered = toggle;
                 _islandHotkeyHovered = box;
+                _silentHotkeyToggleHovered = silentToggle;
+                _silentHotkeyHovered = silentBox;
                 Render();
             }
         }
@@ -166,7 +183,7 @@ namespace NotchPeninsula
         // 提示是「这一次操作的结论」，离开这一页再回来还挂着，会让人以为刚才又失败了一次。
         private void SwitchTab(int tab)
         {
-            if (tab < 0 || tab > 8 || tab == _selectedTab) return;
+            if (tab < 0 || tab > 9 || tab == _selectedTab) return;
 
             _selectedTab = tab;
             _dropdownOpen = false;
@@ -204,6 +221,7 @@ namespace NotchPeninsula
             _cacheCleanHint = "";
             _hotkeyHint = "";
             _islandHotkeyHint = "";
+            _silentHotkeyHint = "";
             _fontHint = "";
             _soundHint = "";
         }
@@ -232,6 +250,9 @@ namespace NotchPeninsula
 
             if (_islandHotkeyRecording && !_islandHotkeyHovered)
                 CancelIslandHotkeyRecording();
+
+            if (_silentHotkeyRecording && !_silentHotkeyHovered)
+                CancelSilentHotkeyRecording();
 
             if (_closeHovered)
             {
@@ -296,8 +317,9 @@ namespace NotchPeninsula
                 _monitorDropdownOpen = false;
                 Render();
             }
-            // 待机显示内容下拉：点中某一项就把它存成待机场景（空串 = 空白，其余是内置键 / 插件 Key）
-            else if (_selectedTab == 1 && _sceneDropdownOpen
+            // 待机显示内容下拉：点中某一项就把它存成待机场景（空串 = 空白，其余是内置键 / 插件 Key）。
+            // 普通模式这个下拉是置灰的（待机专属），静默模式整行换成了标题 —— 都不该能点开。
+            else if (_selectedTab == 1 && Renderer.StandbyModeOnly && _sceneDropdownOpen
                 && _hoveredSceneIndex >= 0 && _hoveredSceneIndex < _sceneChoices.Length)
             {
                 var choice = _sceneChoices[_hoveredSceneIndex];
@@ -309,7 +331,7 @@ namespace NotchPeninsula
                 _sceneDropdownOpen = false;
                 Render();
             }
-            else if (_selectedTab == 1 && _sceneDropdownHovered)
+            else if (_selectedTab == 1 && Renderer.StandbyModeOnly && _sceneDropdownHovered)
             {
                 OpenSceneDropdown();
             }
@@ -321,11 +343,16 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 1 && _hoveredDisplayModeIndex != -1)
             {
-                bool wantStandby = _hoveredDisplayModeIndex == 0;
-                if (Renderer.StandbyActive != wantStandby)
+                var want = (IslandDisplayMode)_hoveredDisplayModeIndex;
+                if (Renderer.DisplayMode != want)
                 {
-                    Renderer.StandbyActive = wantStandby;
-                    Program.SaveSetting("StandbyActive", wantStandby ? 1 : 0);
+                    Renderer.DisplayMode = want;
+                    Program.SaveSetting("DisplayMode", (int)want);
+                    // 老键一起写：万一回退到旧版本，至少「待机 / 普通」的语义还是对的
+                    //（旧版本没有静默模式，会把静默当成普通）。
+                    Program.SaveSetting("StandbyActive", want == IslandDisplayMode.Standby ? 1 : 0);
+                    // 模式一换，待机显示内容下拉 / 场景列表的可用性就变了：残留的展开列表必须收掉。
+                    CloseAllDropdowns();
                     Render();
                 }
             }
@@ -356,7 +383,7 @@ namespace NotchPeninsula
                 {
                     GetListScrollbarLayout(out float top, out float trackH);
                     float thumbH = Math.Max(18f,
-                        trackH * visibleRows / PluginManager.Instance.DisplayItems.Count);
+                        trackH * visibleRows / CurrentDisplayList.Count);
                     float travel = Math.Max(1f, trackH - thumbH);
                     float ratio = Math.Clamp((clickY - top - thumbH / 2f) / travel, 0f, 1f);
                     _displayScroll = (int)Math.Round(ratio * maxFirstRow);
@@ -365,7 +392,7 @@ namespace NotchPeninsula
                 SyncHoverFromCursor();
                 Render();
             }
-            else if (_hoveredTab >= 0 && _hoveredTab <= 8 && _selectedTab != _hoveredTab)
+            else if (_hoveredTab >= 0 && _hoveredTab <= 9 && _selectedTab != _hoveredTab)
             {
                 SwitchTab(_hoveredTab);
             }
@@ -679,6 +706,7 @@ namespace NotchPeninsula
                 // 两边一起挂起：录制期间按到任意一组已注册的组合都不该真的生效。
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
+                SilentHotkey.SuspendRegistration();
                 _hotkeyRecordingIndex = _hoveredHotkeyRow;
                 _captureLiveMods = 0;
                 // 客户区键盘消息录不到系统级组合，先挂低层钩子（装不上就靠下面的 WM_KEYDOWN 兜底）。
@@ -698,7 +726,27 @@ namespace NotchPeninsula
                 _islandHotkeyHint = "";
                 MediaHotkeys.SuspendRegistration();
                 IslandHotkey.SuspendRegistration();
+                SilentHotkey.SuspendRegistration();
                 _islandHotkeyRecording = true;
+                _captureLiveMods = 0;
+                BeginKeyCapture();
+                Render();
+            }
+            // 「静默模式」快捷键卡：与上面那张同一套交互（开关 / 录制框）。
+            else if (_selectedTab == 3 && _silentHotkeyToggleHovered)
+            {
+                _silentHotkeyHint = "";
+                SilentHotkey.SetEnabled(!SilentHotkey.IsEnabled);
+                if (SilentHotkey.IsEnabled) _silentHotkeyHint = SilentHotkey.LastError;
+                Render();
+            }
+            else if (_selectedTab == 3 && _silentHotkeyHovered)
+            {
+                _silentHotkeyHint = "";
+                MediaHotkeys.SuspendRegistration();
+                IslandHotkey.SuspendRegistration();
+                SilentHotkey.SuspendRegistration();
+                _silentHotkeyRecording = true;
                 _captureLiveMods = 0;
                 BeginKeyCapture();
                 Render();
@@ -789,8 +837,8 @@ namespace NotchPeninsula
                 _dropdownOpen = false;
                 Render();
             }
-            // ---- 显示内容列表 ----
-            else if (_selectedTab == 1 && !Renderer.StandbyActive
+            // ---- 显示内容列表（普通模式；静默清单在 tab 9）----
+            else if (_selectedTab == 1 && !Renderer.StandbyModeOnly && !Renderer.SilentActive
                 && (_hoveredDisplayRow != -1 || _hoveredDisplayMoveUp != -1 || _hoveredDisplayMoveDown != -1))
             {
                 var displayItems = PluginManager.Instance.DisplayItems;
@@ -806,10 +854,39 @@ namespace NotchPeninsula
                     if (rowIdx >= 0 && rowIdx < displayItems.Count)
                     {
                         int delta = _hoveredDisplayMoveUp != -1 ? -1 : 1;
+                        // 排序两套模式共用同一份 _order —— 静默列表直接复用普通模式的顺序。
                         PluginManager.Instance.MoveDisplay(displayItems[rowIdx].Key, delta);
                     }
                 }
 
+                Render();
+            }
+            // 静默模式设置页右上角「去切换」→ 显示设置（显示模式三段在那儿）
+            else if (_selectedTab == 9 && _silentSwitchHovered)
+            {
+                SwitchTab(1);
+            }
+            // 「消息通知」卡 → 通用设置（总开关在那儿，这里是跟随而不是独立勾选）
+            else if (_selectedTab == 9 && _silentToastHovered)
+            {
+                SwitchTab(0);
+            }
+            // ---- 静默模式设置（tab 9）：勾选 / 上下排序（排序与普通模式共用同一份顺序）----
+            else if (_selectedTab == 9
+                && (_hoveredSilentRow != -1 || _hoveredSilentMoveUp != -1 || _hoveredSilentMoveDown != -1))
+            {
+                var items = PluginManager.Instance.SilentDisplayItems;
+                if (_hoveredSilentRow != -1 && _hoveredSilentRow < items.Count)
+                {
+                    var item = items[_hoveredSilentRow];
+                    if (!item.IsBuiltin) PluginManager.Instance.SetSilentDisplayed(item.Key, !item.IsShown);
+                }
+                else
+                {
+                    int rowIdx = _hoveredSilentMoveUp != -1 ? _hoveredSilentMoveUp : _hoveredSilentMoveDown;
+                    if (rowIdx >= 0 && rowIdx < items.Count)
+                        PluginManager.Instance.MoveDisplay(items[rowIdx].Key, _hoveredSilentMoveUp != -1 ? -1 : 1);
+                }
                 Render();
             }
             // ---- 实况窗管理（tab 8）----

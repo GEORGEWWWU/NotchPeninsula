@@ -57,6 +57,7 @@ NotchPeninsula 在屏幕顶部显示一条「灵动岛」。岛上的原生内�
 | 详情页尺寸改了要重测 | `host.InvalidateDetailPageSize()`（见 [7.2](#72-尺寸由你决定也可以不决定)） |
 | 收起实况窗浮动面板 | `host.CloseLiveWindowDetailPage()`（见 [8.7](#87-实况窗live-window)） |
 | 在岛左侧加一个实况窗 | `host.RegisterLiveWindow(...)`（见 [8.7](#87-实况窗live-window)） |
+| 静默模式下「有重要信息才让岛出现」 | `host.SetImportantInformation(...)`（见 [8.8](#88-静默模式重要信息)） |
 
 ### 1.2 最小可运行插件
 
@@ -1059,6 +1060,7 @@ _liveReg?.Dispose();   // 注销：气泡分裂回收到岛体左缘并消失（
 | `void OnRemoved()` | 宿主注销时回调一次；之后宿主不再回调本对象 |
 | `void OnHostEnabledChanged(bool enabled)` | 插件级开关变化：`false` = 已被禁用（气泡挂起，内容回到主岛组件行）；`true` = 重新启用。窗口对象仍有效，别在这里注销 / 重注册 |
 | `bool SpinWhenNoProgress` | **带默认实现（不实现 = `false`，旧插件二进制无需重编译）**：没有可用进度（`Progress < 0`）时内圈是否继续转；`true` = 照 `SpinInner` / `SpinSpeed` 转（用来代替原来的「转圈扫描段」）。**不要挪进 `LiveWindowVisual`**（会改结构体布局、破坏插件二进制兼容） |
+| `bool CountsAsImportantInfo` | **带默认实现（不实现 = `false`）**：本气泡是否算「重要信息」。静默模式下岛平时整块退场、气泡也会跟着出画面，返回 `true` 的气泡在屏上时宿主会把岛叫回来。下载 / 录制这类必须看见的气泡用 `true`，装饰性气泡保持 `false`。见 [8.8](#88-静默模式重要信息) |
 
 ```csharp
 public sealed class MyLiveWindow : ILiveWindow
@@ -1144,6 +1146,66 @@ internal sealed class DownloadDetailPage : IDetailPage
     public void OnAction(string? action, float x, float y) { }
 }
 ```
+
+### 8.8 静默模式（重要信息）
+
+**静默模式**是「显示模式」的第三种形态（设置 → 显示设置 → 显示模式：待机 / 普通 / 静默）：
+
+- 平时岛**整块退场**（完全滑出屏幕，不是变透明、也不占鼠标）；
+- 只有插件上报了**重要信息**（下载中、录制中、有待确认的提醒……）并且**在静默模式设置里被勾选**时，岛才会出现；
+- 普通消息提醒照常弹出，几秒后照常自动收起；**重要信息期间岛一直在**，直到插件把状态撤掉才退场。
+
+> 一句话：**勾选 ≠ 一定显示**。勾了但没上报 = 岛不出现；上报了但没勾 = 也不出现。两个条件缺一不可。
+
+**上报**
+
+```csharp
+// 有重要信息 → 岛出现
+host.SetImportantInformation(true);
+
+// 结束了（下载完成 / 取消 / 出错）→ 岛退场
+host.SetImportantInformation(false);
+
+// 想让静默模式用「你自己的详情页」展示（默认用折叠态组件）：
+host.SetImportantInformation(true, useImportantPresentation: true);
+```
+
+| 参数 | 说明 |
+|---|---|
+| `hasImportant` | `true` = 有重要信息（静默模式下岛要出现）；`false` = 撤销。**状态会一直保持到下一次上报或插件卸载** |
+| `useImportantPresentation` | `true` = 用该插件的详情页（[§7](#7-详情页-idetailpage) 那套自定义页面）展示；`false`（默认）= 折叠态组件，和普通模式那个 widget 一致 |
+
+- **调用即声明**：只要调用过这个方法（哪怕第一次报的是 `false`），宿主就把该插件记成「重要信息型插件」，静默模式设置页会列出它供用户勾选。建议在 `Initialize` 或首次刷新时先调一次（哪怕 `false`），别等到真有下载才第一次调用 —— 否则用户在列表里看不到你的插件。
+- **线程不限**：宿主内部加锁，刷新回调 / UI 线程 / 后台任务都能调。
+- **随时可调**：每秒调一次也无所谓 —— 值没变时宿主直接短路，不会触发重绘。
+- **卸载自动清**：插件卸载 / 重载时宿主会清掉它的上报，不会残留一个「永远 true」把岛钉在屏上。也建议在 `Dispose` 里补一次 `SetImportantInformation(false)`（卸载动画期间岛会立刻开始退场）。
+- **老宿主兼容**：接口成员带默认实现（空），插件源码不用改也能在旧宿主上编译；旧宿主运行时调用会抛 `MissingMethodException`，按需 `try/catch` 即可（本插件其余功能不受影响）。
+- **系统自带只有「消息通知」**：静默模式设置列表里的系统项只有它，勾选跟随「通用设置 → 消息通知」的总开关；时间日期 / 资源占用 / 媒体控制器没有重要信息概念，不出现在该列表里。
+
+**与实况窗的关系（推荐组合）**
+
+实况窗气泡挂在岛左侧，岛退场它也会跟着出画面 —— 所以声明了 `ILiveWindow.CountsAsImportantInfo => true` 的气泡**在屏上就等于重要信息**，宿主会自动把岛叫回来陪它。下载进度这类必须让用户看见的气泡应该两样都做：
+
+```csharp
+// ① 气泡自己声明「我算重要信息」——即使上报那一路出 bug，静默模式也不会空屏
+public bool CountsAsImportantInfo => true;
+
+// ② 状态刷新时同步上报 —— 覆盖率更高，且能表达「有任务但气泡被用户关掉了」也算重要信息
+host.SetImportantInformation(HasUnfinishedDownload());
+```
+
+两个判断口径要对齐（比如都用「还有没下完的活动任务 / 等待队列非空」），这样「气泡在、岛没了」和「岛在、没内容」都不会出现。
+
+**典型节奏（下载类）**
+
+```
+刷新发现任务开始   → SetImportantInformation(true)     岛出现（折叠态或自定义页）
+每秒刷新           → 不要再报 true（宿主自动短路）     岛保持在
+任务全部完成/取消  → SetImportantInformation(false)    岛退场（几秒的弹簧动画）
+插件卸载           → 宿主自动清；自己也补一次 false 更稳
+```
+
+> 静默模式下**自动隐藏 / 唤出灵动岛 / 双击空白切换待机**在设置页里是置灰的：岛的显隐完全由重要信息决定，手动那套开关不参与。
 
 ---
 
@@ -1485,6 +1547,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 主题 | `RenderTheme CurrentTheme` | 开放 |
 | 提醒 | `ShowReminder(ReminderData)` | 开放（仅岛内显示，见 [8.2](#82-提醒)） |
 | 提醒 | `PostReminder(ReminderData)` | 开放（公开提醒，见 [8.2](#82-提醒)） |
+| 静默模式 | `SetImportantInformation(bool hasImportant, bool useImportantPresentation = false)` | 开放（2.3.0 新增；静默模式下据此决定岛出不出现，见 [8.8](#88-静默模式重要信息)） |
 | 设置 | `GetSetting(key, fallback)` / `SetSetting(key, value)` / `event SettingsChanged` | 开放 |
 | 刷新 | `IDisposable ScheduleRefresh(TimeSpan, Action)` | 开放 |
 | 交互 | `RequestRedraw()` | 空操作 |
@@ -1570,6 +1633,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 生命周期 | `OnRemoved()` | 空 |
 | 开关 | `OnHostEnabledChanged(bool enabled)` | 空 |
 | 外观 | `SpinWhenNoProgress` | `false`（没有可用进度时内圈是否继续转） |
+| 静默模式 | `CountsAsImportantInfo` | `false`（气泡是否算重要信息；`true` 时静默模式下气泡在屏 = 岛回来看它，见 [8.8](#88-静默模式重要信息)） |
 
 `LiveWindowVisual` 字段：`Progress`（`<0` = 没有可用进度）、`Status` / `Title` / `PercentText`、`ProgressColor`、`SpinInner`、`SpinSpeed`、`Completed` —— 语义见 [8.7](#87-实况窗live-window)。
 

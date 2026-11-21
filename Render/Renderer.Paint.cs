@@ -257,6 +257,9 @@ namespace NotchPeninsula
                 // 面板网格建不起来（背板映射失败 / 没抓到像素）时也必须把「面板作用域」打开：
                 // 否则 PluginTone 会退到主岛网格，把面板局部坐标当岛体坐标查，颜色完全随机。
                 float lum = Luminance(_bgPaint.Color);
+                // 玻璃 / 亚克力的涂层色偏深，但底下的壁纸可能是浅色的：拿不到背板时用系统主题
+                // 做一次粗修正，避免整块面板判成「深底」而画出白字。
+                if (IslandMaterialIndex != 0 && SystemIsLightTheme) lum = Math.Max(lum, 0.78f);
                 lum = Math.Clamp(lum, 0f, 1f);
                 for (int i = 0; i < _panelToneGrid.Length; i++) _panelToneGrid[i] = lum;
                 Array.Copy(_panelToneGrid, _panelToneGridPrev, _panelToneGrid.Length);
@@ -322,7 +325,9 @@ namespace NotchPeninsula
             // primed 表示「上一帧已经有网格」；先取出来再清，否则下面的插值永远走不到。
             bool hadPrev = primed;
             primed = false;
-            if (material != 0 && ThemeMode != 2) return false;
+            // 以前这里是「非实体材质 + 固定深/浅主题 → 不采样」，结果液态玻璃底下透出的浅色壁纸
+            // 一律被当成深底（白字压浅底）。只要有桌面背板就照常采样；没有背板才回落到涂层色。
+            if (material != 0 && ThemeMode != 2 && backdrop == null) return false;
             if (dst.Width < 4f || dst.Height < 4f) return false;
 
             if (material == 0 || (material == 2 && backdrop == null))

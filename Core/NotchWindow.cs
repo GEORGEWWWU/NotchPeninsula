@@ -109,6 +109,14 @@ namespace NotchPeninsula
         private Timer? _pollingTimer;
         private readonly Dispatcher _dispatcher;
         private readonly DateTime _appStartTime = DateTime.Now;
+
+        /// <summary>
+        /// 启动宽限期（应用启动后 3 秒内为 true）。渲染循环每帧刷新一次。
+        /// 非普通模式下用它压住插件 Initialize 阶段的「自动打开详情页」——那些调用会把胶囊态撑成大面板。
+        /// </summary>
+        public static volatile bool InStartupGrace = true;
+
+        private const double StartupGraceSeconds = 3.0;
         private readonly AudioAnalyzer _audioAnalyzer;
         private float[] _currentBars = new float[5]; // 用于渲染线程的平滑过渡
         private readonly float[] _spectrumBars = new float[5]; // LyricServer 12 频段压缩为 5 柱的复用缓冲（仅 RenderLoop 单线程内写入并当帧消费）
@@ -544,6 +552,7 @@ namespace NotchPeninsula
 
             MediaHotkeys.Attach(_hwnd);
             IslandHotkey.Attach(_hwnd);
+            SilentHotkey.Attach(_hwnd);
             _audioWatchTimer = new Timer(500);
             _audioWatchTimer.Elapsed += OnAudioWatchTick;
             _audioWatchTimer.Start();
@@ -1363,12 +1372,25 @@ namespace NotchPeninsula
                     _outsideLeftPressPending = false;
                 }
 
+                InStartupGrace = (DateTime.Now - _appStartTime).TotalSeconds < StartupGraceSeconds;
+
                 TickFullscreenProbe();
+                SyncSilentPresentation();
 
                 // 三项都在它内部合成，所以这里不再重复写。
                 // 手动隐藏（交互设置页的全局快捷键）与自动隐藏共用同一条退场动画，
                 // 区别是它不看设置里的三个开关，按下就必须藏。
-                bool shouldHide = (Renderer.IslandHidden || CanAutoHideNow)
+                //
+                // 静默模式是个例外：它不用「上下滑出」，而是从岛体中心放大 / 缩回中心（见 TickSilentScale）。
+                // 消息提醒期间不缩放 —— 用户要求「静默模式下消息弹出动画不变」，岛照常就位、toast 照常淡入。
+                bool silentHide = SilentMode.ShouldHideIsland;
+                bool silentHiding = silentHide && !isToastActive;   // 消息期间岛必须在屏上
+                TickSilentScale(silentHiding, instantShow: isToastActive);
+
+                // 静默模式「缩没了」之后才允许滑出屏幕：那只是收尾（避免空窗口挡住鼠标），不是动画本体。
+                bool silentSlidOut = silentHiding && Renderer.SilentScale < 0.02f;
+
+                bool shouldHide = (Renderer.IslandHidden || CanAutoHideNow || silentSlidOut)
                     && !_media.IsDragging && !HasAnyExpanded && !isToastActive;
 
                 float currentTopY = 12f * _currentStyleProgress;
@@ -1376,7 +1398,28 @@ namespace NotchPeninsula
 
                 // 唤醒按钮（与穿透睡眠态同一颗）。
                 bool slideOutHide = Renderer.IslandBaseY <= 0.5f;
-                float expectedTargetY = shouldHide && slideOutHide ? -((settledHeight + currentTopY - 4) * _dpiScale) : 0f;
+                float slideOutY = -((settledHeight + currentTopY - 4) * _dpiScale);
+
+                float expectedTargetY;
+                if (Renderer.SilentActive)
+                {
+                    // 静默模式：缩放期间窗口钉在顶部；缩到 0 之后才滑出去。
+                    // 从「已在屏幕外」回到显示时瞬间归位 —— 缩放是从 0 开始的，看不见这一跳，
+                    // 观感才是「从中间跳出来」，而不是「边滑下来边放大」。
+                    if (!silentHiding && _silentWindowSlidOut)
+                    {
+                        _currentY = 0f;
+                        _targetY = 0f;
+                        _startY = 0f;
+                        _isYAnimating = false;
+                    }
+                    expectedTargetY = silentSlidOut && slideOutHide ? slideOutY : 0f;
+                }
+                else
+                {
+                    expectedTargetY = shouldHide && slideOutHide ? slideOutY : 0f;
+                }
+                _silentWindowSlidOut = silentSlidOut;
 
                 if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
@@ -2043,11 +2086,13 @@ namespace NotchPeninsula
                 case Win32.WM_HOTKEY:
                     MediaHotkeys.Handle(Win32.Low32(wParam));
                     IslandHotkey.Handle(Win32.Low32(wParam));
+                    SilentHotkey.Handle(Win32.Low32(wParam));
                     return (IntPtr)0;
 
                 case Win32.WM_DESTROY:
                     MediaHotkeys.Detach();
                     IslandHotkey.Detach();
+                    SilentHotkey.Detach();
                     SetRawMouseSink(false);     // 窗口要没了，原始输入先摘掉
                     RevokeIslandDropTarget();
                     LiveWindowHost.Reset();     // 实况窗引用一并摘掉，别再回调解载中的插件
@@ -2261,6 +2306,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDBLCLK:
                     {
+                        Renderer.LastUserInputMs = Environment.TickCount;
                         // → 跳回正在放媒体的那个应用。
                         // 一次干净的双击直接跳转。
                         // · 展开态：封面那一格双击 → 跳转。
@@ -2315,23 +2361,29 @@ namespace NotchPeninsula
                             return (IntPtr)0; // 消费掉：别再让第二下点到底下的播放按钮上
                         }
 
-                        if (Renderer.StandbyToggleByDoubleClick && _isHovered
+                        if (Renderer.StandbyToggleByDoubleClick && !Renderer.SilentActive && _isHovered
                             && _currentToast == null
                             && !Renderer.HasActiveDetailPage)
                         {
                             // 进入 / 退出的命中区：
                             //   · 非待机态：双击空白进入；
                             bool onBlank = Renderer.IsBlankAt(dx, dy, _currentHeight);
-                            bool hitsToggleZone = Renderer.StandbyActive
+                            bool hitsToggleZone = Renderer.StandbyModeOnly
                                 && string.Equals(Renderer.StandbySceneKey, Plugins.BuiltinWidgets.Media, StringComparison.OrdinalIgnoreCase)
                                 ? Renderer.HitMediaZone(dx) || onBlank
                                 : onBlank;
 
                             if (hitsToggleZone)
                             {
-                                Renderer.StandbyActive = !Renderer.StandbyActive;
-                                Program.SaveSetting("StandbyActive", Renderer.StandbyActive ? 1 : 0);
-                                Logger.Info($"[待机模式] {(Renderer.StandbyActive ? "进入" : "退出")}"
+                                // 待机 ↔ 普通（静默模式在上面已排除，双击切换对它无意义）。
+                                // DisplayMode 才是唯一真源：只写旧键的话重启会读回旧的 DisplayMode。
+                                var next = Renderer.StandbyModeOnly
+                                    ? IslandDisplayMode.Regular
+                                    : IslandDisplayMode.Standby;
+                                Renderer.DisplayMode = next;
+                                Program.SaveSetting("DisplayMode", (int)next);
+                                Program.SaveSetting("StandbyActive", next == IslandDisplayMode.Standby ? 1 : 0);
+                                Logger.Info($"[待机模式] {(next == IslandDisplayMode.Standby ? "进入" : "退出")}"
                                     + $"（双击 {dx},{dy}，场景={(Renderer.StandbySceneKey.Length == 0 ? "空白" : Renderer.StandbySceneKey)}）");
                                 return (IntPtr)0;
                             }
@@ -2341,6 +2393,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_LBUTTONDOWN:
                     {
+                        Renderer.LastUserInputMs = Environment.TickCount;
                         // Windows can deliver the first click before WM_MOUSEMOVE,
                         // particularly when the animated HWND moves under a still pointer.
                         TrackIslandMouse(hwnd);
@@ -2515,6 +2568,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_RBUTTONDBLCLK:
                     {
+                        Renderer.LastUserInputMs = Environment.TickCount;
                         if (_isHovered)
                         {
                             int bx = (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale);
@@ -2687,6 +2741,50 @@ namespace NotchPeninsula
             Renderer.IsMediaExpanded = false;
         }
 
+        // ---- 静默模式：插件要求「自定义页面」时自动展开 / 收起详情页 ----
+        // 渲染循环每帧调一次：只在「要展示的页面」变了的时候动一下，不做任何 IO。
+        // 默认形态是折叠态组件；只有插件上报 useImportantPresentation = true 才走这条路。
+        private string? _silentPresentationWidgetId;
+
+        private void SyncSilentPresentation()
+        {
+            string? wantWidget = null;
+            if (Renderer.SilentActive)
+            {
+                string? pluginId = Plugins.PluginManager.Instance.SilentPresentationPluginId;
+                if (pluginId != null)
+                    wantWidget = Plugins.PluginManager.Instance.Host.FindPrimaryDetailWidgetId(pluginId);
+            }
+
+            if (string.Equals(wantWidget, _silentPresentationWidgetId, StringComparison.OrdinalIgnoreCase)) return;
+
+            string? previous = _silentPresentationWidgetId;
+            _silentPresentationWidgetId = wantWidget;
+
+            // 只收掉「我们自己开的那一个」：用户手动打开的别的详情页不碰。
+            if (previous != null && string.Equals(
+                    Plugins.PluginManager.Instance.Host.ActiveDetailWidgetId, previous,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                Plugins.PluginManager.Instance.Host.CloseDetailPage();
+            }
+
+            if (wantWidget != null)
+            {
+                // 宿主可能因为「非普通模式 + 插件自动展开」把它压掉：没打开成功就不记，
+                // 下一帧再试（否则会以为已经展示了，永远不再打开）。
+                if (Plugins.PluginManager.Instance.Host.OpenDetailPage(wantWidget))
+                {
+                    _silentPresentationWidgetId = wantWidget;
+                    Logger.Info($"[静默模式] 用插件自定义页面展示：{wantWidget}");
+                }
+                else
+                {
+                    _silentPresentationWidgetId = null;
+                }
+            }
+        }
+
         public void RequestWakeIsland()
         {
             // 手动隐藏的岛被「唤出」时顺手解除标记：否则它亮一下又会自己藏回去
@@ -2711,6 +2809,113 @@ namespace NotchPeninsula
                 Renderer.IslandHidden = true;
                 _liveInstance?.CollapseAllExpanded();
             }
+        }
+
+        // 全局快捷键「切换静默模式」：非静默 → 静默；静默 → 回到切走之前的那个模式。
+        // 与设置页点分段器是同一套持久化（DisplayMode 是新键，StandbyActive 是给旧版本回退用的）。
+        public static void ToggleSilentMode()
+        {
+            IslandDisplayMode next;
+            if (Renderer.SilentActive)
+            {
+                next = Renderer.SilentReturnMode;   // 从哪切走就回哪（待机进的就回待机）
+            }
+            else
+            {
+                next = IslandDisplayMode.Silent;
+                Program.SaveSetting("SilentReturnMode", (int)Renderer.DisplayMode);
+            }
+
+            Renderer.DisplayMode = next;
+            Program.SaveSetting("DisplayMode", (int)next);
+            Program.SaveSetting("StandbyActive", next == IslandDisplayMode.Standby ? 1 : 0);
+
+            // 进静默时岛要立刻退场：收起所有展开态（媒体面板 / 详情页），
+            // 否则 HasAnyExpanded 会一直把 shouldHide 顶住，观感就是「按了没反应」。
+            if (next == IslandDisplayMode.Silent)
+            {
+                _liveInstance?.CollapseAllExpanded();
+                Renderer.IslandHidden = false;   // 手动隐藏态先解掉，交给静默模式统一判断显隐
+            }
+
+            Logger.Info($"[静默模式] 快捷键 → {next}"
+                + (next == IslandDisplayMode.Silent ? "（有重要信息才会出现）" : ""));
+        }
+
+        // ---- 静默模式：整体缩放（出现 = 从中心跳出放大，退场 = 缩回中心）----
+        // 与上下滑出共用同一套弹簧（带 overshoot），所以「跳」的手感和别处一致。
+        private float _silentScale = 1f;
+        private float _silentScaleFrom = 1f;
+        private float _silentScaleTo = 1f;
+        private long _silentScaleStartTs;
+        private bool _silentScaleAnimating;
+        private bool _silentWindowSlidOut;   // 已经缩没并滑出屏幕（用于「回来时瞬间归位」）
+
+        /// <summary>
+        /// 每帧更新 <see cref="Renderer.SilentScale"/>。
+        /// </summary>
+        /// <param name="hidden">静默模式当前没有重要信息（且没有消息提醒）→ 缩到中心。</param>
+        /// <param name="instantShow">
+        /// 消息提醒期间：直接置 1，不做缩放 —— 用户要求「静默模式下消息弹出动画不变」，
+        /// toast 照旧在正常尺寸的岛上淡入。
+        /// </param>
+        private void TickSilentScale(bool hidden, bool instantShow)
+        {
+            if (!Renderer.SilentActive)
+            {
+                // 切出静默：立刻复位，否则岛会带着上一轮的缩小值出场。
+                if (_silentScale != 1f || Renderer.SilentScale != 1f)
+                {
+                    _silentScale = 1f;
+                    _silentScaleFrom = 1f;
+                    _silentScaleTo = 1f;
+                    _silentScaleAnimating = false;
+                    Renderer.SilentScale = 1f;
+                }
+                return;
+            }
+
+            float target = hidden ? 0f : 1f;
+
+            if (instantShow && target >= 1f)
+            {
+                if (_silentScale != 1f || Renderer.SilentScale != 1f)
+                {
+                    _silentScale = 1f;
+                    _silentScaleFrom = 1f;
+                    _silentScaleTo = 1f;
+                    _silentScaleAnimating = false;
+                    Renderer.SilentScale = 1f;
+                }
+                return;
+            }
+
+            if (Math.Abs(target - _silentScaleTo) > 0.0001f)
+            {
+                _silentScaleFrom = _silentScale;
+                _silentScaleTo = target;
+                _silentScaleStartTs = Stopwatch.GetTimestamp();
+                _silentScaleAnimating = true;
+            }
+
+            if (_silentScaleAnimating)
+            {
+                double elapsed = (Stopwatch.GetTimestamp() - _silentScaleStartTs) / (double)Stopwatch.Frequency;
+                if (elapsed >= SpringDurationSeconds)
+                {
+                    _silentScale = _silentScaleTo;
+                    _silentScaleAnimating = false;
+                }
+                else
+                {
+                    double k = SpringEase(elapsed);
+                    // 放大允许 6% 过冲（「跳出」那一下）；缩小钳到 0，别把岛翻过来画。
+                    _silentScale = Math.Clamp(
+                        (float)(_silentScaleFrom + (_silentScaleTo - _silentScaleFrom) * k), 0f, 1.06f);
+                }
+            }
+
+            Renderer.SilentScale = _silentScale;
         }
 
         private static void RequestPanelCollapse()

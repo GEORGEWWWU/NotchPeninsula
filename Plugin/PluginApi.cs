@@ -239,6 +239,22 @@ public interface IPluginHost
     /// </summary>
     IDisposable RegisterLiveWindow(ILiveWindow window);
 
+    /// <summary>
+    /// 上报本插件当前是否有「重要信息」—— 例如正在下载、正在录屏、有待确认的提醒。
+    ///
+    /// <para><b>只影响「静默模式」</b>（设置 → 显示设置 → 显示模式 → 静默模式）：静默模式平时把岛整块收走，
+    /// 只有「在静默模式设置里勾选了 且 上报了重要信息」的插件才会让岛出现。普通 / 待机模式完全不看这个状态。</para>
+    ///
+    /// <para><b>勾选 ≠ 一定显示</b>：勾了但没上报 = 岛不出现；没勾但上报了 = 也不出现。两个条件缺一不可。</para>
+    ///
+    /// <para><paramref name="useImportantPresentation"/> 决定出现时用什么形态：默认 <c>false</c> = 折叠态组件
+    /// （和普通模式那个widget一样），<c>true</c> = 用本插件的详情页（自定义页面）。</para>
+    ///
+    /// <para>随时可调、线程不限（内部加锁）。状态一直保持到下一次上报或插件卸载；插件卸载时宿主动清空。
+    /// 老宿主没有这个成员，接口默认实现为空 —— 插件源码不用改也能在旧宿主上编译运行。</para>
+    /// </summary>
+    void SetImportantInformation(bool hasImportant, bool useImportantPresentation = false) { }
+
     // 主题（当前帧快照）
     RenderTheme CurrentTheme { get; }
 

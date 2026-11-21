@@ -48,7 +48,7 @@ namespace NotchPeninsula
         private const string ReleasesApiUrlMirror = "https://edgeone.gh-proxy.org/" + ReleasesApiUrl;
 
         // 有新版本时统一跳这里下载（官方下载页，不走 GitHub release 页面）。
-        internal const string DownloadPageUrl = "https://dlnps.zzjjack.us.kg";
+        internal const string DownloadPageUrl = "https://dlnps.georgewu.top";
 
         // 手动检测失败时的兜底入口：直接去 GitHub 发布页自己挑包。
         internal const string GitHubReleasesUrl = "https://github.com/GEORGEWWWU/NotchPeninsula/releases";
