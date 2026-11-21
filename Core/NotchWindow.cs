@@ -1403,23 +1403,27 @@ namespace NotchPeninsula
                 float expectedTargetY;
                 if (Renderer.SilentActive)
                 {
-                    // 静默模式：缩放期间窗口钉在顶部；缩到 0 之后才滑出去。
-                    // 从「已在屏幕外」回到显示时瞬间归位 —— 缩放是从 0 开始的，看不见这一跳，
-                    // 观感才是「从中间跳出来」，而不是「边滑下来边放大」。
-                    if (!silentHiding && _silentWindowSlidOut)
-                    {
-                        _currentY = 0f;
-                        _targetY = 0f;
-                        _startY = 0f;
-                        _isYAnimating = false;
-                    }
-                    expectedTargetY = silentSlidOut && slideOutHide ? slideOutY : 0f;
+                    // 静默模式：窗口**永远钉在顶部**，动画只有「缩向中心」这一种 —— 不滑出、不上移。
+                    // 缩到 0 之后靠 WS_EX_TRANSPARENT 让窗口不吃鼠标（见下面的 SetClickThrough），
+                    // 而不是把窗口挪出屏幕：那正是「还会看到上移」的来源。
+                    expectedTargetY = 0f;
                 }
                 else
                 {
                     expectedTargetY = shouldHide && slideOutHide ? slideOutY : 0f;
                 }
                 _silentWindowSlidOut = silentSlidOut;
+
+                // 完全缩没 = 屏幕上什么都看不到 → 让整个窗口鼠标穿透，不挡下层程序。
+                // ⚠️ SetWindowLongPtr 会同步发 WM_STYLECHANGED 给窗口线程，渲染线程直接调会和
+                //    UI 线程的 Render()（持 _renderLock）撞成死锁 —— 所以只置意愿 + PostMessage。
+                bool silentInvisible = Renderer.SilentActive && silentHiding && Renderer.SilentScale < 0.02f;
+                if (silentInvisible != Renderer.WantSilentClickThrough)
+                {
+                    Renderer.WantSilentClickThrough = silentInvisible;
+                    if (_hwnd != IntPtr.Zero)
+                        Win32.PostMessage(_hwnd, WM_APPLY_CLICK_THROUGH, IntPtr.Zero, IntPtr.Zero);
+                }
 
                 if (Math.Abs(expectedTargetY - _targetY) > 0.1f)
             {
@@ -2304,6 +2308,18 @@ namespace NotchPeninsula
                         break;
                     }
 
+                case WM_APPLY_CLICK_THROUGH:
+                    {
+                        bool want = Renderer.WantSilentClickThrough;
+                        if (want != _silentClickThrough)
+                        {
+                            _silentClickThrough = want;
+                            if (Win32.SetClickThrough(_hwnd, want))
+                                Logger.Info($"[静默模式] 窗口鼠标穿透 = {want}");
+                        }
+                        return (IntPtr)0;
+                    }
+
                 case Win32.WM_LBUTTONDBLCLK:
                     {
                         Renderer.LastUserInputMs = Environment.TickCount;
@@ -2849,7 +2865,11 @@ namespace NotchPeninsula
         private float _silentScaleTo = 1f;
         private long _silentScaleStartTs;
         private bool _silentScaleAnimating;
-        private bool _silentWindowSlidOut;   // 已经缩没并滑出屏幕（用于「回来时瞬间归位」）
+        private bool _silentWindowSlidOut;   // 已经缩没（保留字段给日志 / 兼容）
+        private bool _silentClickThrough;    // 静默完全隐藏时窗口是否已设为鼠标穿透
+
+        // 渲染线程 → UI 线程：应用「静默完全隐藏时的鼠标穿透」。
+        private const int WM_APPLY_CLICK_THROUGH = 0x8000 + 0x61;
 
         /// <summary>
         /// 每帧更新 <see cref="Renderer.SilentScale"/>。

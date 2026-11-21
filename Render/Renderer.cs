@@ -369,6 +369,9 @@ namespace NotchPeninsula
         /// </summary>
         public static volatile int LastUserInputMs;
 
+        /// <summary>静默模式完全隐藏时，窗口是否应该设置 WS_EX_TRANSPARENT（由渲染线程置、UI 线程应用）。</summary>
+        public static volatile bool WantSilentClickThrough;
+
         // 媒体交互状态：0=直接交互，1=展开交互(默认)
         public static int MediaInteractionMode = 1;
 

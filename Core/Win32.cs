@@ -14,6 +14,7 @@ namespace NotchPeninsula
         public const int WS_EX_APPWINDOW = 0x00040000;
         public const int WS_EX_LAYERED = 0x00080000;
         public const int WS_EX_NOACTIVATE = 0x08000000;
+        public const int WS_EX_TRANSPARENT = 0x00000020;   // 鼠标穿透到下层窗口（静默模式完全隐藏时用）
 
         public const int WM_MOVE = 0x0003;
         public const int WM_SIZE = 0x0005;
@@ -535,6 +536,27 @@ namespace NotchPeninsula
 
         public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex)
             => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : (IntPtr)GetWindowLong32(hWnd, nIndex);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+        private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        public static IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
+            => IntPtr.Size == 8 ? SetWindowLongPtr64(hWnd, nIndex, dwNewLong)
+                                : (IntPtr)SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32());
+
+        /// <summary>开关窗口的鼠标穿透（WS_EX_TRANSPARENT）。返回 true = 样式确实变了。</summary>
+        public static bool SetClickThrough(IntPtr hWnd, bool on)
+        {
+            if (hWnd == IntPtr.Zero) return false;
+            IntPtr ex = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
+            long style = ex.ToInt64();
+            long want = on ? (style | WS_EX_TRANSPARENT) : (style & ~(long)WS_EX_TRANSPARENT);
+            if (want == style) return false;
+            SetWindowLongPtr(hWnd, GWL_EXSTYLE, (IntPtr)want);
+            return true;
+        }
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
