@@ -2579,6 +2579,7 @@ namespace NotchPeninsula
                     }
 
                 case Win32.WM_RBUTTONDOWN:
+                    Renderer.LastUserInputMs = Environment.TickCount;
                     TrackIslandMouse(hwnd);
                     if (_isHovered)
                     {

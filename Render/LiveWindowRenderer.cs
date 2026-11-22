@@ -255,15 +255,6 @@ public static class LiveWindowRenderer
         float cx = rect.MidX;
         float cy = rect.MidY;
 
-        // 【诊断】气泡滑行黑半：记录绘制矩形 / 裁切状态 / 玻璃采样夹取（2s 节流）
-        if (_diagThrottleMs == 0 || Environment.TickCount64 - _diagThrottleMs > 2000)
-        {
-            _diagThrottleMs = Environment.TickCount64;
-            Logger.Debug($"[气泡诊断][build=1309] rect=({rect.Left:F0},{rect.Top:F0})-({rect.Right:F0},{rect.Bottom:F0}) " +
-                         $"cx={cx:F0} r={r:F0} transferring={transferring} spawn={item.SpawnProgress:F2} " +
-                         $"exit={item.ExitProgress:F2} merging={item.MergeTargetX:F0} cover=[{Renderer.BackdropCoverLeft:F0},{Renderer.BackdropCoverRight:F0}]");
-        }
-
         float bandW = Math.Clamp(r * 0.15f, 2.5f, 4.5f);
         // 圆环只保留「进度条 + 内容区」，不再有整个圆盘的底色：
         //   进度条那一圈（contentClipR..r 的环带）就是气泡唯一的实体，材质直接铺在这圈上；
@@ -605,8 +596,6 @@ public static class LiveWindowRenderer
     /// 面板 / 气泡的玻璃背景：优先用「面板展开前的桌面快照」（面板区域在实时背板里是被抹掉的），
     /// 并按用户在设置里选的「模糊」档位做一次高斯模糊 —— 这样液态玻璃的参数才真正接管这块。
     /// </summary>
-    private static long _diagThrottleMs;
-
     private static bool DrawGlassBackdrop(SKCanvas canvas, SKRect sampleRect, SKRect drawRect, float alpha)
     {
         // 气泡可滑到背板覆盖区（岛体矩形）之外 —— 直接采样越界的部分会发黑（用户实测「右半是黑的」）。
@@ -624,8 +613,6 @@ public static class LiveWindowRenderer
                     if (sR - sL < 2f) return false;
                     float dLeft = drawRect.Left + (sL - sampleRect.Left) / full * drawRect.Width;
                     float dRight = drawRect.Right - (sampleRect.Right - sR) / full * drawRect.Width;
-                    Logger.Debug($"[气泡诊断] 玻璃夹取 sample({sampleRect.Left:F0}→{sL:F0},{sampleRect.Right:F0}→{sR:F0}) " +
-                                 $"draw({drawRect.Left:F0}→{dLeft:F0},{drawRect.Right:F0}→{dRight:F0})");
                     sampleRect = new SKRect(sL, sampleRect.Top, sR, sampleRect.Bottom);
                     drawRect = new SKRect(dLeft, drawRect.Top, dRight, drawRect.Bottom);
                 }
