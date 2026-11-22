@@ -1,27 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="370" viewBox="0 0 960 370" role="img" aria-labelledby="title desc">
   <title id="title">NotchPeninsula Star History</title>
-  <desc id="desc">Cumulative currently active GitHub stars through 2026-11-22. Total: 0.</desc>
+  <desc id="desc">Cumulative currently active GitHub stars through 2026-11-22. Total: 281.</desc>
   <rect width="960" height="370" rx="18" fill="#f4f8fc"/>
   <g font-family="system-ui, sans-serif">
     <text x="32" y="46" fill="#142b46" font-weight="700" font-size="24">Star History</text>
     <text x="32" y="73" fill="#4a617a" font-size="15">NotchPeninsula · Cumulative stars (UTC+8)</text>
-    <text x="916" y="51" text-anchor="end" fill="#1556a0" font-weight="700" font-size="21">0 stars</text>
+    <text x="916" y="51" text-anchor="end" fill="#1556a0" font-weight="700" font-size="21">281 stars</text>
     <g fill="#4a617a" font-size="13">
     <path d="M 78 323 H 916" stroke="#dbe5ef"/>
     <text x="64" y="328" text-anchor="end">0</text>
     <path d="M 78 268 H 916" stroke="#dbe5ef"/>
-    <text x="64" y="273" text-anchor="end">1</text>
+    <text x="64" y="273" text-anchor="end">71</text>
     <path d="M 78 213 H 916" stroke="#dbe5ef"/>
-    <text x="64" y="218" text-anchor="end">2</text>
+    <text x="64" y="218" text-anchor="end">142</text>
     <path d="M 78 158 H 916" stroke="#dbe5ef"/>
-    <text x="64" y="163" text-anchor="end">3</text>
+    <text x="64" y="163" text-anchor="end">213</text>
     <path d="M 78 103 H 916" stroke="#dbe5ef"/>
-    <text x="64" y="108" text-anchor="end">4</text>
-    <text x="78.00" y="349" text-anchor="middle">2026-11-21</text>
+    <text x="64" y="108" text-anchor="end">284</text>
+    <text x="78.00" y="349" text-anchor="middle">2026-08-24</text>
+    <text x="282.84" y="349" text-anchor="middle">2026-09-15</text>
+    <text x="497.00" y="349" text-anchor="middle">2026-10-08</text>
+    <text x="711.16" y="349" text-anchor="middle">2026-10-31</text>
     <text x="916.00" y="349" text-anchor="middle">2026-11-22</text>
     </g>
   </g>
-  <path d="M 78 323 H 916 V 323 H 78 Z" fill="#d9eafb"/>
-  <path d="M 78 323 H 916" fill="none" stroke="#2368b5" stroke-width="2.5" stroke-linejoin="round"/>
-  <circle cx="916" cy="323.00" r="4" fill="#2368b5"/>
+  <path d="M 78 323 H 87.31 V 322.23 H 96.62 V 321.45 H 152.49 V 320.68 H 161.80 V 316.03 H 171.11 V 313.70 H 180.42 V 310.61 H 189.73 V 303.63 H 199.04 V 298.21 H 208.36 V 296.66 H 217.67 V 292.79 H 226.98 V 291.24 H 245.60 V 288.14 H 254.91 V 285.82 H 264.22 V 285.04 H 273.53 V 282.72 H 282.84 V 276.52 H 292.16 V 274.20 H 301.47 V 272.65 H 310.78 V 271.10 H 320.09 V 268.00 H 329.40 V 264.90 H 338.71 V 263.35 H 348.02 V 261.03 H 357.33 V 259.48 H 366.64 V 258.70 H 375.96 V 254.06 H 385.27 V 247.86 H 394.58 V 244.76 H 403.89 V 243.99 H 413.20 V 238.56 H 422.51 V 235.46 H 431.82 V 227.72 H 441.13 V 223.85 H 450.44 V 222.30 H 459.76 V 217.65 H 469.07 V 214.55 H 478.38 V 210.68 H 497.00 V 208.35 H 506.31 V 205.25 H 515.62 V 203.70 H 524.93 V 200.61 H 534.24 V 195.96 H 543.56 V 195.18 H 552.87 V 192.08 H 562.18 V 188.99 H 571.49 V 185.89 H 580.80 V 183.56 H 590.11 V 181.24 H 599.42 V 179.69 H 608.73 V 178.92 H 618.04 V 177.37 H 627.36 V 174.27 H 636.67 V 169.62 H 645.98 V 168.07 H 655.29 V 166.52 H 664.60 V 164.20 H 673.91 V 162.65 H 683.22 V 160.32 H 692.53 V 157.23 H 701.84 V 156.45 H 711.16 V 154.90 H 739.09 V 154.13 H 748.40 V 150.25 H 757.71 V 147.15 H 767.02 V 146.38 H 776.33 V 144.06 H 794.96 V 139.41 H 804.27 V 131.66 H 813.58 V 129.34 H 822.89 V 125.46 H 832.20 V 123.14 H 841.51 V 118.49 H 850.82 V 116.94 H 860.13 V 111.52 H 869.44 V 109.97 H 878.76 V 107.65 H 888.07 V 106.10 H 906.69 V 105.32 H 916 V 323 H 78 Z" fill="#d9eafb"/>
+  <path d="M 78 323 H 87.31 V 322.23 H 96.62 V 321.45 H 152.49 V 320.68 H 161.80 V 316.03 H 171.11 V 313.70 H 180.42 V 310.61 H 189.73 V 303.63 H 199.04 V 298.21 H 208.36 V 296.66 H 217.67 V 292.79 H 226.98 V 291.24 H 245.60 V 288.14 H 254.91 V 285.82 H 264.22 V 285.04 H 273.53 V 282.72 H 282.84 V 276.52 H 292.16 V 274.20 H 301.47 V 272.65 H 310.78 V 271.10 H 320.09 V 268.00 H 329.40 V 264.90 H 338.71 V 263.35 H 348.02 V 261.03 H 357.33 V 259.48 H 366.64 V 258.70 H 375.96 V 254.06 H 385.27 V 247.86 H 394.58 V 244.76 H 403.89 V 243.99 H 413.20 V 238.56 H 422.51 V 235.46 H 431.82 V 227.72 H 441.13 V 223.85 H 450.44 V 222.30 H 459.76 V 217.65 H 469.07 V 214.55 H 478.38 V 210.68 H 497.00 V 208.35 H 506.31 V 205.25 H 515.62 V 203.70 H 524.93 V 200.61 H 534.24 V 195.96 H 543.56 V 195.18 H 552.87 V 192.08 H 562.18 V 188.99 H 571.49 V 185.89 H 580.80 V 183.56 H 590.11 V 181.24 H 599.42 V 179.69 H 608.73 V 178.92 H 618.04 V 177.37 H 627.36 V 174.27 H 636.67 V 169.62 H 645.98 V 168.07 H 655.29 V 166.52 H 664.60 V 164.20 H 673.91 V 162.65 H 683.22 V 160.32 H 692.53 V 157.23 H 701.84 V 156.45 H 711.16 V 154.90 H 739.09 V 154.13 H 748.40 V 150.25 H 757.71 V 147.15 H 767.02 V 146.38 H 776.33 V 144.06 H 794.96 V 139.41 H 804.27 V 131.66 H 813.58 V 129.34 H 822.89 V 125.46 H 832.20 V 123.14 H 841.51 V 118.49 H 850.82 V 116.94 H 860.13 V 111.52 H 869.44 V 109.97 H 878.76 V 107.65 H 888.07 V 106.10 H 906.69 V 105.32 H 916" fill="none" stroke="#2368b5" stroke-width="2.5" stroke-linejoin="round"/>
+  <circle cx="916" cy="105.32" r="4" fill="#2368b5"/>
 </svg>
