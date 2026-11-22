@@ -1848,7 +1848,7 @@ namespace NotchPeninsula
             }
         }
 
-        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃"];
+        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "插件背景"];
 
         private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
         {
@@ -1909,13 +1909,20 @@ namespace NotchPeninsula
         {
             RefreshPluginView();
 
+            // 插件设置子页：由行内「设置」按钮进入，仍然属于 tab 6
+            if (_settingsPluginId != null)
+            {
+                RenderPluginSettingsPage(canvas);
+                return;
+            }
+
             // ── 顶部操作卡片 ──
             float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var topRect = new SKRect(CONTENT_L, topY, WIDTH - CONTENT_RM, topY + PluginTopCardH);
             canvas.DrawRoundRect(topRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(topRect, 6, 6, _cardBorder);
             canvas.DrawText("我的插件", CONTENT_TEXT_X, topY + 26, _uiTextPaint);
-            canvas.DrawText("管理已安装的插件，或从下方插件市场获取新插件", CONTENT_TEXT_X, topY + 46, _subTextPaint);
+            canvas.DrawText("管理已安装插件；点插件行的「设置」可配置插件参数", CONTENT_TEXT_X, topY + 46, _subTextPaint);
 
             void DrawPluginButton(int index, string label, float bx, float by, float bw)
             {
@@ -1955,7 +1962,7 @@ namespace NotchPeninsula
 
             // 上行：名称独占整行，可延展至卡片右边界外侧
             float nameTextMax = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;                // 名称几乎全宽
-            float infoTextMax = PLUGIN_BTN_RELOAD_X - CONTENT_TEXT_X - 8;     // 信息止于按钮区之前
+            float infoTextMax = PLUGIN_BTN_SETTINGS_X - CONTENT_TEXT_X - 8;   // 信息止于按钮区之前
 
             if (_pluginView.Count == 0)
                 canvas.DrawText("暂无插件，点击「导入插件」或到「插件市场」下载", CONTENT_TEXT_X, listY + 62, _subTextPaint);
@@ -2000,16 +2007,19 @@ namespace NotchPeninsula
                 const float btnTop = 21f, btnH = 20f;       // 操作按钮矩形
 
                 // 操作按钮（重载 / 卸载）+ 开关
-                void DrawRowButton(float bx, bool hovered, string label, bool danger)
+                void DrawRowButton(float bx, bool hovered, string label, bool danger, bool accent = false)
                 {
                     var r = new SKRect(bx, rowY + btnTop, bx + 50, rowY + btnTop + btnH);
-                    _dynamicFillPaint.Color = hovered
-                        ? (danger ? new SKColor(180, 50, 50) : Overlay(30))
+                    _dynamicFillPaint.Color = accent
+                        ? (hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212))
+                        : hovered ? (danger ? new SKColor(180, 50, 50) : Overlay(30))
                         : Overlay(15);
                     canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                    _uiTextPaint.Color = _fgColor;
+                    _uiTextPaint.Color = accent ? SKColors.White : _fgColor;
                     DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
+                    _uiTextPaint.Color = _fgColor;
                 }
+                DrawRowButton(PLUGIN_BTN_SETTINGS_X, _hoveredPluginSettings == i, "设置", false, accent: true);
                 DrawRowButton(PLUGIN_BTN_RELOAD_X, _hoveredPluginReload == i, "重载", false);
                 DrawRowButton(PLUGIN_BTN_REMOVE_X, _hoveredPluginRemove == i, "卸载", true);
 

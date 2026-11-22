@@ -253,6 +253,10 @@ namespace NotchPeninsula
             int newHoveredPluginToggle = -1;
             int newHoveredPluginReload = -1;
             int newHoveredPluginRemove = -1;
+            int newHoveredPluginSettings = -1;
+            bool newSettingsBackHovered = false;
+            int newHoveredSettingControl = -1;
+            int newHoveredSettingSegment = -1;
             int newHoveredMarketInstall = -1;
             int newHoveredMarketUninstall = -1;
             int newHoveredMarketDetail = -1;
@@ -706,7 +710,13 @@ namespace NotchPeninsula
                 }
             }
             else if (_selectedTab == 6) // 我的插件
-            {                if (IsConfirmDialogOpen)
+            {
+                if (_settingsPluginId != null)
+                {
+                    UpdatePluginSettingsHover(x, y, out newSettingsBackHovered,
+                        out newHoveredSettingControl, out newHoveredSettingSegment);
+                }
+                else if (IsConfirmDialogOpen)
                 {
                     var rect = GetCurrentDialogRect();
                     if (rect.Width > 0)
@@ -744,8 +754,9 @@ namespace NotchPeninsula
                             float rowY = listY + PluginRowsTopPad + slot * PluginListRowH;
                             if (y >= rowY + 18 && y <= rowY + 44)
                             {
-                                // 从左到右：重载 | 卸载 | 开关
-                                if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
+                                // 从左到右：设置 | 重载 | 卸载 | 开关
+                                if (x >= PLUGIN_BTN_SETTINGS_X && x <= PLUGIN_BTN_SETTINGS_X + 50) newHoveredPluginSettings = idx;
+                                else if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
                                 else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
                                 else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
                             }
@@ -903,6 +914,10 @@ namespace NotchPeninsula
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
                 newHoveredPluginRemove != _hoveredPluginRemove ||
+                newHoveredPluginSettings != _hoveredPluginSettings ||
+                newSettingsBackHovered != _settingsBackHovered ||
+                newHoveredSettingControl != _hoveredSettingControl ||
+                newHoveredSettingSegment != _hoveredSettingSegment ||
                 newLiveWindowMediaHovered != _liveWindowMediaHovered ||
                 newLiveWindowHoverRow != _liveWindowHoverRow ||
                 newHoveredMarketInstall != _hoveredMarketInstall ||
@@ -991,6 +1006,10 @@ namespace NotchPeninsula
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;
                 _hoveredPluginRemove = newHoveredPluginRemove;
+                _hoveredPluginSettings = newHoveredPluginSettings;
+                _settingsBackHovered = newSettingsBackHovered;
+                _hoveredSettingControl = newHoveredSettingControl;
+                _hoveredSettingSegment = newHoveredSettingSegment;
                 _liveWindowMediaHovered = newLiveWindowMediaHovered;
                 _liveWindowHoverRow = newLiveWindowHoverRow;
                 _hoveredMarketInstall = newHoveredMarketInstall;

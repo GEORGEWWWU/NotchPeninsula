@@ -73,7 +73,7 @@ namespace NotchPeninsula
         private const float THEME_CARD_H = 112f;
         private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
         private const float OPACITY_CARD_H = 78f;
-        private static bool ShowOpacityCard => !Renderer.IslandLiquidGlass;
+        private static bool ShowOpacityCard => !Renderer.IslandLiquidGlass && !Renderer.IslandPluginBackground;
         private const float GLASS_CARD_Y = OPACITY_CARD_Y;
 
         private const float THEME_SEG_W = 150f;
@@ -100,11 +100,13 @@ namespace NotchPeninsula
 
         private const float MAT_SUB_DY = MAT_SEG_Y + 18f;    // 96
 
-        // ---- 尺寸卡：三种材质下都固定排最下 ----
-        // 实体 / 亚克力挂在「背景透明度」卡后，液态玻璃挂在玻璃参数卡后 ——
+        // ---- 尺寸卡：四种材质下都固定排最下 ----
+        // 实体 / 亚克力挂在「背景透明度」卡后，液态玻璃挂在玻璃参数卡后，
+        // 插件背景没有底色可调，直接挂在主题卡后 ——
         private static float SIZE_CARD_Y => Renderer.IslandLiquidGlass
             ? GLASS_CARD_Y + GlassCardH + CARD_GAP
-            : OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP;
+            : ShowOpacityCard ? OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP
+            : THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
 
         private const float GLASS_ROW0_Y = 42f;
         private const float GLASS_ROW_H = 32f;

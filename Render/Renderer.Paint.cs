@@ -219,18 +219,18 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 本帧重新采样「文字底色亮度网格」。三种材质都建：
+        /// 本帧重新采样「文字底色亮度网格」。四种材质都建：
         ///   · 实体 —— 主题纯色，整张网格填同一个亮度；
         ///   · 亚克力 —— 背板 + 主岛涂层（按涂层 alpha 混合）；
-        ///   · 玻璃 —— 背板 + 玻璃明度 / 雾度着色。
+        ///   · 玻璃 —— 背板 + 玻璃明度 / 雾度着色；
+        ///   · 插件背景 —— 宿主无底色，按主题纯色采样（调用方把 material 传成实体）。
         /// 背板为空（玻璃 / 亚克力）时置 _toneReady=false，所有元素回落到全局文字色。
         /// </summary>
-        private static void BeginToneGrid(SKCanvas canvas, SKImage? backdrop, SKRect dst, SKRect src)
+        private static void BeginToneGrid(SKCanvas canvas, SKImage? backdrop, SKRect dst, SKRect src, int material)
         {
             _toneBase = canvas.TotalMatrix;
             _toneGridAverage = 0f;
-            _toneReady = SampleToneGrid(backdrop, dst, src, _toneGrid, _toneGridPrev, ref _tonePrimed,
-                IslandMaterialIndex);
+            _toneReady = SampleToneGrid(backdrop, dst, src, _toneGrid, _toneGridPrev, ref _tonePrimed, material);
             if (!_toneReady) return;
             _toneDstL = dst.Left; _toneDstT = dst.Top; _toneDstW = dst.Width; _toneDstH = dst.Height;
             _toneGridAverage = Average(_toneGrid);
@@ -243,7 +243,9 @@ namespace NotchPeninsula
         internal static void BeginPanelToneGrid(SKImage? backdrop, SKRect dst, SKRect src)
         {
             _toneUsePanel = false;
-            if (ThemeMode != 2 && IslandMaterialIndex != 0)
+            // 插件背景没有宿主底色可采：和实体一样按主题色造网格，面板文字仍能逐元素判黑白。
+            int toneMaterial = IslandPluginBackground ? 0 : IslandMaterialIndex;
+            if (ThemeMode != 2 && toneMaterial != 0)
             {
                 _panelToneReady = false;
                 _panelTonePrimed = false;
@@ -251,7 +253,7 @@ namespace NotchPeninsula
                 return;
             }
             _panelToneReady = SampleToneGrid(backdrop, dst, src, _panelToneGrid, _panelToneGridPrev,
-                ref _panelTonePrimed, IslandMaterialIndex);
+                ref _panelTonePrimed, toneMaterial);
             if (!_panelToneReady)
             {
                 // 面板网格建不起来（背板映射失败 / 没抓到像素）时也必须把「面板作用域」打开：
@@ -259,7 +261,7 @@ namespace NotchPeninsula
                 float lum = Luminance(_bgPaint.Color);
                 // 玻璃 / 亚克力的涂层色偏深，但底下的壁纸可能是浅色的：拿不到背板时用系统主题
                 // 做一次粗修正，避免整块面板判成「深底」而画出白字。
-                if (IslandMaterialIndex != 0 && SystemIsLightTheme) lum = Math.Max(lum, 0.78f);
+                if (toneMaterial != 0 && SystemIsLightTheme) lum = Math.Max(lum, 0.78f);
                 lum = Math.Clamp(lum, 0f, 1f);
                 for (int i = 0; i < _panelToneGrid.Length; i++) _panelToneGrid[i] = lum;
                 Array.Copy(_panelToneGrid, _panelToneGridPrev, _panelToneGrid.Length);
@@ -514,11 +516,14 @@ namespace NotchPeninsula
             if (material != _loggedMaterial)
             {
                 _loggedMaterial = material;
-                string name = material switch { 2 => "液态玻璃", 1 => "亚克力", _ => "实体" };
+                string name = material switch { 3 => "插件背景", 2 => "液态玻璃", 1 => "亚克力", _ => "实体" };
                 Logger.Info($"[背景材质] 材质={name}  主题={(isLight ? "浅" : "深")}");
             }
             var baseBg = isLight ? SKColors.White : SKColors.Black;
-            var bg = material == 2 ? GlassMaterial.TintColor(isLight, GlassMaterial.BackdropReady) : baseBg.WithAlpha(bgAlpha);
+            // 插件背景：宿主不画任何底色，同时把这一事实如实地告诉插件（alpha=0，RGB 保留主题明暗供亮度采样）。
+            var bg = material == 3 ? baseBg.WithAlpha(0)
+                : material == 2 ? GlassMaterial.TintColor(isLight, GlassMaterial.BackdropReady)
+                : baseBg.WithAlpha(bgAlpha);
             _currentTextColor = isLight ? SKColors.Black : SKColors.White;
             _currentSubTextColor = isLight ? new SKColor(80, 80, 80) : new SKColor(200, 200, 200);
 
