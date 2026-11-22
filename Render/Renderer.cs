@@ -172,14 +172,14 @@ namespace NotchPeninsula
 
         public static bool StandbyToggleByDoubleClick { get; set; } = false;
 
-        // 材质编号与设置页及引导页一致：0 实体，1 亚克力，2 液态玻璃。
+        // 材质编号与设置页及引导页一致：0 实体，1 亚克力，2 液态玻璃，3 插件背景（宿主不画背景）。
         private static volatile int _materialIndex;
         public static int IslandMaterialIndex
         {
             get => _materialIndex;
             set
             {
-                _materialIndex = Math.Clamp(value, 0, 2);
+                _materialIndex = Math.Clamp(value, 0, 3);
                 // 切到液态玻璃的同时把主题钉死为「自动」（设置页里该控件也随之置灰）。
                 if (_materialIndex == 2) ThemeMode = 2;
             }
@@ -187,6 +187,15 @@ namespace NotchPeninsula
 
         public static bool IslandAcrylic => IslandMaterialIndex == 1;
         public static bool IslandLiquidGlass => IslandMaterialIndex == 2;
+        public static bool IslandPluginBackground => IslandMaterialIndex == 3;
+
+        // 每帧发布给插件的岛体几何（引用赋值天然原子；插件只读快照）。
+        private static Plugins.IslandGeometry? _publishedIslandGeometry;
+        public static Plugins.IslandGeometry CurrentIslandGeometry
+            => _publishedIslandGeometry ?? Plugins.IslandGeometry.Empty;
+
+        internal static void PublishIslandGeometry(Plugins.IslandGeometry geometry)
+            => _publishedIslandGeometry = geometry;
 
         // 亚克力背板：已模糊好的桌面截图，由 NotchWindow 每帧喂进来（只允许渲染线程读写）
         public static SKImage? AcrylicBackdrop { get; set; }
@@ -511,70 +520,85 @@ namespace NotchPeninsula
                 _bgPath.ConicTo(islandRight, 0, islandRight - rTopX, 0, w);
                 _bgPath.Close();
 
-                bool glass = IslandLiquidGlass;
-                bool acrylic = IslandAcrylic;
+                // 发布给插件背景窗口：逻辑几何 + 宿主 HWND，插件据此贴到岛体背后。
+                PublishIslandGeometry(new Plugins.IslandGeometry(
+                    islandLeft, topY, currentWidth, currentHeight,
+                    rTopX, rTopY, rBottom, styleProgress, GLOBAL_DPI, NotchWindow.InstanceHandle));
+
+                // 插件背景：宿主背板 / 涂层一笔不画，内容、裁剪和命中照常走下面的流程。
+                bool skipBackground = IslandPluginBackground;
+                bool glass = !skipBackground && IslandLiquidGlass;
+                bool acrylic = !skipBackground && IslandAcrylic;
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
                 UpdateBackdropCanvasMapping(backdrop != null, islandLeft, currentWidth, currentHeight, source);
 
-                bool glassDrawn = false;
-                if (backdrop != null)
+                if (skipBackground)
                 {
-                    float flare = Math.Max(0f, -rTopX);
-                    var acrylicSource = source;
-                    acrylicSource.Inflate(flare * source.Width / Math.Max(1f, currentWidth), 0f);
-                    canvas.Save();
-                    canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-                    var expanded = new SKRect(islandLeft - flare, 0f, islandRight + flare, currentHeight);
-                    SKBitmap? refracted = null;
-                    if (glass)
+                    // 没有背板也照常建主题色亮度网格，文字 / 插件逐元素取色不受影响。
+                    BeginToneGrid(canvas, null, destination, source, 0);
+                }
+                else
+                {
+                    bool glassDrawn = false;
+                    if (backdrop != null)
                     {
-                        try
+                        float flare = Math.Max(0f, -rTopX);
+                        var acrylicSource = source;
+                        acrylicSource.Inflate(flare * source.Width / Math.Max(1f, currentWidth), 0f);
+                        canvas.Save();
+                        canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
+                        var expanded = new SKRect(islandLeft - flare, 0f, islandRight + flare, currentHeight);
+                        SKBitmap? refracted = null;
+                        if (glass)
                         {
-                            refracted = LiquidGlass.Compose(backdrop, GlassMaterial.BackdropVersion, acrylicSource,
-                                expanded.Width, currentHeight, flare > 0f ? 0f : Math.Max(1f, rTopY),
-                                Math.Max(1f, rBottom), flare, rTopY, flare > 0.25f && styleProgress < 0.02f);
-                        }
-                        catch (Exception ex)
-                        {
-                            LiquidGlass.Invalidate();
-                            long now = Environment.TickCount64;
-                            if (now - _lastGlassErrorMs >= 5000)
+                            try
                             {
-                                _lastGlassErrorMs = now;
-                                Logger.Error("[液态玻璃] 折射合成失败，使用原始背板", ex);
+                                refracted = LiquidGlass.Compose(backdrop, GlassMaterial.BackdropVersion, acrylicSource,
+                                    expanded.Width, currentHeight, flare > 0f ? 0f : Math.Max(1f, rTopY),
+                                    Math.Max(1f, rBottom), flare, rTopY, flare > 0.25f && styleProgress < 0.02f);
+                            }
+                            catch (Exception ex)
+                            {
+                                LiquidGlass.Invalidate();
+                                long now = Environment.TickCount64;
+                                if (now - _lastGlassErrorMs >= 5000)
+                                {
+                                    _lastGlassErrorMs = now;
+                                    Logger.Error("[液态玻璃] 折射合成失败，使用原始背板", ex);
+                                }
                             }
                         }
+                        if (refracted != null)
+                        {
+                            canvas.DrawBitmap(refracted, expanded, _acrylicPaint);
+                            glassDrawn = true;
+                        }
+                        else canvas.DrawImage(backdrop, acrylicSource, expanded, _acrylicPaint);
+                        canvas.Restore();
                     }
-                    if (refracted != null)
-                    {
-                        canvas.DrawBitmap(refracted, expanded, _acrylicPaint);
-                        glassDrawn = true;
-                    }
-                    else canvas.DrawImage(backdrop, acrylicSource, expanded, _acrylicPaint);
-                    canvas.Restore();
-                }
 
-                BeginToneGrid(canvas, backdrop, destination, source);
-                if (glass && ThemeMode == 2)
-                {
-                    bool hasGlassTone = glassDrawn && LiquidGlass.HasLuminance;
-                    UpdateGlassTextTone(hasGlassTone ? LiquidGlass.GlassLuminance
-                        : (int)MathF.Round(ToneGridAverage * 255f), hasGlassTone || (backdrop != null && PluginToneReady));
-                }
-                if (glass && !glassDrawn)
-                    GlassMaterial.DrawCoating(canvas, _bgPath, _paletteIsLight, 1f, GlassMaterial.BackdropReady,
-                        interactiveIsland: FullHideAlpha >= 0.99f
-                            && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake));
-                else if (glass && ThemeMode != 2)
-                    GlassMaterial.DrawManualThemeTint(canvas, _bgPath, _paletteIsLight);
-                else if (!glass)
-                {
-                    // DWM 背板与前景 HWND 分开合成。零色调时给前景保留最小的命中 alpha。
-                    bool needsAcrylicHitArea = acrylic && NativeAcrylic.IsSupported && _bgPaint.Color.Alpha == 0
-                        && FullHideAlpha >= 0.99f && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake);
-                    canvas.DrawPath(_bgPath, needsAcrylicHitArea ? _nativeAcrylicHitPaint : _bgPaint);
+                    BeginToneGrid(canvas, backdrop, destination, source, IslandMaterialIndex);
+                    if (glass && ThemeMode == 2)
+                    {
+                        bool hasGlassTone = glassDrawn && LiquidGlass.HasLuminance;
+                        UpdateGlassTextTone(hasGlassTone ? LiquidGlass.GlassLuminance
+                            : (int)MathF.Round(ToneGridAverage * 255f), hasGlassTone || (backdrop != null && PluginToneReady));
+                    }
+                    if (glass && !glassDrawn)
+                        GlassMaterial.DrawCoating(canvas, _bgPath, _paletteIsLight, 1f, GlassMaterial.BackdropReady,
+                            interactiveIsland: FullHideAlpha >= 0.99f
+                                && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake));
+                    else if (glass && ThemeMode != 2)
+                        GlassMaterial.DrawManualThemeTint(canvas, _bgPath, _paletteIsLight);
+                    else if (!glass)
+                    {
+                        // DWM 背板与前景 HWND 分开合成。零色调时给前景保留最小的命中 alpha。
+                        bool needsAcrylicHitArea = acrylic && NativeAcrylic.IsSupported && _bgPaint.Color.Alpha == 0
+                            && FullHideAlpha >= 0.99f && (!PassthroughModeEnabled || NotchWindow._isPassthroughAwake);
+                        canvas.DrawPath(_bgPath, needsAcrylicHitArea ? _nativeAcrylicHitPaint : _bgPaint);
+                    }
                 }
 
                 canvas.Save();

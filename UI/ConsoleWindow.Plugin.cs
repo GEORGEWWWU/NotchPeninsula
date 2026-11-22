@@ -84,6 +84,7 @@ namespace NotchPeninsula
             _hoveredPluginToggle = -1;
             _hoveredPluginReload = -1;
             _hoveredPluginRemove = -1;
+            _hoveredPluginSettings = -1;
             _hoveredMarketInstall = -1;
             _hoveredMarketUninstall = -1;
             _hoveredMarketDetail = -1;

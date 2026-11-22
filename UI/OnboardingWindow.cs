@@ -556,6 +556,7 @@ namespace NotchPeninsula
                     Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                     Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                    Program.SaveSetting("IslandPluginBackground", Renderer.IslandPluginBackground ? 1 : 0);
                     break;
 
                 case ACT_MONITOR:
@@ -913,7 +914,7 @@ namespace NotchPeninsula
             Row(c, BODY_TOP + ROW_GAP, "主题配色",
                 themeLocked ? ["黑", "白", "自动"] : ["黑", "白", "跟随系统"],
                 _theme, themeLocked ? -1 : ACT_THEME, CTRL_X, CTRL_W);
-            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力", "液态玻璃"], _material, ACT_MATERIAL, CTRL_X, CTRL_W);
+            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力", "液态玻璃", "插件背景"], _material, ACT_MATERIAL, CTRL_X, CTRL_W);
         }
 
         private void DrawPreview(SKCanvas c, SKRect box)
@@ -921,7 +922,9 @@ namespace NotchPeninsula
             float cx = box.MidX, cy = box.MidY;
 
             _fill.Color = M(Light ? SKColors.White : SKColors.Black);
-            if (_material != 0) _fill.Color = _fill.Color.WithAlpha((byte)(_fill.Color.Alpha * (_material == 2 ? 0.74f : 0.62f)));
+            // 插件背景：预览里同样不画底色，只留描边和下面那几根内容条示意。
+            if (_material == 3) _fill.Color = SKColors.Transparent;
+            else if (_material != 0) _fill.Color = _fill.Color.WithAlpha((byte)(_fill.Color.Alpha * (_material == 2 ? 0.74f : 0.62f)));
             _stroke.Color = M(Light ? new SKColor(0, 0, 0, 34) : new SKColor(255, 255, 255, 46));
             _stroke.StrokeWidth = 1f;
 

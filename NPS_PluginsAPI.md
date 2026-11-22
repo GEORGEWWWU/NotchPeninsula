@@ -936,7 +936,7 @@ host.SetSetting("on", "0");              // 只存字符串
 - `host.SettingsChanged`：**`SetSetting` 写入时会同步触发你自己注册的处理器**（在调用 `SetSetting` 的那条线程上），适合「改完立刻重算」。
 - 读回的最佳时机是组件的 `OnActivate`。
 
-> 宿主**不提供**「在设置窗口里给插件一块配置区」的能力（`RegisterSettingsPage` 未接线，注册了也不会显示）。要配置项就自己做 UI：做进详情页最省事，或用 `CreateWindow` 开独立窗口。
+> 宿主已接通 `RegisterSettingsPage`：插件在 `Initialize` 里注册 `ISettingsPage`，用户可在「设置中心 → 我的插件」对应插件行点「设置」进入配置页。`ToggleSetting` / `ChoiceSetting` / `NumberSetting` 由宿主绘制，值统一走 `GetSetting` / `SetSetting` 持久化，写入时照常触发 `SettingsChanged`。需要完全自定义绘制时，仍可用详情页或 `CreateWindow`。
 
 ### 8.4 自定义窗口
 
@@ -1374,11 +1374,11 @@ public readonly record struct RenderTheme(
 - 这两个色是**整块面板**的全局明暗；要按每段文字自己下方的玻璃分别判黑白，用 `PluginTone.DrawText` / `DrawAccentText` / `ColorFor`（见 10.3）。
 - `GlobalDpi`：宿主把逻辑像素换成物理像素用的系数（设置里可改，默认 1.0）。你自己做坐标换算时必须用同一个，否则高 DPI 下会偏。
 - `NotchBottomRadius`：岛体底部圆角（宿主夹在 0~28），贴边画内容时用。
-- `BackgroundColor`：主题底色。**玻璃材质下没有可用底色**（玻璃自己负责背景，宿主给它的 alpha 是 0），别拿它做对比度判断。
+- `BackgroundColor`：主题底色。**玻璃 / 插件背景材质下没有可用底色**（宿主不画底色，给它的 alpha 是 0），别拿它做对比度判断。插件背景由插件自己负责绘制背景。
 
-### 10.3 文字颜色是逐元素自适应的（实体 / 亚克力 / 液态玻璃）
+### 10.3 文字颜色是逐元素自适应的（实体 / 亚克力 / 液态玻璃 / 插件背景）
 
-> **2026-11 起：三种材质都按「每段文字自己下方那块底色」判黑白；插件用 `PluginTone` 就能拿到同一套能力。**
+> **2026-11 起：四种材质都按「每段文字自己下方那块底色」判黑白；插件用 `PluginTone` 就能拿到同一套能力。**
 >
 > 只看整块面板的平均亮度是不够的：壁纸横向从深到浅时，同一块面板上左边白字、右边黑字才是对的。宿主每帧把底色降采样成 `24×6` 的亮度网格，查询时按元素矩形取覆盖格的平均值，再做平滑。
 
@@ -1387,6 +1387,7 @@ public readonly record struct RenderTheme(
 | 采样 · 实体 | 主题纯色（白 / 黑）→ 整张网格填同一个亮度；逐元素查询仍可用 |
 | 采样 · 亚克力 | 背板（隐身抓到的真实桌面）+ 主岛涂层，按涂层 alpha 混合 |
 | 采样 · 液态玻璃 | 背板 + 玻璃明度补偿 / 雾度掺白（当前只有一档液态玻璃；2.0 已下线） |
+| 采样 · 插件背景 | 宿主不画背景，按主题纯色（白 / 黑）填网格；插件自己画的底色请用 `PluginTone` 自行判色 |
 | 平滑 | 每格 `grid = prev + (new - prev) * 0.35`，背板约 250ms 换一张，硬切会看到字色跳 |
 | 判亮 | 元素覆盖格的平均亮度 **> 0.60** → 浅底（黑字 / 深灰副文字） |
 | 判暗 | 否则 → 深底（白字 / 浅灰副文字） |
@@ -1543,9 +1544,11 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 |---|---|---|
 | 注册 | `RegisterWidget(IWidget)` | 开放 |
 | 注册 | `RegisterSecondaryWidget(ISecondaryWidget)` | **未开放** |
-| 注册 | `RegisterSettingsPage(ISettingsPage)` | **未开放** |
+| 注册 | `RegisterSettingsPage(ISettingsPage)` | 开放（在「我的插件」行内「设置」进入，见 [8.3](#83-设置项)） |
 | 注册 | `IDisposable RegisterLiveWindow(ILiveWindow)` | 开放（见 [8.7](#87-实况窗live-window)） |
 | 主题 | `RenderTheme CurrentTheme` | 开放 |
+| 材质 | `int BackgroundMaterialIndex` | 开放（0=实体，1=亚克力，2=液态玻璃，3=插件背景；默认接口成员，老宿主返回 0） |
+| 几何 | `IslandGeometry CurrentIslandGeometry` | 开放（每帧岛体逻辑几何 + 宿主 HWND；默认接口成员，老宿主返回 `IslandGeometry.Empty`） |
 | 提醒 | `ShowReminder(ReminderData)` | 开放（仅岛内显示，见 [8.2](#82-提醒)） |
 | 提醒 | `PostReminder(ReminderData)` | 开放（公开提醒，见 [8.2](#82-提醒)） |
 | 静默模式 | `SetImportantInformation(bool hasImportant, bool useImportantPresentation = false)` | 开放（2.3.0 新增；静默模式下据此决定岛出不出现，见 [8.8](#88-静默模式重要信息)） |
@@ -1647,6 +1650,11 @@ readonly record struct RenderTheme(SKColor TextColor, SKColor SubTextColor,
 readonly record struct WidgetFrame(RenderTheme Theme, byte Alpha, float TextOffsetY,
     float[]? Bars, bool IsHovered);
 
+// 岛体每帧几何快照（Left / TopOffset / Width / Height 为逻辑像素；HostHwnd 可用来取屏幕矩形）
+sealed record IslandGeometry(float Left, float TopOffset, float Width, float Height,
+    float TopRadiusX, float TopRadiusY, float BottomRadius, float StyleProgress,
+    float Dpi, IntPtr HostHwnd);
+
 class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClick }
 ```
 
@@ -1657,9 +1665,9 @@ class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClic
 ### 未开放的接口（定义了但没接线）
 
 - `ISecondaryWidget`：副显示区只读信息。注册后不绘制。
-- `ISettingsPage` / `ICustomSettingsPage` / `SettingControl`：声明式设置页。`RegisterSettingsPage` 只把页存进宿主列表，**全程序没有任何地方读它去渲染**。
+- `ICustomSettingsPage`：接口仍定义了但没有注册入口；需要完全自定义设置 UI 时，请用详情页或 `CreateWindow`。
 
-做配置请走「自己存 + 自己做 UI」（详情页或 `CreateWindow`）。
+`ISettingsPage` / `SettingControl` 已接线：通过 `RegisterSettingsPage` 注册后，宿主会在「我的插件」里渲染 `ToggleSetting` / `ChoiceSetting` / `NumberSetting`，值走 `GetSetting` / `SetSetting`。
 
 ---
 

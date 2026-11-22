@@ -39,6 +39,28 @@ public readonly record struct WidgetFrame(
     float[]? Bars,
     bool IsHovered);
 
+/// <summary>
+/// 宿主每帧发布的岛体几何快照（逻辑像素 + 宿主窗口句柄）。
+/// 插件窗口要贴着岛体背后显示时，用 <see cref="HostHwnd"/> 取屏幕矩形，再按
+/// <see cref="Left"/> / <see cref="TopOffset"/> / <see cref="Width"/> / <see cref="Height"/> 换算。
+/// </summary>
+public sealed record IslandGeometry(
+    float Left,
+    float TopOffset,
+    float Width,
+    float Height,
+    float TopRadiusX,
+    float TopRadiusY,
+    float BottomRadius,
+    float StyleProgress,
+    float Dpi,
+    IntPtr HostHwnd)
+{
+    public static readonly IslandGeometry Empty = new(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 1f, IntPtr.Zero);
+
+    public bool IsValid => Width > 0f && Height > 0f && HostHwnd != IntPtr.Zero;
+}
+
 // ---- 数据来源 ----
 
 // ---- 五种「页」 ----
@@ -257,6 +279,18 @@ public interface IPluginHost
 
     // 主题（当前帧快照）
     RenderTheme CurrentTheme { get; }
+
+    /// <summary>
+    /// 当前背景材质：0=实体，1=亚克力，2=液态玻璃，3=插件背景。
+    /// 默认实现给老插件 / 老宿主兜底；插件背景类插件应轮询或配合定时刷新监听 3。
+    /// </summary>
+    int BackgroundMaterialIndex => 0;
+
+    /// <summary>
+    /// 当前岛体几何快照。插件背景窗口用它继承宿主背景的大小、位置和圆角。
+    /// 默认实现为空，老宿主上调用方需要自行判断 <see cref="IslandGeometry.IsValid"/>。
+    /// </summary>
+    IslandGeometry CurrentIslandGeometry => IslandGeometry.Empty;
 
     /// <summary>在岛上显示公开提醒。宿主 MSP 启用时，订阅方可收到提醒的标题和正文。</summary>
     void PostReminder(ReminderData reminder);
