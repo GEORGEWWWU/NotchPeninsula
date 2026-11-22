@@ -550,11 +550,35 @@ namespace NotchPeninsula
         public static bool SetClickThrough(IntPtr hWnd, bool on)
         {
             if (hWnd == IntPtr.Zero) return false;
+
+            // ⚠️ GetWindowLongPtr 失败时返回 0（并置 last error）。旧写法直接把 0 当样式用，
+            //    再 OR 上 WS_EX_TRANSPARENT 写回去 —— 等于把 WS_EX_LAYERED 一起抹掉了。
+            //    分层窗口一失去 WS_EX_LAYERED，UpdateLayeredWindow 全部失效：窗口矩形、命中区
+            //    都还在，但屏幕上什么都不显示，正是「岛还在、里面所有元素都不见了」。
+            //    所以失败时必须原样返回，绝不能拿 0 当基准写回。
+            Marshal.SetLastPInvokeError(0);
             IntPtr ex = GetWindowLongPtr(hWnd, GWL_EXSTYLE);
+            int getError = Marshal.GetLastPInvokeError();
+            if (ex == IntPtr.Zero && getError != 0)
+            {
+                Logger.Warn($"[SetClickThrough] GetWindowLongPtr failed, error={getError}");
+                return false;
+            }
+
             long style = ex.ToInt64();
             long want = on ? (style | WS_EX_TRANSPARENT) : (style & ~(long)WS_EX_TRANSPARENT);
             if (want == style) return false;
-            SetWindowLongPtr(hWnd, GWL_EXSTYLE, (IntPtr)want);
+
+            // 成功时 SetWindowLongPtr 返回「旧值」（可能正好是 0），失败才返回 0 并置错误 ——
+            // 同样先清 last error，才能区分「成功且旧值为 0」与「失败」。
+            Marshal.SetLastPInvokeError(0);
+            IntPtr prev = SetWindowLongPtr(hWnd, GWL_EXSTYLE, (IntPtr)want);
+            int error = Marshal.GetLastPInvokeError();
+            if (prev == IntPtr.Zero && error != 0)
+            {
+                Logger.Warn($"[SetClickThrough] SetWindowLongPtr failed, error={error}");
+                return false;
+            }
             return true;
         }
 

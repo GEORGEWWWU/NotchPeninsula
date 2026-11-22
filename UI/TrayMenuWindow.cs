@@ -114,7 +114,10 @@ namespace NotchPeninsula
                 Enabled = false            // 灰色标题：HitTest 跳过 Enabled=false，天然不可点
             });
             _items.Add(new MenuItem { Action = MenuAction.OpenSettings, Text = "打开设置" });
-            _items.Add(new MenuItem { Action = MenuAction.WakeIsland, Text = "唤回灵动岛" });
+            // 静默模式下岛由「重要信息 / 媒体」自动控制，手动唤回没有意义 —— 与设置页把
+            // 「自动隐藏 / 唤出灵动岛」置灰同一口径。菜单每次右键都重建，构造时判断即时生效。
+            if (!Renderer.SilentActive)
+                _items.Add(new MenuItem { Action = MenuAction.WakeIsland, Text = "唤回灵动岛" });
             _items.Add(new MenuItem
             {
                 Action = MenuAction.ToggleAutoStart,

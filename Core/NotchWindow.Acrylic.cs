@@ -30,6 +30,10 @@ namespace NotchPeninsula
 
             // 透明度档位只调整前景色调，原生背板随岛体的隐藏和穿透动画淡出。
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
+            // 静默模式是「缩向中心」，不走 FullHideAlpha —— 而亚克力背板是 DWM 合成的，
+            // 不跟着 Skia 画布一起缩，所以必须自己乘 SilentScale：
+            // 否则岛缩没后，原位置会留一块空白的亚克力矩形（实体材质 / 液态玻璃都画在画布里，没这问题）。
+            if (Renderer.SilentActive) opacity *= Math.Clamp(Renderer.SilentScale, 0f, 1f);
             if (material != 1 || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {
@@ -229,6 +233,32 @@ namespace NotchPeninsula
                     extra[n++] = dstY + r.Bottom * _dpiScale;
                 }
                 IslandBackdrop.SetExtraMasks(extra.AsSpan(0, n));
+            }
+
+            // 气泡组包围盒并入抓取矩形（用户实测「滑行中右半黑」）：气泡在岛体左侧外，
+            // 玻璃要采样它下方的桌面 —— 抓屏区不含气泡的话采样出图必发黑。
+            {
+                var lf = LiveWindowHost.Frame;
+                float bL = float.MaxValue, bR = float.MinValue;
+                for (int i = 0; i < lf.Count; i++)
+                {
+                    ref readonly var it = ref lf.Items[i];
+                    if (it.Alpha < 16 || it.Rect.Width < 1f) continue;
+                    bL = MathF.Min(bL, it.Rect.Left);
+                    bR = MathF.Max(bR, it.Rect.Right);
+                }
+                if (bL <= bR)
+                {
+                    // 余量 48px：气泡遮罩的「四方向参考边」必须落在真实桌面上 ——
+                    // 贴着抓屏边缘的话 hasL/hasR 缺失，FillSoft 会用全图平均色兜底（偏暗 → 遮罩块半边发黑）。
+                    // 32px 网格对齐：气泡滑行时抓屏矩形只在跨格时变化，降低重抓频率（缓解卡顿）。
+                    float bScrL = dstX + bL * _dpiScale;
+                    float bScrR = dstX + bR * _dpiScale;
+                    int extL = Math.Max(_cachedMonitorX, ((int)MathF.Floor(bScrL) - 48) & ~31);
+                    int extR = Math.Min(_cachedMonitorX + _cachedMonitorWidth, ((int)MathF.Ceiling(bScrR) + 48 + 31) & ~31);
+                    if (extL < capX) { capW += capX - extL; capX = extL; }
+                    if (extR > capX + capW) capW = extR - capX;
+                }
             }
 
             // 贴图用的源矩形按【实际产出图】的比例与原点换算

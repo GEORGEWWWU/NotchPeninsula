@@ -85,7 +85,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>预设图标：没带 icon / 头像的来源，按名字挑一张内置图（目前只有 QQ）。</summary>
-        private static SKBitmap? ResolvePresetIcon(ToastData toast)
+        internal static SKBitmap? ResolvePresetIcon(ToastData toast)
         {
             if (toast.ProcessName.Contains("QQ", StringComparison.OrdinalIgnoreCase) ||
                 toast.AppName.Contains("QQ", StringComparison.OrdinalIgnoreCase))

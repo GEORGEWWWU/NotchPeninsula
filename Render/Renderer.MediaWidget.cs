@@ -35,8 +35,9 @@ namespace NotchPeninsula
 
         // ---- 展开态标题超长自动滚动 ----
         // 岛内展开面板和实况窗详情页共用这一段绘制：两处共用同一条时间轴，
-        // 不会出现「主岛滚到一半、浮层从头发车」。速度取偏慢的 34px/s，长标题读起来才不晕。
-        private const float TITLE_MARQUEE_SPEED = 34f;
+        // 不会出现「主岛滚到一半、浮层从头发车」。速度取 22px/s：慢一点更好读，
+        // 但慢速对亚像素抖更敏感 —— 配合 MediaTitleScrollOffset 的整像素量化 + 滚动期间关 SubpixelText。
+        private const float TITLE_MARQUEE_SPEED = 22f;
         // 滚完一整条标题后空出来的间隔，按「几个空格」的宽度算：换字体时比例也不会突然变窄。
         private const string TITLE_MARQUEE_GAP = "     ";
 
@@ -87,7 +88,9 @@ namespace NotchPeninsula
             if (period <= 0f) return 0f;
             _titleMarqueeOffset %= period;
             if (_titleMarqueeOffset < 0f) _titleMarqueeOffset = 0f;
-            return _titleMarqueeOffset;
+            // 整像素量化：亚像素平移会导致字形边缘每帧重新抗锯齿，慢速滚动时就是肉眼可见的「闪」，
+            // 中文笔画密尤其明显。落到整像素后每 1~2 帧跳一次，但完全不闪。
+            return MathF.Round(_titleMarqueeOffset);
         }
 
         private readonly record struct MediaBlockGeometry(float ZoneLeft, float ContentLeft, float AnchorRight);
@@ -148,6 +151,9 @@ namespace NotchPeninsula
             canvas.ClipRect(new SKRect(0, 0, textClipRight, currentHeight), SKClipOperation.Intersect, true);
 
             // 折叠态下的歌词叠化与位移动画 (带卡拉OK)
+            // ⚠️ 这里刻意用原始 CurrentLyricProgress，不接 SmoothLyricProgress：
+            //    折叠态不做滚动、且宽度随内容自适应，而 SmoothLyricProgress 的计时基准
+            //    是展开态共享的静态字段，两边同时调会互相把基准刷掉（折叠态宽度会跟着抖）。
             bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
             if (_lyricAnimProgress < 1f && isLyricDisplay)
             {
@@ -248,12 +254,20 @@ namespace NotchPeninsula
             }
             else
             {
-                // 两段就够：标题宽 + 空格间隔 = period ≥ 可视宽度，第二段正好在滚完时接上。
-                float gap = Math.Max(_titlePaint.MeasureText(TITLE_MARQUEE_GAP), 16f);
-                float period = titleWidth + gap;
-                float x = textStartX - titleScroll;
-                DrawKaraoke(canvas, title, x, coverY + 18f, _titlePaint, alpha, 0f, false);
-                DrawKaraoke(canvas, title, x + period, coverY + 18f, _titlePaint, alpha, 0f, false);
+                // 滚动期间关掉亚像素文本定位：慢速平移下字形边缘每帧重新抗锯齿，肉眼看就是「闪」，
+                // 中文笔画密比英文明显得多。静止文字仍然保留亚像素（更平滑）。
+                bool prevSubpixel = _titlePaint.SubpixelText;
+                _titlePaint.SubpixelText = false;
+                try
+                {
+                    // 两段就够：标题宽 + 空格间隔 = period ≥ 可视宽度，第二段正好在滚完时接上。
+                    float gap = Math.Max(_titlePaint.MeasureText(TITLE_MARQUEE_GAP), 16f);
+                    float period = titleWidth + gap;
+                    float x = textStartX - titleScroll;
+                    DrawKaraoke(canvas, title, x, coverY + 18f, _titlePaint, alpha, 0f, false);
+                    DrawKaraoke(canvas, title, x + period, coverY + 18f, _titlePaint, alpha, 0f, false);
+                }
+                finally { _titlePaint.SubpixelText = prevSubpixel; }
             }
 
             _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);

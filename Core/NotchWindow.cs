@@ -1417,7 +1417,8 @@ namespace NotchPeninsula
                 // 完全缩没 = 屏幕上什么都看不到 → 让整个窗口鼠标穿透，不挡下层程序。
                 // ⚠️ SetWindowLongPtr 会同步发 WM_STYLECHANGED 给窗口线程，渲染线程直接调会和
                 //    UI 线程的 Render()（持 _renderLock）撞成死锁 —— 所以只置意愿 + PostMessage。
-                bool silentInvisible = Renderer.SilentActive && silentHiding && Renderer.SilentScale < 0.02f;
+                bool silentInvisible = Renderer.SilentActive && silentHiding && Renderer.SilentScale < 0.02f
+                                       && !LiveWindowHost.HasVisibleBubble;
                 if (silentInvisible != Renderer.WantSilentClickThrough)
                 {
                     Renderer.WantSilentClickThrough = silentInvisible;
@@ -1475,7 +1476,13 @@ namespace NotchPeninsula
                 if (currentDisplayState != _lastDisplayState)
                 {
                     _lastDisplayState = currentDisplayState;
-                    _stateChangedAtTs = stateNowTs;
+                    // ⚠️ 状态源抖动（toast 边界、媒体 IsActive 在两次 SMTC 采样之间跳变）会把
+                    //    _stateChangedAtTs 反复刷成「现在」，于是 300ms 淡入永远从 0 重来 ——
+                    //    内容整块停在全透明，而布局宽度、命中区照常发布，观感就是
+                    //    「岛的位置有空壳、点得到，但什么都不显示」。
+                    //    距上次切换还不足一个淡入周期时保留旧计时器，让 alpha 接着往上走。
+                    double sinceLastSwitchMs = (stateNowTs - _stateChangedAtTs) * 1000.0 / Stopwatch.Frequency;
+                    if (sinceLastSwitchMs >= 300.0) _stateChangedAtTs = stateNowTs;
                 }
                 double sinceSwitchMs = (stateNowTs - _stateChangedAtTs) * 1000.0 / Stopwatch.Frequency;
                 float transitionAlpha = (float)Math.Clamp(sinceSwitchMs / 300.0, 0, 1);
@@ -1544,6 +1551,15 @@ namespace NotchPeninsula
                 {
                     expectedTargetWidth = Renderer.GetToastAutoWidth(_currentToast);
                     expectedTargetHeight = Renderer.TOAST_HEIGHT;
+                }
+                else if (Renderer.SilentActive)
+                {
+                    // 静默模式：内容 = 媒体（在播时上岛）+ 静默插件清单，宽度按实际内容量。
+                    // 组合模式按勾选算的 GetCompositeWidth 可能不含媒体项 —— 媒体会被裁成一条窄胶囊。
+                    // 宽度口径必须与 DrawSilentContent 一致（MeasureSilentContentWidth），+32 = 左右各 16px 边距。
+                    float silentTotal = Renderer.MeasureSilentContentWidth(_media, out _);
+                    expectedTargetWidth = Math.Max(60f, silentTotal + 32f);
+                    expectedTargetHeight = Renderer.MEDIA_HEIGHT;
                 }
                 else
                 {
@@ -2313,9 +2329,14 @@ namespace NotchPeninsula
                         bool want = Renderer.WantSilentClickThrough;
                         if (want != _silentClickThrough)
                         {
-                            _silentClickThrough = want;
+                            // 成功才记下状态：SetClickThrough 失败时保持旧值，下一次意愿变化
+                            // 还会再试一遍。先赋值的话失败就永久不同步了（窗口实际没穿透，
+                            // 标志却说已经穿透），鼠标会在「看不见的岛」上继续被吃掉。
                             if (Win32.SetClickThrough(_hwnd, want))
+                            {
+                                _silentClickThrough = want;
                                 Logger.Info($"[静默模式] 窗口鼠标穿透 = {want}");
+                            }
                         }
                         return (IntPtr)0;
                     }
@@ -2558,6 +2579,7 @@ namespace NotchPeninsula
                     }
 
                 case Win32.WM_RBUTTONDOWN:
+                    Renderer.LastUserInputMs = Environment.TickCount;
                     TrackIslandMouse(hwnd);
                     if (_isHovered)
                     {
@@ -2845,6 +2867,8 @@ namespace NotchPeninsula
             Renderer.DisplayMode = next;
             Program.SaveSetting("DisplayMode", (int)next);
             Program.SaveSetting("StandbyActive", next == IslandDisplayMode.Standby ? 1 : 0);
+            // 进/出静默：同步实况窗挂起状态（未勾选插件的重要信息气泡在静默下撤下）
+            SilentMode.SyncLiveWindowGates();
 
             // 进静默时岛要立刻退场：收起所有展开态（媒体面板 / 详情页），
             // 否则 HasAnyExpanded 会一直把 shouldHide 顶住，观感就是「按了没反应」。
@@ -2879,6 +2903,9 @@ namespace NotchPeninsula
         /// 消息提醒期间：直接置 1，不做缩放 —— 用户要求「静默模式下消息弹出动画不变」，
         /// toast 照旧在正常尺寸的岛上淡入。
         /// </param>
+        /// <summary>静默缩放动画时长（全部隐藏 / 显示动画统一 0.5s）。</summary>
+        private const double SilentScaleDurationSeconds = 0.50;
+
         private void TickSilentScale(bool hidden, bool instantShow)
         {
             if (!Renderer.SilentActive)
@@ -2920,8 +2947,9 @@ namespace NotchPeninsula
 
             if (_silentScaleAnimating)
             {
+                // 静默缩放独立节奏 0.45s：比岛体弹簧慢半拍，所有静默动画统一「放大 / 缩小」语义。
                 double elapsed = (Stopwatch.GetTimestamp() - _silentScaleStartTs) / (double)Stopwatch.Frequency;
-                if (elapsed >= SpringDurationSeconds)
+                if (elapsed >= SilentScaleDurationSeconds)
                 {
                     _silentScale = _silentScaleTo;
                     _silentScaleAnimating = false;

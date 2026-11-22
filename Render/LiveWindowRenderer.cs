@@ -275,12 +275,16 @@ public static class LiveWindowRenderer
             if (BuildLiquidNeck(in item, transfer, absorbing, r, _neckPath, _lipPath) > 0f)
                 canvas.ClipPath(_neckPath, SKClipOperation.Difference, true);
 
-            // 岛体那一侧一律切掉：岛体画在气泡之前，重叠出来的像素就是一颗贴在边上的鼓包。
-            // 颈掐断之后（girth = 0）也仍然靠这条兜住，不会突然「弹回整圆」再淡出。
-            _maskPath.Rewind();
-            _maskPath.AddRect(new SKRect(item.MergeTargetX, cy - rBase * 3f,
-                item.MergeTargetX + rBase * 6f, cy + rBase * 3f));
-            canvas.ClipPath(_maskPath, SKClipOperation.Difference, true);
+            // 岛体侧裁切**只用于退场**（吸回岛体：岛体侧的气泡部分是被吸进去的实体，要裁）。
+            // 出生方向不裁 —— 媒体气泡从岛缘滑向最左（用户定稿的位移出生），前半程气泡右半
+            // 落在裁切区内被砍掉 → 露出底下暗色（用户实测「被砍一半，右半是黑的，很快恢复」）。
+            if (absorbing)
+            {
+                _maskPath.Rewind();
+                _maskPath.AddRect(new SKRect(item.MergeTargetX, cy - rBase * 3f,
+                    item.MergeTargetX + rBase * 6f, cy + rBase * 3f));
+                canvas.ClipPath(_maskPath, SKClipOperation.Difference, true);
+            }
         }
 
         // 液体形变：沿运动方向（x）拉伸、另一轴收缩，才像水而不是气球。
@@ -594,11 +598,33 @@ public static class LiveWindowRenderer
     /// </summary>
     private static bool DrawGlassBackdrop(SKCanvas canvas, SKRect sampleRect, SKRect drawRect, float alpha)
     {
+        // 气泡可滑到背板覆盖区（岛体矩形）之外 —— 直接采样越界的部分会发黑（用户实测「右半是黑的」）。
+        // 处理：把采样/绘制矩形**夹取**到覆盖区内（等比收缩），出界的窄条取边缘像素延伸 ——
+        // 玻璃观感连续不发黑；气泡完全离开覆盖区（夹完不足 2px）才退纯色涂层。
+        {
+            float cL = Renderer.BackdropCoverLeft, cR = Renderer.BackdropCoverRight;
+            if (cR - cL > 1f)
+            {
+                float full = sampleRect.Width;
+                if (full > 1f)
+                {
+                    float sL = MathF.Max(sampleRect.Left, cL);
+                    float sR = MathF.Min(sampleRect.Right, cR);
+                    if (sR - sL < 2f) return false;
+                    float dLeft = drawRect.Left + (sL - sampleRect.Left) / full * drawRect.Width;
+                    float dRight = drawRect.Right - (sampleRect.Right - sR) / full * drawRect.Width;
+                    sampleRect = new SKRect(sL, sampleRect.Top, sR, sampleRect.Bottom);
+                    drawRect = new SKRect(dLeft, drawRect.Top, dRight, drawRect.Bottom);
+                }
+            }
+        }
+
         SKImage? img;
         SKRect src;
-        if (Renderer.PanelToneBackdrop != null && Renderer.TryCanvasToPanelSnapshot(sampleRect, out src))
-            img = Renderer.PanelToneBackdrop;
-        else if (Renderer.AcrylicBackdrop is { } live && Renderer.TryCanvasToBackdrop(sampleRect, out src))
+        // 环带玻璃**永远用当前背板**（抓屏覆盖区已扩展到气泡包围盒）——
+        // PanelToneBackdrop 是面板出现前的旧抓屏（覆盖区不含气泡），气泡滑出它就是
+        // 「右半黑」（用户实测多轮）；面板明暗快照只留给面板自己的 DrawPanelMaterial 用。
+        if (Renderer.AcrylicBackdrop is { } live && Renderer.TryCanvasToBackdrop(sampleRect, out src))
             img = live;
         else
             return false;

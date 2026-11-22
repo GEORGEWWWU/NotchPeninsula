@@ -350,6 +350,9 @@ public static class PluginDataBridge
         try
         {
             // 保证组件立刻有画面；拿不到也不阻塞。
+            // 图标不再由宿主推位图：插件拿 Aumid 走 host.GetAppLogo（四级解析 + 宿主缓存，
+            // 与岛内 Toast 同源）自己取 —— 省掉 PNG 编解码和跨程序集拷贝，两端共享一份缓存。
+            // 头像仍推（那是系统通知自带的流，插件没有别的获取途径）。
             Publish(new ToastNotice
             {
                 NoticeId = noticeId,
@@ -357,7 +360,7 @@ public static class PluginDataBridge
                 Title = toast.Title,
                 Body = toast.Body,
                 Aumid = toast.Aumid,
-                IconPng = EncodePng(ResolveFallbackIcon(toast)),
+                IconPng = null,
                 AvatarPng = EncodePng(Safe(() => toast.Avatar)),
                 Version = 1,
                 ReceivedUtc = DateTime.UtcNow,
@@ -369,35 +372,7 @@ public static class PluginDataBridge
             return;
         }
 
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                var logo = TryGetAppLogo(toast);
-                if (logo == null) return;
 
-                var png = EncodePng(logo);
-                if (png == null || png.Length == 0) return;
-
-                Publish(new ToastNotice
-                {
-                    NoticeId = noticeId,
-                    AppName = toast.AppName,
-                    Title = toast.Title,
-                    Body = toast.Body,
-                    Aumid = toast.Aumid,
-                    IconPng = png,
-                    // 头像走异步解析，此刻多半已落地：能补就跟着这一帧一起补上。
-                    AvatarPng = EncodePng(Safe(() => toast.Avatar)),
-                    Version = 2,
-                    ReceivedUtc = DateTime.UtcNow,
-                });
-            }
-            catch
-            {
-                try { Logger.DebugThrottled("[PluginDataBridge] 取通知应用图标失败（10s 内只记一次）"); } catch { }
-            }
-        });
     }
 
     private static void Publish(ToastNotice notice)

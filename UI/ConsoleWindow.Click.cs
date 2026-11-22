@@ -352,6 +352,8 @@ namespace NotchPeninsula
                 {
                     Renderer.DisplayMode = want;
                     Program.SaveSetting("DisplayMode", (int)want);
+                    // 进/出静默：同步实况窗挂起状态（未勾选插件的重要信息气泡在静默下撤下）
+                    SilentMode.SyncLiveWindowGates();
                     // 老键一起写：万一回退到旧版本，至少「待机 / 普通」的语义还是对的
                     //（旧版本没有静默模式，会把静默当成普通）。
                     Program.SaveSetting("StandbyActive", want == IslandDisplayMode.Standby ? 1 : 0);
@@ -875,6 +877,17 @@ namespace NotchPeninsula
             else if (_selectedTab == 9 && _silentToastHovered)
             {
                 SwitchTab(0);
+            }
+            // 「媒体」卡 → 切换「媒体是否作为重要信息」（默认开启），落注册表并立即同步气泡挂起状态
+            else if (_selectedTab == 9 && _silentMediaHovered)
+            {
+                bool next = !SilentMode.MediaImportantEnabled;
+                SilentMode.MediaImportantEnabled = next;
+                Program.SaveSetting("SilentMediaImportant", next ? 1 : 0);
+                // 开关关 → 媒体气泡立即从屏上撤下（挂起），开 → 恢复；别等退场动画。
+                try { SilentMode.SyncLiveWindowGates(); }
+                catch (Exception ex) { Logger.Error("[静默模式] 同步媒体气泡挂起失败", ex); }
+                Render();   // 点击即刻反馈：别等鼠标移走触发 hover 重算才画新状态
             }
             // ---- 静默模式设置（tab 9）：勾选 / 上下排序（排序与普通模式共用同一份顺序）----
             else if (_selectedTab == 9

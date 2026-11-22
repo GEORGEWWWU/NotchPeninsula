@@ -219,6 +219,9 @@ namespace NotchPeninsula
                     Renderer.SilentReturnMode = (IslandDisplayMode)Math.Clamp(
                         (int)key.GetValue("SilentReturnMode", (int)IslandDisplayMode.Regular), 0, 2);
 
+                    // 媒体是否作为重要信息（静默模式下媒体在播时让岛出现）。默认开启。
+                    SilentMode.MediaImportantEnabled = (int)key.GetValue("SilentMediaImportant", 1) != 0;
+
                     Renderer.ApplyThemeColors(); // 启动时注入颜色
                 }
 

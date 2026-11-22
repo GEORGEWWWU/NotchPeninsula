@@ -211,6 +211,10 @@ namespace NotchPeninsula
         private static float _backdropMapCanvasLeft, _backdropMapCanvasW, _backdropMapCanvasH;
         private static SKRect _backdropMapSrc;
 
+        /// <summary>背板抓屏覆盖的画布 X 区间（岛体矩形；LiveWindowRenderer 玻璃采样夹取用）。</summary>
+        public static float BackdropCoverLeft => _backdropMapCanvasLeft;
+        public static float BackdropCoverRight => _backdropMapCanvasLeft + _backdropMapCanvasW;
+
         internal static void UpdateBackdropCanvasMapping(bool valid, float canvasLeft,
             float canvasW, float canvasH, SKRect src)
         {
@@ -228,6 +232,12 @@ namespace NotchPeninsula
         {
             src = default;
             if (!_backdropMapValid) return false;
+            // 气泡可移动到背板抓屏区域之外（静默下气泡组滑行 / 居中）——部分出界时
+            // SKImage 采样越界的部分会发黑（用户实测「右半是黑的」）。
+            // 不完全落在覆盖区内就放弃玻璃取样，调用方退回纯色涂层；气泡回到覆盖区后玻璃自动恢复。
+            float coverLeft = _backdropMapCanvasLeft;
+            float coverRight = _backdropMapCanvasLeft + _backdropMapCanvasW;
+            if (canvasRect.Left < coverLeft || canvasRect.Right > coverRight) return false;
             float kx = _backdropMapSrc.Width / _backdropMapCanvasW;
             float ky = _backdropMapSrc.Height / _backdropMapCanvasH;
             src = new SKRect(
@@ -532,7 +542,28 @@ namespace NotchPeninsula
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
-                UpdateBackdropCanvasMapping(backdrop != null, islandLeft, currentWidth, currentHeight, source);
+                // 映射覆盖区扩展为「岛体 ∪ 气泡包围盒」（画布坐标）：气泡在岛体左侧外，
+                // 玻璃采样它下方的桌面 —— src 按岛体比例线性外推（映射是线性的）。
+                float mapL = islandLeft, mapR = islandRight;
+                var liveFrame = LiveWindowHost.Frame;
+                for (int i = 0; i < liveFrame.Count; i++)
+                {
+                    var r = liveFrame.Items[i].Rect;
+                    if (liveFrame.Items[i].Alpha < 16 || r.Width < 1f) continue;
+                    mapL = MathF.Min(mapL, r.Left);
+                    mapR = MathF.Max(mapR, r.Right);
+                }
+                // 与抓屏侧同口径的 48px 余量：气泡右缘贴覆盖区边缘时，模糊 filter 的采样半径
+                // 会超出背板位图 → 边缘外发黑（日志实锤 cover=[955,1045] 恰贴气泡右缘）。
+                mapL -= 48f;
+                mapR += 48f;
+                float kxMap = currentWidth > 1f ? source.Width / currentWidth : 0f;
+                var mappedSrc = new SKRect(
+                    source.Left - (islandLeft - mapL) * kxMap,
+                    source.Top,
+                    source.Right + (mapR - islandRight) * kxMap,
+                    source.Bottom);
+                UpdateBackdropCanvasMapping(backdrop != null, mapL, mapR - mapL, currentHeight, mappedSrc);
 
                 if (skipBackground)
                 {
@@ -614,7 +645,9 @@ namespace NotchPeninsula
                     if (tA - _alphaDiagMs >= 2000)
                     {
                         _alphaDiagMs = tA;
-                        Logger.Warn($"[渲染] 内容透明度只有 {alpha}/255（transitionAlpha={transitionAlpha:F2}），"
+                        Logger.Warn($"[渲染] 内容透明度只有 {alpha}/255"
+                            + $"（startupProgress={startupProgress:F2} transitionAlpha={transitionAlpha:F2}"
+                            + $" PassthroughAlpha={PassthroughAlpha:F2} FullHideAlpha={FullHideAlpha:F2}），"
                             + "岛内元素会整体不可见");
                     }
                 }
@@ -666,7 +699,7 @@ namespace NotchPeninsula
                 UpdateClockCache();
 
                 // 自定义组合模式 / 原生布局
-                if (!SuppressMediaInIsland && IsMediaPanelShowing(media, currentHeight))
+                if (!SuppressMediaInIsland && (!SilentActive || SilentMode.MediaImportantEnabled) && IsMediaPanelShowing(media, currentHeight))
                     DrawMediaControl(canvas, media, isHovered, bars,
                         new MediaBlockGeometry(left, left, right), currentHeight, textOffsetY, alpha);
                 else if (CompositeModeEnabled)

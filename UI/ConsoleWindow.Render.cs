@@ -202,6 +202,8 @@ namespace NotchPeninsula
             canvas.DrawText("媒体", CONTENT_TEXT_X, mediaTop + 25, _uiTextPaint);
             canvas.DrawText(MediaLiveWindowController.IsEnabled ? "已启用（跟随「媒体设置」）" : "默认关闭（在「媒体设置」里开启）",
                 CONTENT_TEXT_X, mediaTop + 44, _subTextPaint);
+            canvas.DrawText("待机模式不支持实况窗：媒体会留在岛内显示。",
+                CONTENT_TEXT_X, mediaTop + 62, _subTextPaint);
 
             string hint = "去「媒体设置」修改";
             float hintW = _subTextPaint.MeasureText(hint);
@@ -1062,7 +1064,14 @@ namespace NotchPeninsula
 
         private static float SilentToastTop => TITLE_BAR_HEIGHT + SILENT_TOAST_CARD_Y;
 
-        private static float SilentListCardY => SILENT_TOAST_CARD_Y + SILENT_TOAST_CARD_H + CARD_GAP;
+        // 媒体卡（媒体是否作为重要信息）：整卡点击切换，默认开启。样式与消息通知卡同款。
+        private const float SILENT_MEDIA_CARD_Y = SILENT_TOAST_CARD_Y + SILENT_TOAST_CARD_H + CARD_GAP;
+
+        private const float SILENT_MEDIA_CARD_H = 62f;
+
+        private static float SilentMediaTop => TITLE_BAR_HEIGHT + SILENT_MEDIA_CARD_Y;
+
+        private static float SilentListCardY => SILENT_MEDIA_CARD_Y + SILENT_MEDIA_CARD_H + CARD_GAP;
 
         private static float SilentListCardH => HEIGHT - 6f - (TITLE_BAR_HEIGHT + SilentListCardY);
 
@@ -1135,6 +1144,11 @@ namespace NotchPeninsula
             var toastRect = new SKRect(CONTENT_L, toastTop, WIDTH - CONTENT_RM, toastTop + SILENT_TOAST_CARD_H);
             canvas.DrawRoundRect(toastRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(toastRect, 6, 6, _cardBorder);
+            if (_silentToastHovered)
+            {
+                _dynamicFillPaint.Color = Overlay(12);
+                canvas.DrawRoundRect(toastRect, 6, 6, _dynamicFillPaint);
+            }
 
             canvas.DrawText("消息通知", CONTENT_TEXT_X, toastTop + 26, _uiTextPaint);
             _subTextPaint.Color = Neutral(170);
@@ -1146,6 +1160,39 @@ namespace NotchPeninsula
             canvas.DrawText(toastGo, DISPLAY_CTRL_RIGHT - _subTextPaint.MeasureText(toastGo),
                 toastTop + 34, _subTextPaint);
             _subTextPaint.Color = Neutral(170);
+
+            // ── 媒体：是否作为重要信息（勾选框开关，默认开启；与实况窗无关）──
+            float mediaCardTop = TITLE_BAR_HEIGHT + SILENT_MEDIA_CARD_Y;
+            var mediaCardRect = new SKRect(CONTENT_L, mediaCardTop, WIDTH - CONTENT_RM, mediaCardTop + SILENT_MEDIA_CARD_H);
+            canvas.DrawRoundRect(mediaCardRect, 6, 6, _cardBg);
+            canvas.DrawRoundRect(mediaCardRect, 6, 6, _cardBorder);
+            if (_silentMediaHovered)
+            {
+                _dynamicFillPaint.Color = Overlay(12);
+                canvas.DrawRoundRect(mediaCardRect, 6, 6, _dynamicFillPaint);
+            }
+
+            bool mediaOn = SilentMode.MediaImportantEnabled;
+            canvas.DrawText("媒体", CONTENT_TEXT_X, mediaCardTop + 26, _uiTextPaint);
+            _subTextPaint.Color = Neutral(170);
+            canvas.DrawText("开启后静默模式展示媒体，关闭后不展示（与实况窗无关）",
+                CONTENT_TEXT_X, mediaCardTop + 46, _subTextPaint);
+
+            // 右侧滑块开关（iOS 风格：蓝色圆角胶囊 + 白色圆点）
+            const float tW = 44f, tH = 22f;
+            var tRect = new SKRect(
+                DISPLAY_CTRL_RIGHT - 6f - tW, mediaCardTop + (SILENT_MEDIA_CARD_H - tH) / 2f,
+                DISPLAY_CTRL_RIGHT - 6f, mediaCardTop + (SILENT_MEDIA_CARD_H + tH) / 2f);
+            _dynamicFillPaint.Color = mediaOn ? new SKColor(0, 120, 212) : Neutral(90);
+            canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, _dynamicFillPaint);
+            if (_silentMediaHovered && !mediaOn)
+            {
+                using var hover = new SKPaint { IsAntialias = true, Color = Overlay(20) };
+                canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, hover);
+            }
+            float knobX = mediaOn ? tRect.Right - tH / 2f : tRect.Left + tH / 2f;
+            using (var knob = new SKPaint { IsAntialias = true, Color = SKColors.White })
+                canvas.DrawCircle(knobX, tRect.MidY, tH / 2f - 3f, knob);
 
             // ── 静默显示列表 ──
             float cardY = TITLE_BAR_HEIGHT + SilentListCardY;

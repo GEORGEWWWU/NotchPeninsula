@@ -112,10 +112,103 @@ public static class SilentMode
     public static bool HasPluginContent
         => Renderer.SilentActive && PluginManager.Instance.SilentImportantCount > 0;
 
-    /// <summary>静默模式当前是否该让岛出现（插件重要信息 or 重要实况窗）。</summary>
+    /// <summary>静默模式当前是否该让岛出现：岛内有实际内容（组件有宽度的插件 / 岛内媒体）。</summary>
     public static bool ShouldShowIsland
-        => Renderer.SilentActive
-           && (HasPluginContent || LiveWindowHost.HasImportantLiveWindow);
+        => Renderer.SilentActive && (HasIslandContent || IsIslandMedia);
+
+    /// <summary>
+    /// 静默清单里有「组件真的有宽度」的插件。
+    ///
+    /// <para>宽 0 的画出来是一颗空胶囊：插件把内容全放进了实况窗气泡（如 RayBurst 的下载进度），
+    /// 岛内组件自报 0 宽 —— 这种情况主岛不出，只留气泡。气泡退场、内容回到岛内（组件宽恢复）
+    /// 后岛自然弹回。</para>
+    /// </summary>
+    internal static bool HasIslandContent
+    {
+        get { return HasIslandContentBesides(null); }
+    }
+
+    /// <summary>岛内除 <paramref name="excludeIds"/> 外是否还有其他有宽度的插件内容。</summary>
+    internal static bool HasIslandContentBesides(IEnumerable<string>? excludeIds)
+    {
+        var exclude = excludeIds != null
+            ? new HashSet<string>(excludeIds, StringComparer.OrdinalIgnoreCase)
+            : null;
+        var ids = Plugins.PluginManager.Instance.SilentImportantPluginIds;
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (exclude != null && exclude.Contains(ids[i])) continue;
+            if (Renderer.SumPluginRowWidth(ids[i]) > 0f) return true;
+        }
+        return false;
+    }
+
+    // ---- 媒体是否作为重要信息（静默页开关，默认开）----
+    private static readonly object _mediaGate = new();
+    private static bool _mediaImportant = true;
+
+    /// <summary>
+    /// 媒体是否作为「重要信息」（静默模式下媒体在播时让岛出现）。
+    /// 持久化在 <c>SilentMediaImportant</c>（Program 启动读回），默认开启。
+    /// </summary>
+    public static bool MediaImportantEnabled
+    {
+        get { lock (_mediaGate) return _mediaImportant; }
+        set { lock (_mediaGate) _mediaImportant = value; }
+    }
+
+    /// <summary>
+    /// 气泡的 owner 是否被静默清单允许让岛出现：
+    /// 媒体气泡看「媒体作为重要信息」开关；插件气泡看它在静默模式设置里是否勾选 ——
+    /// 没勾选的插件气泡不算重要信息，不把岛叫回来（用户要求：没勾选的不要展示）。
+    /// </summary>
+    public static bool IsOwnerAllowed(string? ownerId)
+    {
+        if (string.IsNullOrEmpty(ownerId)) return false;
+        if (ownerId == MediaLiveWindowController.Owner) return MediaImportantEnabled;
+
+        var e = Plugins.PluginManager.Instance.FindById(ownerId);
+        return e != null && Plugins.PluginManager.Instance.IsSilentShown(e.Key);
+    }
+
+    /// <summary>
+    /// 把静默清单的勾选状态同步到实况窗：静默模式下未勾选插件的重要信息气泡**挂起**
+    /// （回调 <c>OnHostEnabledChanged(false)</c>，气泡从屏上撤下），勾选 / 退出静默时恢复。
+    /// 勾选在这里是「重要信息总开关」—— 用户都禁止它使用重要信息了，气泡也不该出现。
+    /// </summary>
+    public static void SyncLiveWindowGates()
+    {
+        // 媒体气泡：静默下开关关 → 挂起（立即从屏上撤下，不等退场动画）；开 → 恢复。
+        LiveWindowHost.SetOwnerSuppressed(MediaLiveWindowController.Owner,
+            Renderer.SilentActive && !MediaImportantEnabled, out _, out _);
+
+        foreach (var ownerId in LiveWindowHost.KnownPluginOwners)
+        {
+            bool allowed = !Renderer.SilentActive || IsOwnerAllowed(ownerId);
+            LiveWindowHost.SetOwnerSuppressed(ownerId, !allowed, out _, out _);
+        }
+    }
+
+    /// <summary>
+    /// 媒体在<b>岛内</b>（实况窗没接管时）。
+    ///
+    /// <para>实况窗开着时媒体全在左侧气泡里，岛内没有可画的内容 —— 主岛跟着退场，只留气泡，
+    /// 别挂一颗空岛。气泡退场动画期间岛会先缩没、媒体回到岛内后再从中心弹回（与普通模式
+    /// 「岛体维持收短态 → 播完展开」同一套编排）。</para>
+    /// </summary>
+    private static bool IsIslandMedia
+    {
+        get
+        {
+            try
+            {
+                return MediaController.Instance?.IsActive == true
+                       && MediaImportantEnabled
+                       && !Renderer.SuppressMediaInIsland;
+            }
+            catch { return false; }
+        }
+    }
 
     /// <summary>静默模式当前是否该把岛藏起来。</summary>
     public static bool ShouldHideIsland => Renderer.SilentActive && !ShouldShowIsland;

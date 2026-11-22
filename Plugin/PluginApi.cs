@@ -277,6 +277,30 @@ public interface IPluginHost
     /// </summary>
     void SetImportantInformation(bool hasImportant, bool useImportantPresentation = false) { }
 
+    /// <summary>
+    /// 按应用的实际 logo（AUMID 四级解析，宿主统一缓存：AUMID 路径 / shell:AppsFolder / 进程 exe / 词元兜底，
+    /// 失败指数退避重试）。返回的是独立 Copy，归调用方所有；取不到（解析中 / 落空）返回 null ——
+    /// 插件侧先画占位、后续刷新时再取（解析完成后宿主缓存会命中）。
+    ///
+    /// <para>通知图标走这里而不是让宿主推位图：省掉 PNG 编解码和跨程序集拷贝，
+    /// 两端共享同一份宿主缓存，总内存更低。默认实现为空（返回 null）：老宿主上插件退回占位图。</para>
+    /// </summary>
+    SKBitmap? GetAppLogo(string? aumid) => null;
+
+    /// <summary>
+    /// 请求宿主禁用本插件 —— 等同用户在插件中心把开关关掉（会被记入禁用列表，重启后不再加载）。
+    ///
+    /// <para>典型用法：组件自带的「关闭组件」菜单项。插件只把自己内部的停用状态写进设置是不够的，
+    /// 插件中心那条仍然显示「运行中 / 开关开着」，两边对不上。调这个方法后宿主会：
+    /// 记下禁用状态 → 卸载插件（<see cref="INotchPlugin"/> 的 Dispose）→ 插件中心开关变灰。</para>
+    ///
+    /// <para>⚠️ 必须在<b>别的线程</b>上调用（如 <c>ThreadPool.QueueUserWorkItem</c>）：
+    /// 宿主卸载时会等插件自己的窗口线程退出，在窗口线程里同步调用就是「自己等自己」。</para>
+    ///
+    /// <para>默认实现为空：老宿主没有这个成员时插件仍可编译，调用无效果。</para>
+    /// </summary>
+    void DisableSelf() { }
+
     // 主题（当前帧快照）
     RenderTheme CurrentTheme { get; }
 
