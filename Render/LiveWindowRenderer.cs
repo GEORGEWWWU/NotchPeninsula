@@ -255,6 +255,15 @@ public static class LiveWindowRenderer
         float cx = rect.MidX;
         float cy = rect.MidY;
 
+        // 【诊断】气泡滑行黑半：记录绘制矩形 / 裁切状态 / 玻璃采样夹取（2s 节流）
+        if (_diagThrottleMs == 0 || Environment.TickCount64 - _diagThrottleMs > 2000)
+        {
+            _diagThrottleMs = Environment.TickCount64;
+            Logger.Debug($"[气泡诊断][build=1309] rect=({rect.Left:F0},{rect.Top:F0})-({rect.Right:F0},{rect.Bottom:F0}) " +
+                         $"cx={cx:F0} r={r:F0} transferring={transferring} spawn={item.SpawnProgress:F2} " +
+                         $"exit={item.ExitProgress:F2} merging={item.MergeTargetX:F0} cover=[{Renderer.BackdropCoverLeft:F0},{Renderer.BackdropCoverRight:F0}]");
+        }
+
         float bandW = Math.Clamp(r * 0.15f, 2.5f, 4.5f);
         // 圆环只保留「进度条 + 内容区」，不再有整个圆盘的底色：
         //   进度条那一圈（contentClipR..r 的环带）就是气泡唯一的实体，材质直接铺在这圈上；
@@ -275,12 +284,16 @@ public static class LiveWindowRenderer
             if (BuildLiquidNeck(in item, transfer, absorbing, r, _neckPath, _lipPath) > 0f)
                 canvas.ClipPath(_neckPath, SKClipOperation.Difference, true);
 
-            // 岛体那一侧一律切掉：岛体画在气泡之前，重叠出来的像素就是一颗贴在边上的鼓包。
-            // 颈掐断之后（girth = 0）也仍然靠这条兜住，不会突然「弹回整圆」再淡出。
-            _maskPath.Rewind();
-            _maskPath.AddRect(new SKRect(item.MergeTargetX, cy - rBase * 3f,
-                item.MergeTargetX + rBase * 6f, cy + rBase * 3f));
-            canvas.ClipPath(_maskPath, SKClipOperation.Difference, true);
+            // 岛体侧裁切**只用于退场**（吸回岛体：岛体侧的气泡部分是被吸进去的实体，要裁）。
+            // 出生方向不裁 —— 媒体气泡从岛缘滑向最左（用户定稿的位移出生），前半程气泡右半
+            // 落在裁切区内被砍掉 → 露出底下暗色（用户实测「被砍一半，右半是黑的，很快恢复」）。
+            if (absorbing)
+            {
+                _maskPath.Rewind();
+                _maskPath.AddRect(new SKRect(item.MergeTargetX, cy - rBase * 3f,
+                    item.MergeTargetX + rBase * 6f, cy + rBase * 3f));
+                canvas.ClipPath(_maskPath, SKClipOperation.Difference, true);
+            }
         }
 
         // 液体形变：沿运动方向（x）拉伸、另一轴收缩，才像水而不是气球。
@@ -592,13 +605,39 @@ public static class LiveWindowRenderer
     /// 面板 / 气泡的玻璃背景：优先用「面板展开前的桌面快照」（面板区域在实时背板里是被抹掉的），
     /// 并按用户在设置里选的「模糊」档位做一次高斯模糊 —— 这样液态玻璃的参数才真正接管这块。
     /// </summary>
+    private static long _diagThrottleMs;
+
     private static bool DrawGlassBackdrop(SKCanvas canvas, SKRect sampleRect, SKRect drawRect, float alpha)
     {
+        // 气泡可滑到背板覆盖区（岛体矩形）之外 —— 直接采样越界的部分会发黑（用户实测「右半是黑的」）。
+        // 处理：把采样/绘制矩形**夹取**到覆盖区内（等比收缩），出界的窄条取边缘像素延伸 ——
+        // 玻璃观感连续不发黑；气泡完全离开覆盖区（夹完不足 2px）才退纯色涂层。
+        {
+            float cL = Renderer.BackdropCoverLeft, cR = Renderer.BackdropCoverRight;
+            if (cR - cL > 1f)
+            {
+                float full = sampleRect.Width;
+                if (full > 1f)
+                {
+                    float sL = MathF.Max(sampleRect.Left, cL);
+                    float sR = MathF.Min(sampleRect.Right, cR);
+                    if (sR - sL < 2f) return false;
+                    float dLeft = drawRect.Left + (sL - sampleRect.Left) / full * drawRect.Width;
+                    float dRight = drawRect.Right - (sampleRect.Right - sR) / full * drawRect.Width;
+                    Logger.Debug($"[气泡诊断] 玻璃夹取 sample({sampleRect.Left:F0}→{sL:F0},{sampleRect.Right:F0}→{sR:F0}) " +
+                                 $"draw({drawRect.Left:F0}→{dLeft:F0},{drawRect.Right:F0}→{dRight:F0})");
+                    sampleRect = new SKRect(sL, sampleRect.Top, sR, sampleRect.Bottom);
+                    drawRect = new SKRect(dLeft, drawRect.Top, dRight, drawRect.Bottom);
+                }
+            }
+        }
+
         SKImage? img;
         SKRect src;
-        if (Renderer.PanelToneBackdrop != null && Renderer.TryCanvasToPanelSnapshot(sampleRect, out src))
-            img = Renderer.PanelToneBackdrop;
-        else if (Renderer.AcrylicBackdrop is { } live && Renderer.TryCanvasToBackdrop(sampleRect, out src))
+        // 环带玻璃**永远用当前背板**（抓屏覆盖区已扩展到气泡包围盒）——
+        // PanelToneBackdrop 是面板出现前的旧抓屏（覆盖区不含气泡），气泡滑出它就是
+        // 「右半黑」（用户实测多轮）；面板明暗快照只留给面板自己的 DrawPanelMaterial 用。
+        if (Renderer.AcrylicBackdrop is { } live && Renderer.TryCanvasToBackdrop(sampleRect, out src))
             img = live;
         else
             return false;

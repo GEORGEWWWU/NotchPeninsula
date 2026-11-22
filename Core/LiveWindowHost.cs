@@ -269,7 +269,6 @@ public static class LiveWindowHost
         bool keepSuppressed = Renderer.SilentActive && !SilentMode.IsOwnerAllowed(ownerId);
         var windows = SetOwnerSuppressed(ownerId, suppressed: !enabled || keepSuppressed, out var deferredNotify, out var deferredResume);
         if (deferredNotify || deferredResume) windows.Clear();   // 动画完成后由 Tick 补发通知
-        if (deferredNotify) windows.Clear();   // 吸回动画完成后由 Tick 补发禁用通知
         foreach (var window in windows)
         {
             try { window.OnHostEnabledChanged(enabled); }
@@ -641,7 +640,7 @@ public static class LiveWindowHost
             bool regIslandVisible = (Renderer.SilentActive ? Renderer.SilentScale : 1f) >= 0.02f
                                     && Renderer.FullHideAlpha >= 0.02f;
             float spawnFrom = regIslandVisible
-                ? _lastIslandLeft + BubbleDiameter * 0.02f
+                ? _lastIslandLeft - IslandGap - BubbleDiameter * 0.5f   // 岛缘左侧完整位：出生不压岛体（裁切已移除，避免重叠鼓包）
                 : _lastIslandLeft + Renderer.STANDBY_WIDTH / 2f;
 
             entry = new Entry

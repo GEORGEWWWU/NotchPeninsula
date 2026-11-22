@@ -202,6 +202,10 @@ namespace NotchPeninsula
         private static float _backdropMapCanvasLeft, _backdropMapCanvasW, _backdropMapCanvasH;
         private static SKRect _backdropMapSrc;
 
+        /// <summary>背板抓屏覆盖的画布 X 区间（岛体矩形；LiveWindowRenderer 玻璃采样夹取用）。</summary>
+        public static float BackdropCoverLeft => _backdropMapCanvasLeft;
+        public static float BackdropCoverRight => _backdropMapCanvasLeft + _backdropMapCanvasW;
+
         internal static void UpdateBackdropCanvasMapping(bool valid, float canvasLeft,
             float canvasW, float canvasH, SKRect src)
         {
@@ -522,7 +526,28 @@ namespace NotchPeninsula
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
-                UpdateBackdropCanvasMapping(backdrop != null, islandLeft, currentWidth, currentHeight, source);
+                // 映射覆盖区扩展为「岛体 ∪ 气泡包围盒」（画布坐标）：气泡在岛体左侧外，
+                // 玻璃采样它下方的桌面 —— src 按岛体比例线性外推（映射是线性的）。
+                float mapL = islandLeft, mapR = islandRight;
+                var liveFrame = LiveWindowHost.Frame;
+                for (int i = 0; i < liveFrame.Count; i++)
+                {
+                    var r = liveFrame.Items[i].Rect;
+                    if (liveFrame.Items[i].Alpha < 16 || r.Width < 1f) continue;
+                    mapL = MathF.Min(mapL, r.Left);
+                    mapR = MathF.Max(mapR, r.Right);
+                }
+                // 与抓屏侧同口径的 48px 余量：气泡右缘贴覆盖区边缘时，模糊 filter 的采样半径
+                // 会超出背板位图 → 边缘外发黑（日志实锤 cover=[955,1045] 恰贴气泡右缘）。
+                mapL -= 48f;
+                mapR += 48f;
+                float kxMap = currentWidth > 1f ? source.Width / currentWidth : 0f;
+                var mappedSrc = new SKRect(
+                    source.Left - (islandLeft - mapL) * kxMap,
+                    source.Top,
+                    source.Right + (mapR - islandRight) * kxMap,
+                    source.Bottom);
+                UpdateBackdropCanvasMapping(backdrop != null, mapL, mapR - mapL, currentHeight, mappedSrc);
 
                 bool glassDrawn = false;
                 if (backdrop != null)
