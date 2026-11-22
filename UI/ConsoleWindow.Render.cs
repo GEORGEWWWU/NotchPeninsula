@@ -1922,7 +1922,7 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(topRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(topRect, 6, 6, _cardBorder);
             canvas.DrawText("我的插件", CONTENT_TEXT_X, topY + 26, _uiTextPaint);
-            canvas.DrawText("管理已安装的插件，或从下方插件市场获取新插件", CONTENT_TEXT_X, topY + 46, _subTextPaint);
+            canvas.DrawText("管理已安装插件；点插件行的「设置」可配置插件参数", CONTENT_TEXT_X, topY + 46, _subTextPaint);
 
             void DrawPluginButton(int index, string label, float bx, float by, float bw)
             {
@@ -2007,17 +2007,19 @@ namespace NotchPeninsula
                 const float btnTop = 21f, btnH = 20f;       // 操作按钮矩形
 
                 // 操作按钮（重载 / 卸载）+ 开关
-                void DrawRowButton(float bx, bool hovered, string label, bool danger)
+                void DrawRowButton(float bx, bool hovered, string label, bool danger, bool accent = false)
                 {
                     var r = new SKRect(bx, rowY + btnTop, bx + 50, rowY + btnTop + btnH);
-                    _dynamicFillPaint.Color = hovered
-                        ? (danger ? new SKColor(180, 50, 50) : Overlay(30))
+                    _dynamicFillPaint.Color = accent
+                        ? (hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212))
+                        : hovered ? (danger ? new SKColor(180, 50, 50) : Overlay(30))
                         : Overlay(15);
                     canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                    _uiTextPaint.Color = _fgColor;
+                    _uiTextPaint.Color = accent ? SKColors.White : _fgColor;
                     DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
+                    _uiTextPaint.Color = _fgColor;
                 }
-                DrawRowButton(PLUGIN_BTN_SETTINGS_X, _hoveredPluginSettings == i, "设置", false);
+                DrawRowButton(PLUGIN_BTN_SETTINGS_X, _hoveredPluginSettings == i, "设置", false, accent: true);
                 DrawRowButton(PLUGIN_BTN_RELOAD_X, _hoveredPluginReload == i, "重载", false);
                 DrawRowButton(PLUGIN_BTN_REMOVE_X, _hoveredPluginRemove == i, "卸载", true);
 
