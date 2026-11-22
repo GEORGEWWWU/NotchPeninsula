@@ -555,6 +555,7 @@ namespace NotchPeninsula
                 Renderer.ApplyThemeColors();
                 Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
                 Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                Program.SaveSetting("IslandPluginBackground", Renderer.IslandPluginBackground ? 1 : 0);
                 // 切到玻璃时 ThemeMode 已被钳成自动：把钳制结果写回，注册表里不留旧的黑/白。
                 Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
                 NotchWindow.RequestAcrylicRebuild();

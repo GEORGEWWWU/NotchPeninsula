@@ -253,7 +253,7 @@ namespace NotchPeninsula
             try { sb.AppendLine($"应用内缩放: {Renderer.GLOBAL_DPI:F2}"); } catch { }
             try
             {
-                string material = Renderer.IslandMaterialIndex switch { 2 => "液态玻璃", 1 => "亚克力", _ => "实体" };
+                string material = Renderer.IslandMaterialIndex switch { 3 => "插件背景", 2 => "液态玻璃", 1 => "亚克力", _ => "实体" };
                 sb.AppendLine($"主题模式: {Renderer.ThemeMode}，背景材质: {material}");
                 sb.AppendLine($"岛体帧率: {GlassMaterial.FpsLabels[GlassMaterial.GetLevel(GlassMaterial.FrameRate)]}");
                 if (Renderer.IslandLiquidGlass)

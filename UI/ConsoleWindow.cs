@@ -1127,7 +1127,7 @@ namespace NotchPeninsula
 
         private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
 
-        private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力, 2:液态玻璃, 3:液态玻璃2.0
+        private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力, 2:液态玻璃, 3:插件背景
         private int _hoveredGlassParamIndex = -1;        // 11 根滑轨里悬停的是哪一根（-1 = 没有）
         private int _hoveredGlassParamLevel = -1;        // 悬停到的档位 0..4
         private bool _hoveredGlassReset;                 // 「恢复默认参数」（质量分段同一行右侧）

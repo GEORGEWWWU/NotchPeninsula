@@ -1848,7 +1848,7 @@ namespace NotchPeninsula
             }
         }
 
-        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃"];
+        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "插件背景"];
 
         private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
         {
