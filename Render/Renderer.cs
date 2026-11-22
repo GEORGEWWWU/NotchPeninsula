@@ -189,6 +189,14 @@ namespace NotchPeninsula
         public static bool IslandLiquidGlass => IslandMaterialIndex == 2;
         public static bool IslandPluginBackground => IslandMaterialIndex == 3;
 
+        // 每帧发布给插件的岛体几何（引用赋值天然原子；插件只读快照）。
+        private static Plugins.IslandGeometry? _publishedIslandGeometry;
+        public static Plugins.IslandGeometry CurrentIslandGeometry
+            => _publishedIslandGeometry ?? Plugins.IslandGeometry.Empty;
+
+        internal static void PublishIslandGeometry(Plugins.IslandGeometry geometry)
+            => _publishedIslandGeometry = geometry;
+
         // 亚克力背板：已模糊好的桌面截图，由 NotchWindow 每帧喂进来（只允许渲染线程读写）
         public static SKImage? AcrylicBackdrop { get; set; }
 
@@ -511,6 +519,11 @@ namespace NotchPeninsula
                 _bgPath.LineTo(islandRight, rTopY);
                 _bgPath.ConicTo(islandRight, 0, islandRight - rTopX, 0, w);
                 _bgPath.Close();
+
+                // 发布给插件背景窗口：逻辑几何 + 宿主 HWND，插件据此贴到岛体背后。
+                PublishIslandGeometry(new Plugins.IslandGeometry(
+                    islandLeft, topY, currentWidth, currentHeight,
+                    rTopX, rTopY, rBottom, styleProgress, GLOBAL_DPI, NotchWindow.InstanceHandle));
 
                 // 插件背景：宿主背板 / 涂层一笔不画，内容、裁剪和命中照常走下面的流程。
                 bool skipBackground = IslandPluginBackground;

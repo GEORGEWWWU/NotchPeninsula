@@ -1547,6 +1547,8 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 | 注册 | `RegisterSettingsPage(ISettingsPage)` | **未开放** |
 | 注册 | `IDisposable RegisterLiveWindow(ILiveWindow)` | 开放（见 [8.7](#87-实况窗live-window)） |
 | 主题 | `RenderTheme CurrentTheme` | 开放 |
+| 材质 | `int BackgroundMaterialIndex` | 开放（0=实体，1=亚克力，2=液态玻璃，3=插件背景；默认接口成员，老宿主返回 0） |
+| 几何 | `IslandGeometry CurrentIslandGeometry` | 开放（每帧岛体逻辑几何 + 宿主 HWND；默认接口成员，老宿主返回 `IslandGeometry.Empty`） |
 | 提醒 | `ShowReminder(ReminderData)` | 开放（仅岛内显示，见 [8.2](#82-提醒)） |
 | 提醒 | `PostReminder(ReminderData)` | 开放（公开提醒，见 [8.2](#82-提醒)） |
 | 静默模式 | `SetImportantInformation(bool hasImportant, bool useImportantPresentation = false)` | 开放（2.3.0 新增；静默模式下据此决定岛出不出现，见 [8.8](#88-静默模式重要信息)） |
@@ -1647,6 +1649,11 @@ readonly record struct RenderTheme(SKColor TextColor, SKColor SubTextColor,
     SKColor BackgroundColor, float GlobalDpi, float NotchBottomRadius);
 readonly record struct WidgetFrame(RenderTheme Theme, byte Alpha, float TextOffsetY,
     float[]? Bars, bool IsHovered);
+
+// 岛体每帧几何快照（Left / TopOffset / Width / Height 为逻辑像素；HostHwnd 可用来取屏幕矩形）
+sealed record IslandGeometry(float Left, float TopOffset, float Width, float Height,
+    float TopRadiusX, float TopRadiusY, float BottomRadius, float StyleProgress,
+    float Dpi, IntPtr HostHwnd);
 
 class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClick }
 ```

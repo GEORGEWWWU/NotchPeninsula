@@ -455,6 +455,8 @@ public sealed class PluginHost
     public IPluginHost CreateScopedHost(string pluginId) => new ScopedPluginHost(this, pluginId);
 
     public RenderTheme CurrentTheme => Renderer.GetCurrentTheme();
+    public int BackgroundMaterialIndex => Renderer.IslandMaterialIndex;
+    public IslandGeometry CurrentIslandGeometry => Renderer.CurrentIslandGeometry;
 
     // ---- MSP 插件接口（实验性）----
     //
@@ -1021,6 +1023,8 @@ public sealed class ScopedPluginHost : IPluginHost
     public IDisposable RegisterLiveWindow(ILiveWindow window) => _host.RegisterLiveWindow(_pluginId, window);
 
     public RenderTheme CurrentTheme => _host.CurrentTheme;
+    public int BackgroundMaterialIndex => _host.BackgroundMaterialIndex;
+    public IslandGeometry CurrentIslandGeometry => _host.CurrentIslandGeometry;
     public void PostReminder(ReminderData reminder) => _host.PostReminder(reminder);
     public void ShowReminder(ReminderData reminder) => _host.ShowReminder(reminder, _pluginId);
     public string GetSetting(string key, string fallback) => _host.GetSetting(_pluginId, key, fallback);
