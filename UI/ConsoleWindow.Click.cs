@@ -196,10 +196,14 @@ namespace NotchPeninsula
             ClearTransientHints();
 
             if (tab == 6) RefreshPluginView();
-            else if (tab == 7)
+            else
             {
-                if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
-                EnsureMarketData();
+                ClosePluginSettings();
+                if (tab == 7)
+                {
+                    if (_marketError.Length > 0 && !_marketFetching) _marketTriedFetch = false;   // 上次拉取失败：这次重试
+                    EnsureMarketData();
+                }
             }
 
             Render();
@@ -912,7 +916,11 @@ namespace NotchPeninsula
             // ---- 我的插件交互（tab 6）----
             else if (_selectedTab == 6)
             {
-                if (IsConfirmDialogOpen)
+                if (_settingsPluginId != null)
+                {
+                    HandlePluginSettingsClick(clickX, clickY);
+                }
+                else if (IsConfirmDialogOpen)
                 {
                     HandleConfirmDialogClick();
                 }
@@ -928,6 +936,11 @@ namespace NotchPeninsula
                             SwitchTab(7);
                             break;
                     }
+                }
+                else if (_hoveredPluginSettings != -1)
+                {
+                    var pe = GetPluginAt(_hoveredPluginSettings);
+                    if (pe != null) OpenPluginSettings(pe.Id);
                 }
                 else if (_hoveredPluginToggle != -1)
                 {

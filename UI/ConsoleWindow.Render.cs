@@ -1909,6 +1909,13 @@ namespace NotchPeninsula
         {
             RefreshPluginView();
 
+            // 插件设置子页：由行内「设置」按钮进入，仍然属于 tab 6
+            if (_settingsPluginId != null)
+            {
+                RenderPluginSettingsPage(canvas);
+                return;
+            }
+
             // ── 顶部操作卡片 ──
             float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var topRect = new SKRect(CONTENT_L, topY, WIDTH - CONTENT_RM, topY + PluginTopCardH);
@@ -1955,7 +1962,7 @@ namespace NotchPeninsula
 
             // 上行：名称独占整行，可延展至卡片右边界外侧
             float nameTextMax = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;                // 名称几乎全宽
-            float infoTextMax = PLUGIN_BTN_RELOAD_X - CONTENT_TEXT_X - 8;     // 信息止于按钮区之前
+            float infoTextMax = PLUGIN_BTN_SETTINGS_X - CONTENT_TEXT_X - 8;   // 信息止于按钮区之前
 
             if (_pluginView.Count == 0)
                 canvas.DrawText("暂无插件，点击「导入插件」或到「插件市场」下载", CONTENT_TEXT_X, listY + 62, _subTextPaint);
@@ -2010,6 +2017,7 @@ namespace NotchPeninsula
                     _uiTextPaint.Color = _fgColor;
                     DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
                 }
+                DrawRowButton(PLUGIN_BTN_SETTINGS_X, _hoveredPluginSettings == i, "设置", false);
                 DrawRowButton(PLUGIN_BTN_RELOAD_X, _hoveredPluginReload == i, "重载", false);
                 DrawRowButton(PLUGIN_BTN_REMOVE_X, _hoveredPluginRemove == i, "卸载", true);
 

@@ -43,6 +43,8 @@ namespace NotchPeninsula
 
         // 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
 
+        private const float PLUGIN_BTN_SETTINGS_X = 348f; // 设置按钮
+
         private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
 
         private const float PLUGIN_BTN_REMOVE_X = 460f;  // 卸载按钮
@@ -1682,7 +1684,13 @@ namespace NotchPeninsula
                         int steps = wheelDelta / 120 * 3;
                         bool moved;
 
-                        if (_selectedTab == 7)
+                        if (_selectedTab == 6 && _settingsPluginId != null)
+                        {
+                            int sTarget = Math.Clamp(_settingsScroll - steps, 0, GetSettingsMaxScroll());
+                            moved = sTarget != _settingsScroll;
+                            _settingsScroll = sTarget;
+                        }
+                        else if (_selectedTab == 7)
                         {
                             GetMarketListLayout(out _, out int marketMaxFirst);
                             int mTarget = Math.Clamp(_marketScroll - steps, 0, marketMaxFirst);

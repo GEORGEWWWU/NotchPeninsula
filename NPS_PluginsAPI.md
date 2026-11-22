@@ -936,7 +936,7 @@ host.SetSetting("on", "0");              // 只存字符串
 - `host.SettingsChanged`：**`SetSetting` 写入时会同步触发你自己注册的处理器**（在调用 `SetSetting` 的那条线程上），适合「改完立刻重算」。
 - 读回的最佳时机是组件的 `OnActivate`。
 
-> 宿主**不提供**「在设置窗口里给插件一块配置区」的能力（`RegisterSettingsPage` 未接线，注册了也不会显示）。要配置项就自己做 UI：做进详情页最省事，或用 `CreateWindow` 开独立窗口。
+> 宿主已接通 `RegisterSettingsPage`：插件在 `Initialize` 里注册 `ISettingsPage`，用户可在「设置中心 → 我的插件」对应插件行点「设置」进入配置页。`ToggleSetting` / `ChoiceSetting` / `NumberSetting` 由宿主绘制，值统一走 `GetSetting` / `SetSetting` 持久化，写入时照常触发 `SettingsChanged`。需要完全自定义绘制时，仍可用详情页或 `CreateWindow`。
 
 ### 8.4 自定义窗口
 
@@ -1544,7 +1544,7 @@ if (frame.Bars is { Length: 5 } bars && bars[0] > 0.05f)
 |---|---|---|
 | 注册 | `RegisterWidget(IWidget)` | 开放 |
 | 注册 | `RegisterSecondaryWidget(ISecondaryWidget)` | **未开放** |
-| 注册 | `RegisterSettingsPage(ISettingsPage)` | **未开放** |
+| 注册 | `RegisterSettingsPage(ISettingsPage)` | 开放（在「我的插件」行内「设置」进入，见 [8.3](#83-设置项)） |
 | 注册 | `IDisposable RegisterLiveWindow(ILiveWindow)` | 开放（见 [8.7](#87-实况窗live-window)） |
 | 主题 | `RenderTheme CurrentTheme` | 开放 |
 | 材质 | `int BackgroundMaterialIndex` | 开放（0=实体，1=亚克力，2=液态玻璃，3=插件背景；默认接口成员，老宿主返回 0） |
@@ -1665,9 +1665,9 @@ class ReminderData { Title, Body, Source, IconPath, AvatarPath, Duration, OnClic
 ### 未开放的接口（定义了但没接线）
 
 - `ISecondaryWidget`：副显示区只读信息。注册后不绘制。
-- `ISettingsPage` / `ICustomSettingsPage` / `SettingControl`：声明式设置页。`RegisterSettingsPage` 只把页存进宿主列表，**全程序没有任何地方读它去渲染**。
+- `ICustomSettingsPage`：接口仍定义了但没有注册入口；需要完全自定义设置 UI 时，请用详情页或 `CreateWindow`。
 
-做配置请走「自己存 + 自己做 UI」（详情页或 `CreateWindow`）。
+`ISettingsPage` / `SettingControl` 已接线：通过 `RegisterSettingsPage` 注册后，宿主会在「我的插件」里渲染 `ToggleSetting` / `ChoiceSetting` / `NumberSetting`，值走 `GetSetting` / `SetSetting`。
 
 ---
 
