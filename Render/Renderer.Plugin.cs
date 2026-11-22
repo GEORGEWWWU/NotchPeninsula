@@ -240,11 +240,14 @@ namespace NotchPeninsula
             string? detailWidgetId = null;
             lock (_pluginSlotLock)
             {
+                // 整行命中（用户定稿「整个高度都可以」）：slot 的 Y 本来就是全岛体高；
+                // X 加半档缝容差，widget 之间的缝 / 两侧 padding 的右键也落到插件上。
+                float hitSlop = 6f;
                 for (int i = 0; i < _pluginSlots.Count; i++)
                 {
                     var slot = _pluginSlots[i];
                     var r = slot.Rect;
-                    if (x < r.Left || x > r.Right || y < r.Top || y > r.Bottom) continue;
+                    if (x < r.Left - hitSlop || x > r.Right + hitSlop || y < r.Top || y > r.Bottom) continue;
                     try { slot.Widget.OnRightClick(); }
                     catch (Exception ex) { Logger.Error("[Renderer] 插件组件右键回调异常", ex); }
 
@@ -847,7 +850,7 @@ namespace NotchPeninsula
             return scene;   // 兜底：按原值当 Id 试一次
         }
 
-        private static float SumPluginRowWidth(string? pluginIdFilter)
+        internal static float SumPluginRowWidth(string? pluginIdFilter)
         {
             var widgets = _pluginWidgets;
             var widths = _pluginWidths;

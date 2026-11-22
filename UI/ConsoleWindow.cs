@@ -78,7 +78,7 @@ namespace NotchPeninsula
 
         // ---- 页签 8：实况窗管理（侧边栏「显示设置」下面一项）----
         private const float LW_INTRO_CARD_H = 62f;
-        private const float LW_MEDIA_CARD_H = 56f;
+        private const float LW_MEDIA_CARD_H = 76f;
         private const float LW_CARD_HEADER_H = 34f;
         private const float LW_ROW_H = 40f;
 
@@ -869,6 +869,7 @@ namespace NotchPeninsula
 
         // 静默模式设置页「消息通知」卡（整卡可点，跳到通用设置）
         private bool _silentToastHovered;
+        private bool _silentMediaHovered;   // 静默页「媒体」卡（媒体是否作为重要信息），整卡点击切换
 
         // 显示模式分段器的标签：下标与 IslandDisplayMode 一一对应（0 待机 / 1 普通 / 2 静默）。
         private static readonly string[] DisplayModeLabels = ["待机模式", "普通模式", "静默模式"];

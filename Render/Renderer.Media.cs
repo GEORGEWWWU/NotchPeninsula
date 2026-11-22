@@ -349,37 +349,62 @@ namespace NotchPeninsula
 
             // 展开态歌词横向滚动：把「正在唱的位置」对到可视区左侧 40%，滚到底就停（逐字没走完也不再滚）。
             float mainScroll = LyricScrollOffset(paint.MeasureText(text), viewWidth, progress);
-            if (mainScroll > 0.01f)
-            {
-                canvas.Save();
-                canvas.Translate(-mainScroll, 0f);
-                DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
-                canvas.Restore();
-            }
-            else
-            {
-                DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
-            }
-
-            if (!twoLines) return;
-
-            byte transAlpha = (byte)(targetAlpha * 0.88f);
-            var savedColor = paint.Color;
-            paint.Color = _currentSubTextColor.WithAlpha(transAlpha);
 
             // 翻译：不跟逐字锚点，就按行进度「匀速」从 0 滚到底（到底即停）——
             // 它比主歌词短，跟着 40% 锚点走会显得乱跳，匀速更稳。
-            float transScreenW = paint.MeasureText(translation) * LYRIC_TRANS_SCALE;
-            float transScroll = viewWidth > 1f && transScreenW > viewWidth + 0.5f
-                ? MathF.Round((transScreenW - viewWidth) * Math.Clamp(progress, 0f, 1f) * 2f) * 0.5f
-                : 0f;
+            float transScroll = 0f;
+            if (twoLines)
+            {
+                float transScreenW = paint.MeasureText(translation) * LYRIC_TRANS_SCALE;
+                if (viewWidth > 1f && transScreenW > viewWidth + 0.5f)
+                    transScroll = MathF.Round((transScreenW - viewWidth) * Math.Clamp(progress, 0f, 1f));
+            }
 
-            canvas.Save();
-            canvas.Translate(x - transScroll / LYRIC_TRANS_SCALE, y + LYRIC_TRANS_LINE_STEP * 0.5f);
-            canvas.Scale(LYRIC_TRANS_SCALE, LYRIC_TRANS_SCALE);
-            DrawKaraoke(canvas, translation, 0f, 0f, paint, transAlpha, 1f, false);
-            canvas.Restore();
-            paint.Color = savedColor;
+            // 滚动期间关掉亚像素定位：慢速平移下字形边缘每帧重新抗锯齿 = 肉眼看就是「闪」，
+            // 中文笔画密尤其明显。静止文字仍保留亚像素（更平滑）。
+            bool scrolling = mainScroll > 0.01f || transScroll > 0.01f;
+            bool prevSubpixel = paint.SubpixelText;
+            if (scrolling) paint.SubpixelText = false;
+            try
+            {
+                if (mainScroll > 0.01f)
+                {
+                    canvas.Save();
+                    try
+                    {
+                        canvas.Translate(-mainScroll, 0f);
+                        DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
+                    }
+                    finally { canvas.Restore(); }
+                }
+                else
+                {
+                    DrawKaraoke(canvas, text, x, mainY, paint, targetAlpha, progress, isLyric);
+                }
+
+                if (!twoLines) return;
+
+                byte transAlpha = (byte)(targetAlpha * 0.88f);
+                var savedColor = paint.Color;
+                paint.Color = _currentSubTextColor.WithAlpha(transAlpha);
+
+                canvas.Save();
+                try
+                {
+                    canvas.Translate(x - transScroll / LYRIC_TRANS_SCALE, y + LYRIC_TRANS_LINE_STEP * 0.5f);
+                    canvas.Scale(LYRIC_TRANS_SCALE, LYRIC_TRANS_SCALE);
+                    DrawKaraoke(canvas, translation, 0f, 0f, paint, transAlpha, 1f, false);
+                }
+                finally
+                {
+                    canvas.Restore();
+                    paint.Color = savedColor;
+                }
+            }
+            finally
+            {
+                paint.SubpixelText = prevSubpixel;
+            }
         }
 
         /// <summary>
@@ -392,8 +417,8 @@ namespace NotchPeninsula
             if (viewWidth <= 1f || textWidth <= viewWidth + 0.5f) return 0f;
             float maxScroll = textWidth - viewWidth;
             float want = textWidth * Math.Clamp(progress, 0f, 1f) - viewWidth * LyricScrollAnchor;
-            // 半像素量化：亚像素位移每帧都在变，字形边缘会「闪」；对齐到 0.5px 后肉眼几乎看不出台阶。
-            return MathF.Round(Math.Clamp(want, 0f, maxScroll) * 2f) * 0.5f;
+            // 整像素量化：半像素档仍会落到亚像素抗锯齿上，中文边缘照样抖（速度越慢越明显）。
+            return MathF.Round(Math.Clamp(want, 0f, maxScroll));
         }
 
         /// <summary>正在唱的位置停在可视区左侧 40% 处。</summary>

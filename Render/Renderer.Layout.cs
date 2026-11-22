@@ -109,10 +109,10 @@ namespace NotchPeninsula
             var contentOrder = Plugins.PluginManager.Instance.Host.ContentOrder;
             bool clockHandled = false, hardwareHandled = false, mediaHandled = false;
 
-            // 静默模式：内容不由「待机显示内容」决定，而是「静默模式设置里勾选了 + 当前上报了重要信息」的插件。
+            // 静默模式：内容 =「媒体（有媒体时）」+「静默模式设置里勾选了 + 当前上报了重要信息」的插件。
             if (SilentActive)
             {
-                DrawSilentContent(canvas, left, currentWidth, currentHeight, topY, textOffsetY, alpha, bars);
+                DrawSilentContent(canvas, media, isHovered, left, currentWidth, currentHeight, topY, textOffsetY, alpha, bars);
                 return;
             }
 
@@ -200,23 +200,56 @@ namespace NotchPeninsula
         /// <para>没有任何插件上报时岛本来就在退场（<see cref="SilentMode.ShouldHideIsland"/>），
         /// 这里不画东西 —— 空胶囊只在「实况窗重要但没插件内容」时作为兜底出现。</para>
         /// </summary>
-        private static void DrawSilentContent(SKCanvas canvas, float left, float currentWidth,
-            float currentHeight, float topY, float textOffsetY, byte alpha, float[]? bars)
+        /// <summary>
+        /// 静默模式内容净宽：媒体（在播且未被实况窗接管时）+ 静默插件清单。
+        /// <see cref="DrawSilentContent"/> 与岛宽计算（NotchWindow）共用这一个口径 ——
+        /// 两边量出来必须一致，否则媒体会被裁成一条窄胶囊。
+        /// </summary>
+        internal static float MeasureSilentContentWidth(MediaController media, out float mediaW)
         {
-            var ids = Plugins.PluginManager.Instance.SilentImportantPluginIds;
-            if (ids.Count == 0) return;
+            // 必须吃「媒体作为重要信息」开关：开关关了媒体就退出岛体编排 ——
+            // 岛宽收缩到只剩其他内容（岛变形），而不是继续按「媒体 + 插件」算宽（岛不变形）。
+            mediaW = media.IsActive && SilentMode.MediaImportantEnabled
+                && (!SuppressMediaInIsland
+                    // 单气泡编排：岛缩没中且媒体气泡尚未接管 → 媒体跟岛一起缩，不留空白胶囊
+                    || (Renderer.SilentScale > 0.02f && !MediaLiveWindowController.IsActive))
+                ? MeasureMediaBlockWidth(media)
+                : 0f;
 
-            // 先量总宽：岛宽有 60px 下限，内容整体居中才不至于偏左。
-            float total = 0f;
+            float pluginsTotal = 0f;
+            var ids = Plugins.PluginManager.Instance.SilentImportantPluginIds;
             for (int i = 0; i < ids.Count; i++)
             {
                 float w = SumPluginRowWidth(ids[i]);
                 if (w <= 0f) continue;
-                total = total > 0f ? total + 16f + w : w;
+                pluginsTotal = pluginsTotal > 0f ? pluginsTotal + 16f + w : w;
             }
+
+            float total = mediaW;
+            if (mediaW > 0f && pluginsTotal > 0f) total += 16f;
+            return total + pluginsTotal;
+        }
+
+        private static void DrawSilentContent(SKCanvas canvas, MediaController media, bool isHovered,
+            float left, float currentWidth, float currentHeight, float topY, float textOffsetY, byte alpha, float[]? bars)
+        {
+            // 量宽与岛宽计算共用 MeasureSilentContentWidth（口径一致才不会被裁）。
+            float total = MeasureSilentContentWidth(media, out float mediaW);
+            bool hasMedia = mediaW > 0f;
             if (total <= 0f) return;
 
+            var ids = Plugins.PluginManager.Instance.SilentImportantPluginIds;
             float x = left + MathF.Max(16f, (currentWidth - total) / 2f);
+
+            if (hasMedia)
+            {
+                // 右缘 +18：与组合模式 DrawMediaModule 同款余量（展开按钮 / 悬停热区）。
+                DrawMediaControl(canvas, media, isHovered, bars,
+                    new MediaBlockGeometry(x, x, x + mediaW + 18f),
+                    currentHeight, textOffsetY, alpha);
+                x += mediaW + 16f;
+            }
+
             for (int i = 0; i < ids.Count; i++)
             {
                 if (SumPluginRowWidth(ids[i]) <= 0f) continue;
@@ -229,7 +262,8 @@ namespace NotchPeninsula
             float left, float right, float currentHeight, float textOffsetY, byte alpha)
         {
             // 拆分绘制逻辑
-            if (media.IsActive && !SuppressMediaInIsland)
+            if (media.IsActive && !SuppressMediaInIsland
+                && (!SilentActive || SilentMode.MediaImportantEnabled))
             {
                 DrawMediaControl(canvas, media, isHovered, bars,
                     new MediaBlockGeometry(left, left + 16f, right),

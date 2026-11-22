@@ -320,6 +320,19 @@ public sealed class PluginManager
         lock (_lock) return _entries.FirstOrDefault(e => string.Equals(e.Key, key, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// 按插件的 <see cref="PluginEntry.Id"/>（INotchPlugin.Id，不是目录 Key）找条目。
+    ///
+    /// <para>插件侧只知道自己声明的 Id，拿不到宿主的目录 Key —— <c>IPluginHost.DisableSelf</c>
+    /// 这类「插件请求宿主做事」的入口都走这个。</para>
+    /// </summary>
+    public PluginEntry? FindById(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return null;
+        lock (_lock)
+            return _entries.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase));
+    }
+
     public bool IsDisabled(PluginEntry? e)
     {
         if (e == null || string.IsNullOrEmpty(e.Key)) return false;
@@ -471,6 +484,9 @@ public sealed class PluginManager
 
         SaveSilentHiddenList();
         RaiseChanged();   // 快照失效 → 静默模式下一帧按新勾选重算
+        // 勾选是重要信息总开关：静默模式下同步到实况窗（未勾选 → 气泡挂起；重新勾选 → 恢复）。
+        try { SilentMode.SyncLiveWindowGates(); }
+        catch (Exception ex) { Logger.Error("[静默模式] 同步实况窗挂起状态失败", ex); }
     }
 
     /// <summary>
@@ -1297,6 +1313,38 @@ public sealed class PluginManager
         }
         RaiseChanged();
         return ok;
+    }
+
+    /// <summary>
+    /// 插件自己请求禁用（<see cref="IPluginHost.DisableSelf"/> 的宿主实现）。
+    ///
+    /// <para>等价于用户在插件中心关掉这个开关：记入禁用列表（重启后不再加载）→ 卸载插件。
+    /// 卸载会同步等插件自己的窗口线程退出，所以调用方必须在<b>别的线程</b>上发起，
+    /// 不能站在插件窗口线程上直接调（那是「自己等自己」）。</para>
+    ///
+    /// <para>这里统一切回 UI 调度线程执行：<see cref="SetEnabled"/> 会走
+    /// Refresh / Load / Unload，和插件中心按钮同一条路径，不能在任意后台线程上跑。</para>
+    /// </summary>
+    public void DisableById(string id)
+    {
+        var e = FindById(id);
+        if (e == null)
+        {
+            Logger.Warn($"[PluginManager] DisableById 找不到插件：{id}");
+            return;
+        }
+
+        void Do()
+        {
+            try { SetEnabled(e, false); }
+            catch (Exception ex) { Logger.Error($"[PluginManager] 插件自请求禁用失败：{id}", ex); }
+        }
+
+        var disp = _uiDispatcher;
+        if (disp != null && !disp.CheckAccess())
+            disp.BeginInvoke(DispatcherPriority.Normal, new Action(Do));
+        else
+            Do();
     }
 
     // ---- 导入 / 移除 / 打开目录 ----

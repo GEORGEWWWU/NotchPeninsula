@@ -174,8 +174,19 @@ internal sealed class MediaLiveWindow : ILiveWindow
 /// </summary>
 internal static class MediaLiveWindowController
 {
-    private const string Owner = "builtin.media";
+    public const string Owner = "builtin.media";
     private const long IslandPreviewMs = 3000;
+
+    /// <summary>
+    /// 静默编排：气泡出生动画（0.46s）站稳后、压岛前的守护时长 ——
+    /// 顺序是「主岛展示 3s 媒体 → 从媒体态岛缘生成实况窗 → 气泡站稳 → 岛缩没 → 气泡组右移居中」。
+    /// </summary>
+    private const long SpawnSettleGuardMs = 800;
+
+    /// <summary>编排 B：岛缩没（0.5s）+ 余量后，气泡才从岛中心放大出生。</summary>
+    private const long IslandHideGuardMs = 600;
+
+    private static long _pendingSpawnAtMs;   // 编排 B 的延迟出生计时（0 = 未在等待）
     // 岛体宽高弹簧固定 0.450s；这里留一帧余量让弹簧真正启动起来（否则第一帧读到的还是「没在动」）。
     private const long IslandShrinkGuardMs = 50;
     // 弹簧状态异常时不至于让气泡永远出不来（正常情况下 0.45s 就收完了）。
@@ -187,6 +198,30 @@ internal static class MediaLiveWindowController
 
     private static bool _enabled;        // 「使用实况窗展示媒体」开关（注册表持久化）
     private static bool _active;         // 气泡当前已注册
+
+    /// <summary>媒体气泡恢复出生（挂起解除）时由 LiveWindowHost 调用：重置压岛计时，等新出生站稳。</summary>
+    public static void NotifySpawnRestarted()
+    {
+        lock (_gate) _activatedAtMs = Environment.TickCount64;
+    }
+
+    private static bool _delayedSpawn;       // 编排 B（插件恢复触发）：先压岛缩没，气泡后从中心放大
+    private static long _delayedSpawnAtMs;
+
+    /// <summary>
+    /// 「只有一个东西」的启用：恢复的插件是岛上唯一内容 —— 请求延迟出生编排：
+    /// 岛先带内容缩小消失（0.5s），缩完气泡再从岛中心（=居中位）原地放大出生。
+    /// </summary>
+    public static void RequestDelayedSpawn()
+    {
+        lock (_gate)
+        {
+            _delayedSpawn = true;
+            _pendingSpawnAtMs = 0;
+            _delayedSpawnAtMs = Environment.TickCount64;
+        }
+    }
+    private static long _activatedAtMs;  // 注册成功时刻：静默编排用它等气泡站稳再压岛
     private static IDisposable? _handle;
     private static long _mediaDetectedAt;   // 首次检测到媒体的时刻；0 = 还没检测到
     private static bool _islandShrinking;   // 已请求岛体收缩，正在等弹簧跑完
@@ -230,7 +265,9 @@ internal static class MediaLiveWindowController
         // 待机时岛体只显示待机内容：媒体先留在岛内，退出待机后再重新走一遍 3 秒预览。
         // 静默模式放行 —— 用户既然在「媒体设置」里打开了实况窗，静默模式下气泡就该照常出现
         //（气泡算重要信息，岛会回来陪它，见 MediaLiveWindow.CountsAsImportantInfo）。
-        bool wantLive = enabled && media.IsActive && !Renderer.StandbyModeOnly;
+        // ⚠️ 静默模式下还要过「媒体是否作为重要信息」开关：关了就不展示（岛内和气泡都不出现）。
+        bool wantLive = enabled && media.IsActive && !Renderer.StandbyModeOnly
+                        && (!Renderer.SilentActive || SilentMode.MediaImportantEnabled);
         long now = Environment.TickCount64;
 
         // 气泡退场阶段：动画本身一点没改（还是原来那条「滑回岛体」），只是把它播完之前岛体先不展开。
@@ -239,7 +276,8 @@ internal static class MediaLiveWindowController
             bool stillExiting = LiveWindowHost.HasExiting(Owner);
             if (stillExiting && now - _bubbleExitAtMs < BubbleExitTimeoutMs)
             {
-                Renderer.SuppressMediaInIsland = true;   // 岛体维持收短态，等气泡完全收回
+                // 与普通模式顺序一致（用户定稿）：岛体维持收短态，气泡吸回，播完岛再展开。
+                Renderer.SuppressMediaInIsland = true;
                 return;
             }
             _bubbleExiting = false;
@@ -278,6 +316,56 @@ internal static class MediaLiveWindowController
         // 用户要求「岛主动画优先」：先让主岛把媒体收回去、宽高弹簧收短，等这次形变彻底跑完，
         // 再让气泡从**收短之后**的岛体左缘分裂出来 —— 两个动画不再叠在一起，气泡也不会
         // 骑着还在移动的岛体边跑。气泡自己的生成 / 分裂动画参数一个都没动。
+        //
+        // ⚠️ 静默模式走另一条编排（用户定稿，四步串行）：
+        //    ① 主岛展示 3s 媒体（IslandPreviewMs，媒体在岛内）
+        //    ② 岛**不收短**、保持媒体折叠态当参照，气泡从媒体态岛缘分裂出生（Spawn 0.46s）
+        //    ③ 气泡站稳（SpawnSettleGuardMs = 0.8s）后压岛（SuppressMediaInIsland=true
+        //       → IsIslandMedia=false → 岛缩没 0.3s）
+        //    ④ 岛不可见 → LiveWindowHost 的 islandVisible 跳变沿 → 气泡组一步到居中位。
+        //    走普通收短的话，静默下会先闪一个空白折叠胶囊，再从它上面分裂气泡。
+        if (Renderer.SilentActive && !Renderer.StandbyModeOnly)
+        {
+            // 静默编排（用户定稿，全部 0.5s 统一节奏）：
+            // A. 岛还有其他内容：气泡立即从岛缘出生（岛保持展示），站稳 0.8s 后压岛 → 岛变形/保持。
+            // B. 岛没有其他内容：先压岛（岛带内容缩小消失 0.5s），缩完气泡再从岛中心（=居中位）放大出生。
+            //    B 有两个触发源：媒体启用且岛无其他内容（下方兜底）/ 插件恢复且它是唯一内容
+            //    （RequestDelayedSpawn，由 LiveWindowHost 恢复时判定）。
+            if (_delayedSpawn)
+            {
+                Renderer.SuppressMediaInIsland = true;   // 岛带内容缩小中（岛内画由「缩没中且未接管」分支维持）
+                if (now - _delayedSpawnAtMs >= IslandHideGuardMs)
+                {
+                    _delayedSpawn = false;
+                    Activate(media);                     // 岛已缩没：气泡在居中位（=岛中心）原地放大出生
+                }
+                return;
+            }
+
+            if (SilentMode.HasIslandContent)
+            {
+                Activate(media);   // 幂等：已激活直接返回；注册被拒绝时 _active=false，岛继续显示媒体
+                bool spawnSettled = _activatedAtMs != 0 && now - _activatedAtMs >= SpawnSettleGuardMs;
+                Renderer.SuppressMediaInIsland = IsActive && spawnSettled;
+                return;
+            }
+
+            // B 兜底：媒体启用且岛无其他内容。气泡已接管则维持压制即可。
+            if (IsActive)
+            {
+                Renderer.SuppressMediaInIsland = true;
+                return;
+            }
+            Renderer.SuppressMediaInIsland = true;
+            if (_pendingSpawnAtMs == 0) _pendingSpawnAtMs = now;
+            if (now - _pendingSpawnAtMs >= IslandHideGuardMs)
+            {
+                _pendingSpawnAtMs = 0;
+                Activate(media);   // 岛已缩没：气泡在居中位（=岛中心）原地放大出生
+            }
+            return;
+        }
+
         if (!_islandShrinking)
         {
             _islandShrinking = true;
@@ -313,6 +401,7 @@ internal static class MediaLiveWindowController
 
         // 用户可能在这 3 秒里点开过主岛的媒体面板：媒体已经挪到左边，主岛不该继续展开。
         Renderer.IsMediaExpanded = false;
+        lock (_gate) _activatedAtMs = Environment.TickCount64;
         Logger.Info("[实况窗] 媒体已收进左侧实况窗（岛内不再重复显示）");
     }
 

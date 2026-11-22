@@ -30,6 +30,10 @@ namespace NotchPeninsula
 
             // 透明度档位只调整前景色调，原生背板随岛体的隐藏和穿透动画淡出。
             float opacity = Renderer.FullHideAlpha * Renderer.PassthroughAlpha;
+            // 静默模式是「缩向中心」，不走 FullHideAlpha —— 而亚克力背板是 DWM 合成的，
+            // 不跟着 Skia 画布一起缩，所以必须自己乘 SilentScale：
+            // 否则岛缩没后，原位置会留一块空白的亚克力矩形（实体材质 / 液态玻璃都画在画布里，没这问题）。
+            if (Renderer.SilentActive) opacity *= Math.Clamp(Renderer.SilentScale, 0f, 1f);
             if (material != 1 || _nativeAcrylicFailed || opacity <= 0.001f
                 || _currentWidth * _dpiScale < 1f || _currentHeight * _dpiScale < 1f)
             {

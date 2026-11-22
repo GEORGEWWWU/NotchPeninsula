@@ -2,6 +2,8 @@ using Microsoft.Win32;
 using System.IO;
 using System.Text.Json;
 
+using SkiaSharp;
+
 namespace NotchPeninsula.Plugins;
 
 public static class BuiltinWidgets
@@ -1059,4 +1061,10 @@ public sealed class ScopedPluginHost : IPluginHost
     // 静默模式：插件 Id 由这里绑定，插件只报「有没有重要信息」。
     public void SetImportantInformation(bool hasImportant, bool useImportantPresentation = false)
         => SilentMode.Report(_pluginId, hasImportant, useImportantPresentation);
+
+    // 插件自请求禁用（组件自带「关闭组件」菜单等）：等同插件中心关掉开关。
+    public void DisableSelf() => PluginManager.Instance.DisableById(_pluginId);
+
+    // 应用实际 logo（四级解析 + 宿主统一缓存，岛内 Toast 同源）。返回独立 Copy 归插件所有。
+    public SKBitmap? GetAppLogo(string? aumid) => AppIconProvider.Get(aumid);
 }

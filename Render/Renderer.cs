@@ -219,6 +219,12 @@ namespace NotchPeninsula
         {
             src = default;
             if (!_backdropMapValid) return false;
+            // 气泡可移动到背板抓屏区域之外（静默下气泡组滑行 / 居中）——部分出界时
+            // SKImage 采样越界的部分会发黑（用户实测「右半是黑的」）。
+            // 不完全落在覆盖区内就放弃玻璃取样，调用方退回纯色涂层；气泡回到覆盖区后玻璃自动恢复。
+            float coverLeft = _backdropMapCanvasLeft;
+            float coverRight = _backdropMapCanvasLeft + _backdropMapCanvasW;
+            if (canvasRect.Left < coverLeft || canvasRect.Right > coverRight) return false;
             float kx = _backdropMapSrc.Width / _backdropMapCanvasW;
             float ky = _backdropMapSrc.Height / _backdropMapCanvasH;
             src = new SKRect(
@@ -590,7 +596,9 @@ namespace NotchPeninsula
                     if (tA - _alphaDiagMs >= 2000)
                     {
                         _alphaDiagMs = tA;
-                        Logger.Warn($"[渲染] 内容透明度只有 {alpha}/255（transitionAlpha={transitionAlpha:F2}），"
+                        Logger.Warn($"[渲染] 内容透明度只有 {alpha}/255"
+                            + $"（startupProgress={startupProgress:F2} transitionAlpha={transitionAlpha:F2}"
+                            + $" PassthroughAlpha={PassthroughAlpha:F2} FullHideAlpha={FullHideAlpha:F2}），"
                             + "岛内元素会整体不可见");
                     }
                 }
@@ -642,7 +650,7 @@ namespace NotchPeninsula
                 UpdateClockCache();
 
                 // 自定义组合模式 / 原生布局
-                if (!SuppressMediaInIsland && IsMediaPanelShowing(media, currentHeight))
+                if (!SuppressMediaInIsland && (!SilentActive || SilentMode.MediaImportantEnabled) && IsMediaPanelShowing(media, currentHeight))
                     DrawMediaControl(canvas, media, isHovered, bars,
                         new MediaBlockGeometry(left, left, right), currentHeight, textOffsetY, alpha);
                 else if (CompositeModeEnabled)

@@ -210,6 +210,7 @@ namespace NotchPeninsula
             int newHoveredSilentMoveDown = -1;    // 同上：∨
             bool newSilentSwitchHovered = false;  // 静默页右上角「去切换」按钮
             bool newSilentToastHovered = false;   // 静默页「消息通知」卡
+            bool newSilentMediaHovered = false;   // 静默页「媒体」卡
             bool newToggleHovered = false;
             bool newToastToggleHovered = false;
             bool newTopmostToggleHovered = false;
@@ -781,6 +782,10 @@ namespace NotchPeninsula
                     && y >= SilentToastTop && y <= SilentToastTop + SILENT_TOAST_CARD_H)
                     newSilentToastHovered = true;
 
+                if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM
+                    && y >= SilentMediaTop && y <= SilentMediaTop + SILENT_MEDIA_CARD_H)
+                    newSilentMediaHovered = true;
+
                 var items = NotchPeninsula.Plugins.PluginManager.Instance.SilentDisplayItems;
                 int visibleRows = SilentListVisibleRows();
                 _silentListScroll = Math.Clamp(_silentListScroll, 0, Math.Max(0, items.Count - visibleRows));
@@ -870,6 +875,7 @@ namespace NotchPeninsula
                 newHoveredSilentMoveDown != _hoveredSilentMoveDown ||
                 newSilentSwitchHovered != _silentSwitchHovered ||
                 newSilentToastHovered != _silentToastHovered ||
+                newSilentMediaHovered != _silentMediaHovered ||
                 newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                 newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
@@ -949,6 +955,7 @@ namespace NotchPeninsula
                 _hoveredSilentMoveDown = newHoveredSilentMoveDown;
                 _silentSwitchHovered = newSilentSwitchHovered;
                 _silentToastHovered = newSilentToastHovered;
+                _silentMediaHovered = newSilentMediaHovered;
                 _hoveredStyleIndex = newHoveredStyleIndex;
                 _hoveredDisplayModeIndex = newHoveredDisplayModeIndex;
                 _hoveredSceneIndex = newHoveredStandbySceneIndex;
