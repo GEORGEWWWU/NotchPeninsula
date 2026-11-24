@@ -193,9 +193,9 @@ namespace NotchPeninsula
                 _bgPaint.Color = light ? new SKColor(244, 244, 244, 191) : new SKColor(19, 19, 19, 191);
             else
                 _bgPaint.Color = light ? new SKColor(245, 245, 245, 112) : new SKColor(18, 18, 18, 112);
-            _cardBg.Color = light
-                ? new SKColor(255, 255, 255, acrylic ? (byte)194 : (byte)255)
-                : new SKColor(48, 48, 51, acrylic ? (byte)176 : (byte)255);
+            // 卡片表面一律半透明：浅色 / 深色、亚克力 / 实色兜底都走同一组「很低」的不透明度，
+            // 不再因为缺少亚克力就退回纯色 —— 卡片只叠一层很薄的明度，层次交给背后的模糊底。
+            _cardBg.Color = light ? SettingsCardFillLight : SettingsCardFillDark;
             _globalBorderPaint.Color = acrylic ? Overlay(40)
                 : light ? new SKColor(205, 205, 205) : new SKColor(60, 60, 60);
         }

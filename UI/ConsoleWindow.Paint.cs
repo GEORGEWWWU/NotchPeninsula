@@ -32,6 +32,15 @@ namespace NotchPeninsula
         // 极致内存优化：全局复用画笔缓存
         private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(32, 32, 32), IsAntialias = true };
 
+        // 设置卡片填充：浅色 / 深色、亚克力 / 实色兜底都不是纯色，而是同一层很淡的白色叠加。
+        // 不透明度刻意压得很低：卡片的层次来自亚克力模糊底和留白，卡片本身只做极轻的明度抬升。
+        private const byte SettingsCardAlphaLight = 56;
+        private const byte SettingsCardAlphaDark = 26;
+
+        private static SKColor SettingsCardFillLight => new SKColor(255, 255, 255, SettingsCardAlphaLight);
+
+        private static SKColor SettingsCardFillDark => new SKColor(255, 255, 255, SettingsCardAlphaDark);
+
         // 设置窗正文的字体 / 字号：正文画笔与「下拉框要留多宽」的实测量共用这一份 ——
         // 只改这里，画出来的字和算出来的框宽会一起变，不会再各写一个 13.5。
         private const string UI_TEXT_FONT = "Microsoft YaHei UI";
@@ -67,7 +76,7 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _tabIndicator = new SKPaint { Color = new SKColor(0, 120, 212), IsAntialias = true };
 
-        private static readonly SKPaint _cardBg = new SKPaint { Color = new SKColor(48, 48, 51), IsAntialias = true };
+        private static readonly SKPaint _cardBg = new SKPaint { Color = SettingsCardFillDark, IsAntialias = true };
 
         private static readonly SKPaint _separatorPaint = new SKPaint { Color = new SKColor(255, 255, 255, 20), StrokeWidth = 1, IsAntialias = true };
 
