@@ -643,8 +643,8 @@ namespace NotchPeninsula
         private void RenderTabGeneral(SKCanvas canvas)
         {
             DrawToggleCard(canvas, CARD_TOP_Y, "开机自启", "跟随系统启动自动运行该程序", _isAutoStartEnabled, _toggleHovered, leftColumn: true);
-            // 窗口置顶（与下方消息通知整组互换位置）
-            DrawToggleCard(canvas, TOPMOST_CARD_Y, "窗口置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered, leftColumn: true);
+            // 灵动岛置顶（与下方消息通知整组互换位置）
+            DrawToggleCard(canvas, TOPMOST_CARD_Y, "灵动岛置顶", "开启后刘海将始终保持在其他窗口最上层", NotchWindow.IsTopmostEnabled, _topmostToggleHovered, leftColumn: true);
             //    分隔线 +TOAST_SEP_Y (222)
             //    分隔线 +SOUND_SEP_Y (284)
             var notifyCardRect = new SKRect(RightColumnLeft, TITLE_BAR_HEIGHT + TOAST_ROW1_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
@@ -678,10 +678,6 @@ namespace NotchPeninsula
             // ── 行 4：提示音设置（行 3 的附属，无开关）──
             bool soundRowEnabled = ToastSoundConfig.IsRowEnabled;
             bool soundReady = ToastSoundConfig.IsSourceReady;
-
-            if (!soundRowEnabled) _uiTextPaint.Color = Neutral(100);
-            canvas.DrawText("提示音", SOUND_LABEL_X, TITLE_BAR_HEIGHT + SOUND_ROW_TITLE_Y, _uiTextPaint);
-            if (!soundRowEnabled) _uiTextPaint.Color = _fgColor;
 
             DrawDropdownBox(canvas, SOUND_CTRL_X, TITLE_BAR_HEIGHT + SOUND_BOX_Y, SOUND_CTRL_W, SOUND_ROW_H,
                 ToastSoundConfig.CurrentDisplayText(), _toastSoundDropdownHovered, enabled: soundRowEnabled,
@@ -853,8 +849,8 @@ namespace NotchPeninsula
             DrawStyleOption(0, "经典刘海", STYLE_OPT_X, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
             DrawStyleOption(1, "悬浮灵动岛", STYLE_OPT_X + STYLE_OPT_W + CARD_GAP, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
 
-            var displayOptions = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + MONITOR_ROW_Y + page,
-                LeftColumnRight, TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_H + 8);
+            var displayOptions = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + DISPLAY_OPTIONS_CARD_Y + page,
+                LeftColumnRight, TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_H + 8f + DISPLAY_OPTIONS_EXTRA_PAD);
             DrawSettingsCard(canvas, displayOptions);
             float monitorRowY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + page;
             canvas.DrawText("目标显示器", CONTENT_TEXT_X, monitorRowY + ROW_LABEL_DY, _uiTextPaint);
@@ -864,11 +860,12 @@ namespace NotchPeninsula
             DrawDropdownBox(canvas, mdX, mdY, MONITOR_DD_W, MONITOR_DD_H, mName,
                 _monitorDropdownHovered, enabled: true, open: _monitorDropdownOpen);
 
-            // ── 显示模式（单行分段器）：待机 / 普通 / 静默 ──
             float modeRowY = TITLE_BAR_HEIGHT + MODE_ROW_Y + page;
             canvas.DrawText("显示模式", CONTENT_TEXT_X, modeRowY + ROW_LABEL_DY, _uiTextPaint);
-            DrawSegmented(canvas, MODE_SEG_X, modeRowY + (ROW_H - SEG_H) / 2f, MODE_SEG_W, SEG_H,
-                DisplayModeLabels, (int)Renderer.DisplayMode, _hoveredDisplayModeIndex);
+            var modeBox = DisplayModeDropdownBox;
+            DrawDropdownBox(canvas, modeBox.Left, modeBox.Top, modeBox.Width, modeBox.Height,
+                DisplayModeLabels[(int)Renderer.DisplayMode], _displayModeDropdownHovered, enabled: true,
+                open: _displayModeDropdownOpen);
 
             float sceneRowY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + page;
             canvas.DrawText("待机显示内容", CONTENT_TEXT_X, sceneRowY + ROW_LABEL_DY, _uiTextPaint);
@@ -2527,10 +2524,10 @@ namespace NotchPeninsula
             //    所以向上展开 —— 向下展开会一路拖出窗口。
             if (_selectedTab == 0 && _soundVolumeDropdownOpen)
             {
-                GetVolumeMenuLayout(out _, out _, out int volVisible);
-                RenderDropdownList(canvas, SOUND_VOL_X, TITLE_BAR_HEIGHT + SOUND_BOX_Y, SOUND_VOL_W,
-                    VolumeOptionLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex, dimmedIndex: -1,
-                    upward: true, scrollFirst: 0, visibleRowsOverride: volVisible);
+                GetVolumeMenuLayout(out float menuTop, out int volVisible, out bool upward);
+                RenderDropdownList(canvas, SOUND_VOL_X, upward ? TITLE_BAR_HEIGHT + SOUND_BOX_Y : menuTop,
+                    SOUND_VOL_W, VolumeOptionLabels, ToastSoundConfig.VolumeIndex, _hoveredSoundVolumeIndex,
+                    dimmedIndex: -1, upward: upward, visibleRowsOverride: volVisible);
             }
 
             if (_selectedTab == 1 && _monitorDropdownOpen)
@@ -2539,6 +2536,13 @@ namespace NotchPeninsula
                 float dY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + MONITOR_DD_H + 2f - _displayPageScroll;
                 RenderDropdownList(canvas, dX, dY, MONITOR_DD_W, _monitorOptions,
                     Renderer.TargetMonitorIndex, _hoveredMonitorDropdownIndex, dimmedIndex: -1);
+            }
+
+            if (_selectedTab == 1 && _displayModeDropdownOpen)
+            {
+                var box = DisplayModeDropdownBox;
+                RenderDropdownList(canvas, box.Left, box.Bottom + 2f, box.Width,
+                    DisplayModeLabels, (int)Renderer.DisplayMode, _hoveredDisplayModeIndex, dimmedIndex: -1);
             }
 
             // 待机显示内容下拉（显示设置）：放最后画，要盖住下面的切换行和显示内容列表

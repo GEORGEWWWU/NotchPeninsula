@@ -133,7 +133,8 @@ namespace NotchPeninsula
             }
 
             int newHoveredStyleIndex = -1;
-            int newHoveredDisplayModeIndex = -1;  // 显示模式：0 = 待机模式 / 1 = 普通模式
+            bool newDisplayModeDropdownHovered = false;
+            int newHoveredDisplayModeIndex = -1;
             int newHoveredStandbySceneIndex = -1; // 待机显示内容下拉：列表项的悬停下标
             bool newSceneDropdownHovered = false; // 待机显示内容下拉：框本体的悬停
             bool newStandbyToggleHovered = false; // 待机模式：「双击空白切换」开关
@@ -218,7 +219,7 @@ namespace NotchPeninsula
                 // 开机自启
                 if (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newToggleHovered = true;
-                // 窗口置顶开关
+                // 灵动岛置顶开关
                 if (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                     newTopmostToggleHovered = true;
 
@@ -271,8 +272,7 @@ namespace NotchPeninsula
                     newSoundVolumeDropdownHovered = true;
                 if (soundReady && _soundVolumeDropdownOpen)
                 {
-                    GetVolumeMenuLayout(out float menuTopV, out _, out _);
-                    int volVisible = ToastSoundConfig.VolumeOptions.Length;
+                    GetVolumeMenuLayout(out float menuTopV, out int volVisible, out _);
                     if (x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W)
                     {
                         int row = DropdownRowAt(menuTopV, volVisible, y);
@@ -306,9 +306,10 @@ namespace NotchPeninsula
             else if (_selectedTab == 1) // 显示设置
             {
                 float page = -_displayPageScroll;
+                bool dropdownOpen = _monitorDropdownOpen || _displayModeDropdownOpen || _sceneDropdownOpen;
 
                 float styleY = TITLE_BAR_HEIGHT + STYLE_OPT_Y + page;
-                if (y >= styleY && y <= styleY + STYLE_OPT_H)
+                if (!dropdownOpen && y >= styleY && y <= styleY + STYLE_OPT_H)
                 {
                     if (x >= STYLE_OPT_X && x <= STYLE_OPT_X + STYLE_OPT_W) newHoveredStyleIndex = 0;
                     else
@@ -320,7 +321,7 @@ namespace NotchPeninsula
 
                 float mdY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + (ROW_H - MONITOR_DD_H) / 2f + page;
                 float mdX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
-                if (!_monitorDropdownOpen && x >= mdX && x <= DISPLAY_CTRL_RIGHT && y >= mdY && y <= mdY + MONITOR_DD_H)
+                if (!dropdownOpen && HitMonitorDropdownBox(x, y))
                     newMonitorDropdownHovered = true;
 
                 if (_monitorDropdownOpen)
@@ -333,21 +334,12 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 目标显示器列表展开时它压住下面几行控件（列表 y 209 起，每项 26），
-                // 被压住的控件必须一起停掉悬停，否则会有「悬停列表却亮了显示模式」的观感。
-                bool monitorListOpen = _monitorDropdownOpen;
+                if (_displayModeDropdownOpen)
+                    newHoveredDisplayModeIndex = HitDisplayModeOption(x, y);
+                else if (!dropdownOpen)
+                    newDisplayModeDropdownHovered = DisplayModeDropdownBox.Contains(x, y);
 
-                float modeSegY = TITLE_BAR_HEIGHT + MODE_ROW_Y + (ROW_H - SEG_H) / 2f + page;
-                if (!monitorListOpen && !_sceneDropdownOpen
-                    && y >= modeSegY && y <= modeSegY + SEG_H && x >= MODE_SEG_X && x <= MODE_SEG_X + MODE_SEG_W)
-                    newHoveredDisplayModeIndex = Math.Min(2, (int)((x - MODE_SEG_X) / (MODE_SEG_W / 3f)));
-
-                // 待机显示内容下拉框：展开期间框本体不再吃悬停，交给下面的列表项。
-                // 只有待机模式可点（普通 / 静默置灰）。
-                float sceneBoxY = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f + page;
-                if (!monitorListOpen && !_sceneDropdownOpen && Renderer.StandbyModeOnly
-                    && x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W
-                    && y >= sceneBoxY && y <= sceneBoxY + SCENE_DD_H)
+                if (!dropdownOpen && Renderer.StandbyModeOnly && HitSceneDropdownBox(x, y))
                     newSceneDropdownHovered = true;
 
                 if (_sceneDropdownOpen)
@@ -361,18 +353,16 @@ namespace NotchPeninsula
                     }
                 }
 
-                bool sceneListOpen = _sceneDropdownOpen;
-
                 float modeToggleCy = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
                 // 静默模式下这一整行置灰（岛本来就退场，双击切换没有意义）。
-                if (!monitorListOpen && !sceneListOpen && !Renderer.SilentActive
+                if (!dropdownOpen && !Renderer.SilentActive
                     && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14
                     && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
                     newStandbyToggleHovered = true;
 
                 // 整行悬停只服务右侧那句蓝字提示（悬浮才显示，点击仍只认开关本体）。
                 float standbyRowTop = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page;
-                if (!monitorListOpen && !sceneListOpen && !Renderer.SilentActive
+                if (!dropdownOpen && !Renderer.SilentActive
                     && x >= CONTENT_TEXT_X && x <= LeftColumnRight
                     && y >= standbyRowTop && y <= standbyRowTop + ROW_H)
                     newStandbyRowHovered = true;
@@ -382,7 +372,7 @@ namespace NotchPeninsula
                 float displayRowTop = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_FIRST_ROW_Y + page;
                 float displayRowBottom = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page;
                 // 待机 / 静默模式下这张卡不控制任何东西（静默清单在 tab 9），整卡不吃悬停。
-                if (!Renderer.StandbyModeOnly && !Renderer.SilentActive && !monitorListOpen && !sceneListOpen
+                if (!Renderer.StandbyModeOnly && !Renderer.SilentActive && !dropdownOpen
                     && x >= DISPLAY_ITEM_L && x <= DISPLAY_ITEM_R && y >= displayRowTop && y <= displayRowBottom)
                 {
                     int rowIdx = _displayScroll + (int)((y - displayRowTop) / DISPLAY_ROW_H);
@@ -395,7 +385,7 @@ namespace NotchPeninsula
                     }
                 }
 
-                if (!sceneListOpen && GetDisplayPageMaxScroll() > 0f)
+                if (!dropdownOpen && GetDisplayPageMaxScroll() > 0f)
                 {
                     GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
                     if (x >= DisplayPageScrollbarX - 6f && x <= WIDTH - CONTENT_RM && y >= pageBarTop && y <= pageBarTop + pageBarH)
@@ -403,7 +393,7 @@ namespace NotchPeninsula
                 }
 
                 GetListScrollbarLayout(out float listBarTop, out float listBarH);
-                if (!sceneListOpen && listBarH > 0f && ScrollBarAlpha() > 0.01f
+                if (!dropdownOpen && listBarH > 0f && ScrollBarAlpha() > 0.01f
                     && x >= DisplayListScrollbarX - 6f && x <= WIDTH - CONTENT_RM
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
@@ -818,7 +808,7 @@ namespace NotchPeninsula
             if (x >= RightColumnLeft && x <= WIDTH - CONTENT_RM)
             {
                 if (_selectedTab == 0 && !ToastSoundConfig.IsRowEnabled
-                    && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
+                    && y >= TITLE_BAR_HEIGHT + SOUND_BOX_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
                 {
                     newIsHoveringDisabledArea = true;
                 }
@@ -842,6 +832,7 @@ namespace NotchPeninsula
                 newHoveredAppIndex != _hoveredAppIndex ||
                 newHoveredDropdownIndex != _hoveredDropdownIndex || newHoveredLinkIndex != _hoveredLinkIndex ||
                 newHoveredStyleIndex != _hoveredStyleIndex ||
+                newDisplayModeDropdownHovered != _displayModeDropdownHovered ||
                 newHoveredDisplayModeIndex != _hoveredDisplayModeIndex ||
                 newHoveredStandbySceneIndex != _hoveredSceneIndex ||
                 newSceneDropdownHovered != _sceneDropdownHovered ||
@@ -945,6 +936,7 @@ namespace NotchPeninsula
                 _silentToastHovered = newSilentToastHovered;
                 _silentMediaHovered = newSilentMediaHovered;
                 _hoveredStyleIndex = newHoveredStyleIndex;
+                _displayModeDropdownHovered = newDisplayModeDropdownHovered;
                 _hoveredDisplayModeIndex = newHoveredDisplayModeIndex;
                 _hoveredSceneIndex = newHoveredStandbySceneIndex;
                 _sceneDropdownHovered = newSceneDropdownHovered;

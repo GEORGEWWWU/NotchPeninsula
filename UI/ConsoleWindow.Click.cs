@@ -384,6 +384,12 @@ namespace NotchPeninsula
             {
                 CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.Volume);
             }
+            else if (_soundVolumeDropdownOpen && _hoveredSoundVolumeIndex != -1)
+            {
+                ApplyToastSoundVolume(_hoveredSoundVolumeIndex);
+                _soundVolumeDropdownOpen = false;
+                Render();
+            }
             else if (_matchModeDropdownOpen && _hoveredMatchModeIndex == -1)
             {
                 CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.MatchMode);
@@ -396,9 +402,32 @@ namespace NotchPeninsula
             {
                 CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.Scene);
             }
-            // 目标显示器下拉必须在显示页其它控件之前判定：展开的列表（y 209~261）与「显示模式」
-            // 分段器（y 220~250）重叠且 x 区间被包含，先判下面的控件会把列表里的点击整个吃掉，
-            // 表现成「点了主显示器却什么都没发生」。
+            else if (_selectedTab == 1 && _displayModeDropdownOpen)
+            {
+                int option = HitDisplayModeOption(clickX, clickY);
+                if (option < 0)
+                {
+                    CloseDropdownAndOpenHit(clickX, clickY, DropdownKind.DisplayMode);
+                    return;
+                }
+
+                CloseAllDropdowns();
+                var mode = (IslandDisplayMode)option;
+                if (Renderer.DisplayMode != mode)
+                {
+                    Renderer.DisplayMode = mode;
+                    Program.SaveSetting("DisplayMode", option);
+                    SilentMode.SyncLiveWindowGates();
+                    Program.SaveSetting("StandbyActive", mode == IslandDisplayMode.Standby ? 1 : 0);
+                }
+                Render();
+            }
+            else if (_selectedTab == 1 && !_monitorDropdownOpen && !_sceneDropdownOpen
+                && DisplayModeDropdownBox.Contains(clickX, clickY))
+            {
+                OpenDropdown(DropdownKind.DisplayMode);
+                Render();
+            }
             else if (_monitorDropdownHovered) { _monitorDropdownOpen = true; Render(); }
             else if (_monitorDropdownOpen && _hoveredMonitorDropdownIndex != -1)
             {
@@ -431,23 +460,6 @@ namespace NotchPeninsula
                 Renderer.NotchStyle = _hoveredStyleIndex;
                 Program.SaveSetting("NotchStyle", _hoveredStyleIndex);
                 Render();
-            }
-            else if (_selectedTab == 1 && _hoveredDisplayModeIndex != -1)
-            {
-                var want = (IslandDisplayMode)_hoveredDisplayModeIndex;
-                if (Renderer.DisplayMode != want)
-                {
-                    Renderer.DisplayMode = want;
-                    Program.SaveSetting("DisplayMode", (int)want);
-                    // 进/出静默：同步实况窗挂起状态（未勾选插件的重要信息气泡在静默下撤下）
-                    SilentMode.SyncLiveWindowGates();
-                    // 老键一起写：万一回退到旧版本，至少「待机 / 普通」的语义还是对的
-                    //（旧版本没有静默模式，会把静默当成普通）。
-                    Program.SaveSetting("StandbyActive", want == IslandDisplayMode.Standby ? 1 : 0);
-                    // 模式一换，待机显示内容下拉 / 场景列表的可用性就变了：残留的展开列表必须收掉。
-                    CloseAllDropdowns();
-                    Render();
-                }
             }
             else if (_selectedTab == 1 && _standbyToggleHovered)
             {
@@ -528,12 +540,6 @@ namespace NotchPeninsula
             {
                 CloseAllDropdowns();
                 _soundVolumeDropdownOpen = true;
-                Render();
-            }
-            else if (_soundVolumeDropdownOpen && _hoveredSoundVolumeIndex != -1)
-            {
-                ApplyToastSoundVolume(_hoveredSoundVolumeIndex);
-                _soundVolumeDropdownOpen = false;
                 Render();
             }
             else if (_soundPreviewHovered && ToastSoundConfig.IsSourceReady) { PreviewToastSound(); }
@@ -919,7 +925,7 @@ namespace NotchPeninsula
 
                 Render();
             }
-            // 静默模式设置页右上角「去切换」→ 显示设置（显示模式三段在那儿）
+            // 静默模式设置页右上角「去切换」→ 显示设置（显示模式下拉框在那儿）
             else if (_selectedTab == 9 && _silentSwitchHovered)
             {
                 SwitchTab(1);

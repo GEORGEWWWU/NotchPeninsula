@@ -171,9 +171,9 @@ namespace NotchPeninsula
                         || _soundToggleHovered || _toastSoundDropdownHovered || _soundVolumeDropdownHovered
                         || _soundPreviewHovered || _soundResetHovered || _mspToggleHovered || _mspWikiHovered
                         || _fontPickHovered || _fontResetHovered,
-                1 => _monitorDropdownOpen || _sceneDropdownOpen
-                    ? _hoveredMonitorDropdownIndex >= 0 || _hoveredSceneIndex >= 0
-                    : _hoveredStyleIndex >= 0 || _hoveredDisplayModeIndex >= 0 || _sceneDropdownHovered
+                1 => _monitorDropdownOpen || _displayModeDropdownOpen || _sceneDropdownOpen
+                    ? _hoveredMonitorDropdownIndex >= 0 || _hoveredDisplayModeIndex >= 0 || _hoveredSceneIndex >= 0
+                    : _hoveredStyleIndex >= 0 || _displayModeDropdownHovered || _sceneDropdownHovered
                         || _standbyToggleHovered || _monitorDropdownHovered || _hoveredDisplayRow >= 0
                         || _hoveredDisplayMoveUp >= 0 || _hoveredDisplayMoveDown >= 0 || _hoveredDisplayDrag >= 0,
                 2 => _dropdownOpen || _matchModeDropdownOpen || _appDropdownOpen

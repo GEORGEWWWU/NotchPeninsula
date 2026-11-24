@@ -126,25 +126,24 @@ namespace NotchPeninsula
 
         private const float SEG_H = 30f;
 
-        private const float MONITOR_ROW_Y = STYLE_CARD_Y + STYLE_CARD_H + CARD_GAP;  // 140
+        private const float DISPLAY_OPTIONS_CARD_Y = STYLE_CARD_Y + STYLE_CARD_H + CARD_GAP;
+        private const float DISPLAY_OPTIONS_EXTRA_PAD = 5f;
+        private const float MONITOR_ROW_Y = DISPLAY_OPTIONS_CARD_Y + DISPLAY_OPTIONS_EXTRA_PAD;
 
         private const float MONITOR_DD_W = 160f;
 
         private const float MONITOR_DD_H = 32f;
 
-        private const float MODE_ROW_Y = MONITOR_ROW_Y + 44f;                   // 184
+        private const float MODE_ROW_Y = MONITOR_ROW_Y + 44f;
 
         // 显示页控件右缘：与卡片文字同一右缩进（WIDTH - CONTENT_TEXT_RM）。
         // 之前用 WIDTH - CONTENT_RM（顶着卡片边线），比开关 / 列表箭头凸出一截，整行看起来偏右。
         private float DISPLAY_CTRL_RIGHT => LeftColumnRight - 16f;
 
-        // 三段：待机 / 普通 / 静默（新增静默模式后从 2×92 扩到 3×92）。
-        // 左缘 296 落在「显示模式」标签（202 起，约 250 终）右侧，仍留 46px 呼吸。
-        private float MODE_SEG_W => MathF.Min(276f, DISPLAY_CTRL_RIGHT - CONTENT_TEXT_X - 100f);
+        private const float MODE_DD_W = MONITOR_DD_W;
+        private const float MODE_DD_H = MONITOR_DD_H;
 
-        private float MODE_SEG_X => DISPLAY_CTRL_RIGHT - MODE_SEG_W;       // 296
-
-        private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 228
+        private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;
 
         private float SCENE_SEG_W => MathF.Min(240f, DISPLAY_CTRL_RIGHT - CONTENT_TEXT_X - 100f);
 
@@ -152,7 +151,7 @@ namespace NotchPeninsula
 
         private float SCENE_SEG_X => DISPLAY_CTRL_RIGHT - SCENE_SEG_W;     // 332
 
-        private const float TOGGLE_ROW_Y = SCENE_ROW_Y + 33f;                   // 261
+        private const float TOGGLE_ROW_Y = SCENE_ROW_Y + 33f;
 
         private const float DISPLAY_PAGE_WHEEL_STEP = 48f;
 
@@ -318,7 +317,7 @@ namespace NotchPeninsula
         //   · 行 1「系统消息通知」行首 156 = 首卡 + 两张单行开关卡（各带一个 CARD_GAP）
         //   · 分隔线放在每一对行之间（行带 2026-10-24 由 62 压到 54，整卡收 38）
 
-        private const float TOPMOST_CARD_Y = CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;          // 84 窗口置顶
+        private const float TOPMOST_CARD_Y = CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;          // 84 灵动岛置顶
 
         private const float TOAST_ROW1_Y = CARD_TOP_Y;     // 156
 
@@ -388,13 +387,9 @@ namespace NotchPeninsula
 
         private const float TOAST_TOGGLE_ROW_Y = TOAST_ROW1_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f;
 
-        private const float SOUND_ROW_Y = SOUND_ROW3_Y + 54f;
-
-        private const float SOUND_ROW_TITLE_Y = SOUND_ROW_Y + 17f;
-
         private const float SOUND_ROW_H = 32f;
 
-        private const float SOUND_BOX_Y = SOUND_ROW_Y + 26f;
+        private const float SOUND_BOX_Y = SOUND_ROW3_Y + ROW_TEXT_BASELINE + ROW_SUB_OFFSET + SEP_ROW_CONTENT_DY + 9f;
 
         private const float TOAST_CARD_BOTTOM = SOUND_BOX_Y + SOUND_ROW_H + 10f;
 
@@ -410,9 +405,7 @@ namespace NotchPeninsula
 
         private float SOUND_PREVIEW_X => SOUND_RESET_X - SOUND_BTN_GAP - SOUND_BTN_W;
 
-        private float SOUND_LABEL_X => RightColumnText;
-
-        private float SOUND_CTRL_X => SOUND_LABEL_X;
+        private float SOUND_CTRL_X => RightColumnText;
 
         // 来源框宽度固定为上一版的结果（250 → 385）：音量框再宽也不去抢它的宽度，
         // 多出来的宽度由音量框向自己左右两侧的间隙里「撑开」。
@@ -725,12 +718,17 @@ namespace NotchPeninsula
             maxFirstRow = Math.Max(0, total - visibleRows);
         }
 
-        private void GetVolumeMenuLayout(out float menuTop, out float menuBottom, out int visibleRows)
+        private void GetVolumeMenuLayout(out float menuTop, out int visibleRows, out bool upward)
         {
-            menuBottom = TITLE_BAR_HEIGHT + SOUND_BOX_Y - 2f;   // 对应 RenderDropdownList 的 anchorY - 2
-            int maxRows = Math.Max(1, (int)((menuBottom - TITLE_BAR_HEIGHT - 12f - DROPDOWN_PAD_Y * 2f) / DROPDOWN_ROW_H));
-            visibleRows = Math.Min(ToastSoundConfig.VolumeOptions.Length, maxRows);
-            menuTop = menuBottom - DropdownHeight(visibleRows);
+            float boxTop = TITLE_BAR_HEIGHT + SOUND_BOX_Y;
+            float above = boxTop - 2f - TITLE_BAR_HEIGHT - 12f;
+            float below = ContentBottom - (boxTop + SOUND_ROW_H + 2f);
+            int total = VolumeOptionLabels.Length;
+            upward = above >= DropdownHeight(total) || above >= below;
+            float space = upward ? above : below;
+            int maxRows = Math.Max(1, (int)((space - DROPDOWN_PAD_Y * 2f) / DROPDOWN_ROW_H));
+            visibleRows = Math.Min(total, maxRows);
+            menuTop = upward ? boxTop - 2f - DropdownHeight(visibleRows) : boxTop + SOUND_ROW_H + 2f;
         }
 
         private void ScrollToastSoundMenuToSelected()
@@ -949,6 +947,8 @@ namespace NotchPeninsula
 
         private bool _listScrollbarHovered;
 
+        private bool _displayModeDropdownHovered;
+        private bool _displayModeDropdownOpen;
         private int _hoveredDisplayModeIndex = -1;
 
         // 静默模式设置页（tab 9）列表的悬停项：行本体 / ∧ / ∨
@@ -965,7 +965,7 @@ namespace NotchPeninsula
         private bool _silentToastHovered;
         private bool _silentMediaHovered;   // 静默页「媒体」卡（媒体是否作为重要信息），整卡点击切换
 
-        // 显示模式分段器的标签：下标与 IslandDisplayMode 一一对应（0 待机 / 1 普通 / 2 静默）。
+        // 显示模式下拉框的标签：下标与 IslandDisplayMode 一一对应（0 待机 / 1 普通 / 2 静默）。
         private static readonly string[] DisplayModeLabels = ["待机模式", "普通模式", "静默模式"];
 
         // ---- 待机显示内容下拉（空白 + 内置项 + 插件按名称排序）----
@@ -1078,7 +1078,7 @@ namespace NotchPeninsula
             Render();
         }
 
-        // 显示页两个下拉框的落点判定（与绘制坐标同源）。点击落在别的下拉框上时用来「切换」而不是只收起。
+        // 显示页下拉框的落点判定（与绘制坐标同源）。点击落在别的下拉框上时用来「切换」而不是只收起。
         private bool HitSceneDropdownBox(int x, int y)
         {
             float sy = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f - _displayPageScroll;
@@ -1093,9 +1093,26 @@ namespace NotchPeninsula
             return x >= mdX && x <= DISPLAY_CTRL_RIGHT && y >= mdY && y <= mdY + MONITOR_DD_H;
         }
 
+        private SKRect DisplayModeDropdownBox
+        {
+            get
+            {
+                float y = TITLE_BAR_HEIGHT + MODE_ROW_Y + (ROW_H - MODE_DD_H) / 2f - _displayPageScroll;
+                return new SKRect(DISPLAY_CTRL_RIGHT - MODE_DD_W, y, DISPLAY_CTRL_RIGHT, y + MODE_DD_H);
+            }
+        }
+
+        private int HitDisplayModeOption(int x, int y)
+        {
+            var box = DisplayModeDropdownBox;
+            return x >= box.Left && x < box.Right
+                ? DropdownRowAt(box.Bottom + 2f, DisplayModeLabels.Length, y)
+                : -1;
+        }
+
         // ---- 下拉切换：展开着 A 时点到 B 的框，收起 A 并展开 B ----
         // 只靠「点外部收起」那条分支会把这一下直接吃掉，表现为第二下点了没反应。
-        private enum DropdownKind { None, ToastMode, ToastSound, Volume, Platform, MatchMode, App, Monitor, Scene, Theme, Material, Opacity }
+        private enum DropdownKind { None, ToastMode, ToastSound, Volume, Platform, MatchMode, App, Monitor, DisplayMode, Scene, Theme, Material, Opacity }
 
         private DropdownKind HitDropdownTrigger(int x, int y)
         {
@@ -1119,6 +1136,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 1)
             {
                 if (HitMonitorDropdownBox(x, y)) return DropdownKind.Monitor;
+                if (DisplayModeDropdownBox.Contains(x, y)) return DropdownKind.DisplayMode;
                 // 待机显示内容下拉只在待机模式可点（普通 / 静默模式下是置灰状态）。
                 if (Renderer.StandbyModeOnly && HitSceneDropdownBox(x, y)) return DropdownKind.Scene;
             }
@@ -1173,6 +1191,7 @@ namespace NotchPeninsula
                     _personalizeDropdownOpen = kind;
                     break;
                 case DropdownKind.Monitor: _monitorDropdownOpen = true; break;
+                case DropdownKind.DisplayMode: _displayModeDropdownOpen = true; break;
                 case DropdownKind.Scene:
                     BuildSceneChoices();
                     ScrollSceneMenuToSelected();

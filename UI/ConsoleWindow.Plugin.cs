@@ -310,6 +310,9 @@ namespace NotchPeninsula
         {
             _dropdownOpen = false;
             _monitorDropdownOpen = false;
+            _displayModeDropdownOpen = false;
+            _displayModeDropdownHovered = false;
+            _hoveredDisplayModeIndex = -1;
             _toastModeDropdownOpen = false;
             _toastSoundDropdownOpen = false;
             _soundVolumeDropdownOpen = false;
