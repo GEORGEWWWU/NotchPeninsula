@@ -326,6 +326,7 @@ namespace NotchPeninsula
             SyncHotkeyHoverFromPoint(clickX, clickY);
             SyncExportHoverFromPoint(clickX, clickY);
             int clickedTab = HitSidebarTab(clickX, clickY);
+            int clickedAboutLink = HitAboutLink(clickX, clickY);
 
             // 「显示内容」列表的 ≡ 把手：长按拖动排序。短按吃掉这次点击，不触发行的显隐切换。
             if (TryStartDisplayDrag(clickX, clickY)) return;
@@ -650,9 +651,10 @@ namespace NotchPeninsula
             {
                 ExportDiagnostics();
             }
-            else if (_selectedTab == 4 && _hoveredLinkIndex != -1)
+            else if (clickedAboutLink >= 0)
             {
-                if (_hoveredLinkIndex == 0)
+                string? url = AboutLinks[clickedAboutLink].Url;
+                if (url == null)
                 {
                     // 「检测更新」不再直接甩浏览器：真的去查一次，结果照「发现新版本」那套弹窗说话
                     // （有新版 = 前往下载；已最新 / 查不到 = 同样式的小弹窗给结论）。
@@ -660,17 +662,11 @@ namespace NotchPeninsula
                 }
                 else
                 {
-                    string[] urls = [
-                        "",                                                      // 0: 检测更新（走后台检测，不跳转）
-                        "https://nps.georgewu.top",                              // 1: 项目主页
-                        "https://github.com/GEORGEWWWU/NotchPeninsula",          // 2: 仓库地址
-                        "https://georgewu.top/"                                  // 3: 开发者主页
-                    ];
                     try
                     {
                         Process.Start(new ProcessStartInfo
                         {
-                            FileName = urls[_hoveredLinkIndex],
+                            FileName = url,
                             UseShellExecute = true
                         });
                     }

@@ -810,12 +810,6 @@ namespace NotchPeninsula
 
         private int _hoveredLinkIndex = -1;
 
-        // 关于页四个链接的命中边界：RenderTabAbout 每帧按实际字宽量好后写这里，
-        // 悬停判定直接用同一份布局（整体居中；不写死 x 坐标）。
-        private readonly float[] _aboutLinkLeft = new float[4];
-        private readonly float[] _aboutLinkRight = new float[4];
-        private float _aboutLinkTop, _aboutLinkBottom;
-
         // 「导出诊断包」按钮：常驻在侧边栏左下角（页签最底一行到 388，下面整片空白）。
         // 绘制 / 悬停 / 点击三处共用这套几何。
         // 收起后的方形按钮沿原图标中心布置。

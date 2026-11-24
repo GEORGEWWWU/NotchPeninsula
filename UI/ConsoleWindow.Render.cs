@@ -1406,58 +1406,93 @@ namespace NotchPeninsula
             return mods.Length > 0 ? mods + "…" : "按下按键…";
         }
 
-        // 页签：关于软件
-        // 两张卡各按自己的内容收高：左卡是图标 + 名称 + 版本号，右卡是标题 + 一排链接按钮。
-        // （旧版两张都是写死的 196，右卡底下空出一大半。）
-        private const float ABOUT_ICON_TOP = 30f;
-        private const float ABOUT_ICON_SIZE = 64f;
-        private const float ABOUT_TITLE_BASELINE = 128f;
-        private const float ABOUT_VERSION_BASELINE = 153f;
-        private const float ABOUT_LINKS_TITLE_BASELINE = 30f;
-        private const float ABOUT_LINKS_BASELINE = 82f;
-        private const float ABOUT_LINK_BTN_TOP = 20f;      // 按钮上沿相对基线
-        private const float ABOUT_LINK_BTN_BOTTOM = 9f;    // 按钮下沿相对基线
+        private const float AboutIconTop = 22f;
+        private const float AboutIconSize = 64f;
+        private const float AboutTitleBaseline = 112f;
+        private const float AboutSubtitleBaseline = 137f;
+        private const float AboutButtonTop = 154f;
+        private const float AboutButtonHeight = 30f;
+        private const float AboutButtonWidth = 84f;
+        private const float AboutButtonGap = 8f;
+        private const float AboutCardHeight = AboutButtonTop + AboutButtonHeight + 16f;
 
-        private float AboutIdentityCardH => ABOUT_VERSION_BASELINE + TEXT_INK_BOTTOM + CARD_BOTTOM_PAD;
-        private float AboutResourcesCardH => ABOUT_LINKS_BASELINE + ABOUT_LINK_BTN_BOTTOM + CARD_BOTTOM_PAD;
+        private static readonly (string Label, string? Url)[] AboutLinks =
+        [
+            ("检测更新", null),
+            ("项目主页", "https://nps.georgewu.top/"),
+            ("项目仓库", "https://github.com/GEORGEWWWU/NotchPeninsula"),
+            ("个人主页", "https://georgewu.top/")
+        ];
+
+        private static readonly Lazy<SKBitmap?> AboutAuthorAvatar = new(() =>
+        {
+            using var stream = DataResources.OpenRead("data/image/ryenryen-avatar.png");
+            return stream == null ? null : SKBitmap.Decode(stream);
+        });
+
+        private SKRect AboutLinkRect(int index)
+        {
+            float y = TITLE_BAR_HEIGHT + CARD_TOP_Y + AboutButtonTop;
+            float left;
+            if (index == AboutLinks.Length - 1)
+                left = (RightColumnLeft + WIDTH - CONTENT_RM - AboutButtonWidth) / 2f;
+            else
+            {
+                int count = AboutLinks.Length - 1;
+                float groupWidth = count * AboutButtonWidth + (count - 1) * AboutButtonGap;
+                left = (CONTENT_L + LeftColumnRight - groupWidth) / 2f
+                    + index * (AboutButtonWidth + AboutButtonGap);
+            }
+            return SKRect.Create(left, y, AboutButtonWidth, AboutButtonHeight);
+        }
+
+        private int HitAboutLink(int x, int y)
+        {
+            if (_selectedTab == 4)
+                for (int i = 0; i < AboutLinks.Length; i++)
+                    if (AboutLinkRect(i).Contains(x, y)) return i;
+            return -1;
+        }
 
         private void RenderTabAbout(SKCanvas canvas)
         {
             float top = TITLE_BAR_HEIGHT + CARD_TOP_Y;
-            var identity = new SKRect(CONTENT_L, top, LeftColumnRight, top + AboutIdentityCardH);
-            var resources = new SKRect(RightColumnLeft, top, WIDTH - CONTENT_RM, top + AboutResourcesCardH);
-            DrawSettingsCard(canvas, identity);
-            DrawSettingsCard(canvas, resources);
+            var project = new SKRect(CONTENT_L, top, LeftColumnRight, top + AboutCardHeight);
+            var author = new SKRect(RightColumnLeft, top, WIDTH - CONTENT_RM, top + AboutCardHeight);
+            DrawSettingsCard(canvas, project);
+            DrawSettingsCard(canvas, author);
+
+            SKRect IconRect(float centerX) =>
+                SKRect.Create(centerX - AboutIconSize / 2f, top + AboutIconTop, AboutIconSize, AboutIconSize);
 
             if (_appIconBitmap != null)
-                canvas.DrawBitmap(_appIconBitmap,
-                    new SKRect(identity.MidX - ABOUT_ICON_SIZE / 2f, top + ABOUT_ICON_TOP,
-                        identity.MidX + ABOUT_ICON_SIZE / 2f, top + ABOUT_ICON_TOP + ABOUT_ICON_SIZE), _hqSamplingOpts);
+                canvas.DrawBitmap(_appIconBitmap, IconRect(project.MidX), _hqSamplingOpts);
 
+            if (AboutAuthorAvatar.Value is { } avatar)
+            {
+                var avatarRect = IconRect(author.MidX);
+                using var mask = new SKPath();
+                mask.AddOval(avatarRect);
+                canvas.Save();
+                canvas.ClipPath(mask, antialias: true);
+                canvas.DrawBitmap(avatar, avatarRect, _hqSamplingOpts);
+                canvas.Restore();
+            }
+
+            _dynamicTextPaint.TextAlign = SKTextAlign.Center;
             _dynamicTextPaint.Color = _fgColor;
             _dynamicTextPaint.TextSize = 20f;
-            _dynamicTextPaint.TextAlign = SKTextAlign.Center;
-            canvas.DrawText("NotchPeninsula", identity.MidX, top + ABOUT_TITLE_BASELINE, _dynamicTextPaint);
+            canvas.DrawText("NotchPeninsula", project.MidX, top + AboutTitleBaseline, _dynamicTextPaint);
+            canvas.DrawText("Ryenryen", author.MidX, top + AboutTitleBaseline, _dynamicTextPaint);
             _dynamicTextPaint.Color = SecondaryText;
             _dynamicTextPaint.TextSize = 13f;
-            canvas.DrawText(_appTitleWithVersion.Replace("NotchPeninsula ", "NPS v"), identity.MidX, top + ABOUT_VERSION_BASELINE, _dynamicTextPaint);
+            canvas.DrawText(_appTitleWithVersion.Replace("NotchPeninsula ", "NPS v"), project.MidX,
+                top + AboutSubtitleBaseline, _dynamicTextPaint);
+            canvas.DrawText("NotchPeninsula 开发者", author.MidX, top + AboutSubtitleBaseline, _dynamicTextPaint);
             _dynamicTextPaint.TextAlign = SKTextAlign.Left;
 
-            canvas.DrawText("更新与项目链接", RightColumnText, top + ABOUT_LINKS_TITLE_BASELINE, _uiTextPaint);
-            float x = RightColumnText;
-            float baseline = top + ABOUT_LINKS_BASELINE;
-            string[] links = ["检测更新", "项目主页", "项目仓库", "开发者"];
-            for (int i = 0; i < links.Length; i++)
-            {
-                float width = _dynamicTextPaint.MeasureText(links[i]) + 20;
-                var button = new SKRect(x, baseline - ABOUT_LINK_BTN_TOP, x + width, baseline + ABOUT_LINK_BTN_BOTTOM);
-                DrawSettingsButton(canvas, button, links[i], _hoveredLinkIndex == i);
-                _aboutLinkLeft[i] = button.Left;
-                _aboutLinkRight[i] = button.Right;
-                x += width + 8;
-            }
-            _aboutLinkTop = baseline - ABOUT_LINK_BTN_TOP;
-            _aboutLinkBottom = baseline + ABOUT_LINK_BTN_BOTTOM;
+            for (int i = 0; i < AboutLinks.Length; i++)
+                DrawSettingsButton(canvas, AboutLinkRect(i), AboutLinks[i].Label, _hoveredLinkIndex == i);
         }
 
         // 页签：个性化中心

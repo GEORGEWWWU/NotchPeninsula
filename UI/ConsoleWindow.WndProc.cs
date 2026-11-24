@@ -775,24 +775,7 @@ namespace NotchPeninsula
                 }
             }
 
-            int newHoveredLinkIndex = -1;
-            if (_selectedTab == 4) // 关于页
-            {
-                // 四个链接的左右边界由 RenderTabAbout 每帧按实际字宽量好（整体居中），
-                // 这里直接用同一份布局，避免写死 x 区间和「项目主页」对不上。
-                if (y >= _aboutLinkTop && y <= _aboutLinkBottom)
-                {
-                    for (int i = 0; i < _aboutLinkRight.Length; i++)
-                    {
-                        if (_aboutLinkRight[i] > _aboutLinkLeft[i]
-                            && x >= _aboutLinkLeft[i] && x <= _aboutLinkRight[i])
-                        {
-                            newHoveredLinkIndex = i;
-                            break;
-                        }
-                    }
-                }
-            }
+            int newHoveredLinkIndex = HitAboutLink(x, y);
 
             // 侧边栏左下角的「导出诊断包」「清理解包缓存」常驻，不跟页签走 —— 用户在任何一页都能按。
             bool newAboutExportHovered = x >= EXPORT_BTN_X && x <= EXPORT_BTN_X + EXPORT_BTN_W
