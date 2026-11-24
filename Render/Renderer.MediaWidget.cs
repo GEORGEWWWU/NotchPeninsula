@@ -127,7 +127,11 @@ namespace NotchPeninsula
         private static float MediaInlineCoverSize(float height) => Math.Clamp(height - 4f, 0f, 22f);
 
         private static float MediaInlineLeadingInset(float height)
-            => Math.Min(16f, (height - MediaInlineCoverSize(height)) / 2f);
+        {
+            const float originalInset = 16f;
+            float coverInset = (height - MediaInlineCoverSize(height)) / 2f;
+            return (originalInset + Math.Min(originalInset, coverInset)) / 2f;
+        }
 
         private static void DrawMediaInline(SKCanvas canvas, MediaController media, bool isHovered, float[]? bars,
             MediaBlockGeometry geometry, float currentHeight, float textOffsetY, byte alpha)

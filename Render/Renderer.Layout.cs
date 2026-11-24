@@ -99,7 +99,7 @@ namespace NotchPeninsula
             void DrawMediaModule()
             {
                 float mediaRight = currentX + MeasureMediaBlockWidth(media);
-                // 媒体在最左端时对齐封面上下留白，跟在其他组件后面时只收紧 3 DIP。
+                // 最左端采用折中的左侧留白，跟在其他组件后面时只收紧 3 DIP。
                 float mediaLeft = currentX == left + moduleGap
                     ? left + MediaInlineLeadingInset(currentHeight)
                     : currentX - 3f;
