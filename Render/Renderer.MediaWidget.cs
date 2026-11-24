@@ -147,7 +147,6 @@ namespace NotchPeninsula
             if (thumb != null)
             {
                 var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
-                canvas.DrawRoundRect(thumbRect, thumbRadius, thumbRadius, _shadowPaint);
                 canvas.Save();
                 _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
@@ -235,7 +234,6 @@ namespace NotchPeninsula
             var cover = media.Thumbnail;
             if (cover != null)
             {
-                canvas.DrawRoundRect(coverRect, coverRadius, coverRadius, _shadowPaint);
                 canvas.Save();
                 _clipPath.Rewind(); _clipPath.AddRoundRect(coverRect, coverRadius, coverRadius);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);

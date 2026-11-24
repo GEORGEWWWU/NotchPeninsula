@@ -535,7 +535,6 @@ namespace NotchPeninsula
             _mediaIconPaint.Color = _currentTextColor;
             _barPaint.Color = _currentTextColor;
             _tlTextPaint.Color = _currentSubTextColor; // 时间轴时间文本
-            _shadowPaint.Color = _currentTextColor.WithAlpha(50);
 
             _tagTextPaint.Color = _currentTextColor;
             _tagBgPaint.Color = _currentTextColor.WithAlpha(25);  // 浅色半透明背景标签
@@ -616,7 +615,6 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _textPaint = new() { Color = SKColors.White, TextSize = 12.5f, IsAntialias = true, Typeface = _semiBoldTypeface };
 
-        private static readonly SKPaint _shadowPaint = new() { IsAntialias = true, Color = SKColors.White.WithAlpha(50), MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Outer, 1.5f) };
 
         private static readonly SKPaint _mediaIconPaint = new() { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Fill };
 
