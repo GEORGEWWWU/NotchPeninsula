@@ -167,7 +167,7 @@ namespace NotchPeninsula
             _isLightAppearance = light;
             _fgColor = Neutral(255);
             _uiTextPaint.Color = _fgColor;
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
             _titleTextPaint.Color = Neutral(200);
             _iconPaint.Color = _fgColor;
             _chevronPaint.Color = Neutral(150);
@@ -193,8 +193,9 @@ namespace NotchPeninsula
                 _bgPaint.Color = light ? new SKColor(244, 244, 244, 191) : new SKColor(19, 19, 19, 191);
             else
                 _bgPaint.Color = light ? new SKColor(245, 245, 245, 112) : new SKColor(18, 18, 18, 112);
-            _cardBg.Color = Overlay(acrylic ? (byte)22 : (byte)8);
-            _cardBorder.Color = Overlay(acrylic ? (byte)38 : (byte)15);
+            _cardBg.Color = light
+                ? new SKColor(255, 255, 255, acrylic ? (byte)194 : (byte)255)
+                : new SKColor(48, 48, 51, acrylic ? (byte)176 : (byte)255);
             _globalBorderPaint.Color = acrylic ? Overlay(40)
                 : light ? new SKColor(205, 205, 205) : new SKColor(60, 60, 60);
         }

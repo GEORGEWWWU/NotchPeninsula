@@ -158,8 +158,7 @@ namespace NotchPeninsula
             float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
 
             var header = new SKRect(CONTENT_L, topY, LeftColumnRight, topY + SETTINGS_HEADER_H);
-            canvas.DrawRoundRect(header, 6, 6, _cardBg);
-            canvas.DrawRoundRect(header, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, header);
             canvas.DrawText("插件设置", CONTENT_TEXT_X, topY + 26, _uiTextPaint);
 
             string name = info == null ? "(插件未提供设置页)" : PluginManager.Instance.Host.GetPluginDisplayName(info.Value.PluginId);
@@ -167,16 +166,11 @@ namespace NotchPeninsula
                 CONTENT_TEXT_X, topY + 48, _subTextPaint);
 
             var back = GetSettingsBackRect();
-            _dynamicFillPaint.Color = _settingsBackHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-            canvas.DrawRoundRect(back, 4, 4, _dynamicFillPaint);
-            _uiTextPaint.Color = SKColors.White;
-            DrawCenteredButtonLabel(canvas, "返回", back, _uiTextPaint);
-            _uiTextPaint.Color = _fgColor;
+            DrawSettingsButton(canvas, back, "返回", _settingsBackHovered);
 
             float listY = GetSettingsListTop();
             var listRect = new SKRect(RightColumnLeft, listY, WIDTH - CONTENT_RM, ContentBottom);
-            canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, listRect);
 
             canvas.DrawText("插件参数", RightColumnText, listY + 23, _uiTextPaint);
             if (info == null)
@@ -239,41 +233,17 @@ namespace NotchPeninsula
 
         private void DrawSettingSegments(SKCanvas canvas, string[] labels, int selected, int hovered, SKRect r)
         {
-            float segW = r.Width / labels.Length;
-            for (int i = 0; i < labels.Length; i++)
-            {
-                var seg = new SKRect(r.Left + i * segW + 1f, r.Top, r.Left + (i + 1) * segW - 1f, r.Bottom);
-                _dynamicFillPaint.Color = i == selected ? new SKColor(0, 120, 212)
-                    : i == hovered ? Overlay(32) : Overlay(14);
-                canvas.DrawRoundRect(seg, 4, 4, _dynamicFillPaint);
-
-                _uiTextPaint.Color = i == selected ? SKColors.White : _fgColor;
-                string label = TruncateText(labels[i], _uiTextPaint, seg.Width - 6f);
-                canvas.DrawText(label, seg.MidX - _uiTextPaint.MeasureText(label) / 2f, seg.MidY + 4.5f, _uiTextPaint);
-            }
-            _uiTextPaint.Color = _fgColor;
+            DrawSegmented(canvas, r.Left, r.Top, r.Width, r.Height, labels, selected, hovered);
         }
 
         private void DrawSettingSlider(SKCanvas canvas, NumberSetting number, float value, SKRect r, bool hovered)
         {
-            float railY = r.MidY;
-            canvas.DrawLine(r.Left, railY, r.Right, railY, _separatorPaint);
             float t = number.Max > number.Min ? (value - number.Min) / (number.Max - number.Min) : 0f;
-            float activeX = r.Left + r.Width * t;
-
-            _dynamicStrokePaint.Style = SKPaintStyle.Stroke;
-            _dynamicStrokePaint.StrokeCap = SKStrokeCap.Round;
-            _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
-            _dynamicStrokePaint.StrokeWidth = 2f;
-            canvas.DrawLine(r.Left, railY, activeX, railY, _dynamicStrokePaint);
-            _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-            canvas.DrawCircle(activeX, railY, 5f, _dynamicFillPaint);
+            DrawSliderTrack(canvas, r.Left, r.Right, r.MidY, r.Left + r.Width * t, hovered);
 
             string text = value.ToString("0.###", CultureInfo.InvariantCulture);
-            _subTextPaint.Color = Neutral(170);
             float tw = _subTextPaint.MeasureText(text);
             canvas.DrawText(text, r.Right - tw, r.Top + 10f, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
         }
     }
 }

@@ -1,4 +1,5 @@
 using SkiaSharp;
+using NotchPeninsula.Plugins;
 
 namespace NotchPeninsula
 {
@@ -254,6 +255,7 @@ namespace NotchPeninsula
             bool newSoundPreviewHovered = false;
             bool newSoundResetHovered = false;
             int newHoveredPluginAction = -1;
+            int newHoveredPluginLayout = HitPluginLayoutButton(x, y);
             bool newLiveWindowMediaHovered = false;   // 实况窗管理页：媒体行
             int newLiveWindowHoverRow = -1;           // 实况窗管理页：插件行
             int newHoveredMarketSortIndex = -1;   // 市场排序：菜单内悬停项；-2 = 框本体
@@ -670,9 +672,17 @@ namespace NotchPeninsula
                         close.Inflate(4f, 4f);
                         newHoveredDialogClose = close.Contains(x, y);
 
-                        // 详情弹窗右下角有「安装 / 已安装」按钮：悬停反馈和其它弹窗按钮同一条路。
-                        if (!newHoveredDialogClose && _marketDialog == MarketDialog.Detail)
-                            newHoveredDialogButton = HitDialogButton(rect, x, y);
+                        if (!newHoveredDialogClose && _marketDialog == MarketDialog.Detail
+                            && !string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal))
+                        {
+                            int hit = HitDialogButton(rect, x, y);
+                            if (hit >= 0)
+                            {
+                                var local = MatchLocalPlugin(mp);
+                                if (local == null || PluginManager.Instance.IsDisabled(local))
+                                    newHoveredDialogButton = hit;
+                            }
+                        }
 
                         if (_marketDialog == MarketDialog.Rate && _rateMine <= 0 && !_rateLoading)
                         {
@@ -923,6 +933,7 @@ namespace NotchPeninsula
                 newMspToggleHovered != _mspToggleHovered ||
                 newMspWikiHovered != _mspWikiHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
+                newHoveredPluginLayout != _hoveredPluginLayout ||
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
                 newHoveredPluginRemove != _hoveredPluginRemove ||
@@ -1016,6 +1027,7 @@ namespace NotchPeninsula
                 _mspToggleHovered = newMspToggleHovered;
                 _mspWikiHovered = newMspWikiHovered;
                 _hoveredPluginAction = newHoveredPluginAction;
+                _hoveredPluginLayout = newHoveredPluginLayout;
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;
                 _hoveredPluginRemove = newHoveredPluginRemove;

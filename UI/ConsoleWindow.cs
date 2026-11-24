@@ -1589,16 +1589,18 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_MOUSEMOVE:
-                    // 拖动中不碰 hover：窗口追不上鼠标时，光标会短暂落回客户区，
-                    // hover 一变就 Render，而 Render 走 UpdateLayeredWindow（顺手把窗口重定位一次），
-                    // 等于在拖动循环里插一次窗口搬移 —— 越拖越跟不上。
+                {
+                    // 拖动窗口时跳过悬停重绘，避免分层窗口重复定位。
                     if (_dragMoving) break;
                     TrackSidebarMouseLeave(hwnd);
-                    OnMouseMove(
-                        (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale),
-                        (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale),
-                        (Win32.Low32(wParam) & 0x0001) != 0);
+                    int point = Win32.Low32(lParam);
+                    int mouseX = (int)((short)(point & 0xFFFF) / _dpiScale);
+                    int mouseY = (int)((short)((point >> 16) & 0xFFFF) / _dpiScale);
+                    OnMouseMove(mouseX, mouseY, (Win32.Low32(wParam) & 0x0001) != 0);
+                    if (mouseX >= CONTENT_L && mouseY >= TITLE_BAR_HEIGHT && mouseX < WIDTH && mouseY < HEIGHT)
+                        ApplySettingsCursor(mouseX, mouseY, defaultToArrow: true);
                     break;
+                }
 
                 case Win32.WM_MOUSELEAVE:
                     _trackingSidebarMouse = false;
@@ -1618,6 +1620,9 @@ namespace NotchPeninsula
                 case Win32.WM_LBUTTONUP:
                     // 长按拖动排序的收尾（没在拖时 EndDisplayDrag 什么都不做）。
                     EndDisplayDrag();
+                    if (TryGetCursorClientPos(out int releasedX, out int releasedY)
+                        && IsSettingsControlHovered(releasedX, releasedY))
+                        Render();
                     break;
 
                 case Win32.WM_MOUSEWHEEL:
@@ -1860,16 +1865,15 @@ namespace NotchPeninsula
                     if (_dragMoving) break;
                     if ((Win32.Low32(lParam) & 0xFFFF) == 1) // 1 代表 HTCLIENT (客户区)
                     {
-                        if (_isHoveringDisabledArea)
+                        if (TryGetCursorClientPos(out int curX, out int curY))
                         {
-                            Win32.SetCursor(Win32.LoadCursor(IntPtr.Zero, (int)32648)); // 强制注入系统 NO (禁止) 指针
-                            return (IntPtr)1;
-                        }
-                        // 侧边栏整行可点 → 手指型；其余位置照常交给系统（箭头）。
-                        if (TryGetCursorClientPos(out int curX, out int curY) && HitSidebarTab(curX, curY) >= 0)
-                        {
-                            Win32.SetCursor(_hCursorHand);
-                            return (IntPtr)1;
+                            if (!IsConfirmDialogOpen && HitSidebarTab(curX, curY) >= 0)
+                            {
+                                Win32.SetCursor(_hCursorHand);
+                                return (IntPtr)1;
+                            }
+                            if (ApplySettingsCursor(curX, curY))
+                                return (IntPtr)1;
                         }
                     }
                     break;

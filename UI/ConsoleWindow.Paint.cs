@@ -40,16 +40,14 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _uiTextPaint = new SKPaint { Color = SKColors.White, TextSize = UI_TEXT_SIZE, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
-        private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
+        private static readonly SKPaint _subTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 12f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         // 「实验性」小标签用（见 DrawInlineBadge）：颜色每次画时现设，深色 / 浅色外观下都读得清
         private static readonly SKPaint _badgeTextPaint = new SKPaint { TextSize = 10.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         private static readonly SKPaint _badgeBgPaint = new SKPaint { IsAntialias = true };
 
-        private static readonly SKPaint _badgeShadowPaint = new SKPaint { IsAntialias = true };
-
-        private static readonly SKPaint _marketTextPaint = new SKPaint { Color = new SKColor(170, 170, 170), TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
+        private static readonly SKPaint _marketTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
         private static readonly SKPaint _titleTextPaint = new SKPaint { Color = new SKColor(200, 200, 200), TextSize = 12.5f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
 
@@ -67,12 +65,9 @@ namespace NotchPeninsula
 
         private static readonly SKPaint _tabBgSelected = new SKPaint { Color = new SKColor(255, 255, 255, 15), IsAntialias = true };
 
-
         private static readonly SKPaint _tabIndicator = new SKPaint { Color = new SKColor(0, 120, 212), IsAntialias = true };
 
-        private static readonly SKPaint _cardBg = new SKPaint { Color = new SKColor(255, 255, 255, 8), IsAntialias = true };
-
-        private static readonly SKPaint _cardBorder = new SKPaint { Color = new SKColor(255, 255, 255, 15), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
+        private static readonly SKPaint _cardBg = new SKPaint { Color = new SKColor(48, 48, 51), IsAntialias = true };
 
         private static readonly SKPaint _separatorPaint = new SKPaint { Color = new SKColor(255, 255, 255, 20), StrokeWidth = 1, IsAntialias = true };
 
@@ -85,8 +80,6 @@ namespace NotchPeninsula
         private static readonly SKPaint _menuBorder = new SKPaint { Color = new SKColor(88, 88, 88), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
 
         private static readonly SKPaint _globalBorderPaint = new SKPaint { Color = new SKColor(60, 60, 60), Style = SKPaintStyle.Stroke, StrokeWidth = 1, IsAntialias = true };
-
-        private static readonly SKPaint _toggleCirclePaint = new SKPaint { Color = SKColors.White, IsAntialias = true };
 
         // 动态状态画笔
 

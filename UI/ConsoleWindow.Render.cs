@@ -20,7 +20,7 @@ namespace NotchPeninsula
             float right = TabButtonRight - (SidebarCollapsed ? 6f : 12f);
             var r = new SKRect(right - w, rowTop + 4f, right, rowTop + 4f + badgeH);
 
-            _dynamicFillPaint.Color = new SKColor(232, 168, 48);   // 与列表评分星星同一套黄
+            _dynamicFillPaint.Color = new SKColor(232, 168, 48);
             canvas.DrawRoundRect(r, badgeH / 2f, badgeH / 2f, _dynamicFillPaint);
 
             _dynamicTextPaint.Color = SKColors.White;
@@ -102,8 +102,7 @@ namespace NotchPeninsula
             float left = rightColumn ? RightColumnLeft : CONTENT_L;
             float right = leftColumn ? LeftColumnRight : WIDTH - CONTENT_RM;
             var cardRect = new SKRect(left, TITLE_BAR_HEIGHT + yOffset, right, TITLE_BAR_HEIGHT + yOffset + TOGGLE_CARD_H);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, cardRect);
             DrawToggleRow(canvas, yOffset, title, sub, state, hovered, disabled,
                 cardRight: right, textLeft: left + 16f);
 
@@ -118,7 +117,7 @@ namespace NotchPeninsula
             }
         }
 
-        // 贴纸感的琥珀小标签：圆角矩形 + 一层向下偏 1px 的阴影。
+        // 设置卡片内的中性状态标签。
         // 不用红色 —— 红在这套界面里是「错误 / 失效」的语义，实验性是「留意一下」。
         private void DrawInlineBadge(SKCanvas canvas, float left, float centerY, string text)
         {
@@ -126,14 +125,10 @@ namespace NotchPeninsula
             float top = centerY - BADGE_H / 2f;
             var rect = new SKRect(left, top, left + w, top + BADGE_H);
 
-            _badgeShadowPaint.Color = new SKColor(0, 0, 0, 60);
-            canvas.DrawRoundRect(new SKRect(rect.Left, rect.Top + 1f, rect.Right, rect.Bottom + 1f),
-                BADGE_RADIUS, BADGE_RADIUS, _badgeShadowPaint);
-
-            _badgeBgPaint.Color = new SKColor(245, 180, 50);   // 琥珀
+            _badgeBgPaint.Color = Overlay(17);
             canvas.DrawRoundRect(rect, BADGE_RADIUS, BADGE_RADIUS, _badgeBgPaint);
 
-            _badgeTextPaint.Color = new SKColor(64, 42, 0);    // 深棕字，压在琥珀上
+            _badgeTextPaint.Color = SecondaryText;
             var fm = _badgeTextPaint.FontMetrics;
             float baseline = rect.MidY - (fm.Ascent + fm.Descent) / 2f;
             canvas.DrawText(text, rect.Left + BADGE_PAD_X, baseline, _badgeTextPaint);
@@ -151,7 +146,7 @@ namespace NotchPeninsula
             var oldCap = _dynamicStrokePaint.StrokeCap;
             var oldJoin = _dynamicStrokePaint.StrokeJoin;
 
-            _dynamicStrokePaint.Color = hovered ? new SKColor(0, 140, 240) : Neutral(150);
+            _dynamicStrokePaint.Color = hovered ? AccentText : Neutral(150);
             _dynamicStrokePaint.StrokeWidth = 1.4f;
             _dynamicStrokePaint.StrokeCap = SKStrokeCap.Round;
             _dynamicStrokePaint.StrokeJoin = SKStrokeJoin.Round;
@@ -181,8 +176,7 @@ namespace NotchPeninsula
 
             float introTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var introRect = new SKRect(CONTENT_L, introTop, LeftColumnRight, introTop + LW_INTRO_CARD_H);
-            canvas.DrawRoundRect(introRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(introRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, introRect);
             canvas.DrawText("实况窗管理", CONTENT_TEXT_X, introTop + 26, _uiTextPaint);
             canvas.DrawText(TruncateText("控制哪些插件可以使用左侧实况窗；关闭后内容只留在主岛。", _subTextPaint, LeftColumnRight - CONTENT_TEXT_X - 16),
                 CONTENT_TEXT_X, introTop + 48, _subTextPaint);
@@ -190,8 +184,7 @@ namespace NotchPeninsula
             // ── 媒体：状态跟随「媒体设置」，这里只给蓝字入口 ──
             float mediaTop = LiveWindowMediaCardTop;
             var mediaRect = new SKRect(CONTENT_L, mediaTop, LeftColumnRight, mediaTop + LW_MEDIA_CARD_H);
-            canvas.DrawRoundRect(mediaRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(mediaRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, mediaRect);
             if (_liveWindowMediaHovered)
             {
                 _dynamicFillPaint.Color = Overlay(12);
@@ -205,17 +198,16 @@ namespace NotchPeninsula
 
             string hint = "去「媒体设置」修改";
             float hintW = _subTextPaint.MeasureText(hint);
-            _subTextPaint.Color = new SKColor(0, 140, 240);
+            _subTextPaint.Color = AccentText;
             canvas.DrawText(hint, LeftColumnRight - 16f - hintW, mediaTop + 25, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             // ── 插件：逐个开关 ──
             int visible = Math.Min(owners.Count, LiveWindowVisibleRows);
             _liveWindowScroll = Math.Clamp(_liveWindowScroll, 0, owners.Count - visible);
             float cardTop = LiveWindowPluginCardTop;
             var cardRect = new SKRect(RightColumnLeft, cardTop, WIDTH - CONTENT_RM, GetLiveWindowCardBottom(visible));
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, cardRect);
             canvas.DrawText("插件", RightColumnText, cardTop + 23, _uiTextPaint);
 
             if (owners.Count == 0)
@@ -245,20 +237,7 @@ namespace NotchPeninsula
                 float tX = WIDTH - CONTENT_RM - 16f - tW;
                 float tY = rowY + (LW_ROW_H - tH) / 2f;
                 var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-                if (on)
-                {
-                    _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                    canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, _dynamicFillPaint);
-                    canvas.DrawCircle(tX + tW - tH / 2f, tY + tH / 2f, tH / 2f - 4f, _toggleCirclePaint);
-                }
-                else
-                {
-                    _dynamicStrokePaint.Color = hovered ? Neutral(150) : Neutral(100);
-                    canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, _dynamicStrokePaint);
-                    _toggleCirclePaint.Color = hovered ? Neutral(200) : Neutral(150);
-                    canvas.DrawCircle(tX + tH / 2f, tY + tH / 2f, tH / 2f - 4f, _toggleCirclePaint);
-                    _toggleCirclePaint.Color = SKColors.White;
-                }
+                DrawSettingsSwitch(canvas, tRect, on, hovered);
             }
         }
 
@@ -276,47 +255,19 @@ namespace NotchPeninsula
 
             if (sub.Length > 0)
             {
-                _subTextPaint.Color = disabled ? Neutral(80) : Neutral(170);
+                _subTextPaint.Color = disabled ? Neutral(80) : SecondaryText;
                 string description = cardRight.HasValue
                     ? TruncateText(sub, _subTextPaint, cardRight.Value - labelX - 70)
                     : sub;
                 canvas.DrawText(description, labelX, titleBaseline + ROW_SUB_OFFSET, _subTextPaint);
-                _subTextPaint.Color = Neutral(170);
+                _subTextPaint.Color = SecondaryText;
             }
 
             float tW = 42; float tH = TOGGLE_TRACK_H; float tX = (cardRight ?? WIDTH - CONTENT_RM) - 16 - tW;
             float tY = TITLE_BAR_HEIGHT + yOffset + ROW_ANCHOR_Y - tH / 2f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
 
-            if (disabled)
-            {
-                _dynamicStrokePaint.Color = Neutral(80);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = Neutral(100);
-                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
-            else
-            {
-                if (state)
-                {
-                    _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                }
-                else
-                {
-                    _dynamicStrokePaint.Color = hovered ? Neutral(150) : Neutral(100);
-                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                }
-
-                if (state) canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                else
-                {
-                    _toggleCirclePaint.Color = hovered ? Neutral(200) : Neutral(150);
-                    canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                    _toggleCirclePaint.Color = SKColors.White;
-                }
-            }
+            DrawSettingsSwitch(canvas, tRect, state, hovered, !disabled);
 
             // 右侧蓝字提示：塞在标题与开关之间的空档里；悬浮才出现。
             // 没单独跟踪整行悬停时用开关悬停兜底，避免「传了 rightHint 却永远不显示」。
@@ -325,7 +276,7 @@ namespace NotchPeninsula
                 var prevColor = _subTextPaint.Color;
                 float prevSize = _subTextPaint.TextSize;
                 _subTextPaint.TextSize = 12f;
-                _subTextPaint.Color = disabled ? Neutral(90) : new SKColor(0, 140, 240);
+                _subTextPaint.Color = disabled ? Neutral(90) : AccentText;
                 float hintRight = tX - 6f;
                 canvas.DrawText(rightHint, hintRight - _subTextPaint.MeasureText(rightHint), titleBaseline, _subTextPaint);
                 _subTextPaint.TextSize = prevSize;
@@ -396,31 +347,11 @@ namespace NotchPeninsula
             float baseSize = _uiTextPaint.TextSize;
             if (textScale < 1f) _uiTextPaint.TextSize = MathF.Max(9f, baseSize * textScale);
 
-            _dynamicFillPaint.Color = disabled ? Overlay(5) : Overlay(8);
-            canvas.DrawRoundRect(new SKRect(x, y, x + w, y + h), 6, 6, _dynamicFillPaint);
-
             for (int i = 0; i < n; i++)
             {
-                // 每格左右各收 2px：选中块不贴外框圆角，首尾两格也不会一边贴边一边留缝
-                var r = new SKRect(x + lefts[i] + 2f, y, x + lefts[i] + widths[i] - 2f, y + h);
-                if (i == selected)
-                {
-                    _dynamicFillPaint.Color = disabled ? Neutral(80) : new SKColor(0, 120, 212);
-                    canvas.DrawRoundRect(r, 5, 5, _dynamicFillPaint);
-                }
-                else if (i == hovered && !disabled)
-                {
-                    _dynamicFillPaint.Color = Overlay(24);
-                    canvas.DrawRoundRect(r, 5, 5, _dynamicFillPaint);
-                }
-
-                // 文本用完立刻恢复基准色：本帧后面还要用同一支画笔
-                _uiTextPaint.Color = disabled
-                    ? (i == selected ? Neutral(190) : Neutral(110))
-                    : (i == selected ? SKColors.White : _fgColor);
-                canvas.DrawText(labels[i], r.MidX - _uiTextPaint.MeasureText(labels[i]) / 2f, r.MidY + 5.5f, _uiTextPaint);
+                var rect = new SKRect(x + lefts[i] + 2f, y, x + lefts[i] + widths[i] - 2f, y + h);
+                DrawSettingsButton(canvas, rect, labels[i], i == hovered, !disabled, selected: i == selected);
             }
-            _uiTextPaint.Color = _fgColor;
             _uiTextPaint.TextSize = baseSize;   // 恢复基准字号：同一支画笔本帧后面还要用
         }
 
@@ -583,37 +514,17 @@ namespace NotchPeninsula
             float boxX = DISPLAY_ITEM_L + 10f;
             float boxY = y + (DISPLAY_ITEM_H - boxS) / 2f;
             var box = new SKRect(boxX, boxY, boxX + boxS, boxY + boxS);
-            if (isShown)
-            {
-                _dynamicFillPaint.Color = enabled ? new SKColor(0, 120, 212) : Neutral(80);
-                canvas.DrawRoundRect(box, 4, 4, _dynamicFillPaint);
-                var tick = enabled ? _displayTickPaint : _sortArrowDisabledStroke;
-                canvas.DrawLine(boxX + 4f, boxY + 8.4f, boxX + 6.8f, boxY + 11.2f, tick);
-                canvas.DrawLine(boxX + 6.8f, boxY + 11.2f, boxX + 12f, boxY + 5f, tick);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = !enabled ? Neutral(60) : hoverP > 0.5f ? Neutral(170) : Neutral(110);
-                canvas.DrawRoundRect(box, 4, 4, _dynamicStrokePaint);
-            }
+            DrawSettingsCheckBox(canvas, box, isShown, hoverP > 0.5f, enabled);
 
-            const string tag = "内置";
-            float tagW = isBuiltin ? _subTextPaint.MeasureText(tag) + 14f : 0f;
+            float tagW = isBuiltin ? _subTextPaint.MeasureText("内置") + 14f : 0f;
             float textX = box.Right + 10f;
             string shownName = TruncateText(name, _uiTextPaint, DISPLAY_DRAG_X - 12f - textX - tagW);
-            _uiTextPaint.Color = !enabled ? Neutral(100) : isShown ? _fgColor : Neutral(150);
+            _uiTextPaint.Color = !enabled ? Neutral(100) : isShown ? _fgColor : SecondaryText;
             canvas.DrawText(shownName, textX, y + 20.5f, _uiTextPaint);
             _uiTextPaint.Color = _fgColor;
 
             if (isBuiltin)
-            {
-                float tagX = textX + _uiTextPaint.MeasureText(shownName) + 8f;
-                _dynamicFillPaint.Color = enabled ? new SKColor(0, 120, 212, 40) : Overlay(10);
-                canvas.DrawRoundRect(new SKRect(tagX, y + 7f, tagX + tagW, y + 23f), 8, 8, _dynamicFillPaint);
-                _subTextPaint.Color = enabled ? new SKColor(0, 140, 240) : Neutral(90);
-                canvas.DrawText(tag, tagX + 7f, y + 19f, _subTextPaint);
-                _subTextPaint.Color = Neutral(170);
-            }
+                DrawBuiltinTag(canvas, textX + _uiTextPaint.MeasureText(shownName) + 8f, y + 7f, enabled);
 
             float cy = y + DISPLAY_ITEM_H / 2f;
             DrawDragHandle(canvas, DISPLAY_DRAG_X, cy, hoverDrag || dragging, enabled);
@@ -621,17 +532,7 @@ namespace NotchPeninsula
             DrawMoveArrow(canvas, DISPLAY_MOVE_DOWN_X, cy, hoverDown, enabled && canDown, false);
         }
 
-        private static readonly SKPaint _displayTickPaint = new()
-        {
-            Color = SKColors.White,
-            Style = SKPaintStyle.Stroke,
-            StrokeWidth = 1.7f,
-            StrokeCap = SKStrokeCap.Round,
-            StrokeJoin = SKStrokeJoin.Round,
-            IsAntialias = true
-        };
 
-        // 别删那三行，否则浅色外观下箭头会变成浅灰画在浅底上。
         private static readonly SKPaint _sortArrowStroke = new()
         {
             Color = new SKColor(210, 210, 210),
@@ -745,8 +646,7 @@ namespace NotchPeninsula
             //    分隔线 +TOAST_SEP_Y (222)
             //    分隔线 +SOUND_SEP_Y (284)
             var notifyCardRect = new SKRect(RightColumnLeft, TITLE_BAR_HEIGHT + TOAST_ROW1_Y, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + TOAST_CARD_BOTTOM);
-            canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(notifyCardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, notifyCardRect);
 
             // ── 行 1：总开关 ──
             DrawToggleRow(canvas, TOAST_ROW1_Y, "系统消息通知", "允许在刘海中显示Windows系统的Toast消息", NotchWindow.IsToastEnabled, _toastToggleHovered, textLeft: RightColumnText);
@@ -792,14 +692,7 @@ namespace NotchPeninsula
             void DrawSoundButton(bool hovered, string label, float bx, float bw, bool enabled)
             {
                 var btn = new SKRect(bx, TITLE_BAR_HEIGHT + SOUND_BTN_Y, bx + bw, TITLE_BAR_HEIGHT + SOUND_BTN_Y + SOUND_BTN_H);
-                bool hot = enabled && hovered;
-                if (!enabled) _dynamicFillPaint.Color = Overlay(6);
-                else _dynamicFillPaint.Color = hot ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
-                float tw = _uiTextPaint.MeasureText(label);
-                _uiTextPaint.Color = enabled ? SKColors.White : Neutral(110);
-                canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + SOUND_BTN_Y + 17, _uiTextPaint);
-                _uiTextPaint.Color = _fgColor;
+                DrawSettingsButton(canvas, btn, label, hovered, enabled);
             }
 
             DrawSoundButton(_soundPreviewHovered, "试听", SOUND_PREVIEW_X, SOUND_BTN_W, soundReady);
@@ -813,26 +706,20 @@ namespace NotchPeninsula
             DrawExternalLinkIcon(canvas, MspWikiIconRect(), _mspWikiHovered);
 
             var fontCard = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + FONT_CARD_Y, LeftColumnRight, TITLE_BAR_HEIGHT + FONT_CARD_Y + TOGGLE_CARD_H);
-            canvas.DrawRoundRect(fontCard, 6, 6, _cardBg);
-            canvas.DrawRoundRect(fontCard, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, fontCard);
             canvas.DrawText("切换灵动岛字体", CONTENT_TEXT_X, TITLE_BAR_HEIGHT + FONT_CARD_Y + ROW_TEXT_BASELINE, _uiTextPaint);
 
             bool fontError = _fontHint.Length > 0;
             string fontSub = fontError ? _fontHint : $"当前：{FontConfig.DisplayName}";
-            _subTextPaint.Color = fontError ? new SKColor(232, 100, 100) : Neutral(170);
+            _subTextPaint.Color = fontError ? DangerText : SecondaryText;
             canvas.DrawText(TruncateText(fontSub, _subTextPaint, FONT_PICK_X - CONTENT_TEXT_X - 8), CONTENT_TEXT_X,
                 TITLE_BAR_HEIGHT + FONT_CARD_Y + ROW_TEXT_BASELINE + ROW_SUB_OFFSET, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             void DrawFontButton(bool hovered, string label, float bx, float bw)
             {
                 var btn = new SKRect(bx, TITLE_BAR_HEIGHT + FONT_BTN_Y, bx + bw, TITLE_BAR_HEIGHT + FONT_BTN_Y + FONT_BTN_H);
-                _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
-                float tw = _uiTextPaint.MeasureText(label);
-                _uiTextPaint.Color = SKColors.White;   // 蓝底白字（浅色外观下 _fgColor 是黑的，压蓝底看不清）
-                canvas.DrawText(label, bx + (bw - tw) / 2f, TITLE_BAR_HEIGHT + FONT_BTN_Y + 18, _uiTextPaint);
-                _uiTextPaint.Color = _fgColor;
+                DrawSettingsButton(canvas, btn, label, hovered);
             }
 
             DrawFontButton(_fontPickHovered, "选择字体", FONT_PICK_X, FONT_PICK_W);
@@ -844,23 +731,14 @@ namespace NotchPeninsula
                                      bool open = false, bool builtinTag = false, string? warn = null)
         {
             var rect = new SKRect(x, y, x + w, y + h);
-            bool hot = enabled && (hovered || open);
-            _dynamicFillPaint.Color = !enabled ? Overlay(5) : hot ? Overlay(20) : Overlay(10);
-            canvas.DrawRoundRect(rect, 7, 7, _dynamicFillPaint);
-
-            // 展开时描一圈淡蓝：让「正在选」这件事有明确的视觉落点
-            if (enabled && open)
-            {
-                _dynamicStrokePaint.Color = new SKColor(0, 120, 212, 150);
-                canvas.DrawRoundRect(rect, 7, 7, _dynamicStrokePaint);
-            }
+            DrawControlSurface(canvas, rect, hovered, enabled, focused: open);
 
             float tagW = builtinTag ? _subTextPaint.MeasureText("内置") + 14f : 0f;
             // 右侧状态字（如「加载失败」）占「内置」胶囊那一格：正文按剩余宽度截断，不会压到它。
             float warnW = warn != null ? _subTextPaint.MeasureText(warn) + 6f : 0f;
             float textLimit = w - DROPDOWN_TEXT_PAD_L - DROPDOWN_CHEVRON_AREA
                 - (tagW > 0f ? tagW + 8f : 0f) - warnW;
-            _uiTextPaint.Color = enabled ? _fgColor : Neutral(110);
+            _uiTextPaint.Color = enabled ? _fgColor : DisabledText;
             canvas.DrawText(TruncateText(text, _uiTextPaint, textLimit),
                 rect.Left + DROPDOWN_TEXT_PAD_L, rect.Top + h / 2f + 5f, _uiTextPaint);
             _uiTextPaint.Color = _fgColor;
@@ -870,9 +748,8 @@ namespace NotchPeninsula
 
             if (warn != null)
             {
-                // 红色只留给错误状态：普通说明与「内置」胶囊是灰与蓝，混成一个颜色就分不出轻重了。
                 var prevColor = _subTextPaint.Color;
-                _subTextPaint.Color = new SKColor(232, 100, 100);
+                _subTextPaint.Color = DangerText;
                 float warnRight = rect.Right - DROPDOWN_CHEVRON_AREA - 2f;
                 // 基线跟正文对齐（12px 压在 13px 的同一基线上，底部齐平不显飘）
                 canvas.DrawText(warn, warnRight - _subTextPaint.MeasureText(warn),
@@ -884,22 +761,22 @@ namespace NotchPeninsula
             float cy = rect.MidY;
             float dir = open ? -1f : 1f;   // 展开时箭头朝上
             float tipY = cy + dir * 2.5f;
-            _chevronPaint.Color = !enabled ? Neutral(90) : hot ? Neutral(200) : Neutral(150);
+            _chevronPaint.Color = enabled ? SecondaryText : DisabledText;
             canvas.DrawLine(cx, tipY - dir * 5f, cx + 5f, tipY, _chevronPaint);
             canvas.DrawLine(cx + 5f, tipY, cx + 10f, tipY - dir * 5f, _chevronPaint);
             _chevronPaint.Color = Neutral(150);
         }
 
-        // 蓝色「内置」小胶囊：列表项和折叠框共用，宽度返回给调用方排版。
-        private float DrawBuiltinTag(SKCanvas canvas, float x, float top)
+        // 下拉框和列表共用的内置项标签。
+        private float DrawBuiltinTag(SKCanvas canvas, float x, float top, bool enabled = true)
         {
             const string tag = "内置";
             float tagW = _subTextPaint.MeasureText(tag) + 14f;
-            _dynamicFillPaint.Color = new SKColor(0, 120, 212, 40);
-            canvas.DrawRoundRect(new SKRect(x, top, x + tagW, top + 16f), 8, 8, _dynamicFillPaint);
-            _subTextPaint.Color = new SKColor(0, 140, 240);
+            _dynamicFillPaint.Color = Overlay(enabled ? (byte)16 : (byte)7);
+            canvas.DrawRoundRect(new SKRect(x, top, x + tagW, top + 16f), 4, 4, _dynamicFillPaint);
+            _subTextPaint.Color = enabled ? SecondaryText : DisabledText;
             canvas.DrawText(tag, x + 7f, top + 12.5f, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
             return tagW;
         }
 
@@ -910,8 +787,7 @@ namespace NotchPeninsula
 
             var styleCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + STYLE_CARD_Y + page,
                 LeftColumnRight, TITLE_BAR_HEIGHT + STYLE_CARD_Y + STYLE_CARD_H + page);
-            canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(styleCardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, styleCardRect);
 
             void DrawStyleOption(int index, string name, float x, float y)
             {
@@ -920,10 +796,7 @@ namespace NotchPeninsula
 
                 // 选项外框与背景反馈
                 var optRect = new SKRect(x, y, x + STYLE_OPT_W, y + STYLE_OPT_H);
-                _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212, 40) : (isHovered ? Overlay(15) : Overlay(8));
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicFillPaint);
-                _dynamicStrokePaint.Color = isSelected ? new SKColor(0, 120, 212) : Neutral(80);
-                canvas.DrawRoundRect(optRect, 6, 6, _dynamicStrokePaint);
+                DrawControlSurface(canvas, optRect, isHovered, selected: isSelected);
 
                 // 绘制纯血 Skia 伪 PNG 视觉特效图
                 float cx = x + 75; float cy = y + 35;
@@ -959,19 +832,19 @@ namespace NotchPeninsula
                 }
 
                 // 单选 Radio 按钮与文本：作为整体在框内居中（文字宽度随名字变，钉死偏移会歪）。
-                // 包围框的画笔颜色已经在上面按选中 / 未选中设好，这里直接用。
                 float radioY = y + 72;
                 const float radioDiameter = 12f, radioTextGap = 9f;
                 float radioGroupW = radioDiameter + radioTextGap + _dynamicTextPaint.MeasureText(name);
                 float radioGroupLeft = x + (STYLE_OPT_W - radioGroupW) / 2f;
                 float radioCx = radioGroupLeft + radioDiameter / 2f;
+                _dynamicStrokePaint.Color = isSelected ? AccentText : SecondaryText;
                 canvas.DrawCircle(radioCx, radioY - 4, 6, _dynamicStrokePaint);
                 if (isSelected)
                 {
-                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                    _dynamicFillPaint.Color = AccentText;
                     canvas.DrawCircle(radioCx, radioY - 4, 3, _dynamicFillPaint);
                 }
-                _dynamicTextPaint.Color = isSelected ? new SKColor(0, 140, 240) : _fgColor;
+                _dynamicTextPaint.Color = isSelected ? AccentText : _fgColor;
                 canvas.DrawText(name, radioGroupLeft + radioDiameter + radioTextGap, radioY + 1, _dynamicTextPaint);
             }
 
@@ -980,8 +853,7 @@ namespace NotchPeninsula
 
             var displayOptions = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + MONITOR_ROW_Y + page,
                 LeftColumnRight, TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_H + 8);
-            canvas.DrawRoundRect(displayOptions, 6, 6, _cardBg);
-            canvas.DrawRoundRect(displayOptions, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, displayOptions);
             float monitorRowY = TITLE_BAR_HEIGHT + MONITOR_ROW_Y + page;
             canvas.DrawText("目标显示器", CONTENT_TEXT_X, monitorRowY + ROW_LABEL_DY, _uiTextPaint);
             float mdX = DISPLAY_CTRL_RIGHT - MONITOR_DD_W;
@@ -1023,8 +895,7 @@ namespace NotchPeninsula
             // 里面内置项没有「重要信息」概念 → 行内勾选框置灰。
             float contentCardY = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page;
             var displayList = new SKRect(RightColumnLeft, contentCardY, WIDTH - CONTENT_RM, contentCardY + DISPLAY_CARD_H);
-            canvas.DrawRoundRect(displayList, 6, 6, _cardBg);
-            canvas.DrawRoundRect(displayList, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, displayList);
             canvas.DrawText("显示内容", RightColumnText, contentCardY + 24, _uiTextPaint);
             // 静默模式那份清单已经独立成「静默模式设置」页（tab 9），这一页只管普通模式的常驻内容。
             bool listEnabled = !Renderer.StandbyModeOnly && !Renderer.SilentActive;
@@ -1116,8 +987,7 @@ namespace NotchPeninsula
         {
             float introTop = TITLE_BAR_HEIGHT + SILENT_INTRO_CARD_Y;
             var introRect = new SKRect(CONTENT_L, introTop, LeftColumnRight, introTop + SILENT_INTRO_CARD_H);
-            canvas.DrawRoundRect(introRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(introRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, introRect);
 
             canvas.DrawText("静默模式", CONTENT_TEXT_X, introTop + 26, _uiTextPaint);
 
@@ -1125,7 +995,7 @@ namespace NotchPeninsula
             var prevColor = _subTextPaint.Color;
             float prevSize = _subTextPaint.TextSize;
             _subTextPaint.TextSize = 12f;
-            _subTextPaint.Color = Renderer.SilentActive ? new SKColor(0, 140, 240) : Neutral(150);
+            _subTextPaint.Color = Renderer.SilentActive ? AccentText : Neutral(150);
             string stateText = Renderer.SilentActive ? "当前：静默模式" : "当前不是静默模式";
             float stateRight = SilentSwitchLeft - 10f;
             canvas.DrawText(stateText, stateRight - _subTextPaint.MeasureText(stateText),
@@ -1136,18 +1006,10 @@ namespace NotchPeninsula
             {
                 var btnRect = new SKRect(SilentSwitchLeft, SilentSwitchTop,
                     DISPLAY_CTRL_RIGHT, SilentSwitchTop + SILENT_SWITCH_H);
-                _dynamicFillPaint.Color = _silentSwitchHovered ? Overlay(30) : Overlay(15);
-                canvas.DrawRoundRect(btnRect, 5f, 5f, _dynamicFillPaint);
-
-                _dynamicTextPaint.TextAlign = SKTextAlign.Center;
-                _dynamicTextPaint.TextSize = 12.5f;
-                _dynamicTextPaint.Color = _silentSwitchHovered ? new SKColor(0, 150, 255) : Neutral(220);
-                canvas.DrawText("去切换", btnRect.MidX, btnRect.MidY + 4.5f, _dynamicTextPaint);
-                _dynamicTextPaint.TextAlign = SKTextAlign.Left;
-                _dynamicTextPaint.TextSize = 13f;
+                DrawSettingsButton(canvas, btnRect, "去切换", _silentSwitchHovered);
             }
 
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
             float introTextMax = (LeftColumnRight - 16) - CONTENT_TEXT_X;
             canvas.DrawText(TruncateText("平时整块隐藏，插件上报「重要信息」（如下载中）时才弹出来。",
                     _subTextPaint, introTextMax), CONTENT_TEXT_X, introTop + 50, _subTextPaint);
@@ -1157,8 +1019,7 @@ namespace NotchPeninsula
             // ── 消息通知：系统内容里唯一能在静默模式出现的项，状态与通用设置双向跟随 ──
             float toastTop = TITLE_BAR_HEIGHT + SILENT_TOAST_CARD_Y;
             var toastRect = new SKRect(CONTENT_L, toastTop, LeftColumnRight, toastTop + SILENT_TOAST_CARD_H);
-            canvas.DrawRoundRect(toastRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(toastRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, toastRect);
             if (_silentToastHovered)
             {
                 _dynamicFillPaint.Color = Overlay(12);
@@ -1166,21 +1027,20 @@ namespace NotchPeninsula
             }
 
             canvas.DrawText("消息通知", CONTENT_TEXT_X, toastTop + 26, _uiTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
             canvas.DrawText(NotchWindow.IsToastEnabled ? "已启用（跟随「通用设置」）" : "已关闭（跟随「通用设置」）",
                 CONTENT_TEXT_X, toastTop + 46, _subTextPaint);
 
             const string toastGo = "去「通用设置」修改";
-            _subTextPaint.Color = _silentToastHovered ? new SKColor(0, 150, 255) : new SKColor(0, 140, 240);
+            _subTextPaint.Color = _silentToastHovered ? AccentText : AccentText;
             canvas.DrawText(toastGo, DISPLAY_CTRL_RIGHT - _subTextPaint.MeasureText(toastGo),
                 toastTop + 34, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             // ── 媒体：是否作为重要信息（勾选框开关，默认开启；与实况窗无关）──
             float mediaCardTop = TITLE_BAR_HEIGHT + SILENT_MEDIA_CARD_Y;
             var mediaCardRect = new SKRect(CONTENT_L, mediaCardTop, LeftColumnRight, mediaCardTop + SILENT_MEDIA_CARD_H);
-            canvas.DrawRoundRect(mediaCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(mediaCardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, mediaCardRect);
             if (_silentMediaHovered)
             {
                 _dynamicFillPaint.Color = Overlay(12);
@@ -1189,31 +1049,20 @@ namespace NotchPeninsula
 
             bool mediaOn = SilentMode.MediaImportantEnabled;
             canvas.DrawText("媒体", CONTENT_TEXT_X, mediaCardTop + 26, _uiTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
             canvas.DrawText(TruncateText("开启后静默模式展示媒体，关闭后不展示（与实况窗无关）", _subTextPaint, LeftColumnRight - CONTENT_TEXT_X - 72),
                 CONTENT_TEXT_X, mediaCardTop + 46, _subTextPaint);
 
-            // 右侧滑块开关（iOS 风格：蓝色圆角胶囊 + 白色圆点）
             const float tW = 44f, tH = 22f;
             var tRect = new SKRect(
                 DISPLAY_CTRL_RIGHT - 6f - tW, mediaCardTop + (SILENT_MEDIA_CARD_H - tH) / 2f,
                 DISPLAY_CTRL_RIGHT - 6f, mediaCardTop + (SILENT_MEDIA_CARD_H + tH) / 2f);
-            _dynamicFillPaint.Color = mediaOn ? new SKColor(0, 120, 212) : Neutral(90);
-            canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, _dynamicFillPaint);
-            if (_silentMediaHovered && !mediaOn)
-            {
-                using var hover = new SKPaint { IsAntialias = true, Color = Overlay(20) };
-                canvas.DrawRoundRect(tRect, tH / 2f, tH / 2f, hover);
-            }
-            float knobX = mediaOn ? tRect.Right - tH / 2f : tRect.Left + tH / 2f;
-            using (var knob = new SKPaint { IsAntialias = true, Color = SKColors.White })
-                canvas.DrawCircle(knobX, tRect.MidY, tH / 2f - 3f, knob);
+            DrawSettingsSwitch(canvas, tRect, mediaOn, _silentMediaHovered);
 
             // ── 静默显示列表 ──
             float cardY = TITLE_BAR_HEIGHT + SilentListCardY;
             var listRect = new SKRect(RightColumnLeft, cardY, WIDTH - CONTENT_RM, cardY + SilentListCardH);
-            canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, listRect);
 
             canvas.DrawText("重要信息", RightColumnText, cardY + 24, _uiTextPaint);
             var items = PluginManager.Instance.SilentDisplayItems;
@@ -1246,8 +1095,7 @@ namespace NotchPeninsula
         private void RenderTabMedia(SKCanvas canvas)
         {
             var mediaCard = new SKRect(CONTENT_L, MediaCardTop, LeftColumnRight, MediaCardTop + MediaTopCardHeight);
-            canvas.DrawRoundRect(mediaCard, 6, 6, _cardBg);
-            canvas.DrawRoundRect(mediaCard, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, mediaCard);
             DrawToggleRow(canvas, MediaRowStart, "媒体控制", "允许在刘海中显示和控制系统媒体播放",
                 MediaController.IsMediaControlEnabled, _mediaToggleHovered, cardRight: LeftColumnRight);
             DrawToggleRow(canvas, MediaRowStart + MEDIA_LIVE_ROW_DY, "使用实况窗展示媒体",
@@ -1255,8 +1103,7 @@ namespace NotchPeninsula
                 MediaLiveWindowController.IsEnabled, _mediaLiveToggleHovered, cardRight: LeftColumnRight);
 
             var platformCard = new SKRect(RightColumnLeft, MediaCardTop, WIDTH - CONTENT_RM, MediaCardTop + MediaTopCardHeight);
-            canvas.DrawRoundRect(platformCard, 6, 6, _cardBg);
-            canvas.DrawRoundRect(platformCard, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, platformCard);
             canvas.DrawText("目标媒体平台", RightColumnText, PlatformBoxY + 10, _uiTextPaint);
             string platformHint = MediaController.TargetPlatform == "browser" ? "仅接管浏览器内的播放会话" : "多平台共存时，优先截获并接管的平台";
             canvas.DrawText(TruncateText(platformHint, _subTextPaint, PlatformBoxX - RightColumnText - 8),
@@ -1269,10 +1116,10 @@ namespace NotchPeninsula
             _uiTextPaint.Color = matchEnabled ? _fgColor : Neutral(100);
             canvas.DrawText("匹配方式", RightColumnText, PLATFORM_ROW2_Y + 24, _uiTextPaint);
             _uiTextPaint.Color = _fgColor;
-            _subTextPaint.Color = matchEnabled ? Neutral(170) : Neutral(80);
+            _subTextPaint.Color = matchEnabled ? SecondaryText : Neutral(80);
             canvas.DrawText(TruncateText("自动匹配或手动指定", _subTextPaint, MATCH_MODE_X - RightColumnText - 8),
                 RightColumnText, PLATFORM_ROW2_Y + 43, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             float moX = MATCH_MODE_X, appX = MATCH_APP_X, mBoxY = MATCH_ROW_Y, mBoxW = MATCH_BOX_W, mBoxH = MATCH_BOX_H;
 
@@ -1289,86 +1136,40 @@ namespace NotchPeninsula
 
             float lyricY = LYRIC_CARD_Y - 33f + MediaLyricsTopInset;
             var lyricRect = new SKRect(CONTENT_L, LYRIC_CARD_Y, LeftColumnRight, LYRIC_CARD_Y + HOTKEY_CARD_H);
-            canvas.DrawRoundRect(lyricRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(lyricRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, lyricRect);
 
             // 歌词开关（四行统一 34px 行距：原 40px 在 692 高窗口里显得太空）
             canvas.DrawText("在刘海中显示歌词", CONTENT_TEXT_X, lyricY + 48, _subTextPaint);
             float tW = 42, tH = 20;
             float tX = LeftColumnRight - 16 - tW, tY = lyricY + 33;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-            if (MediaController.IsLyricsEnabled)
-            {
-                _dynamicFillPaint.Color = _lyricToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = _lyricToggleHovered ? Neutral(150) : Neutral(100);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = _lyricToggleHovered ? Neutral(200) : Neutral(150);
-                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
+            DrawSettingsSwitch(canvas, tRect, MediaController.IsLyricsEnabled, _lyricToggleHovered);
 
             canvas.DrawText("显示翻译歌词（上下两行）", CONTENT_TEXT_X, lyricY + 82, _subTextPaint);
             float trY = lyricY + 67;
             var trRect = new SKRect(tX, trY, tX + tW, trY + tH);
-            if (MediaController.IsTranslationEnabled)
-            {
-                _dynamicFillPaint.Color = _transToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(trRect, tH / 2, tH / 2, _dynamicFillPaint);
-                canvas.DrawCircle(tX + tW - tH / 2, trY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = _transToggleHovered ? Neutral(150) : Neutral(100);
-                canvas.DrawRoundRect(trRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = _transToggleHovered ? Neutral(200) : Neutral(150);
-                canvas.DrawCircle(tX + tH / 2, trY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
+            DrawSettingsSwitch(canvas, trRect, MediaController.IsTranslationEnabled, _transToggleHovered);
 
             canvas.DrawText("逐字歌词（不可用时自动回退卡拉OK）", CONTENT_TEXT_X, lyricY + 116, _subTextPaint);
             float kY = lyricY + 101;
             var kRect = new SKRect(tX, kY, tX + tW, kY + tH);
-            if (MediaController.IsLyricScanEnabled)
-            {
-                _dynamicFillPaint.Color = _scanToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicFillPaint);
-                canvas.DrawCircle(tX + tW - tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = _scanToggleHovered ? Neutral(150) : Neutral(100);
-                canvas.DrawRoundRect(kRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = _scanToggleHovered ? Neutral(200) : Neutral(150);
-                canvas.DrawCircle(tX + tH / 2, kY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
+            DrawSettingsSwitch(canvas, kRect, MediaController.IsLyricScanEnabled, _scanToggleHovered);
 
             // 延迟调整
             canvas.DrawText("歌词延迟补偿", CONTENT_TEXT_X, lyricY + 150, _subTextPaint);
             float cardRightX = LeftColumnRight - 16;
             float btnY = lyricY + 133;
 
-            _dynamicFillPaint.Color = _lyricMinusHovered ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), 4, 4, _dynamicFillPaint);
-            canvas.DrawText("-", cardRightX - 164, btnY + 17, _uiTextPaint);
+            DrawSettingsButton(canvas, new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), "-", _lyricMinusHovered);
 
             string valStr = $"{MediaController.LyricDelayOffset:F1} s";
             if (MediaController.LyricDelayOffset > 0) valStr = "+" + valStr;
             float textW = _uiTextPaint.MeasureText(valStr);
             canvas.DrawText(valStr, cardRightX - 90 - textW, btnY + 17, _uiTextPaint);
 
-            _dynamicFillPaint.Color = _lyricPlusHovered ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(new SKRect(cardRightX - 80, btnY, cardRightX - 50, btnY + 24), 4, 4, _dynamicFillPaint);
-            canvas.DrawText("+", cardRightX - 69, btnY + 17, _uiTextPaint);
+            DrawSettingsButton(canvas, new SKRect(cardRightX - 80, btnY, cardRightX - 50, btnY + 24), "+", _lyricPlusHovered);
 
-            _dynamicFillPaint.Color = _lyricResetHovered ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(new SKRect(cardRightX - 40, btnY, cardRightX, btnY + 24), 4, 4, _dynamicFillPaint);
-            canvas.DrawText("重置", cardRightX - 33, btnY + 17, _subTextPaint);
+            DrawSettingsButton(canvas, new SKRect(cardRightX - 40, btnY, cardRightX, btnY + 24), "重置", _lyricResetHovered);
 
             DrawHotkeyCard(canvas);
         }
@@ -1377,8 +1178,7 @@ namespace NotchPeninsula
         {
             float cardY = HOTKEY_CARD_Y;
             var cardRect = new SKRect(RightColumnLeft, cardY, WIDTH - CONTENT_RM, cardY + HOTKEY_CARD_H);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, cardRect);
 
 
             bool hasHint = _hotkeyHint.Length > 0;
@@ -1388,29 +1188,16 @@ namespace NotchPeninsula
             string sub = hasHint ? _hotkeyHint
                 : (recording ? "按下按键录制 · Esc 取消 · Backspace 清空"
                              : "在其他窗口也能控制播放 · 点按键框可重录");
-            _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
+            _subTextPaint.Color = hasHint ? DangerText : SecondaryText;
             float subMax = (WIDTH - CONTENT_RM - 16f - 42f) - 12f - RightColumnText;
             DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, RightColumnText, cardY + 28);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             float tW = 42f, tH = 20f;
             float tX = WIDTH - CONTENT_RM - 16f - tW;
             float tY = cardY + 12f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-            if (MediaHotkeys.IsEnabled)
-            {
-                _dynamicFillPaint.Color = _hotkeyToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = _hotkeyToggleHovered ? Neutral(150) : Neutral(100);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = _hotkeyToggleHovered ? Neutral(200) : Neutral(150);
-                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
+            DrawSettingsSwitch(canvas, tRect, MediaHotkeys.IsEnabled, _hotkeyToggleHovered);
 
             // ── 五行键位：左 = 动作名，右 = 键位框 ──
             for (int i = 0; i < MediaHotkeys.Count; i++)
@@ -1421,20 +1208,10 @@ namespace NotchPeninsula
                 bool rowRecording = _hotkeyRecordingIndex == i;
                 var boxRect = new SKRect(HOTKEY_BOX_X, rowY + 4, HOTKEY_BOX_RIGHT, rowY + 4 + HOTKEY_BOX_H);
 
-                _dynamicFillPaint.Color = rowRecording ? new SKColor(0, 120, 212, 70)
-                    : (_hoveredHotkeyRow == i ? Overlay(30) : Overlay(15));
-                canvas.DrawRoundRect(boxRect, 4, 4, _dynamicFillPaint);
-                if (rowRecording)
-                {
-                    float oldStroke = _dynamicStrokePaint.StrokeWidth;
-                    _dynamicStrokePaint.Color = new SKColor(0, 140, 240);
-                    _dynamicStrokePaint.StrokeWidth = 1f;
-                    canvas.DrawRoundRect(boxRect, 4, 4, _dynamicStrokePaint);
-                    _dynamicStrokePaint.StrokeWidth = oldStroke;
-                }
+                DrawControlSurface(canvas, boxRect, _hoveredHotkeyRow == i, true, focused: rowRecording);
 
                 string text = rowRecording ? RecordingBoxText() : MediaHotkeys.FormatKey(i);
-                _dynamicTextPaint.Color = rowRecording ? new SKColor(0, 150, 255)
+                _dynamicTextPaint.Color = rowRecording ? AccentText
                     : (MediaHotkeys.IsBound(i) ? _fgColor : Neutral(120));
                 DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
                     HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);
@@ -1452,8 +1229,7 @@ namespace NotchPeninsula
             bool isModeDisabled = !NotchWindow.IsAutoHideEnabled || silent;
             const string silentSub = "静默模式下由重要信息驱动";
             var autoHideCardRect = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + AUTOHIDE_CARD_Y, LeftColumnRight, TITLE_BAR_HEIGHT + AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H);
-            canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(autoHideCardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, autoHideCardRect);
 
             // 行 1：总开关，关掉时下面三行一起置灰、不可点。
             DrawToggleRow(canvas, 12, "自动隐藏", silent ? silentSub : "允许灵动岛自动隐藏",
@@ -1517,8 +1293,7 @@ namespace NotchPeninsula
         {
             float cardY = TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y;
             var cardRect = new SKRect(RightColumnLeft, cardY, WIDTH - CONTENT_RM, cardY + SILENT_HOTKEY_CARD_H);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, cardRect);
 
             canvas.DrawText("静默模式", RightColumnText, cardY + 23, _uiTextPaint);
 
@@ -1527,20 +1302,7 @@ namespace NotchPeninsula
             float tX = WIDTH - CONTENT_RM - 16f - tW;
             float tY = cardY + 16f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-            if (SilentHotkey.IsEnabled)
-            {
-                _dynamicFillPaint.Color = _silentHotkeyToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = _silentHotkeyToggleHovered ? Neutral(150) : Neutral(100);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = _silentHotkeyToggleHovered ? Neutral(200) : Neutral(150);
-                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
+            DrawSettingsSwitch(canvas, tRect, SilentHotkey.IsEnabled, _silentHotkeyToggleHovered);
 
             // 优先级：错误提示 > 录制操作说明 > 未设置键位 > 未开启 > 平时说明。
             string hint = _silentHotkeyHint.Length > 0 ? _silentHotkeyHint : SilentHotkey.LastError;
@@ -1550,30 +1312,20 @@ namespace NotchPeninsula
                     : (!SilentHotkey.IsBound ? "先点下面的按键框录一个组合键（默认空）"
                         : (!SilentHotkey.IsEnabled ? "已保存，打开右上角开关后生效"
                                                    : "全局生效：按一下在静默与之前模式之间切换"));
-            _subTextPaint.Color = hasHint ? new SKColor(230, 122, 92) : Neutral(170);
+            _subTextPaint.Color = hasHint ? DangerText : SecondaryText;
             float subMax = (WIDTH - CONTENT_RM - 16f - tW) - 12f - RightColumnText;
             DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, RightColumnText, cardY + 40);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             float rowY = cardY + HOTKEY_HEAD_H;
             canvas.DrawText("快捷键", RightColumnText, rowY + 20, _subTextPaint);
 
             var boxRect = new SKRect(HOTKEY_BOX_X, rowY + 4, HOTKEY_BOX_RIGHT, rowY + 4 + HOTKEY_BOX_H);
 
-            _dynamicFillPaint.Color = _silentHotkeyRecording ? new SKColor(0, 120, 212, 70)
-                : (_silentHotkeyHovered ? Overlay(30) : Overlay(15));
-            canvas.DrawRoundRect(boxRect, 4, 4, _dynamicFillPaint);
-            if (_silentHotkeyRecording)
-            {
-                float oldStroke = _dynamicStrokePaint.StrokeWidth;
-                _dynamicStrokePaint.Color = new SKColor(0, 140, 240);
-                _dynamicStrokePaint.StrokeWidth = 1f;
-                canvas.DrawRoundRect(boxRect, 4, 4, _dynamicStrokePaint);
-                _dynamicStrokePaint.StrokeWidth = oldStroke;
-            }
+            DrawControlSurface(canvas, boxRect, _silentHotkeyHovered, true, focused: _silentHotkeyRecording);
 
             string text = _silentHotkeyRecording ? RecordingBoxText() : SilentHotkey.FormatKey();
-            _dynamicTextPaint.Color = _silentHotkeyRecording ? new SKColor(0, 150, 255)
+            _dynamicTextPaint.Color = _silentHotkeyRecording ? AccentText
                 : (SilentHotkey.IsBound ? _fgColor : Neutral(120));
             DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
                 HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);
@@ -1591,8 +1343,7 @@ namespace NotchPeninsula
             // 于是「看得见的卡片点不动、点得动的地方反而是空的」。
             float cardY = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y;
             var cardRect = new SKRect(RightColumnLeft, cardY, WIDTH - CONTENT_RM, cardY + ISLAND_HOTKEY_CARD_H);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, cardRect);
 
             _uiTextPaint.Color = disabled ? Neutral(100) : _fgColor;
             canvas.DrawText("唤出灵动岛", RightColumnText, cardY + 23, _uiTextPaint);
@@ -1603,29 +1354,7 @@ namespace NotchPeninsula
             float tX = WIDTH - CONTENT_RM - 16f - tW;
             float tY = cardY + 16f;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-            if (disabled)
-            {
-                // 静默模式：整卡置灰，开关只画灰描边（同 DrawToggleRow 的 disabled 样式）。
-                _dynamicStrokePaint.Color = Neutral(80);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = Neutral(100);
-                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
-            else if (IslandHotkey.IsEnabled)
-            {
-                _dynamicFillPaint.Color = _islandHotkeyToggleHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-            }
-            else
-            {
-                _dynamicStrokePaint.Color = _islandHotkeyToggleHovered ? Neutral(150) : Neutral(100);
-                canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                _toggleCirclePaint.Color = _islandHotkeyToggleHovered ? Neutral(200) : Neutral(150);
-                canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                _toggleCirclePaint.Color = SKColors.White;
-            }
+            DrawSettingsSwitch(canvas, tRect, IslandHotkey.IsEnabled, _islandHotkeyToggleHovered, !disabled);
 
             // 优先级：错误提示 > 录制操作说明 > 未开启 > 平时说明。
             // 注册失败（键被别的程序占着）在没录制时也要一直挂着，否则用户只会觉得「按了没反应」。
@@ -1636,34 +1365,23 @@ namespace NotchPeninsula
                 : (_islandHotkeyRecording ? "按下按键录制 · Esc 取消 · Backspace 清空"
                     : (!IslandHotkey.IsEnabled ? "开启后按下可隐藏 / 唤出灵动岛 · 点按键框可重录"
                                                : "全局生效 · 点按键框可重录"));
-            _subTextPaint.Color = disabled ? Neutral(80) : hasHint ? new SKColor(230, 122, 92) : Neutral(170);
+            _subTextPaint.Color = disabled ? Neutral(80) : hasHint ? DangerText : SecondaryText;
             float subMax = (WIDTH - CONTENT_RM - 16f - tW) - 12f - RightColumnText;
             DrawTextWithEmoji(canvas, sub, _subTextPaint, subMax, RightColumnText, cardY + 40);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             float rowY = cardY + HOTKEY_HEAD_H;
-            _subTextPaint.Color = disabled ? Neutral(80) : Neutral(170);
+            _subTextPaint.Color = disabled ? Neutral(80) : SecondaryText;
             canvas.DrawText("快捷键", RightColumnText, rowY + 20, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             var boxRect = new SKRect(HOTKEY_BOX_X, rowY + 4, HOTKEY_BOX_RIGHT, rowY + 4 + HOTKEY_BOX_H);
 
-            _dynamicFillPaint.Color = disabled ? Overlay(5)
-                : _islandHotkeyRecording ? new SKColor(0, 120, 212, 70)
-                : (_islandHotkeyHovered ? Overlay(30) : Overlay(15));
-            canvas.DrawRoundRect(boxRect, 4, 4, _dynamicFillPaint);
-            if (_islandHotkeyRecording && !disabled)
-            {
-                float oldStroke = _dynamicStrokePaint.StrokeWidth;
-                _dynamicStrokePaint.Color = new SKColor(0, 140, 240);
-                _dynamicStrokePaint.StrokeWidth = 1f;
-                canvas.DrawRoundRect(boxRect, 4, 4, _dynamicStrokePaint);
-                _dynamicStrokePaint.StrokeWidth = oldStroke;
-            }
+            DrawControlSurface(canvas, boxRect, _islandHotkeyHovered, !disabled, focused: _islandHotkeyRecording);
 
             string text = _islandHotkeyRecording ? RecordingBoxText() : IslandHotkey.FormatKey();
             _dynamicTextPaint.Color = disabled ? Neutral(90)
-                : _islandHotkeyRecording ? new SKColor(0, 150, 255)
+                : _islandHotkeyRecording ? AccentText
                 : (IslandHotkey.IsBound ? _fgColor : Neutral(120));
             DrawTextWithEmoji(canvas, text, _dynamicTextPaint,
                 HOTKEY_BOX_W - 24f, HOTKEY_BOX_RIGHT - 12f, rowY + 20.5f, rightAlign: true);
@@ -1685,10 +1403,8 @@ namespace NotchPeninsula
             float top = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var identity = new SKRect(CONTENT_L, top, LeftColumnRight, top + 196);
             var resources = new SKRect(RightColumnLeft, top, WIDTH - CONTENT_RM, top + 196);
-            canvas.DrawRoundRect(identity, 6, 6, _cardBg);
-            canvas.DrawRoundRect(identity, 6, 6, _cardBorder);
-            canvas.DrawRoundRect(resources, 6, 6, _cardBg);
-            canvas.DrawRoundRect(resources, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, identity);
+            DrawSettingsCard(canvas, resources);
 
             if (_appIconBitmap != null)
                 canvas.DrawBitmap(_appIconBitmap, new SKRect(identity.MidX - 32, top + 30, identity.MidX + 32, top + 94), _hqSamplingOpts);
@@ -1697,7 +1413,7 @@ namespace NotchPeninsula
             _dynamicTextPaint.TextSize = 20f;
             _dynamicTextPaint.TextAlign = SKTextAlign.Center;
             canvas.DrawText("NotchPeninsula", identity.MidX, top + 128, _dynamicTextPaint);
-            _dynamicTextPaint.Color = Neutral(170);
+            _dynamicTextPaint.Color = SecondaryText;
             _dynamicTextPaint.TextSize = 13f;
             canvas.DrawText(_appTitleWithVersion.Replace("NotchPeninsula ", "NPS v"), identity.MidX, top + 153, _dynamicTextPaint);
             _dynamicTextPaint.TextAlign = SKTextAlign.Left;
@@ -1710,12 +1426,9 @@ namespace NotchPeninsula
             {
                 float width = _dynamicTextPaint.MeasureText(links[i]) + 20;
                 var button = new SKRect(x, baseline - 20, x + width, baseline + 9);
-                _dynamicFillPaint.Color = Overlay(_hoveredLinkIndex == i ? (byte)28 : (byte)14);
-                canvas.DrawRoundRect(button, 4, 4, _dynamicFillPaint);
+                DrawSettingsButton(canvas, button, links[i], _hoveredLinkIndex == i);
                 _aboutLinkLeft[i] = button.Left;
                 _aboutLinkRight[i] = button.Right;
-                _dynamicTextPaint.Color = _hoveredLinkIndex == i ? new SKColor(0, 150, 255) : _fgColor;
-                canvas.DrawText(links[i], x + 10, baseline, _dynamicTextPaint);
                 x += width + 8;
             }
             _aboutLinkTop = baseline - 20;
@@ -1730,8 +1443,7 @@ namespace NotchPeninsula
             {
                 float cardHeight = 12 + subLabels.Length * 34 + 2;   // 上下各 12（末行按钮底 138，卡高 150）
                 var cardRect = new SKRect(RightColumnLeft, TITLE_BAR_HEIGHT + yOffset, WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + yOffset + cardHeight);
-                canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-                canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+                DrawSettingsCard(canvas, cardRect);
 
                 for (int i = 0; i < subLabels.Length; i++)
                 {
@@ -1746,10 +1458,10 @@ namespace NotchPeninsula
                     if (Math.Abs(_customValues[index] - _defaultCustomValues[index]) > 0.001f)
                     {
                         var tagRect = new SKRect(afterLabelX, cardBtnY + 3, afterLabelX + 38, cardBtnY + 21);
-                        _dynamicFillPaint.Color = new SKColor(0, 120, 212, 35);
+                        _dynamicFillPaint.Color = AccentText.WithAlpha(22);
                         canvas.DrawRoundRect(tagRect, 3f, 3f, _dynamicFillPaint);
                         _dynamicTextPaint.TextSize = 10f; // 小文本样式
-                        _dynamicTextPaint.Color = new SKColor(0, 140, 240);
+                        _dynamicTextPaint.Color = AccentText;
                         canvas.DrawText("已生效", afterLabelX + 4, cardBtnY + 16, _dynamicTextPaint);
                         _dynamicTextPaint.TextSize = 13f; // 还原字号，防止污染后续文字渲染
                         afterLabelX += 46;
@@ -1760,12 +1472,12 @@ namespace NotchPeninsula
                         float hintA = GetHintAlpha(index);
                         if (hintA > 0.01f)
                         {
-                            // ⚠️ 必须存/还原调用前的颜色，不能写死 Neutral(170)：
+                            // ⚠️ 必须存/还原调用前的颜色，不能写死 SecondaryText：
                             //    这一行画完还有第 3、4 行（消息通知弹出高度 / 视觉比例）要画，
                             //    写死灰色会让它们整行跟着变暗 —— 而且只在悬停时触发（hintA>0 才会进来），
                             //    观感就是「鼠标一放上去，下面两行突然变灰」。
                             var hintPrev = _subTextPaint.Color;
-                            _subTextPaint.Color = new SKColor(0, 140, 240, (byte)(255 * hintA));
+                            _subTextPaint.Color = AccentText.WithAlpha((byte)(255 * hintA));
                             canvas.DrawText("刘海模式下生效", afterLabelX, cardBtnY + 17, _subTextPaint);
                             _subTextPaint.Color = hintPrev;
                         }
@@ -1773,30 +1485,22 @@ namespace NotchPeninsula
 
                     float cardRightX = WIDTH - CONTENT_TEXT_RM;
 
-                    _dynamicFillPaint.Color = _hoveredMinusIndex == index ? Overlay(30) : Overlay(15);
-                    canvas.DrawRoundRect(new SKRect(cardRightX - 175, cardBtnY, cardRightX - 145, cardBtnY + 24), 4, 4, _dynamicFillPaint);
-                    // 按钮文字一律在按钮矩形里居中（原来减号/加号是写死左边距，看着偏右）
-                    canvas.DrawText("-", cardRightX - 160f - _uiTextPaint.MeasureText("-") / 2f, cardBtnY + 17, _uiTextPaint);
+                    DrawSettingsButton(canvas, new SKRect(cardRightX - 175, cardBtnY, cardRightX - 145, cardBtnY + 24), "-", _hoveredMinusIndex == index);
 
                     // 使用静态缓存字符串，零 GC 开销
                     string valStr = _valStrCache[index];
                     float textW = _uiTextPaint.MeasureText(valStr);
                     canvas.DrawText(valStr, cardRightX - 90 - textW, cardBtnY + 17, _uiTextPaint);
 
-                    _dynamicFillPaint.Color = _hoveredPlusIndex == index ? Overlay(30) : Overlay(15);
-                    canvas.DrawRoundRect(new SKRect(cardRightX - 80, cardBtnY, cardRightX - 50, cardBtnY + 24), 4, 4, _dynamicFillPaint);
-                    canvas.DrawText("+", cardRightX - 65f - _uiTextPaint.MeasureText("+") / 2f, cardBtnY + 17, _uiTextPaint);
+                    DrawSettingsButton(canvas, new SKRect(cardRightX - 80, cardBtnY, cardRightX - 50, cardBtnY + 24), "+", _hoveredPlusIndex == index);
 
-                    _dynamicFillPaint.Color = _hoveredResetIndex == index ? Overlay(30) : Overlay(15);
-                    canvas.DrawRoundRect(new SKRect(cardRightX - 40, cardBtnY, cardRightX, cardBtnY + 24), 4, 4, _dynamicFillPaint);
-                    canvas.DrawText("重置", cardRightX - 20f - _subTextPaint.MeasureText("重置") / 2f, cardBtnY + 17, _subTextPaint);
+                    DrawSettingsButton(canvas, new SKRect(cardRightX - 40, cardBtnY, cardRightX, cardBtnY + 24), "重置", _hoveredResetIndex == index);
                 }
             }
 
             // 绘制新增的主题卡片
             float themeY = TITLE_BAR_HEIGHT + THEME_CARD_Y;
-            canvas.DrawRoundRect(new SKRect(CONTENT_L, themeY, LeftColumnRight, themeY + THEME_CARD_H), 6, 6, _cardBg);
-            canvas.DrawRoundRect(new SKRect(CONTENT_L, themeY, LeftColumnRight, themeY + THEME_CARD_H), 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, new SKRect(CONTENT_L, themeY, LeftColumnRight, themeY + THEME_CARD_H));
 
             canvas.DrawText("刘海 / 灵动岛主题", CONTENT_TEXT_X, themeY + 26, _uiTextPaint);
             // 「副标题」专指主标题下面这一行，统一灰色；它不属于状态说明。
@@ -1824,40 +1528,27 @@ namespace NotchPeninsula
             if (ShowOpacityCard)
             {
                 float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
-                canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, LeftColumnRight, opaY + OPACITY_CARD_H), 6, 6, _cardBg);
-                canvas.DrawRoundRect(new SKRect(CONTENT_L, opaY, LeftColumnRight, opaY + OPACITY_CARD_H), 6, 6, _cardBorder);
+                DrawSettingsCard(canvas, new SKRect(CONTENT_L, opaY, LeftColumnRight, opaY + OPACITY_CARD_H));
 
                 canvas.DrawText("背景透明度", CONTENT_TEXT_X, opaY + 26, _subTextPaint);
                 float sliderY = opaY + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
                 float sliderW = (LeftColumnRight - 16f) - CONTENT_TEXT_X;
-                // 背景透明度滑轨
-                canvas.DrawLine(sliderX, sliderY, sliderX + sliderW, sliderY, _separatorPaint);
                 float activePx = sliderX + (sliderW / 4) * Renderer.BgOpacityLevel;
+                DrawSliderTrack(canvas, sliderX, sliderX + sliderW, sliderY, activePx,
+                    _hoveredOpacityIndex == Renderer.BgOpacityLevel);
 
-                // ⚠️ 这几笔必须自己把画笔状态摆正：_dynamicStrokePaint 是全局复用的，
-                //    玻璃卡的滑轨也在改它的 StrokeWidth；一旦 Style/Cap 被别处动过，
-                //    DrawLine 什么都不会画，画面上只剩 _separatorPaint 那条灰轨道（"进度条不显示"）。
-                _dynamicStrokePaint.Style = SKPaintStyle.Stroke;
-                _dynamicStrokePaint.StrokeCap = SKStrokeCap.Round;
-                _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
-                _dynamicStrokePaint.StrokeWidth = 2f;
-                canvas.DrawLine(sliderX, sliderY, activePx, sliderY, _dynamicStrokePaint);
-
-                // 穿透模式下也允许调背景透明度：滑轨不再置灰、不再吞掉点击/拖动。
-                // 穿透淡出是叠在这层之上的「悬停淡出」，两者互不冲突（旧版直接禁用，用户只会以为坏了）。
-                _dynamicStrokePaint.Color = new SKColor(0, 120, 212);
                 for (int i = 0; i < 5; i++)
                 {
                     float px = sliderX + (sliderW / 4) * i;
                     bool isSelected = Renderer.BgOpacityLevel == i;
                     bool isHovered = _hoveredOpacityIndex == i;
-                    if (isSelected || isHovered)
+                    if (!isSelected && isHovered)
                     {
-                        _dynamicFillPaint.Color = isSelected ? new SKColor(0, 120, 212) : Overlay(80);
-                        canvas.DrawCircle(px, sliderY, isSelected ? 6 : 4, _dynamicFillPaint);
+                        _dynamicFillPaint.Color = Overlay(80);
+                        canvas.DrawCircle(px, sliderY, 4, _dynamicFillPaint);
                     }
-                    _dynamicTextPaint.Color = isSelected ? _fgColor : Neutral(150);
+                    _dynamicTextPaint.Color = isSelected ? _fgColor : SecondaryText;
                     _dynamicTextPaint.TextSize = 11f;
                     string pct = OpacityStopLabels[i];   // 复用静态刻度文案，避免每帧插值
                     float tw = _dynamicTextPaint.MeasureText(pct);
@@ -1871,19 +1562,14 @@ namespace NotchPeninsula
             {
                 float gY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
                 var gRect = new SKRect(RightColumnLeft, gY, WIDTH - CONTENT_RM, gY + GlassCardH);
-                canvas.DrawRoundRect(gRect, 6, 6, _cardBg);
-                canvas.DrawRoundRect(gRect, 6, 6, _cardBorder);
+                DrawSettingsCard(canvas, gRect);
 
                 string glassHint = "桌面抓屏背板 · 可调模糊与折射";
                 canvas.DrawText(glassHint, RightColumnText, gY + 26f, _subTextPaint);
 
                 float rY = gY + GlassResetTopY;
-                _dynamicFillPaint.Color = _hoveredGlassReset ? Overlay(30) : Overlay(15);
-                canvas.DrawRoundRect(new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
-                    4, 4, _dynamicFillPaint);
-                const string resetLabel = "恢复默认参数";
-                float resetW = _uiTextPaint.MeasureText(resetLabel);
-                canvas.DrawText(resetLabel, GLASS_RESET_X + (GLASS_RESET_W - resetW) / 2f, rY + 18, _uiTextPaint);
+                DrawSettingsButton(canvas, new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
+                    "恢复默认参数", _hoveredGlassReset);
 
                 int rows = GlassRowCount;
                 for (int row = 0; row < rows; row++)
@@ -1908,28 +1594,26 @@ namespace NotchPeninsula
             float x0 = colX + GLASS_SLIDER_DX;
             float textY = rowY + 17f;
             float railY = textY - 4.5f;
-            var accent = new SKColor(0, 120, 212);
 
             _subTextPaint.TextSize = 13f;
             _subTextPaint.Color = available ? _fgColor : Neutral(110);
             canvas.DrawText(GlassMaterial.Labels[paramIndex], colX, textY, _subTextPaint);
-            canvas.DrawLine(x0, railY, x0 + GLASS_SLIDER_W, railY, _separatorPaint);
             if (available)
             {
                 float step = GLASS_SLIDER_W / maxLevel;
                 float active = x0 + step * level;
-                _dynamicStrokePaint.Style = SKPaintStyle.Stroke;
-                _dynamicStrokePaint.StrokeCap = SKStrokeCap.Round;
-                _dynamicStrokePaint.Color = accent;
-                _dynamicStrokePaint.StrokeWidth = 2f;
-                canvas.DrawLine(x0, railY, active, railY, _dynamicStrokePaint);
-                if (_hoveredGlassParamIndex == paramIndex && _hoveredGlassParamLevel >= 0)
+                bool hovered = _hoveredGlassParamIndex == paramIndex;
+                DrawSliderTrack(canvas, x0, x0 + GLASS_SLIDER_W, railY, active, hovered);
+                if (hovered && _hoveredGlassParamLevel >= 0 && _hoveredGlassParamLevel != level)
                 {
                     _dynamicFillPaint.Color = Overlay(80);
                     canvas.DrawCircle(x0 + step * _hoveredGlassParamLevel, railY, 4.5f, _dynamicFillPaint);
                 }
-                _dynamicFillPaint.Color = accent;
-                canvas.DrawCircle(active, railY, 5.5f, _dynamicFillPaint);
+            }
+
+            else
+            {
+                canvas.DrawLine(x0, railY, x0 + GLASS_SLIDER_W, railY, _separatorPaint);
             }
 
             string[] values = paramIndex switch
@@ -1949,7 +1633,7 @@ namespace NotchPeninsula
                 colX + GLASS_SLIDER_DX + GLASS_SLIDER_W + 10f);
             canvas.DrawText(value, valueX, textY, _subTextPaint);
             _subTextPaint.TextSize = 12f;
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
         }
 
         private void RenderTabPlugins(SKCanvas canvas)
@@ -1966,8 +1650,7 @@ namespace NotchPeninsula
             // ── 顶部操作卡片 ──
             float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var topRect = new SKRect(CONTENT_L, topY, WIDTH - CONTENT_RM, topY + PluginTopCardH);
-            canvas.DrawRoundRect(topRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(topRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, topRect);
             canvas.DrawText("我的插件", CONTENT_TEXT_X, topY + 26, _uiTextPaint);
             canvas.DrawText("管理已安装插件；点插件行的「设置」可配置插件参数", CONTENT_TEXT_X, topY + 46, _subTextPaint);
 
@@ -1975,12 +1658,8 @@ namespace NotchPeninsula
             {
                 bool hovered = _hoveredPluginAction == index;
                 var btn = new SKRect(bx, by, bx + bw, by + 24);
-                _dynamicFillPaint.Color = hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                canvas.DrawRoundRect(btn, 4, 4, _dynamicFillPaint);
-                float tw = _uiTextPaint.MeasureText(label);
-                _uiTextPaint.Color = SKColors.White;   // 蓝底白字（浅色外观下 _fgColor 是黑的，压蓝底看不清）
-                canvas.DrawText(label, bx + (bw - tw) / 2f, by + 17, _uiTextPaint);
-                _uiTextPaint.Color = _fgColor;
+                DrawSettingsButton(canvas, btn, label, hovered,
+                    kind: index == 0 ? SettingsButtonKind.Primary : SettingsButtonKind.Standard);
             }
 
             DrawPluginButton(0, "导入插件", CONTENT_TEXT_X, topY + 60, 96);
@@ -1991,17 +1670,16 @@ namespace NotchPeninsula
             // ── 已安装插件列表卡片（可滚动，整卡高度）──
             GetPluginListCardTop(out float listY);
             var listRect = new SKRect(CONTENT_L, listY, WIDTH - CONTENT_RM, ContentBottom);
-            canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, listRect);
             canvas.DrawText($"已安装插件 ({_pluginView.Count})", CONTENT_TEXT_X, listY + 26, _uiTextPaint);
 
             if (!string.IsNullOrEmpty(_pluginHint))
             {
                 string header = $"已安装插件 ({_pluginView.Count})";
                 float hintMax = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X - _uiTextPaint.MeasureText(header) - 16;
-                _subTextPaint.Color = _pluginHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
+                _subTextPaint.Color = _pluginHintIsError ? DangerText : SecondaryText;
                 DrawTextWithEmoji(canvas, _pluginHint, _subTextPaint, hintMax, WIDTH - CONTENT_TEXT_RM, listY + 26, rightAlign: true);
-                _subTextPaint.Color = Neutral(170);
+                _subTextPaint.Color = SecondaryText;
             }
 
             // 条目变少时把滚动位置钳回可滚范围，避免停在一片空白上
@@ -2035,22 +1713,22 @@ namespace NotchPeninsula
                 {
                     // 红字：这一行是弹窗关掉之后唯一还能说明「它没跑起来」的地方
                     const string tag = "加载失败";
-                    _subTextPaint.Color = new SKColor(232, 100, 100);
+                    _subTextPaint.Color = DangerText;
                     canvas.DrawText(tag, textX, infoBaseline, _subTextPaint);
-                    _subTextPaint.Color = Neutral(170);
+                    _subTextPaint.Color = SecondaryText;
                     canvas.DrawText(shownSub[tag.Length..], textX + _subTextPaint.MeasureText(tag), infoBaseline, _subTextPaint);
                 }
                 else if (subDisabled && shownSub.StartsWith("已禁用", StringComparison.Ordinal))
                 {
                     const string tag = "已禁用";
-                    _subTextPaint.Color = new SKColor(0, 140, 240);
+                    _subTextPaint.Color = AccentText;
                     canvas.DrawText(tag, textX, infoBaseline, _subTextPaint);
-                    _subTextPaint.Color = Neutral(170);
+                    _subTextPaint.Color = SecondaryText;
                     canvas.DrawText(shownSub[tag.Length..], textX + _subTextPaint.MeasureText(tag), infoBaseline, _subTextPaint);
                 }
                 else
                 {
-                    _subTextPaint.Color = Neutral(170);
+                    _subTextPaint.Color = SecondaryText;
                     canvas.DrawText(shownSub, textX, infoBaseline, _subTextPaint);
                 }
 
@@ -2061,14 +1739,8 @@ namespace NotchPeninsula
                 void DrawRowButton(float bx, bool hovered, string label, bool danger, bool accent = false)
                 {
                     var r = new SKRect(bx, rowY + btnTop, bx + 50, rowY + btnTop + btnH);
-                    _dynamicFillPaint.Color = accent
-                        ? (hovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212))
-                        : hovered ? (danger ? new SKColor(180, 50, 50) : Overlay(30))
-                        : Overlay(15);
-                    canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                    _uiTextPaint.Color = accent ? SKColors.White : _fgColor;
-                    DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
-                    _uiTextPaint.Color = _fgColor;
+                    DrawSettingsButton(canvas, r, label, hovered, kind: danger
+                        ? SettingsButtonKind.Danger : accent ? SettingsButtonKind.Primary : SettingsButtonKind.Standard);
                 }
                 DrawRowButton(settingsX, _hoveredPluginSettings == i, "设置", false, accent: true);
                 DrawRowButton((settingsX + 56f), _hoveredPluginReload == i, "重载", false);
@@ -2077,20 +1749,7 @@ namespace NotchPeninsula
                 float tW = 42, tH = 20;
                 float tX = (settingsX + 168f), tY = rowY + btnTop;
                 var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-                if (entry.IsEnabled)
-                {
-                    _dynamicFillPaint.Color = _hoveredPluginToggle == i ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212);
-                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicFillPaint);
-                    canvas.DrawCircle(tX + tW - tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                }
-                else
-                {
-                    _dynamicStrokePaint.Color = _hoveredPluginToggle == i ? Neutral(150) : Neutral(100);
-                    canvas.DrawRoundRect(tRect, tH / 2, tH / 2, _dynamicStrokePaint);
-                    _toggleCirclePaint.Color = _hoveredPluginToggle == i ? Neutral(200) : Neutral(150);
-                    canvas.DrawCircle(tX + tH / 2, tY + tH / 2, tH / 2 - 4, _toggleCirclePaint);
-                    _toggleCirclePaint.Color = SKColors.White;
-                }
+                DrawSettingsSwitch(canvas, tRect, entry.IsEnabled, _hoveredPluginToggle == i);
                 canvas.Restore();
             }
 
@@ -2107,8 +1766,8 @@ namespace NotchPeninsula
             {
                 var zone = GetPluginDropZone();
 
-                _dynamicFillPaint.Color = new SKColor(0, 120, 212, 42);
-                _dynamicStrokePaint.Color = new SKColor(0, 140, 240, 215);
+                _dynamicFillPaint.Color = AccentText.WithAlpha(36);
+                _dynamicStrokePaint.Color = AccentText;
                 _dynamicStrokePaint.StrokeWidth = 2f;
                 canvas.DrawRoundRect(zone, 8, 8, _dynamicFillPaint);
                 canvas.DrawRoundRect(zone, 8, 8, _dynamicStrokePaint);
@@ -2118,9 +1777,9 @@ namespace NotchPeninsula
                 float hintW = _uiTextPaint.MeasureText(dropHint);
                 float hintX = zone.MidX - hintW / 2f;
                 float hintY = zone.MidY + 5f;
-                _dynamicFillPaint.Color = new SKColor(0, 90, 170, 235);
+                _dynamicFillPaint.Color = AccentFill(false);
                 canvas.DrawRoundRect(new SKRect(hintX - 14, hintY - 22, hintX + hintW + 14, hintY + 10), 6, 6, _dynamicFillPaint);
-                _uiTextPaint.Color = SKColors.White;
+                _uiTextPaint.Color = OnAccent;
                 canvas.DrawText(dropHint, hintX, hintY, _uiTextPaint);
                 _uiTextPaint.Color = _fgColor;
             }
@@ -2133,8 +1792,7 @@ namespace NotchPeninsula
 
             float cardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var cardRect = new SKRect(CONTENT_L, cardTop, WIDTH - CONTENT_RM, ContentBottom);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
-            canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
+            DrawSettingsCard(canvas, cardRect);
 
             // 工具栏下拉框（分类 / 排序）与设置页共用同一套 DrawDropdownBox。
             var catRect = new SKRect(CONTENT_TEXT_X, MarketControlsY, CONTENT_TEXT_X + MarketCatBtnW, MarketControlsY + MarketControlH);
@@ -2143,16 +1801,13 @@ namespace NotchPeninsula
                 enabled: true, open: _marketCategoryOpen);
 
             var searchRect = new SKRect(MarketSearchX, MarketControlsY, MarketSearchX + MarketSearchW, MarketControlsY + MarketControlH);
-            _dynamicFillPaint.Color = Overlay(15);
-            canvas.DrawRoundRect(searchRect, 5, 5, _dynamicFillPaint);
-            _dynamicStrokePaint.Color = _marketSearchFocused ? new SKColor(0, 140, 240) : Neutral(_marketSearchHovered ? (byte)130 : (byte)90);
-            canvas.DrawRoundRect(searchRect, 5, 5, _dynamicStrokePaint);
+            DrawControlSurface(canvas, searchRect, _marketSearchHovered, focused: _marketSearchFocused);
             float mgx = MarketSearchX + 14, mgy = MarketControlsY + 12;
             _dynamicStrokePaint.Color = Neutral(150);
             _dynamicStrokePaint.StrokeWidth = 1.5f;
             canvas.DrawCircle(mgx, mgy, 5f, _dynamicStrokePaint);
             canvas.DrawLine(mgx + 3.6f, mgy + 3.6f, mgx + 7f, mgy + 7f, _dynamicStrokePaint);
-            _marketTextPaint.Color = _marketSearch.Length == 0 && _marketImeComposing.Length == 0 ? Neutral(120) : _fgColor;
+            _marketTextPaint.Color = _marketSearch.Length == 0 && _marketImeComposing.Length == 0 ? SecondaryText : _fgColor;
             float caretX = MarketSearchTextX;
             if (_marketSearch.Length > 0)
             {
@@ -2163,7 +1818,7 @@ namespace NotchPeninsula
                     float hx2 = MarketSearchXAtIndex(MarketSelEnd);
                     if (hx2 - hx1 > 0.5f)
                     {
-                        _dynamicFillPaint.Color = new SKColor(0, 120, 212, 96);
+                        _dynamicFillPaint.Color = AccentText.WithAlpha(64);
                         canvas.DrawRect(new SKRect(hx1, MarketControlsY + 5f, hx2, MarketControlsY + 21f), _dynamicFillPaint);
                     }
                 }
@@ -2177,7 +1832,7 @@ namespace NotchPeninsula
             }
             if (_marketImeComposing.Length > 0)
             {
-                _marketTextPaint.Color = Neutral(150);
+                _marketTextPaint.Color = SecondaryText;
                 string comp = TruncateText(_marketImeComposing, _marketTextPaint, MarketSearchX + MarketSearchW - 8 - caretX);
                 canvas.DrawText(comp, caretX, MarketControlsY + 17, _marketTextPaint);
                 float cw = _marketTextPaint.MeasureText(comp);
@@ -2193,27 +1848,14 @@ namespace NotchPeninsula
             }
             if (_marketSearchFocused)
             {
-                _dynamicFillPaint.Color = new SKColor(0, 140, 240);
+                _dynamicFillPaint.Color = AccentText;
                 canvas.DrawRect(new SKRect(caretX + 1, MarketControlsY + 6, caretX + 2.4f, MarketControlsY + 20), _dynamicFillPaint);
             }
 
             DrawPluginLayoutButtons(canvas, MarketControlsY);
 
             var chkBox = new SKRect(MarketChkX, MarketChkY, MarketChkX + MarketChkBoxSize, MarketChkY + MarketChkBoxSize);
-            _dynamicStrokePaint.Color = _marketOnlyInstalled
-                ? new SKColor(0, 120, 212)
-                : Neutral(_hoveredMarketChk ? (byte)150 : (byte)100);
-            _dynamicFillPaint.Color = _marketOnlyInstalled ? new SKColor(0, 120, 212) : SKColors.Transparent;
-            canvas.DrawRoundRect(chkBox, 3, 3, _dynamicFillPaint);
-            canvas.DrawRoundRect(chkBox, 3, 3, _dynamicStrokePaint);
-            if (_marketOnlyInstalled)
-            {
-                // 白色对勾（与「显示内容」列表的勾选框同一套画法）
-                _iconPaint.Color = SKColors.White;
-                canvas.DrawLine(MarketChkX + 3, MarketChkY + 8, MarketChkX + 6, MarketChkY + 11, _iconPaint);
-                canvas.DrawLine(MarketChkX + 6, MarketChkY + 11, MarketChkX + 13, MarketChkY + 4, _iconPaint);
-                _iconPaint.Color = _fgColor;
-            }
+            DrawSettingsCheckBox(canvas, chkBox, _marketOnlyInstalled, _hoveredMarketChk);
             _marketTextPaint.Color = _hoveredMarketChk ? _fgColor : Neutral(190);
             canvas.DrawText(MarketChkLabel, MarketChkLabelX, MarketStatusBaseline, _marketTextPaint);
 
@@ -2224,35 +1866,29 @@ namespace NotchPeninsula
                 : $"共 {_marketView.Count} 个插件";
             float statusX = MarketChkLabelX + _marketTextPaint.MeasureText(MarketChkLabel) + 18f;
             float statusMax = MarketSortX - 10f - statusX;   // 止于排序下拉左侧
-            _marketTextPaint.Color = _marketError.Length > 0 && !_marketFetching ? new SKColor(232, 100, 100) : Neutral(140);
+            _marketTextPaint.Color = _marketError.Length > 0 && !_marketFetching ? DangerText : SecondaryText;
             canvas.DrawText(TruncateText(status, _marketTextPaint, statusMax), statusX, MarketStatusBaseline, _marketTextPaint);
-            _marketTextPaint.Color = Neutral(140);
+            _marketTextPaint.Color = SecondaryText;
             if (!string.IsNullOrEmpty(_marketHint) && !_marketFetching)
             {
                 float hintRight = MarketSortX - 10f;   // 提示右对齐到排序下拉左侧，别钻到控件底下
                 float hintMax = hintRight - statusX - _marketTextPaint.MeasureText(status) - 16;
-                _marketTextPaint.Color = _marketHintIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140);
+                _marketTextPaint.Color = _marketHintIsError ? DangerText : SecondaryText;
                 DrawTextWithEmoji(canvas, _marketHint, _marketTextPaint, hintMax, hintRight, MarketStatusBaseline, rightAlign: true);
-                _marketTextPaint.Color = Neutral(140);
+                _marketTextPaint.Color = SecondaryText;
             }
 
             var refreshRect = new SKRect(MarketRefreshX, MarketStatusRowY, MarketRefreshX + MarketRefreshW, MarketStatusRowY + MarketControlH);
             bool refreshActive = !_marketFetching;
-            _dynamicFillPaint.Color = refreshActive && _hoveredMarketRefresh ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(refreshRect, 5, 5, _dynamicFillPaint);
-            _dynamicStrokePaint.Color = Neutral(refreshActive && _hoveredMarketRefresh ? (byte)130 : (byte)90);
-            canvas.DrawRoundRect(refreshRect, 5, 5, _dynamicStrokePaint);
-            _marketTextPaint.Color = refreshActive ? _fgColor : Neutral(110);
-            float refreshTw = _marketTextPaint.MeasureText("刷新");
-            canvas.DrawText("刷新", MarketRefreshX + (MarketRefreshW - refreshTw) / 2f, MarketStatusBaseline, _marketTextPaint);
-            _marketTextPaint.Color = Neutral(170);
+            DrawSettingsButton(canvas, refreshRect, "刷新", _hoveredMarketRefresh, refreshActive);
+            _marketTextPaint.Color = SecondaryText;
 
             // ── 排序下拉（最热 / 评分 / 最新 / 名称，官方插件始终置顶）──
             var sortRect = new SKRect(MarketSortX, MarketStatusRowY, MarketSortX + MarketSortW, MarketStatusRowY + MarketControlH);
             DrawDropdownBox(canvas, sortRect.Left, sortRect.Top, MarketSortW, MarketControlH,
                 MarketSortOptions[_marketSortIndex], _hoveredMarketSortIndex == -2,
                 enabled: true, open: _marketSortOpen);
-            _subTextPaint.Color = Neutral(170);   // 下面列表区继续用这支，保持默认灰
+            _subTextPaint.Color = SecondaryText;   // 下面列表区继续用这支，保持默认灰
 
             float rowsTop = MarketRowsTop;
 
@@ -2306,7 +1942,7 @@ namespace NotchPeninsula
                 float scoreW = _subTextPaint.MeasureText(scoreText);
                 float scoreX = dlX - dlGap - scoreW;
 
-                _subTextPaint.Color = Neutral(140);
+                _subTextPaint.Color = SecondaryText;
                 canvas.DrawText(dlText, dlX, statBaseline, _subTextPaint);
 
                 float ratingLeft = scoreX;   // 名称可用宽度的右界（下方算 nameMaxNow 用）
@@ -2314,14 +1950,14 @@ namespace NotchPeninsula
                 {
                     float starCx = scoreX - scoreGap - starR;
                     using var star = BuildStarPath(starCx, statBaseline - 5f, starR, starR * 0.42f);
-                    _dynamicFillPaint.Color = new SKColor(232, 168, 48);
+                    _dynamicFillPaint.Color = AccentText;
                     canvas.DrawPath(star, _dynamicFillPaint);
                     _dynamicFillPaint.Color = Overlay(15);   // 复位：该画笔多处共用
                     ratingLeft = starCx - starR;
                 }
-                _subTextPaint.Color = hasRating ? Neutral(185) : Neutral(115);
+                _subTextPaint.Color = SecondaryText;
                 canvas.DrawText(scoreText, scoreX, statBaseline, _subTextPaint);
-                _subTextPaint.Color = Neutral(170);
+                _subTextPaint.Color = SecondaryText;
 
                 string tagOfficial = mp.Official ? "官方" : "";
                 //    绝不拼成半截的「已装 v」。
@@ -2337,35 +1973,35 @@ namespace NotchPeninsula
 
                 if (tagOfficial.Length > 0)
                 {
-                    _subTextPaint.Color = dim ? Neutral(95) : new SKColor(0, 140, 240);
+                    _subTextPaint.Color = dim ? Neutral(95) : AccentText;
                     canvas.DrawText(tagOfficial, afterNameX + 6, rowY + 17, _subTextPaint);
                     afterNameX += 6 + _subTextPaint.MeasureText(tagOfficial);
                 }
                 if (tagInstalled.Length > 0)
                 {
-                    _subTextPaint.Color = dim ? Neutral(95) : new SKColor(0, 140, 240);
+                    _subTextPaint.Color = dim ? Neutral(95) : AccentText;
                     canvas.DrawText(tagInstalled, afterNameX + 8, rowY + 17, _subTextPaint);
                     afterNameX += 8 + _subTextPaint.MeasureText(tagInstalled);
                 }
-                _subTextPaint.Color = Neutral(170);
+                _subTextPaint.Color = SecondaryText;
 
                 float infoTextMax = Math.Max(0, (_showPluginCards ? ratingLeft : installX) - textX - 8);
                 if (busy)
                 {
-                    _subTextPaint.Color = new SKColor(0, 140, 240);
+                    _subTextPaint.Color = AccentText;
                     canvas.DrawText("正在下载安装…", textX, rowY + 37, _subTextPaint);
-                    _subTextPaint.Color = Neutral(170);
+                    _subTextPaint.Color = SecondaryText;
                 }
                 else if (dim)
                 {
                     //    同时说明这一行为什么是灰的
                     _subTextPaint.Color = Neutral(95);
                     canvas.DrawText("已禁用", textX, rowY + 37, _subTextPaint);
-                    _subTextPaint.Color = Neutral(170);
+                    _subTextPaint.Color = SecondaryText;
                 }
                 else
                 {
-                    _subTextPaint.Color = Neutral(170);
+                    _subTextPaint.Color = SecondaryText;
                     canvas.DrawText(TruncateText($"v{mp.Version} · {mp.Author}", _subTextPaint, infoTextMax),
                         textX, rowY + 37, _subTextPaint);
                 }
@@ -2373,40 +2009,28 @@ namespace NotchPeninsula
                 float btnTop = PluginButtonsTop;
                 const float btnH = 20f;
 
-                // 主操作（下载 / 更新 / 重装 / 启用）：四态四种颜色
+                // 主操作（下载 / 更新 / 重装 / 启用）
                 {
                     bool enabled = !busy;
                     bool hovered = _hoveredMarketInstall == i;
                     var r = new SKRect(installX, rowY + btnTop, installX + MarketBtnW, rowY + btnTop + btnH);
-                    var (normal, hover) = InstallButtonColors(local, mp, dim);
-                    _dynamicFillPaint.Color = !enabled ? Overlay(20) : hovered ? hover : normal;
-                    canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                    // 「启用」是灰底，白字压在浅色主题的浅灰底上会糊掉 —— 这类按钮的文字跟着底色走。
-                    _uiTextPaint.Color = !enabled ? Neutral(110)
-                        : (local != null && dim) ? Neutral(235) : SKColors.White;
-                    DrawCenteredButtonLabel(canvas, MarketInstallLabel(mp, local, dim), r, _uiTextPaint);
+                    DrawSettingsButton(canvas, r, MarketInstallLabel(mp, local, dim), hovered, enabled,
+                        local != null && dim ? SettingsButtonKind.Standard : SettingsButtonKind.Primary);
                 }
 
-                // 卸载：灰实底，悬停转红；本机没装则置灰
+                // 未安装时禁用卸载
                 {
                     bool enabled = local != null && !busy;
                     bool hovered = _hoveredMarketUninstall == i;
                     var r = new SKRect(uninstallX, rowY + btnTop, uninstallX + MarketBtnW, rowY + btnTop + btnH);
-                    _dynamicFillPaint.Color = !enabled ? Overlay(8)
-                        : hovered ? new SKColor(180, 50, 50) : Overlay(15);
-                    canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                    _uiTextPaint.Color = !enabled ? Neutral(110) : hovered ? SKColors.White : Neutral(200);
-                    DrawCenteredButtonLabel(canvas, "卸载", r, _uiTextPaint);
+                    DrawSettingsButton(canvas, r, "卸载", hovered, enabled, SettingsButtonKind.Danger);
                 }
 
-                // 详情：中性灰
+                // 详情
                 {
                     bool hovered = _hoveredMarketDetail == i;
                     var r = new SKRect(detailX, rowY + btnTop, detailX + MarketBtnW, rowY + btnTop + btnH);
-                    _dynamicFillPaint.Color = hovered ? Overlay(40) : Overlay(20);
-                    canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-                    _uiTextPaint.Color = hovered ? _fgColor : Neutral(200);
-                    DrawCenteredButtonLabel(canvas, "详情", r, _uiTextPaint);
+                    DrawSettingsButton(canvas, r, "详情", hovered);
                 }
                 canvas.Restore();
             }
@@ -2425,13 +2049,8 @@ namespace NotchPeninsula
                 var bar = MarketUpdateBarRect;
                 bool running = _updateAllRunning;
                 bool enabled = !running && _marketBusyId.Length == 0;
-                // 主操作色跟行内「更新」按钮同一套橙：一眼看出这条是干什么的
-                _dynamicFillPaint.Color = running ? Overlay(20)
-                    : enabled && _hoveredMarketUpdateAll ? new SKColor(238, 146, 34)
-                    : new SKColor(214, 126, 24);
-                canvas.DrawRoundRect(bar, 5, 5, _dynamicFillPaint);
-                _uiTextPaint.Color = running ? Neutral(200) : SKColors.White;
-                DrawCenteredButtonLabel(canvas, running ? UpdateAllProgressText : $"一键更新全部插件（{MarketUpdateCount}）", bar, _uiTextPaint);
+                DrawSettingsButton(canvas, bar, running ? UpdateAllProgressText : $"一键更新全部插件（{MarketUpdateCount}）",
+                    _hoveredMarketUpdateAll, enabled, SettingsButtonKind.Primary);
             }
 
             if (_marketCategoryOpen)
@@ -2484,16 +2103,6 @@ namespace NotchPeninsula
         private static string FormatScore(double score)
             => score.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
 
-        private static (SKColor Normal, SKColor Hover) InstallButtonColors(PluginEntry? local, MarketPlugin mp, bool disabled)
-        {
-            // 已装但没在跑：中性灰，和「下载绿 / 更新橙 / 重装蓝」区分开 —— 它不下载任何东西。
-            if (local != null && disabled) return (Neutral(95), Neutral(115));
-            if (local == null) return (new SKColor(44, 160, 92), new SKColor(58, 184, 108));       // 下载：绿
-            if (local.Version.Length > 0 && CompareVersions(mp.Version, local.Version) > 0)
-                return (new SKColor(214, 126, 24), new SKColor(238, 146, 34));                    // 更新：橙
-            return (new SKColor(0, 120, 212), new SKColor(0, 140, 240));                          // 重装：主题蓝
-        }
-
         private void DrawCenteredButtonLabel(SKCanvas canvas, string label, SKRect button, SKPaint paint)
         {
             float tw = paint.MeasureText(label);
@@ -2509,10 +2118,7 @@ namespace NotchPeninsula
 
             var close = GetMarketDialogCloseRect(rect);
             if (_hoveredDialogClose)
-            {
-                _dynamicFillPaint.Color = Overlay(30);
-                canvas.DrawRoundRect(close, 4, 4, _dynamicFillPaint);
-            }
+                DrawControlSurface(canvas, close, hovered: true);
             float ccx = close.MidX, ccy = close.MidY, half = 5.5f;
             using (var cross = new SKPaint
             {
@@ -2566,10 +2172,10 @@ namespace NotchPeninsula
                 ? $"{FormatScore(mp.Rating)} 分 · "
                 : "暂无评分 · ";
             string meta = ratingPart + $"v{mp.Version} · {mp.Author} · {mp.Updated} 更新 · {mp.Downloads} 次下载";
-            _subTextPaint.Color = Neutral(150);
+            _subTextPaint.Color = SecondaryText;
             DrawTextWithEmoji(canvas, TruncateText(meta, _subTextPaint, innerW), _subTextPaint, innerW,
                 rect.Left + DialogPad, y + 12);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
             y += DialogLineH;
             canvas.DrawLine(rect.Left + DialogPad, y, rect.Right - DialogPad, y, _separatorPaint);
             y += 18;
@@ -2583,8 +2189,7 @@ namespace NotchPeninsula
                 canvas.DrawText(TruncateText("标签：" + mp.Tags, _subTextPaint, innerW), rect.Left + DialogPad, y + 12, _subTextPaint);
 
             // 右下角常驻安装按钮：没装 = 安装，已装 = 已安装（灰掉点击），禁用态 = 启用。
-            // 三种状态都用绿色，和列表里的「下载」按钮同一套视觉。
-            var local = MatchLocalPlugin(mp);
+                var local = MatchLocalPlugin(mp);
             bool disabled = local != null && PluginManager.Instance.IsDisabled(local);
             bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
             bool actionable = local == null || disabled;
@@ -2593,12 +2198,7 @@ namespace NotchPeninsula
 
             var button = GetDialogButtonRect(rect, 0, 1);
             bool hovered = actionable && !busy && _hoveredDialogButton == 0;
-            _dynamicFillPaint.Color = actionable
-                ? (hovered ? DialogAccentGreen.Hover : DialogAccentGreen.Normal)
-                : DialogAccentGreen.Normal;   // 已安装：还是绿色，只是不再响应悬停
-            canvas.DrawRoundRect(button, 4, 4, _dynamicFillPaint);
-            _uiTextPaint.Color = SKColors.White;
-            DrawCenteredButtonLabel(canvas, label, button, _uiTextPaint);
+            DrawSettingsButton(canvas, button, label, hovered, actionable && !busy, SettingsButtonKind.Primary);
         }
 
         // 评分正文：平均分行 → 五颗星（可点半星）→ 状态行
@@ -2606,9 +2206,9 @@ namespace NotchPeninsula
         {
             string summary = _rateCount > 0 ? $"{FormatScore(_rateAverage)} 分 · {_rateCount} 人评分" : "还没有人评分";
             if (_rateLoading) summary = "正在读取…";
-            _subTextPaint.Color = Neutral(150);
+            _subTextPaint.Color = SecondaryText;
             canvas.DrawText(summary, rect.Left + DialogPad, y + 12, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
             double shown = _rateStars > 0 ? _rateStars : _rateMine;
             var stars = GetRateStarsRect(rect);
@@ -2626,11 +2226,11 @@ namespace NotchPeninsula
             if (status.Length > 0)
             {
                 _subTextPaint.Color = _rateStatus.Length > 0
-                    ? (_rateStatusIsError ? new SKColor(232, 100, 100) : new SKColor(120, 200, 140))
+                    ? (_rateStatusIsError ? DangerText : SecondaryText)
                     : Neutral(160);
                 DrawTextWithEmoji(canvas, TruncateText(status, _subTextPaint, DialogInnerW), _subTextPaint,
                     DialogInnerW, rect.Left + DialogPad, sy + 12);
-                _subTextPaint.Color = Neutral(170);
+                _subTextPaint.Color = SecondaryText;
             }
         }
 
@@ -2661,7 +2261,7 @@ namespace NotchPeninsula
                     canvas.Save();
                     // 按比例裁切：左半颗 = 只露出左边一半宽度的实心星
                     canvas.ClipRect(new SKRect(-r, -r, -r + size * fillRatio, r));
-                    _dynamicFillPaint.Color = new SKColor(0, 140, 240);
+                    _dynamicFillPaint.Color = AccentText;
                     canvas.DrawPath(star, _dynamicFillPaint);
                     canvas.Restore();
                 }
@@ -2689,23 +2289,9 @@ namespace NotchPeninsula
         /// 弹窗按钮只有两种：主操作（彩色实底白字，accent 有值）与次操作（灰底浅字，accent 为 null）。
         /// 弹窗样式统一的要求全落在这里 —— 别在各自的 Draw 里再手搓颜色。
         /// </summary>
-        private void DrawDialogButton(SKCanvas canvas, SKRect r, string label, int index,
-                                      (SKColor Normal, SKColor Hover)? accent, bool darkText = false)
-        {
-            bool hovered = _hoveredDialogButton == index;
-            _dynamicFillPaint.Color = accent is { } a
-                ? (hovered ? a.Hover : a.Normal)
-                : (hovered ? Overlay(30) : Overlay(15));
-            canvas.DrawRoundRect(r, 4, 4, _dynamicFillPaint);
-            _uiTextPaint.Color = darkText ? new SKColor(42, 34, 8)
-                : accent == null ? Neutral(200) : SKColors.White;
-            DrawCenteredButtonLabel(canvas, label, r, _uiTextPaint);
-        }
-
-        private static readonly (SKColor Normal, SKColor Hover) DialogAccentBlue = (new SKColor(0, 120, 212), new SKColor(0, 140, 240));
-        private static readonly (SKColor Normal, SKColor Hover) DialogAccentRed = (new SKColor(180, 50, 50), new SKColor(200, 60, 60));
-        private static readonly (SKColor Normal, SKColor Hover) DialogAccentGreen = (new SKColor(44, 160, 92), new SKColor(58, 184, 108));
-        private static readonly (SKColor Normal, SKColor Hover) DialogAccentYellow = (new SKColor(235, 190, 50), new SKColor(250, 208, 70));
+        private void DrawDialogButton(SKCanvas canvas, SKRect rect, string label, int index,
+            SettingsButtonKind kind = SettingsButtonKind.Standard)
+            => DrawSettingsButton(canvas, rect, label, _hoveredDialogButton == index, kind: kind);
 
         /// <summary>提示弹窗的富文本正文：逐行逐段画，群号单独上色。</summary>
         private void DrawNoticeBody(SKCanvas canvas, SKRect rect, float bodyY)
@@ -2720,7 +2306,7 @@ namespace NotchPeninsula
                 foreach (var (text, isLink) in _loadFailedLines[i])
                 {
                     _subTextPaint.Color = isLink
-                        ? (_loadFailedLinkHovered ? new SKColor(0, 140, 240) : new SKColor(0, 120, 212))
+                        ? (_loadFailedLinkHovered ? AccentText : AccentFill(false))
                         : Neutral(200);
                     canvas.DrawText(text, x, lineY, _subTextPaint);
                     x += _subTextPaint.MeasureText(text);
@@ -2732,11 +2318,11 @@ namespace NotchPeninsula
             {
                 float y = bodyY + _loadFailedLinkLine * DialogLineH + 3f;
                 float x0 = left + _loadFailedLinkOffsetX;
-                _dynamicFillPaint.Color = new SKColor(0, 140, 240);
+                _dynamicFillPaint.Color = AccentText;
                 canvas.DrawRect(new SKRect(x0, y, x0 + _loadFailedLinkWidth, y + 1f), _dynamicFillPaint);
             }
 
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
         }
 
         private void DrawLoadFailedDialog(SKCanvas canvas)
@@ -2747,7 +2333,7 @@ namespace NotchPeninsula
 
             float bodyY = DrawDialogHeader(canvas, rect, "插件加载失败") + LoadFailedBodyDY;
             DrawNoticeBody(canvas, rect, bodyY);
-            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 1), "好的", 0, DialogAccentBlue);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 1), "好的", 0, SettingsButtonKind.Primary);
         }
 
         private void DrawMinVersionDialog(SKCanvas canvas)
@@ -2760,8 +2346,8 @@ namespace NotchPeninsula
             DrawNoticeBody(canvas, rect, bodyY);
 
             // 用户指定：取消在左（绿）、继续在右（黄）。继续是主操作，放最右。
-            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 2), "取消", 0, DialogAccentGreen);
-            DrawDialogButton(canvas, GetDialogButtonRect(rect, 1, 2), "继续", 1, DialogAccentYellow, darkText: true);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 2), "取消", 0);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 1, 2), "继续", 1, SettingsButtonKind.Primary);
         }
 
         /// <summary>
@@ -2784,28 +2370,28 @@ namespace NotchPeninsula
                 _subTextPaint.Color = Neutral(200);
                 canvas.DrawText(TruncateText($"确定要卸载「{name}」吗？", _subTextPaint, DialogInnerW),
                     rect.Left + DialogPad, bodyY + 12, _subTextPaint);
-                _subTextPaint.Color = Neutral(150);
+                _subTextPaint.Color = SecondaryText;
                 canvas.DrawText(TruncateText("插件文件会移入回收站，之后可以重新导入。", _subTextPaint, DialogInnerW),
                     rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
-                _subTextPaint.Color = Neutral(170);
+                _subTextPaint.Color = SecondaryText;
 
-                DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 1), "卸载", 0, DialogAccentRed);
+                DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 1), "卸载", 0, SettingsButtonKind.Danger);
                 return;
             }
 
             _subTextPaint.Color = Neutral(200);
             canvas.DrawText(TruncateText("这个插件登记了它创建的数据目录：", _subTextPaint, DialogInnerW),
                 rect.Left + DialogPad, bodyY + 12, _subTextPaint);
-            _subTextPaint.Color = Neutral(150);
+            _subTextPaint.Color = SecondaryText;
             canvas.DrawText(TruncateText(_uninstallDir, _subTextPaint, DialogInnerW),
                 rect.Left + DialogPad, bodyY + 12 + DialogLineH, _subTextPaint);
             canvas.DrawText(TruncateText("删除后无法恢复；点「保留」只卸载插件。", _subTextPaint, DialogInnerW),
                 rect.Left + DialogPad, bodyY + 12 + DialogLineH * 2, _subTextPaint);
-            _subTextPaint.Color = Neutral(170);
+            _subTextPaint.Color = SecondaryText;
 
-            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 3), "打开目录", 0, null);
-            DrawDialogButton(canvas, GetDialogButtonRect(rect, 1, 3), "保留", 1, null);
-            DrawDialogButton(canvas, GetDialogButtonRect(rect, 2, 3), "删除", 2, DialogAccentRed);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 0, 3), "打开目录", 0);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 1, 3), "保留", 1);
+            DrawDialogButton(canvas, GetDialogButtonRect(rect, 2, 3), "删除", 2, SettingsButtonKind.Danger);
         }
 
         // 统一下拉面板：圆角 8、悬停整行提亮、选中蓝字 + 左侧蓝条、内置项带蓝色胶囊，超高时内部滚动。
@@ -2842,7 +2428,7 @@ namespace NotchPeninsula
 
             if (total == 0)
             {
-                _dynamicTextPaint.Color = Neutral(150);
+                _dynamicTextPaint.Color = SecondaryText;
                 canvas.DrawText(emptyText!, x + 12, dY + 18, _dynamicTextPaint);
                 _dynamicTextPaint.Color = _fgColor;
                 return;
@@ -2858,18 +2444,20 @@ namespace NotchPeninsula
                 bool selected = i == selectedIndex;
 
                 var rowRect = new SKRect(x + 4, rowTop + 1, x + w - 4, rowTop + DROPDOWN_ROW_H - 1);
-                if (hoveredIndex == i) canvas.DrawRoundRect(rowRect, 5, 5, _tabBgSelected);
-                else if (selected)
+                bool hovered = hoveredIndex == i && i != dimmedIndex;
+                if (hovered || selected)
                 {
-                    _dynamicFillPaint.Color = Overlay(10);
-                    canvas.DrawRoundRect(rowRect, 5, 5, _dynamicFillPaint);
+                    _dynamicFillPaint.Color = selected
+                        ? AccentText.WithAlpha(hovered ? (byte)36 : (byte)23)
+                        : Overlay(SettingsControlPressed(hovered) ? (byte)31 : (byte)19);
+                    canvas.DrawRoundRect(rowRect, SettingsControlRadius, SettingsControlRadius, _dynamicFillPaint);
                 }
 
                 // 文字统一留出左侧蓝条的位置，选中与否都不左右跳
                 float textX = x + 18f;
                 if (selected)
                 {
-                    _dynamicFillPaint.Color = new SKColor(0, 120, 212);
+                    _dynamicFillPaint.Color = AccentText;
                     canvas.DrawRoundRect(new SKRect(x + 6f, rowTop + 7f, x + 8.5f, rowTop + DROPDOWN_ROW_H - 7f),
                         1.5f, 1.5f, _dynamicFillPaint);
                 }
@@ -2879,8 +2467,7 @@ namespace NotchPeninsula
                 float nameMaxW = x + w - 12f - textX - (tagW > 0f ? tagW + 8f : 0f);
                 string shown = TruncateText(options[i], _dynamicTextPaint, nameMaxW);
                 float nameW = _dynamicTextPaint.MeasureText(shown);
-                _dynamicTextPaint.Color = selected ? new SKColor(0, 120, 212)
-                    : (i == dimmedIndex ? Neutral(130) : _fgColor);
+                _dynamicTextPaint.Color = i == dimmedIndex ? DisabledText : selected ? AccentText : _fgColor;
                 canvas.DrawText(shown, textX, rowTop + 18f, _dynamicTextPaint);
                 _dynamicTextPaint.Color = _fgColor;
 

@@ -6,6 +6,7 @@ namespace NotchPeninsula
     {
         private const float PluginLayoutButtonWidth = 78f;
         private bool _showPluginCards;
+        private int _hoveredPluginLayout = -1;
         private float PluginTileLeft => CONTENT_L + 6f;
         private float PluginTileSpace => WIDTH - CONTENT_RM - 12f - PluginTileLeft;
         private int PluginColumns => _showPluginCards
@@ -29,8 +30,8 @@ namespace NotchPeninsula
         {
             if (_showPluginCards)
             {
-                canvas.DrawRoundRect(tile, 6, 6, _cardBg);
-                canvas.DrawRoundRect(tile, 6, 6, _cardBorder);
+                _dynamicFillPaint.Color = _isLightAppearance ? new SKColor(237, 239, 242, 188) : Overlay(13);
+                canvas.DrawRoundRect(tile, SettingsCardRadius, SettingsCardRadius, _dynamicFillPaint);
             }
             else
             {
@@ -76,26 +77,30 @@ namespace NotchPeninsula
             {
                 var rect = PluginLayoutButton(cards, y);
                 bool selected = _showPluginCards == cards;
-                _dynamicFillPaint.Color = selected ? new SKColor(0, 98, 178) : Overlay(16);
-                canvas.DrawRoundRect(rect, 4, 4, _dynamicFillPaint);
-                _uiTextPaint.Color = selected ? SKColors.White : _fgColor;
-                DrawCenteredButtonLabel(canvas, label, rect, _uiTextPaint);
-                _uiTextPaint.Color = _fgColor;
+                DrawSettingsButton(canvas, rect, label, _hoveredPluginLayout == (cards ? 1 : 0), selected: selected);
             }
+        }
+
+        private int HitPluginLayoutButton(int x, int y)
+        {
+            if (IsConfirmDialogOpen || (_selectedTab != 7 && (_selectedTab != 6 || _settingsPluginId != null)))
+                return -1;
+            if (_selectedTab == 7 && (_marketSortOpen || _marketCategoryOpen))
+                return -1;
+
+            float top = _selectedTab == 7 ? MarketControlsY : TITLE_BAR_HEIGHT + CARD_TOP_Y + 60;
+            if (PluginLayoutButton(true, top).Contains(x, y))
+                return 1;
+            return PluginLayoutButton(false, top).Contains(x, y) ? 0 : -1;
         }
 
         private bool HandlePluginLayoutClick(int x, int y)
         {
-            if (_selectedTab != 7 && (_selectedTab != 6 || _settingsPluginId != null))
-                return false;
-            if (_selectedTab == 7 && (_marketSortOpen || _marketCategoryOpen))
-                return false;
-            float top = _selectedTab == 7 ? MarketControlsY : TITLE_BAR_HEIGHT + CARD_TOP_Y + 60;
-            bool cards = PluginLayoutButton(true, top).Contains(x, y);
-            if (!cards && !PluginLayoutButton(false, top).Contains(x, y))
+            int layout = HitPluginLayoutButton(x, y);
+            if (layout < 0)
                 return false;
 
-            _showPluginCards = cards;
+            _showPluginCards = layout == 1;
             _pluginScroll = _pluginScroll / PluginColumns * PluginColumns;
             _marketScroll = _marketScroll / PluginColumns * PluginColumns;
             _marketSearchFocused = false;

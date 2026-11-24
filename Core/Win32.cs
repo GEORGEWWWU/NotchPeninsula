@@ -451,6 +451,8 @@ namespace NotchPeninsula
         public static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
 
         public const int IDC_ARROW = 32512;
+        public const int IDC_IBEAM = 32513;
+        public const int IDC_NO = 32648;
 
         [DllImport("user32.dll")]
         public static extern IntPtr SetCursor(IntPtr hCursor);
