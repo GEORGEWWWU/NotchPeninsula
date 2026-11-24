@@ -223,7 +223,17 @@ namespace NotchPeninsula
             }
         }
 
-        private static readonly SKPaint _immersiveArtworkPaint = new() { FilterQuality = SKFilterQuality.Medium };
+        // 原生亚克力的模糊位于前景窗口之下，前景封面需单独做柔化。
+        private const float ImmersiveBlurSigma = 12f;
+        private static readonly SKImageFilter _immersiveArtworkBlur = SKImageFilter.CreateBlur(ImmersiveBlurSigma, ImmersiveBlurSigma);
+        private static readonly SKPaint _immersiveArtworkPaint = new()
+        {
+            FilterQuality = SKFilterQuality.Medium,
+            ImageFilter = _immersiveArtworkBlur
+        };
+
+        private static SKBitmap? _immersiveShaderBitmap;
+        private static SKRect _immersiveShaderBounds;
 
         private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media, SKRect island)
         {
@@ -239,9 +249,23 @@ namespace NotchPeninsula
             // 按岛体宽度等比例缩放，垂直居中，所有溢出交给岛体路径裁切。
             float imageHeight = island.Width * artwork.Height / artwork.Width;
             var image = SKRect.Create(island.Left, island.MidY - imageHeight / 2f, island.Width, imageHeight);
+            if (!ReferenceEquals(artwork, _immersiveShaderBitmap) || image != _immersiveShaderBounds)
+            {
+                var matrix = SKMatrix.CreateScaleTranslation(image.Width / artwork.Width, image.Height / artwork.Height,
+                    image.Left, image.Top);
+                using var shader = artwork.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, matrix);
+                _immersiveArtworkPaint.Shader = shader;
+                _immersiveShaderBitmap = artwork;
+                _immersiveShaderBounds = image;
+            }
+
+            // 为卷积补上延伸的边缘像素，防止模糊在封面两侧混入透明像素。
+            var blurInput = island;
+            blurInput.Inflate(ImmersiveBlurSigma * 4f, ImmersiveBlurSigma * 4f);
             canvas.Save();
             canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-            canvas.DrawBitmap(artwork, image, _immersiveArtworkPaint);
+            canvas.ClipRect(image);
+            canvas.DrawRect(blurInput, _immersiveArtworkPaint);
             canvas.Restore();
         }
 
