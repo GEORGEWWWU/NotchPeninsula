@@ -1919,7 +1919,8 @@ namespace NotchPeninsula
                 float detailX = rightEdge - MarketBtnW;
                 float uninstallX = detailX - 6f - MarketBtnW;
                 float installX = uninstallX - 6f - MarketBtnW;
-                float statBaseline = rowY + MarketStatsBaseline;
+                float titleBaseline = rowY + MarketTitleBaseline;
+                float infoBaseline = rowY + MarketMetadataBaseline;
                 var local = MatchLocalPlugin(mp);
                 bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
                 bool dim = PluginManager.Instance.IsDisabled(local);
@@ -1945,19 +1946,18 @@ namespace NotchPeninsula
                 float scoreX = dlX - dlGap - scoreW;
 
                 _subTextPaint.Color = SecondaryText;
-                canvas.DrawText(dlText, dlX, statBaseline, _subTextPaint);
-
+                canvas.DrawText(dlText, dlX, titleBaseline, _subTextPaint);
 
                 if (hasRating)
                 {
                     float starCx = scoreX - scoreGap - starR;
-                    using var star = BuildStarPath(starCx, statBaseline - 5f, starR, starR * 0.42f);
+                    using var star = BuildStarPath(starCx, titleBaseline - 5f, starR, starR * 0.42f);
                     _dynamicFillPaint.Color = AccentText;
                     canvas.DrawPath(star, _dynamicFillPaint);
                     _dynamicFillPaint.Color = Overlay(15);   // 复位：该画笔多处共用
                 }
                 _subTextPaint.Color = SecondaryText;
-                canvas.DrawText(scoreText, scoreX, statBaseline, _subTextPaint);
+                canvas.DrawText(scoreText, scoreX, titleBaseline, _subTextPaint);
                 _subTextPaint.Color = SecondaryText;
 
                 string tagOfficial = mp.Official ? "官方" : "";
@@ -1980,7 +1980,6 @@ namespace NotchPeninsula
                 float nameMaxNow = Math.Max(0f, textSpace - tagW);
 
                 string shownName = TruncateText(mp.Name, _pluginTitlePaint, nameMaxNow);
-                var (titleBaseline, infoBaseline) = PluginTextBaselines(tile, shownName);
                 _pluginTitlePaint.Color = dim ? DisabledText : _fgColor;
                 canvas.DrawText(shownName, textX, titleBaseline, _pluginTitlePaint);
                 float afterNameX = textX + _pluginTitlePaint.MeasureText(shownName);

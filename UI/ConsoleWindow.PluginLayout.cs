@@ -16,8 +16,10 @@ namespace NotchPeninsula
         private float PluginTileHeight => _showPluginCards ? 86f : 54f;
         private float PluginTilePitch => PluginTileHeight + CARD_GAP;
         private float PluginButtonsTop => (PluginTileHeight - 20f) / 2f;
-        private float MarketButtonsTop => PluginButtonsTop + 5f;
-        private float MarketStatsBaseline => PluginTileHeight / 2f - 5f;
+        private float MarketButtonsTop => PluginTileHeight / 2f;
+        // 市场用两条对齐的横排：标题与统计在上，副文本与操作在下。
+        private float MarketTitleBaseline => MarketButtonsTop - 9f;
+        private float MarketMetadataBaseline => MarketButtonsTop + 14f;
 
         private (float Title, float Metadata) PluginTextBaselines(SKRect tile, string title)
         {
@@ -52,7 +54,6 @@ namespace NotchPeninsula
         {
             _dynamicFillPaint.Color = Overlay(_showPluginCards ? (byte)17 : (byte)8);
             canvas.DrawRoundRect(tile, SettingsCardRadius, SettingsCardRadius, _dynamicFillPaint);
-
         }
 
         private int HitPluginTile(float top, int x, int y)
