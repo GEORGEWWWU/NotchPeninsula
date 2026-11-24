@@ -4,11 +4,20 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        private static readonly SKColor _fgColor = SKColors.White;
+        private static bool _isLightAppearance;
+        private static SKColor _fgColor = SKColors.White;
 
-        private static SKColor Neutral(byte value) => new(value, value, value);
+        private static SKColor Neutral(byte value)
+        {
+            byte tone = _isLightAppearance ? (byte)(255 - value) : value;
+            return new SKColor(tone, tone, tone);
+        }
 
-        private static SKColor Overlay(byte alpha) => new(255, 255, 255, alpha);
+        private static SKColor Overlay(byte alpha)
+        {
+            byte tone = _isLightAppearance ? (byte)0 : (byte)255;
+            return new SKColor(tone, tone, tone, alpha);
+        }
 
         private static bool IsLightPreviewCapsule()
             => Renderer.ThemeMode == 2 ? Renderer.SystemIsLightTheme : Renderer.ThemeMode == 1;

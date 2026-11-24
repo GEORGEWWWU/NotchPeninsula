@@ -21,11 +21,11 @@ namespace NotchPeninsula
 
         private enum BackdropMaterialMode
         {
-            SolidDark,
+            Solid,
             Acrylic
         }
 
-        private BackdropMaterialMode _backdropMode = BackdropMaterialMode.SolidDark;
+        private BackdropMaterialMode _backdropMode = BackdropMaterialMode.Solid;
 
         private void ApplyRoundedRegion(IntPtr hwnd)
         {
@@ -81,7 +81,7 @@ namespace NotchPeninsula
                     if (!_consoleAdvancedEffectsEnabled.Value)
                     {
                         _nativeConsoleBackdrop?.Hide();
-                        _backdropMode = BackdropMaterialMode.SolidDark;
+                        _backdropMode = BackdropMaterialMode.Solid;
                     }
                     else
                     {
@@ -102,7 +102,7 @@ namespace NotchPeninsula
                 catch (Exception ex)
                 {
                     _nativeConsoleBackdropFailed = true;
-                    _backdropMode = BackdropMaterialMode.SolidDark;
+                    _backdropMode = BackdropMaterialMode.Solid;
                     Logger.Error("[设置窗口] Windows Composition 背板失败，使用实色背景", ex);
                     DisposeNativeConsoleBackdrop();
                 }
@@ -162,8 +162,10 @@ namespace NotchPeninsula
             Win32.ShowWindow(_hwnd, Win32.SW_MINIMIZE);
         }
 
-        private void ApplyAppearance()
+        private void ApplyAppearance(bool light)
         {
+            _isLightAppearance = light;
+            _fgColor = Neutral(255);
             _uiTextPaint.Color = _fgColor;
             _subTextPaint.Color = Neutral(170);
             _titleTextPaint.Color = Neutral(200);
@@ -181,20 +183,25 @@ namespace NotchPeninsula
 
         private void ApplyBackdropPalette()
         {
-            _menuBg.Color = new SKColor(48, 48, 48);
-            _menuBorder.Color = new SKColor(88, 88, 88);
+            bool light = _isLightAppearance;
+            _menuBg.Color = light ? new SKColor(252, 252, 252) : new SKColor(48, 48, 48);
+            _menuBorder.Color = light ? new SKColor(200, 200, 200) : new SKColor(88, 88, 88);
             bool acrylic = _backdropMode == BackdropMaterialMode.Acrylic;
-            _bgPaint.Color = acrylic
-                ? (_nativeConsoleBackdrop != null ? new SKColor(19, 19, 19, 191) : new SKColor(18, 18, 18, 112))
-                : new SKColor(32, 32, 32);
+            if (!acrylic)
+                _bgPaint.Color = light ? new SKColor(243, 243, 243) : new SKColor(32, 32, 32);
+            else if (_nativeConsoleBackdrop != null)
+                _bgPaint.Color = light ? new SKColor(244, 244, 244, 191) : new SKColor(19, 19, 19, 191);
+            else
+                _bgPaint.Color = light ? new SKColor(245, 245, 245, 112) : new SKColor(18, 18, 18, 112);
             _cardBg.Color = Overlay(acrylic ? (byte)22 : (byte)8);
             _cardBorder.Color = Overlay(acrylic ? (byte)38 : (byte)15);
-            _globalBorderPaint.Color = acrylic ? Overlay(40) : new SKColor(60, 60, 60);
+            _globalBorderPaint.Color = acrylic ? Overlay(40)
+                : light ? new SKColor(205, 205, 205) : new SKColor(60, 60, 60);
         }
 
         private void TryEnableBackdropMaterial()
         {
-            TrySetDarkMode();
+            ApplyWindowTheme(_backdropHwnd);
             TryExtendFrameIntoClientArea();
             TrySetRoundedCornerPreference();
 
@@ -205,16 +212,16 @@ namespace NotchPeninsula
                 return;
             }
 
-            _backdropMode = BackdropMaterialMode.SolidDark;
+            _backdropMode = BackdropMaterialMode.Solid;
         }
 
-        private void TrySetDarkMode()
+        private static void ApplyWindowTheme(IntPtr hwnd)
         {
-            int enabled = 1;
-            int size = Marshal.SizeOf<int>();
-            if (_backdropHwnd == IntPtr.Zero) return;
-            _ = Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, size);
-            _ = Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref enabled, size);
+            if (hwnd == IntPtr.Zero) return;
+            int enabled = _isLightAppearance ? 0 : 1;
+            int size = sizeof(int);
+            _ = Win32.DwmSetWindowAttribute(hwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, size);
+            _ = Win32.DwmSetWindowAttribute(hwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref enabled, size);
         }
 
         private void TrySetRoundedCornerPreference()
@@ -231,7 +238,7 @@ namespace NotchPeninsula
             _ = Win32.DwmExtendFrameIntoClientArea(_backdropHwnd, ref margins);
         }
 
-        private const uint AcrylicTint = 0x8C141414;
+        private static uint AcrylicTint => _isLightAppearance ? 0x8CF2F2F2u : 0x8C141414u;
 
         private bool TryEnableAcrylicBackdrop()
             => ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, AcrylicTint);
@@ -279,21 +286,13 @@ namespace NotchPeninsula
             if (_backdropHwnd == IntPtr.Zero || _dragMoving)
                 return;
 
-            switch (_backdropMode)
+            ApplyWindowTheme(_backdropHwnd);
+            if (_backdropMode == BackdropMaterialMode.Acrylic && !TryEnableAcrylicBackdrop())
             {
-                case BackdropMaterialMode.Acrylic:
-                    if (!TryEnableAcrylicBackdrop())
-                    {
-                        Logger.Warn("[设置窗口] 恢复亚克力失败，重新选择可用背板");
-                        TryEnableBackdropMaterial();
-                        ApplyBackdropPalette();
-                        Render();
-                    }
-                    break;
-
-                // SolidDark 是自绘的实色外观，没有系统材质可补
-                default:
-                    break;
+                Logger.Warn("[设置窗口] 恢复亚克力失败，重新选择可用背板");
+                TryEnableBackdropMaterial();
+                ApplyBackdropPalette();
+                Render();
             }
         }
 
@@ -328,7 +327,7 @@ namespace NotchPeninsula
                 if (_backdropHwnd == IntPtr.Zero)
                 {
                     // 重建不出来就退回自绘实色外观，至少不是一块透明的洞。
-                    _backdropMode = BackdropMaterialMode.SolidDark;
+                    _backdropMode = BackdropMaterialMode.Solid;
                     ApplyBackdropPalette();
                     Render();
                     Logger.Error("重建材质窗失败：CreateWindowEx 返回 0");
@@ -336,8 +335,7 @@ namespace NotchPeninsula
                 }
 
                 ApplyRoundedRegion(_backdropHwnd);
-                _backdropMode = BackdropMaterialMode.SolidDark;
-                ApplyAppearance();
+                _backdropMode = BackdropMaterialMode.Solid;
                 TryEnableBackdropMaterial();
                 ApplyBackdropPalette();
                 SyncBackdropToContent();

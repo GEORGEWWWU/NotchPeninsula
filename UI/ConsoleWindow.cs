@@ -1290,7 +1290,8 @@ namespace NotchPeninsula
                 ApplyRoundedRegion(_backdropHwnd);
             }
 
-            ApplyAppearance();
+            Renderer.InvalidateSystemThemeCache();
+            ApplyAppearance(Renderer.SystemIsLightTheme);
             if (!NativeAcrylic.IsSupported) TryEnableBackdropMaterial();
             ApplyBackdropPalette();
 
@@ -1302,6 +1303,8 @@ namespace NotchPeninsula
                 _scaledWidth, _scaledHeight,
                 IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
             );
+
+            ApplyWindowTheme(_hwnd);
 
             uint actualDpi = Win32.GetDpiForWindow(_hwnd);
             if (actualDpi > 0 && _monitorScale != actualDpi / 96f)
@@ -1561,9 +1564,17 @@ namespace NotchPeninsula
 
                 case Win32.WM_SETTINGCHANGE:
                 {
+                    Renderer.InvalidateSystemThemeCache();
+                    bool light = Renderer.SystemIsLightTheme;
+                    if (light != _isLightAppearance)
+                    {
+                        ApplyAppearance(light);
+                        ApplyWindowTheme(_hwnd);
+                        ApplyBackdropPalette();
+                    }
+
                     _consoleAdvancedEffectsEnabled = null;
                     SyncBackdropToContent(keepZOrder: _dragMoving);
-                    Renderer.InvalidateSystemThemeCache();
                     ReapplyBackdropMaterial();
                     Render();
                     break;
@@ -1914,8 +1925,10 @@ namespace NotchPeninsula
 
             canvas.DrawLine(WIDTH - 92 + 18, 16, WIDTH - 92 + 28, 16, _iconPaint);
             float cx = WIDTH - 46 + 23; float cy = 16;
+            _iconPaint.Color = _closeHovered ? SKColors.White : _fgColor;
             canvas.DrawLine(cx - 5, cy - 5, cx + 5, cy + 5, _iconPaint);
             canvas.DrawLine(cx + 5, cy - 5, cx - 5, cy + 5, _iconPaint);
+            _iconPaint.Color = _fgColor;
 
             RenderSidebar(canvas);
 
