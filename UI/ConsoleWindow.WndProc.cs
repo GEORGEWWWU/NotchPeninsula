@@ -707,7 +707,7 @@ namespace NotchPeninsula
                     if (slot >= 0 && slot < mRows)
                     {
                         var rect = PluginTile(MarketTileTop, slot);
-                        float actionY = rect.Top + PluginButtonsTop;
+                        float actionY = rect.Top + MarketButtonsTop;
                         if (y >= actionY && y <= actionY + 20)
                         {
                             int idx = slot + _marketScroll;

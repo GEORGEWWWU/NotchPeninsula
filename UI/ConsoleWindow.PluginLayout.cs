@@ -15,10 +15,20 @@ namespace NotchPeninsula
         private float PluginTileWidth => (PluginTileSpace - (PluginColumns - 1) * CARD_GAP) / PluginColumns;
         private float PluginTileHeight => _showPluginCards ? 86f : 54f;
         private float PluginTilePitch => PluginTileHeight + CARD_GAP;
-        private float PluginButtonsTop => _showPluginCards ? 55f : 23f;
+        private float PluginButtonsTop => (PluginTileHeight - 20f) / 2f;
+        private float MarketButtonsTop => PluginButtonsTop + 5f;
+        private float MarketStatsBaseline => PluginTileHeight / 2f - 5f;
 
-        private float PluginTitleBaseline => _showPluginCards ? 23f : 19f;
-        private float PluginMetadataBaseline => _showPluginCards ? 43f : 39f;
+        private (float Title, float Metadata) PluginTextBaselines(SKRect tile, string title)
+        {
+            const float lineSpacing = 18f;
+            SKRect titleInk = default, metadataInk = default;
+            _pluginTitlePaint.MeasureText(title.Length == 0 ? "插件" : title, ref titleInk);
+            _subTextPaint.MeasureText("版本 · 作者", ref metadataInk);
+            float baseline = tile.MidY - (titleInk.Top + lineSpacing + metadataInk.Bottom) / 2f;
+            return (baseline, baseline + lineSpacing);
+        }
+
         private float PluginTextInset => _showPluginCards ? 14f : 10f;
 
         private static readonly SKPaint _pluginTitlePaint = new()
@@ -42,13 +52,7 @@ namespace NotchPeninsula
         {
             _dynamicFillPaint.Color = Overlay(_showPluginCards ? (byte)17 : (byte)8);
             canvas.DrawRoundRect(tile, SettingsCardRadius, SettingsCardRadius, _dynamicFillPaint);
-            if (_showPluginCards)
-            {
-                var footer = new SKRect(tile.Left + 6f, tile.Top + PluginButtonsTop - 4f,
-                    tile.Right - 6f, tile.Bottom - 6f);
-                _dynamicFillPaint.Color = Overlay(9);
-                canvas.DrawRoundRect(footer, SettingsControlRadius, SettingsControlRadius, _dynamicFillPaint);
-            }
+
         }
 
         private int HitPluginTile(float top, int x, int y)

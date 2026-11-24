@@ -1700,16 +1700,16 @@ namespace NotchPeninsula
                 float rowY = tile.Top;
                 float textX = tile.Left + PluginTextInset;
                 float settingsX = tile.Right - 224f;
-                float nameTextMax = tile.Right - PluginTextInset - textX;
-                float infoTextMax = _showPluginCards ? nameTextMax : settingsX - textX - 8;
+                float nameTextMax = settingsX - textX - 8f;
+                float infoTextMax = nameTextMax;
                 // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
                 _pluginTitlePaint.Color = _fgColor;
-                canvas.DrawText(TruncateText(entry.FriendlyName, _pluginTitlePaint, nameTextMax),
-                    textX, rowY + PluginTitleBaseline, _pluginTitlePaint);
+                string shownTitle = TruncateText(entry.FriendlyName, _pluginTitlePaint, nameTextMax);
+                var (titleBaseline, infoBaseline) = PluginTextBaselines(tile, shownTitle);
+                canvas.DrawText(shownTitle, textX, titleBaseline, _pluginTitlePaint);
 
                 string sub = i < _pluginSubTexts.Count ? _pluginSubTexts[i] : "";
                 bool subDisabled = i < _pluginSubDisabled.Count && _pluginSubDisabled[i];
-                float infoBaseline = rowY + PluginMetadataBaseline;
                 string shownSub = TruncateText(sub, _subTextPaint, infoTextMax);
                 if (entry.State == PluginState.Failed && shownSub.StartsWith("加载失败", StringComparison.Ordinal))
                 {
@@ -1919,7 +1919,7 @@ namespace NotchPeninsula
                 float detailX = rightEdge - MarketBtnW;
                 float uninstallX = detailX - 6f - MarketBtnW;
                 float installX = uninstallX - 6f - MarketBtnW;
-                float statBaseline = rowY + (_showPluginCards ? PluginMetadataBaseline : PluginTitleBaseline);
+                float statBaseline = rowY + MarketStatsBaseline;
                 var local = MatchLocalPlugin(mp);
                 bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
                 bool dim = PluginManager.Instance.IsDisabled(local);
@@ -1947,7 +1947,7 @@ namespace NotchPeninsula
                 _subTextPaint.Color = SecondaryText;
                 canvas.DrawText(dlText, dlX, statBaseline, _subTextPaint);
 
-                float ratingLeft = scoreX;   // 名称可用宽度的右界（下方算 nameMaxNow 用）
+
                 if (hasRating)
                 {
                     float starCx = scoreX - scoreGap - starR;
@@ -1955,7 +1955,6 @@ namespace NotchPeninsula
                     _dynamicFillPaint.Color = AccentText;
                     canvas.DrawPath(star, _dynamicFillPaint);
                     _dynamicFillPaint.Color = Overlay(15);   // 复位：该画笔多处共用
-                    ratingLeft = starCx - starR;
                 }
                 _subTextPaint.Color = SecondaryText;
                 canvas.DrawText(scoreText, scoreX, statBaseline, _subTextPaint);
@@ -1964,51 +1963,64 @@ namespace NotchPeninsula
                 string tagOfficial = mp.Official ? "官方" : "";
                 //    绝不拼成半截的「已装 v」。
                 string tagInstalled = versionDiff ? $"已装 v{localVer}" : "";
-                float tagW = (tagOfficial.Length > 0 ? 6f + _subTextPaint.MeasureText(tagOfficial) : 0f)
-                           + (tagInstalled.Length > 0 ? 8f + _subTextPaint.MeasureText(tagInstalled) : 0f);
-                float nameMaxNow = Math.Max(30f, (_showPluginCards ? rightEdge : ratingLeft) - 12f - tagW - textX);
+                float textSpace = Math.Max(0f, installX - textX - 8f);
+                float officialWidth = tagOfficial.Length > 0 ? 6f + _subTextPaint.MeasureText(tagOfficial) : 0f;
+                if (textSpace < officialWidth + 24f)
+                {
+                    tagOfficial = "";
+                    officialWidth = 0f;
+                }
+                float installedWidth = tagInstalled.Length > 0 ? 8f + _subTextPaint.MeasureText(tagInstalled) : 0f;
+                if (textSpace < officialWidth + installedWidth + 36f)
+                {
+                    tagInstalled = "";
+                    installedWidth = 0f;
+                }
+                float tagW = officialWidth + installedWidth;
+                float nameMaxNow = Math.Max(0f, textSpace - tagW);
 
                 string shownName = TruncateText(mp.Name, _pluginTitlePaint, nameMaxNow);
+                var (titleBaseline, infoBaseline) = PluginTextBaselines(tile, shownName);
                 _pluginTitlePaint.Color = dim ? DisabledText : _fgColor;
-                canvas.DrawText(shownName, textX, rowY + PluginTitleBaseline, _pluginTitlePaint);
+                canvas.DrawText(shownName, textX, titleBaseline, _pluginTitlePaint);
                 float afterNameX = textX + _pluginTitlePaint.MeasureText(shownName);
 
                 if (tagOfficial.Length > 0)
                 {
                     _subTextPaint.Color = dim ? Neutral(95) : AccentText;
-                    canvas.DrawText(tagOfficial, afterNameX + 6, rowY + PluginTitleBaseline, _subTextPaint);
+                    canvas.DrawText(tagOfficial, afterNameX + 6, titleBaseline, _subTextPaint);
                     afterNameX += 6 + _subTextPaint.MeasureText(tagOfficial);
                 }
                 if (tagInstalled.Length > 0)
                 {
                     _subTextPaint.Color = dim ? Neutral(95) : AccentText;
-                    canvas.DrawText(tagInstalled, afterNameX + 8, rowY + PluginTitleBaseline, _subTextPaint);
+                    canvas.DrawText(tagInstalled, afterNameX + 8, titleBaseline, _subTextPaint);
                     afterNameX += 8 + _subTextPaint.MeasureText(tagInstalled);
                 }
                 _subTextPaint.Color = SecondaryText;
 
-                float infoTextMax = Math.Max(0, (_showPluginCards ? ratingLeft : installX) - textX - 8);
+                float infoTextMax = textSpace;
                 if (busy)
                 {
                     _subTextPaint.Color = AccentText;
-                    canvas.DrawText("正在下载安装…", textX, rowY + PluginMetadataBaseline, _subTextPaint);
+                    canvas.DrawText(TruncateText("正在下载安装…", _subTextPaint, infoTextMax), textX, infoBaseline, _subTextPaint);
                     _subTextPaint.Color = SecondaryText;
                 }
                 else if (dim)
                 {
                     //    同时说明这一行为什么是灰的
                     _subTextPaint.Color = Neutral(95);
-                    canvas.DrawText("已禁用", textX, rowY + PluginMetadataBaseline, _subTextPaint);
+                    canvas.DrawText(TruncateText("已禁用", _subTextPaint, infoTextMax), textX, infoBaseline, _subTextPaint);
                     _subTextPaint.Color = SecondaryText;
                 }
                 else
                 {
                     _subTextPaint.Color = SecondaryText;
                     canvas.DrawText(TruncateText($"v{mp.Version} · {mp.Author}", _subTextPaint, infoTextMax),
-                        textX, rowY + PluginMetadataBaseline, _subTextPaint);
+                        textX, infoBaseline, _subTextPaint);
                 }
 
-                float btnTop = PluginButtonsTop;
+                float btnTop = MarketButtonsTop;
                 const float btnH = 20f;
 
                 // 主操作（下载 / 更新 / 重装 / 启用）
