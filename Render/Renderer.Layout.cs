@@ -99,9 +99,12 @@ namespace NotchPeninsula
             void DrawMediaModule()
             {
                 float mediaRight = currentX + MeasureMediaBlockWidth(media);
-                // 整块交给媒体控制模块（折叠 / 展开由它自己分流）；
+                // 媒体在最左端时对齐封面上下留白，跟在其他组件后面时只收紧 3 DIP。
+                float mediaLeft = currentX == left + moduleGap
+                    ? left + MediaInlineLeadingInset(currentHeight)
+                    : currentX - 3f;
                 DrawMediaControl(canvas, media, isHovered, bars,
-                    new MediaBlockGeometry(currentX, currentX, mediaRight + 18f),
+                    new MediaBlockGeometry(mediaLeft, mediaLeft, mediaRight + 18f),
                     currentHeight, textOffsetY, alpha);
                 currentX = mediaRight + moduleGap;
             }
@@ -244,8 +247,9 @@ namespace NotchPeninsula
             if (hasMedia)
             {
                 // 右缘 +18：与组合模式 DrawMediaModule 同款余量（展开按钮 / 悬停热区）。
+                float mediaLeft = x - 16f + MediaInlineLeadingInset(currentHeight);
                 DrawMediaControl(canvas, media, isHovered, bars,
-                    new MediaBlockGeometry(x, x, x + mediaW + 18f),
+                    new MediaBlockGeometry(mediaLeft, mediaLeft, x + mediaW + 18f),
                     currentHeight, textOffsetY, alpha);
                 x += mediaW + 16f;
             }
@@ -266,7 +270,7 @@ namespace NotchPeninsula
                 && (!SilentActive || SilentMode.MediaImportantEnabled))
             {
                 DrawMediaControl(canvas, media, isHovered, bars,
-                    new MediaBlockGeometry(left, left + 16f, right),
+                    new MediaBlockGeometry(left, left + MediaInlineLeadingInset(currentHeight), right),
                     currentHeight, textOffsetY, alpha);
             }
             else if (StandbyDisplayMode == 0)

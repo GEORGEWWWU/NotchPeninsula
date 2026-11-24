@@ -124,6 +124,11 @@ namespace NotchPeninsula
 
         // ---- 折叠态内联行 ----
 
+        private static float MediaInlineCoverSize(float height) => Math.Clamp(height - 4f, 0f, 22f);
+
+        private static float MediaInlineLeadingInset(float height)
+            => Math.Min(16f, (height - MediaInlineCoverSize(height)) / 2f);
+
         private static void DrawMediaInline(SKCanvas canvas, MediaController media, bool isHovered, float[]? bars,
             MediaBlockGeometry geometry, float currentHeight, float textOffsetY, byte alpha)
         {
@@ -138,21 +143,21 @@ namespace NotchPeninsula
             float textY = (currentHeight - _cachedMediaTextHeight) / 2 - _cachedMediaTextTop + 0.3f + textOffsetY;
             float textX = geometry.ContentLeft;
 
-            // 双击跳转的命中区：不管有没有封面位图都要登记。
-            float thumbSize = 22f; float thumbRadius = 4f; float thumbY = (currentHeight - thumbSize) / 2f;
-            RegisterMediaCover(new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize));
+            float thumbSize = MediaInlineCoverSize(currentHeight);
+            float thumbY = (currentHeight - thumbSize) / 2f;
+            var thumbRect = SKRect.Create(textX, thumbY, thumbSize, thumbSize);
+            RegisterMediaCover(thumbRect);
 
-            //    RenderLoop，直接把进程带走。
             var thumb = media.Thumbnail;
             if (thumb != null)
             {
-                var thumbRect = new SKRect(textX, thumbY, textX + thumbSize, thumbY + thumbSize);
+                const float thumbRadius = 7f;
                 canvas.Save();
                 _clipPath.Rewind(); _clipPath.AddRoundRect(thumbRect, thumbRadius, thumbRadius);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
                 canvas.DrawBitmap(thumb, thumbRect, _highQualitySampling);
                 canvas.Restore();
-                textX += thumbSize + 10;
+                textX = thumbRect.Right + 10f;
             }
 
             // 文字右界：悬停出按钮时让到按钮块左侧、常态让到频谱左侧。
