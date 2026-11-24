@@ -205,9 +205,11 @@ namespace NotchPeninsula
 
         private const float TAB_ROW_H = 36f;          // 页签行高
 
-        private const float TAB_BOX_L = 10f;          // 页签选中块 / 悬停块的左右边界
+        private const float SidebarButtonInset = 10f;
+        private const float SidebarIconCenterX = 30f;
 
-        private float TAB_BOX_R => SidebarWidth - 6f;
+        private float TabButtonLeft => SidebarCollapsed ? SidebarIconCenterX - TAB_ROW_H / 2f : SidebarButtonInset;
+        private float TabButtonRight => SidebarCollapsed ? TabButtonLeft + TAB_ROW_H : SidebarWidth - 6f;
 
         private const float TAB_BAR_DY = 8f;          // 蓝色竖条相对行首的上下内缩（竖条高 = 36 - 2×8）
 
@@ -221,7 +223,7 @@ namespace NotchPeninsula
         /// <summary>侧边栏命中（画布 DIP 坐标）。绘制 / 悬停 / 光标三处都走它，别再各写一遍区间。</summary>
         private int HitSidebarTab(int x, int y)
         {
-            if (x < TAB_BOX_L || x > TAB_BOX_R) return -1;
+            if (x < TabButtonLeft || x > TabButtonRight) return -1;
             for (int i = 0; i < SidebarTabY.Length; i++)
             {
                 float tabY = TITLE_BAR_HEIGHT + TabRowY(i);
@@ -714,11 +716,13 @@ namespace NotchPeninsula
 
         // 「导出诊断包」按钮：常驻在侧边栏左下角（页签最底一行到 388，下面整片空白）。
         // 绘制 / 悬停 / 点击三处共用这套几何。
-        // 左下两个方向的留白取同一个值 —— 底部写死数字会和左边一点点对不上，所以由 X 和按钮高推出来。
-        private const float EXPORT_BTN_X = TAB_BOX_L;                     // 10，与页签块左缘对齐
-        private float EXPORT_BTN_W => SidebarCollapsed ? 40f : 96f;                           // 「导出诊断包」5 字 + 左右呼吸，别占满整行
-        private const float EXPORT_BTN_H = 28f;
-        private float EXPORT_BTN_Y => HEIGHT - EXPORT_BTN_X - EXPORT_BTN_H;   // 622，下边留白 == 左边留白
+        // 收起后的方形按钮沿原图标中心布置。
+        private const float SidebarToolRowHeight = 28f;
+        private const float CollapsedSidebarToolSize = 32f;
+        private float EXPORT_BTN_X => SidebarCollapsed ? SidebarIconCenterX - CollapsedSidebarToolSize / 2f : SidebarButtonInset;
+        private float EXPORT_BTN_W => SidebarCollapsed ? CollapsedSidebarToolSize : 96f;
+        private float EXPORT_BTN_H => SidebarCollapsed ? CollapsedSidebarToolSize : SidebarToolRowHeight;
+        private float EXPORT_BTN_Y => HEIGHT - SidebarButtonInset - (SidebarToolRowHeight + EXPORT_BTN_H) / 2f;
 
         private bool _aboutExportHovered = false;
         private bool _aboutExporting = false;
@@ -727,10 +731,10 @@ namespace NotchPeninsula
         // 「清理解包缓存」：与导出诊断包同宽，叠在它上面 —— 侧栏页签之下就这么点空地。
         // 单文件发布每次换 exe 都会在 %TEMP%\.net\<名>\ 下多解包一份，旧的从不回收，
         // 没有这个入口用户根本不知道那 1.4GB 是谁占的。
-        private const float CACHE_BTN_X = EXPORT_BTN_X;
+        private float CACHE_BTN_X => EXPORT_BTN_X;
         private float CACHE_BTN_W => EXPORT_BTN_W;
-        private const float CACHE_BTN_H = EXPORT_BTN_H;
-        private float CACHE_BTN_Y => EXPORT_BTN_Y - EXPORT_BTN_H - 6f;
+        private float CACHE_BTN_H => EXPORT_BTN_H;
+        private float CACHE_BTN_Y => EXPORT_BTN_Y - SidebarToolRowHeight - 6f;
 
         // 后台清理线程只写这三个，UI 线程读来画（同 WM_ASYNC_RERENDER 那套铁律）
         private volatile bool _cacheCleanHovered = false;

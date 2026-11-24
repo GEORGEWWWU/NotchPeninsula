@@ -17,7 +17,7 @@ namespace NotchPeninsula
             _dynamicTextPaint.TextSize = 9.5f;
             float tw = _dynamicTextPaint.MeasureText(text);
             float w = Math.Max(tw + 8f, badgeH);
-            float right = TAB_BOX_R - 12f;
+            float right = TabButtonRight - (SidebarCollapsed ? 6f : 12f);
             var r = new SKRect(right - w, rowTop + 4f, right, rowTop + 4f + badgeH);
 
             _dynamicFillPaint.Color = new SKColor(232, 168, 48);   // 与列表评分星星同一套黄
@@ -41,7 +41,7 @@ namespace NotchPeninsula
             float d = _tabSlideToY - _tabSlideFromY;
             float top = _tabSlideFromY + d * p;
 
-            canvas.DrawRoundRect(new SKRect(TAB_BOX_L, TITLE_BAR_HEIGHT + top, TAB_BOX_R, TITLE_BAR_HEIGHT + top + TAB_ROW_H), 4, 4, _tabBgSelected);
+            canvas.DrawRoundRect(new SKRect(TabButtonLeft, TITLE_BAR_HEIGHT + top, TabButtonRight, TITLE_BAR_HEIGHT + top + TAB_ROW_H), 4, 4, _tabBgSelected);
 
             // 蓝条以自身中线为中心对称外扩：中点最强、两端归零，所以起止两端没有跳变。
             // 幅度固定、与滑动距离无关，最大伸展时 20 + 10 = 30 仍稳稳落在 36 高的方块里。
@@ -49,7 +49,7 @@ namespace NotchPeninsula
             float mid = top + TAB_ROW_H * 0.5f;
             float half = (TAB_ROW_H * 0.5f - TAB_BAR_DY) + stretch * 0.5f;
 
-            canvas.DrawRoundRect(new SKRect(TAB_BOX_L, TITLE_BAR_HEIGHT + mid - half, TAB_BOX_L + 3, TITLE_BAR_HEIGHT + mid + half),
+            canvas.DrawRoundRect(new SKRect(TabButtonLeft, TITLE_BAR_HEIGHT + mid - half, TabButtonLeft + 3, TITLE_BAR_HEIGHT + mid + half),
                 1.5f, 1.5f, _tabIndicator);
         }
 
@@ -672,9 +672,9 @@ namespace NotchPeninsula
                 if (tab == _hoveredTab && tab != _selectedTab)
                 {
                     _dynamicFillPaint.Color = Overlay(14);
-                    canvas.DrawRoundRect(new SKRect(TAB_BOX_L, top, TAB_BOX_R, top + TAB_ROW_H), 4, 4, _dynamicFillPaint);
+                    canvas.DrawRoundRect(new SKRect(TabButtonLeft, top, TabButtonRight, top + TAB_ROW_H), 4, 4, _dynamicFillPaint);
                 }
-                DrawSidebarIcon(canvas, SidebarIcons[tab], 30, top + TAB_ROW_H / 2);
+                DrawSidebarIcon(canvas, SidebarIcons[tab], SidebarIconCenterX, top + TAB_ROW_H / 2);
                 if (!SidebarCollapsed)
                     canvas.DrawText(SidebarLabels[tab], 54, top + 24, _uiTextPaint);
                 if (tab == 7 && MarketUpdateCount > 0)
@@ -704,7 +704,7 @@ namespace NotchPeninsula
                 _dynamicTextPaint.Color = _cacheCleanHint.Length > 0
                     ? (_cacheCleanFailed ? new SKColor(200, 80, 80) : new SKColor(110, 180, 130))
                     : new SKColor(200, 80, 80);
-                canvas.DrawText(TruncateText(hint, _dynamicTextPaint, TAB_BOX_R - EXPORT_BTN_X),
+                canvas.DrawText(TruncateText(hint, _dynamicTextPaint, TabButtonRight - EXPORT_BTN_X),
                     EXPORT_BTN_X, CACHE_BTN_Y - 8f, _dynamicTextPaint);
             }
 
