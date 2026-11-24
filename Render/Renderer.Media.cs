@@ -237,11 +237,6 @@ namespace NotchPeninsula
             return new SKRect(left + inset, y - 2.5f, right - inset, y + 2.5f);
         }
 
-        private static SKColor MediaAccent(SKRect area, byte alpha)
-            => ToneColor(area, 255).Red < 128
-                ? new SKColor(29, 85, 146, alpha)
-                : new SKColor(152, 202, 255, alpha);
-
         private static void DrawTimeline(SKCanvas canvas, MediaController media, float left, float right, float height,
             byte alpha, bool floating)
         {
@@ -258,9 +253,15 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(track, radius, radius, _barBgPaint);
 
             float head = track.Left + track.Width * media.TimelineProgress;
-            _barPaint.Color = MediaAccent(track, alpha);
+            _barPaint.Color = ToneColor(track, alpha);
             if (head > track.Left)
-                canvas.DrawRoundRect(new SKRect(track.Left, track.Top, head, track.Bottom), radius, radius, _barPaint);
+            {
+                // 进度断面为直线，轨道两端沿用圆角。
+                canvas.Save();
+                canvas.ClipRect(new SKRect(track.Left, track.Top, head, track.Bottom), SKClipOperation.Intersect, true);
+                canvas.DrawRoundRect(track, radius, radius, _barPaint);
+                canvas.Restore();
+            }
             if (media.IsDragging)
                 canvas.DrawCircle(head, track.MidY, 4.5f, _barPaint);
 

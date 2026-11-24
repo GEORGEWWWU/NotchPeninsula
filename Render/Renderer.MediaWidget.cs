@@ -32,6 +32,19 @@ namespace NotchPeninsula
         // 1/6 宽处，几何居中看着偏左，右移这一档才「看着」居中。暂停的两根竖条对称，不需要。
         private const float PlayOpticalDx = 2f;
 
+        // 展开态使用独立的 SVG 路径，按 1 DIP 为一个路径单位绘制。
+        private static readonly SKPath _expandedPlayPath = SKPath.ParseSvgPathData(
+            "M0 2 Q0 0 2 1 L18 11 Q20 12 18 13 L2 23 Q0 24 0 22 Z");
+        private static readonly SKPath _expandedPausePath = SKPath.ParseSvgPathData(
+            "M2 0 H6 Q8 0 8 2 V23 Q8 25 6 25 H2 Q0 25 0 23 V2 Q0 0 2 0 Z " +
+            "M13 0 H17 Q19 0 19 2 V23 Q19 25 17 25 H13 Q11 25 11 23 V2 Q11 0 13 0 Z");
+        private static readonly SKPath _expandedNextPath = SKPath.ParseSvgPathData(
+            "M0 2 Q0 0 2 1 L14 8 Q15 8.5 14 9 L2 16 Q0 17 0 15 Z " +
+            "M14 2 Q14 0 16 1 L28 8 Q29 8.5 28 9 L16 16 Q14 17 14 15 Z");
+        private static readonly SKPath _expandedPrevPath = SKPath.ParseSvgPathData(
+            "M28 2 Q28 0 26 1 L14 8 Q13 8.5 14 9 L26 16 Q28 17 28 15 Z " +
+            "M14 2 Q14 0 12 1 L0 8 Q-1 8.5 0 9 L12 16 Q14 17 14 15 Z");
+
         // ---- 展开态标题超长自动滚动 ----
         // 岛内展开面板和实况窗详情页共用这一段绘制：两处共用同一条时间轴，
         // 不会出现「主岛滚到一半、浮层从头发车」。速度取 22px/s：慢一点更好读，
@@ -218,7 +231,7 @@ namespace NotchPeninsula
                 RegisterMediaCover(coverRect);
             }
 
-            const float coverRadius = 10f;
+            const float coverRadius = 14f;
             var cover = media.Thumbnail;
             if (cover != null)
             {
@@ -231,7 +244,9 @@ namespace NotchPeninsula
             }
             else
             {
-                var accent = MediaAccent(coverRect, alpha);
+                var accent = ToneColor(coverRect, 255).Red < 128
+                    ? new SKColor(29, 85, 146, alpha)
+                    : new SKColor(152, 202, 255, alpha);
                 _barBgPaint.Color = accent.WithAlpha((byte)(alpha * 0.18f));
                 canvas.DrawRoundRect(coverRect, coverRadius, coverRadius, _barBgPaint);
 
@@ -243,7 +258,7 @@ namespace NotchPeninsula
             }
 
             // 双行文字：左右都用真裁切收口（右侧让给频谱，左侧挡住跑马灯，别让标题滚到封面上）。
-            var spectrum = SKRect.Create(right - MediaPanelInset - 34f, coverRect.MidY - 14f, 34f, 28f);
+            var spectrum = SKRect.Create(right - MediaPanelInset - 34f, coverRect.Top + 2f, 34f, 28f);
             float textStartX = coverRect.Right + 14f;
             float titleViewRight = spectrum.Left - 12f;
             float titleBaseline = coverRect.MidY - 6f;
@@ -318,9 +333,9 @@ namespace NotchPeninsula
 
             if (bars is { Length: >= 5 })
             {
-                _barBgPaint.Color = ToneColor(spectrum, (byte)(alpha * 0.09f));
-                canvas.DrawRoundRect(spectrum, 8f, 8f, _barBgPaint);
-                _barPaint.Color = MediaAccent(spectrum, alpha);
+                _barPaint.Color = ToneColor(spectrum, 255).Red < 128
+                    ? new SKColor(117, 68, 85, alpha)
+                    : new SKColor(130, 88, 97, alpha);
                 for (int i = 0; i < 5; i++)
                 {
                     float h = Math.Clamp(bars[i] * 16f, 2f, 16f);
@@ -342,10 +357,10 @@ namespace NotchPeninsula
                     (MEDIA_EXPANDED_HEIGHT_PLAIN - MediaControlsRevealHeight), 0f, 1f);
                 byte controlsAlpha = (byte)(alpha * reveal);
                 float centerX = (left + right) / 2f;
-                DrawExpandedControl(canvas, centerX, currentHeight, 0, _prevPath, controlsAlpha);
-                DrawExpandedControl(canvas, centerX, currentHeight, 1, media.IsPlaying ? _pausePath : _playPath,
+                DrawExpandedControl(canvas, centerX, currentHeight, 0, _expandedPrevPath, controlsAlpha);
+                DrawExpandedControl(canvas, centerX, currentHeight, 1, media.IsPlaying ? _expandedPausePath : _expandedPlayPath,
                     controlsAlpha, media.IsPlaying ? 0f : PlayOpticalDx);
-                DrawExpandedControl(canvas, centerX, currentHeight, 2, _nextPath, controlsAlpha);
+                DrawExpandedControl(canvas, centerX, currentHeight, 2, _expandedNextPath, controlsAlpha);
                 _mediaIconPaint.Color = _currentTextColor.WithAlpha(alpha);
             }
         }
@@ -354,30 +369,9 @@ namespace NotchPeninsula
             byte alpha, float opticalDx = 0f)
         {
             var bounds = MediaButtonBounds(centerX, height, index);
-            bool hovered = HoveredExpandedButton == index;
-            if (index == 1)
-            {
-                var accent = MediaAccent(bounds, alpha);
-                _barBgPaint.Color = accent;
-                canvas.DrawRoundRect(bounds, 12f, 12f, _barBgPaint);
-                _mediaIconPaint.Color = accent.Red < 128 ? SKColors.White.WithAlpha(alpha) : new SKColor(17, 40, 64, alpha);
-                if (hovered)
-                {
-                    _hoverCirclePaint.Color = _mediaIconPaint.Color.WithAlpha((byte)(alpha * 0.13f));
-                    canvas.DrawRoundRect(bounds, 12f, 12f, _hoverCirclePaint);
-                }
-            }
-            else
-            {
-                _mediaIconPaint.Color = ToneColor(bounds, alpha);
-                if (hovered)
-                {
-                    _hoverCirclePaint.Color = _mediaIconPaint.Color.WithAlpha((byte)(alpha * 0.12f));
-                    canvas.DrawRoundRect(bounds, 12f, 12f, _hoverCirclePaint);
-                }
-            }
-
-            DrawSvgPathCentered(canvas, _mediaIconPaint, bounds.MidX + opticalDx, bounds.MidY, icon, index == 1 ? 1.55f : 1.45f);
+            _mediaIconPaint.Color = ToneColor(bounds, alpha);
+            float scale = HoveredExpandedButton == index ? 1.07f : 1f;
+            DrawSvgPathCentered(canvas, _mediaIconPaint, bounds.MidX + opticalDx, bounds.MidY, icon, scale);
         }
     }
 }

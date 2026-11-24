@@ -54,7 +54,6 @@ namespace NotchPeninsula
             return path;
         }
 
-        private static readonly SKPaint _hoverCirclePaint = new() { IsAntialias = true }; // 零 GC 纯色画笔
 
         private static SKColor _currentTextColor = SKColors.White;
 
@@ -175,7 +174,7 @@ namespace NotchPeninsula
         // 面板绘制期间临时切到「面板整体明暗」的全局调色，画完原样还回去。
         private static bool _panelPaletteOverridden;
 
-        private static SKColor _panelSavedText, _panelSavedSub, _panelSavedIcon, _panelSavedHover;
+        private static SKColor _panelSavedText, _panelSavedSub, _panelSavedIcon;
 
         // 元素级判定阈值：亮过它就用黑字。
         // 全局那套仍是 0.78/0.70 的滞回；元素级单值就够 —— 网格本身已经平滑过。
@@ -297,11 +296,9 @@ namespace NotchPeninsula
             _panelSavedText = _currentTextColor;
             _panelSavedSub = _currentSubTextColor;
             _panelSavedIcon = _mediaIconPaint.Color;
-            _panelSavedHover = _hoverCirclePaint.Color;
             _currentTextColor = light ? SKColors.Black : SKColors.White;
             _currentSubTextColor = light ? new SKColor(55, 55, 55) : new SKColor(180, 180, 180);
             _mediaIconPaint.Color = _currentTextColor;
-            _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
             _panelPaletteOverridden = true;
         }
 
@@ -314,7 +311,6 @@ namespace NotchPeninsula
             _currentTextColor = _panelSavedText;
             _currentSubTextColor = _panelSavedSub;
             _mediaIconPaint.Color = _panelSavedIcon;
-            _hoverCirclePaint.Color = _panelSavedHover;
         }
 
         /// <summary>
@@ -540,7 +536,6 @@ namespace NotchPeninsula
             _barPaint.Color = _currentTextColor;
             _tlTextPaint.Color = _currentSubTextColor; // 时间轴时间文本
             _shadowPaint.Color = _currentTextColor.WithAlpha(50);
-            _hoverCirclePaint.Color = _currentTextColor.WithAlpha(25);
 
             _tagTextPaint.Color = _currentTextColor;
             _tagBgPaint.Color = _currentTextColor.WithAlpha(25);  // 浅色半透明背景标签
@@ -732,14 +727,7 @@ namespace NotchPeninsula
             canvas.Restore();
         }
 
-        /// <summary>
-        /// 以 (cx, cy) 为**中心**画矢量图标（按路径包围盒居中）。
-        /// <para>
-        /// 媒体展开面板的播放控件是「悬停底圆 + 图标」两个独立图形，必须共用同一个中心：
-        /// <see cref="DrawSvgPath"/> 把 x 当左上角、圆却把 x 当圆心，底圆就会整整偏左半个图标宽
-        ///（播放键约 8px）—— 就是截图里「按钮底圆偏左」的那个错位。
-        /// </para>
-        /// </summary>
+        /// <summary>按路径包围盒将矢量图标对齐到指定中心。</summary>
         private static void DrawSvgPathCentered(SKCanvas canvas, SKPaint paint, float cx, float cy, SKPath path, float scale = 1f)
         {
             var bounds = path.Bounds;
