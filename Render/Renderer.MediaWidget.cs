@@ -235,7 +235,7 @@ namespace NotchPeninsula
         private static SKBitmap? _immersiveShaderBitmap;
         private static SKRect _immersiveShaderBounds;
 
-        private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media, SKRect island)
+        private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media)
         {
             int opacity = ImmersiveCoverOpacity;
             if (opacity == 0 || !media.IsActive || SuppressMediaInIsland) return;
@@ -247,9 +247,11 @@ namespace NotchPeninsula
             var artwork = media.AlbumArtwork;
             if (artwork == null || artwork.Width <= 0 || artwork.Height <= 0) return;
 
-            // 按岛体宽度等比例缩放，垂直居中，所有溢出交给岛体路径裁切。
-            float imageHeight = island.Width * artwork.Height / artwork.Width;
-            var image = SKRect.Create(island.Left, island.MidY - imageHeight / 2f, island.Width, imageHeight);
+            // 按轮廓的完整边界等比铺满，包含刘海两侧伸出的倒角。
+            var island = _bgPath.Bounds;
+            float scale = Math.Max(island.Width / artwork.Width, island.Height / artwork.Height);
+            float imageWidth = artwork.Width * scale, imageHeight = artwork.Height * scale;
+            var image = SKRect.Create(island.MidX - imageWidth / 2f, island.MidY - imageHeight / 2f, imageWidth, imageHeight);
             if (!ReferenceEquals(artwork, _immersiveShaderBitmap) || image != _immersiveShaderBounds)
             {
                 var matrix = SKMatrix.CreateScaleTranslation(image.Width / artwork.Width, image.Height / artwork.Height,
@@ -265,7 +267,6 @@ namespace NotchPeninsula
             blurInput.Inflate(ImmersiveBlurSigma * 4f, ImmersiveBlurSigma * 4f);
             canvas.Save();
             canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-            canvas.ClipRect(image);
             _immersiveArtworkPaint.Color = SKColors.White.WithAlpha((byte)(255 * opacity / 4));
             canvas.DrawRect(blurInput, _immersiveArtworkPaint);
             canvas.Restore();

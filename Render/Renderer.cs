@@ -633,7 +633,7 @@ namespace NotchPeninsula
                     }
 
                     if (acrylic && IslandImmersiveMode && toast == null)
-                        DrawImmersiveArtwork(canvas, media, destination);
+                        DrawImmersiveArtwork(canvas, media);
 
                     BeginToneGrid(canvas, backdrop, destination, source, material);
                     if (glass && ThemeMode == 2)
