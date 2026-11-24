@@ -190,7 +190,7 @@ namespace NotchPeninsula
                     ? _hoveredPersonalizeOption >= 0
                     : _personalizeDropdownHovered != DropdownKind.None
                         || _hoveredMinusIndex >= 0 || _hoveredPlusIndex >= 0 || _hoveredResetIndex >= 0
-                        || _hoveredGlassParamIndex >= 0 || _hoveredGlassReset,
+                        || _hoveredGlassParamIndex >= 0 || _hoveredGlassReset || _immersiveToggleHovered,
                 6 => _settingsPluginId != null
                     ? _settingsBackHovered || _hoveredSettingControl >= 0
                     : _hoveredPluginAction >= 0 || _hoveredPluginToggle >= 0

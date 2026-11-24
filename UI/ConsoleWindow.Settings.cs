@@ -73,7 +73,18 @@ namespace NotchPeninsula
 
         private const float THEME_CARD_Y = CARD_TOP_Y;
         private const float THEME_CARD_H = 112f;
-        private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
+        private const float IMMERSIVE_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
+        private const float OPACITY_CARD_Y = IMMERSIVE_CARD_Y + TOGGLE_CARD_H + CARD_GAP;
+
+        private bool _immersiveToggleHovered;
+
+        private bool HitImmersiveToggle(int x, int y)
+        {
+            float right = LeftColumnRight - 16f;
+            float centerY = TITLE_BAR_HEIGHT + IMMERSIVE_CARD_Y + ROW_ANCHOR_Y;
+            return y < ContentBottom
+                && new SKRect(right - 42f, centerY - TOGGLE_TRACK_H / 2f, right, centerY + TOGGLE_TRACK_H / 2f).Contains(x, y);
+        }
         private const float OPACITY_CARD_H = 48f;
         private static bool ShowOpacityCard => !Renderer.IslandLiquidGlass && !Renderer.IslandPluginBackground;
         private const float GLASS_CARD_Y = SIZE_CARD_Y + 150f + CARD_GAP;

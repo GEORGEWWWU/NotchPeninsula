@@ -241,6 +241,7 @@ namespace NotchPeninsula
                     NotchWindow.RequestAcrylicRebuild();
                     break;
                 case DropdownKind.Material:
+                    if (Renderer.IslandImmersiveMode) break;
                     Renderer.IslandMaterialIndex = option;
                     Renderer.ApplyThemeColors();
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
@@ -259,6 +260,17 @@ namespace NotchPeninsula
 
         private bool HandlePersonalizeClick(IntPtr hwnd, int x, int y)
         {
+            if (_personalizeDropdownOpen == DropdownKind.None && HitImmersiveToggle(x, y))
+            {
+                Renderer.IslandImmersiveMode = !Renderer.IslandImmersiveMode;
+                Program.SaveSetting("IslandImmersiveMode", Renderer.IslandImmersiveMode ? 1 : 0);
+                Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
+                Renderer.ApplyThemeColors();
+                NotchWindow.RequestAcrylicRebuild();
+                Render();
+                return true;
+            }
+
             if (_personalizeDropdownOpen != DropdownKind.None)
             {
                 var open = _personalizeDropdownOpen;

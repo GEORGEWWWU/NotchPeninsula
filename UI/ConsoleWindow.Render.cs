@@ -1562,8 +1562,12 @@ namespace NotchPeninsula
             // 亚克力仍是实验特性：复用通用设置里 MSP 那枚「实验性」标签
             DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X,
                 themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
-            canvas.DrawText("胶囊内背景材质", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
-            DrawPersonalizeDropdown(canvas, DropdownKind.Material);
+            canvas.DrawText(Renderer.IslandImmersiveMode ? "沉浸模式已锁定亚克力" : "胶囊内背景材质",
+                CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
+            DrawPersonalizeDropdown(canvas, DropdownKind.Material, enabled: !Renderer.IslandImmersiveMode);
+
+            DrawToggleCard(canvas, IMMERSIVE_CARD_Y, "沉浸模式", "使用专辑封面作为灵动岛背景",
+                Renderer.IslandImmersiveMode, _immersiveToggleHovered, leftColumn: true);
 
             if (ShowOpacityCard)
             {
@@ -1597,7 +1601,7 @@ namespace NotchPeninsula
             var box = PersonalizeDropdownBox(kind);
             var (options, selected) = PersonalizeDropdownOptions(kind);
             DrawDropdownBox(canvas, box.Left, box.Top, box.Width, box.Height,
-                enabled ? options[selected] : "自动", _personalizeDropdownHovered == kind, enabled,
+                !enabled && kind == DropdownKind.Theme ? "自动" : options[selected], _personalizeDropdownHovered == kind, enabled,
                 open: _personalizeDropdownOpen == kind);
         }
 

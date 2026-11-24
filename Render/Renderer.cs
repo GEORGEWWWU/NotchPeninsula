@@ -174,14 +174,25 @@ namespace NotchPeninsula
 
         // 材质编号与设置页及引导页一致：0 实体，1 亚克力，2 液态玻璃，3 插件背景（宿主不画背景）。
         private static volatile int _materialIndex;
+        private static volatile bool _islandImmersiveMode;
+        public static bool IslandImmersiveMode
+        {
+            get => _islandImmersiveMode;
+            set
+            {
+                _islandImmersiveMode = value;
+                if (IslandLiquidGlass) ThemeMode = 2;
+            }
+        }
+
         public static int IslandMaterialIndex
         {
-            get => _materialIndex;
+            get => IslandImmersiveMode ? 1 : _materialIndex;
             set
             {
                 _materialIndex = Math.Clamp(value, 0, 3);
                 // 切到液态玻璃的同时把主题钉死为「自动」（设置页里该控件也随之置灰）。
-                if (_materialIndex == 2) ThemeMode = 2;
+                if (IslandLiquidGlass) ThemeMode = 2;
             }
         }
 
@@ -536,9 +547,10 @@ namespace NotchPeninsula
                     rTopX, rTopY, rBottom, styleProgress, GLOBAL_DPI, NotchWindow.InstanceHandle));
 
                 // 插件背景：宿主背板 / 涂层一笔不画，内容、裁剪和命中照常走下面的流程。
-                bool skipBackground = IslandPluginBackground;
-                bool glass = !skipBackground && IslandLiquidGlass;
-                bool acrylic = !skipBackground && IslandAcrylic;
+                int material = IslandMaterialIndex;
+                bool skipBackground = material == 3;
+                bool glass = material == 2;
+                bool acrylic = material == 1;
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
@@ -610,7 +622,10 @@ namespace NotchPeninsula
                         canvas.Restore();
                     }
 
-                    BeginToneGrid(canvas, backdrop, destination, source, IslandMaterialIndex);
+                    if (acrylic && IslandImmersiveMode && toast == null)
+                        DrawImmersiveArtwork(canvas, media, destination);
+
+                    BeginToneGrid(canvas, backdrop, destination, source, material);
                     if (glass && ThemeMode == 2)
                     {
                         bool hasGlassTone = glassDrawn && LiquidGlass.HasLuminance;

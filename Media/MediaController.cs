@@ -244,6 +244,8 @@ namespace NotchPeninsula
 
         private volatile SKBitmap? _thumbnail;
         public SKBitmap? Thumbnail => _thumbnail;
+        private volatile SKBitmap? _albumArtwork;
+        internal SKBitmap? AlbumArtwork => _albumArtwork;
 
         private readonly object _thumbSwap = new();
 
@@ -265,14 +267,15 @@ namespace NotchPeninsula
                 _retiredThumbs.Dequeue().Dispose();
         }
 
-        private void SetThumbnail(SKBitmap? next, string tag)
+        private void SetThumbnail(SKBitmap? next, string tag, string? appIconKey = null)
         {
             lock (_thumbSwap)
             {
                 if (ReferenceEquals(_thumbnail, next)) return;
                 RetireThumbnail(_thumbnail);
+                _albumArtwork = appIconKey == null ? next : null;
                 _thumbnail = next;
-                _appIconKey = "";
+                _appIconKey = appIconKey ?? "";
             }
             Logger.Debug($"[封面] {tag} → {(next == null ? "null" : $"{next.Width}x{next.Height}")}  曲目='{_trackTitle}'");
         }
@@ -284,8 +287,7 @@ namespace NotchPeninsula
             var icon = AppIconProvider.Get(_currentAppId);
             if (icon == null) return;      // 没图标：保持当前那张，别清空
 
-            SetThumbnail(icon, "图标");    // 内部会把 _appIconKey 清空，所以这一步必须排在下面那行之前
-            _appIconKey = _currentAppId;
+            SetThumbnail(icon, "图标", _currentAppId);
         }
 
         private bool IsVideoMode => !_isMusicMode;

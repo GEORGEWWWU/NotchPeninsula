@@ -223,6 +223,28 @@ namespace NotchPeninsula
             }
         }
 
+        private static readonly SKPaint _immersiveArtworkPaint = new() { FilterQuality = SKFilterQuality.Medium };
+
+        private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media, SKRect island)
+        {
+            if (!media.IsActive || SuppressMediaInIsland) return;
+            bool mediaVisible = SilentActive ? SilentMode.MediaImportantEnabled
+                : StandbyActive ? StandbySceneKey == Plugins.BuiltinWidgets.Media
+                : CompShowMedia;
+            if (!mediaVisible || Plugins.PluginManager.Instance.Host.ActiveDetailPage != null) return;
+
+            var artwork = media.AlbumArtwork;
+            if (artwork == null || artwork.Width <= 0 || artwork.Height <= 0) return;
+
+            // 按岛体宽度等比例缩放，垂直居中，所有溢出交给岛体路径裁切。
+            float imageHeight = island.Width * artwork.Height / artwork.Width;
+            var image = SKRect.Create(island.Left, island.MidY - imageHeight / 2f, island.Width, imageHeight);
+            canvas.Save();
+            canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
+            canvas.DrawBitmap(artwork, image, _immersiveArtworkPaint);
+            canvas.Restore();
+        }
+
         // ---- 展开态面板 ----
 
         private static void DrawMediaPanel(SKCanvas canvas, MediaController media, float[]? bars,

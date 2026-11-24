@@ -1154,7 +1154,7 @@ namespace NotchPeninsula
                 if (y >= ContentBottom) return DropdownKind.None;
                 if (!Renderer.IslandLiquidGlass && PersonalizeDropdownBox(DropdownKind.Theme).Contains(x, y))
                     return DropdownKind.Theme;
-                if (PersonalizeDropdownBox(DropdownKind.Material).Contains(x, y))
+                if (!Renderer.IslandImmersiveMode && PersonalizeDropdownBox(DropdownKind.Material).Contains(x, y))
                     return DropdownKind.Material;
                 if (ShowOpacityCard && PersonalizeDropdownBox(DropdownKind.Opacity).Contains(x, y))
                     return DropdownKind.Opacity;

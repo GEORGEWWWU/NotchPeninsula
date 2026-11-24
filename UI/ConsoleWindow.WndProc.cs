@@ -102,6 +102,7 @@ namespace NotchPeninsula
             int newHoveredGlassParam = -1;
             int newHoveredGlassParamLevel = -1;
             bool newHoveredGlassReset = false;
+            bool immersiveHovered = false;
             int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
             if (_selectedTab == 5 && _personalizeDropdownOpen != DropdownKind.None)
             {
@@ -110,6 +111,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 5)
             {
                 newPersonalizeDropdown = HitDropdownTrigger(x, y);
+                immersiveHovered = HitImmersiveToggle(x, y);
                 newHoveredGlassParam = HitGlassTrack(x, y);
                 if (newHoveredGlassParam >= 0)
                     newHoveredGlassParamLevel = GlassLevelAt(newHoveredGlassParam, x);
@@ -840,6 +842,7 @@ namespace NotchPeninsula
                 newHoveredGlassParam != _hoveredGlassParamIndex ||
                 newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
                 newHoveredGlassReset != _hoveredGlassReset ||
+                immersiveHovered != _immersiveToggleHovered ||
                 // ⚠️ 这一项漏掉过：它只在被比较的几个状态里"顺带"赋值，
                 //    于是鼠标只停在这一行时整块 if 不成立 → 悬停永远不更新，
                 //    表现为「控件画得出来、高亮不亮、点了没反应」。
@@ -933,6 +936,7 @@ namespace NotchPeninsula
                 _hoveredGlassParamIndex = newHoveredGlassParam;
                 _hoveredGlassParamLevel = newHoveredGlassParamLevel;
                 _hoveredGlassReset = newHoveredGlassReset;
+                _immersiveToggleHovered = immersiveHovered;
                 _mediaExpToggleHovered = newMediaExpToggleHovered;
                 _appLaunchToggleHovered = newAppLaunchToggleHovered;
                 _monitorDropdownHovered = newMonitorDropdownHovered;
