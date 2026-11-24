@@ -8,7 +8,8 @@ namespace NotchPeninsula
         private float SidebarWidth => _sidebarCollapsed ? 60f : 160f;
         private bool _sidebarToggleHovered;
         private bool _trackingSidebarMouse;
-        private static readonly SKRect SidebarToggleRect = new(10, 5, 50, 28);
+        private const string SidebarToggleGlyph = "\uE700";
+        private static readonly SKRect SidebarToggleRect = new(10, TitleBarCenterY - 12, 50, TitleBarCenterY + 12);
         private static readonly int[] SidebarOrder = [5, 0, 1, 9, 8, 2, 3, 6, 7, 4];
         private static readonly string[] SidebarLabels =
         [
@@ -27,6 +28,8 @@ namespace NotchPeninsula
             TextSize = 16,
             TextAlign = SKTextAlign.Center
         };
+
+        private static readonly float SidebarToggleInkMidY = MeasureInkMidY(SidebarIconPaint, SidebarToggleGlyph);
 
         private void TrackSidebarMouseLeave(IntPtr hwnd)
         {
@@ -55,7 +58,9 @@ namespace NotchPeninsula
                 _dynamicFillPaint.Color = Overlay(22);
                 canvas.DrawRoundRect(SidebarToggleRect, 4, 4, _dynamicFillPaint);
             }
-            DrawSidebarIcon(canvas, "\uE700", SidebarToggleRect.MidX, SidebarToggleRect.MidY);
+            SidebarIconPaint.Color = _fgColor;
+            canvas.DrawText(SidebarToggleGlyph, SidebarToggleRect.MidX,
+                TitleBarCenterY - SidebarToggleInkMidY, SidebarIconPaint);
         }
 
         private void DrawSidebarTooltip(SKCanvas canvas)
@@ -70,7 +75,7 @@ namespace NotchPeninsula
             if (text == null)
                 return;
 
-            float centerY = _sidebarToggleHovered ? 46
+            float centerY = _sidebarToggleHovered ? TITLE_BAR_HEIGHT + 14
                 : _hoveredTab >= 0 ? TITLE_BAR_HEIGHT + TabRowY(_hoveredTab) + TAB_ROW_H / 2
                 : (_cacheCleanHovered ? CACHE_BTN_Y : EXPORT_BTN_Y) + EXPORT_BTN_H / 2;
             float x = _sidebarToggleHovered ? SidebarToggleRect.Right + 4 : SidebarWidth - 2;

@@ -373,7 +373,7 @@ namespace NotchPeninsula
                     if (x >= STYLE_OPT_X && x <= STYLE_OPT_X + STYLE_OPT_W) newHoveredStyleIndex = 0;
                     else
                     {
-                        float styleX1 = STYLE_OPT_X + STYLE_OPT_W + STYLE_OPT_GAP;
+                        float styleX1 = STYLE_OPT_X + STYLE_OPT_W + CARD_GAP;
                         if (x >= styleX1 && x <= styleX1 + STYLE_OPT_W) newHoveredStyleIndex = 1;
                     }
                 }

@@ -21,7 +21,9 @@ namespace NotchPeninsula
         private float WIDTH => _scaledWidth / _dpiScale;
         private float HEIGHT => _scaledHeight / _dpiScale;
 
-        private const int TITLE_BAR_HEIGHT = 32;
+        private const int TITLE_BAR_HEIGHT = 36;
+        private const float TitleBarCenterY = TITLE_BAR_HEIGHT / 2f;
+        private const float TitleBarIconSize = 16f;
 
         // ---- 内容区横向边界（窗口右侧那一列）----
         // 想各挪十几像素得改上百处）。
@@ -105,10 +107,8 @@ namespace NotchPeninsula
 
         private const float STYLE_OPT_H = 90f;
 
-        private const float STYLE_OPT_GAP = 20f;
-
-        // 两选项框整组在卡内水平居中（组内间距 STYLE_OPT_GAP 保持不变，动的是整组不是框）。
-        private const float STYLE_GROUP_W = STYLE_OPT_W * 2f + STYLE_OPT_GAP;
+        // 两选项框整组在卡内水平居中。
+        private const float STYLE_GROUP_W = STYLE_OPT_W * 2f + CARD_GAP;
 
         private float STYLE_OPT_X => CONTENT_L + ((LeftColumnRight - CONTENT_L) - STYLE_GROUP_W) / 2f;   // 227
 
@@ -458,15 +458,14 @@ namespace NotchPeninsula
         private const float MediaCardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
         private const float MediaRowStart = CARD_TOP_Y + 4f;
         private const float MediaTopCardHeight = 118f;
-        private const float ColumnGap = 16f;
         private const float PlatformBoxY = MediaCardTop + 18f;
         private const float PlatformMenuY = PlatformBoxY + 34f;
         private float PlatformBoxX => WIDTH - 140f;
-        private float LeftColumnRight => (CONTENT_L + WIDTH - CONTENT_RM - ColumnGap) / 2f;
-        private float RightColumnLeft => LeftColumnRight + ColumnGap;
+        private float LeftColumnRight => (CONTENT_L + WIDTH - CONTENT_RM - CARD_GAP) / 2f;
+        private float RightColumnLeft => LeftColumnRight + CARD_GAP;
         private float RightColumnText => RightColumnLeft + 16f;
         private const float PLATFORM_ROW2_Y = MediaCardTop + 52f;
-        private const float LYRIC_CARD_Y = MediaCardTop + MediaTopCardHeight + 12f;
+        private const float LYRIC_CARD_Y = MediaCardTop + MediaTopCardHeight + CARD_GAP;
 
 
         private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
@@ -513,6 +512,7 @@ namespace NotchPeninsula
         private static Icon? _appSysIcon;
 
         private static string _appTitleWithVersion = "NotchPeninsula";
+        private static float _titleTextInkMidY;
 
         // 侧边栏与通用设置状态
 
@@ -1230,6 +1230,8 @@ namespace NotchPeninsula
                     _appTitleWithVersion = $"NotchPeninsula {version.Major}.{version.Minor}.{version.Build}";
                 }
 
+                _titleTextInkMidY = MeasureInkMidY(_titleTextPaint, _appTitleWithVersion);
+
                 IntPtr appIconHandle = IntPtr.Zero;
                 try
                 {
@@ -1908,18 +1910,19 @@ namespace NotchPeninsula
             float textX = 58f;
             if (_appIconBitmap != null)
             {
-                var iconRect = new SKRect(textX, 8, textX + 16, 24);
+                var iconRect = SKRect.Create(textX, TitleBarCenterY - TitleBarIconSize / 2,
+                    TitleBarIconSize, TitleBarIconSize);
                 canvas.DrawBitmap(_appIconBitmap, iconRect, _hqSamplingOpts);
-                textX += 24f;
+                textX += TitleBarIconSize + 8f;
             }
 
-            canvas.DrawText(_appTitleWithVersion, textX, 21.2f, _titleTextPaint);
+            canvas.DrawText(_appTitleWithVersion, textX, TitleBarCenterY - _titleTextInkMidY, _titleTextPaint);
 
             if (_minHovered) canvas.DrawRect(WIDTH - 92, 0, 46, TITLE_BAR_HEIGHT, _hoverMinPaint);
             if (_closeHovered) canvas.DrawRect(WIDTH - 46, 0, 46, TITLE_BAR_HEIGHT, _hoverClosePaint);
 
-            canvas.DrawLine(WIDTH - 92 + 18, 16, WIDTH - 92 + 28, 16, _iconPaint);
-            float cx = WIDTH - 46 + 23; float cy = 16;
+            canvas.DrawLine(WIDTH - 92 + 18, TitleBarCenterY, WIDTH - 92 + 28, TitleBarCenterY, _iconPaint);
+            float cx = WIDTH - 46 + 23; float cy = TitleBarCenterY;
             _iconPaint.Color = _closeHovered ? SKColors.White : _fgColor;
             canvas.DrawLine(cx - 5, cy - 5, cx + 5, cy + 5, _iconPaint);
             canvas.DrawLine(cx + 5, cy - 5, cx - 5, cy + 5, _iconPaint);

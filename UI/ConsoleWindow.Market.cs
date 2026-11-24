@@ -406,7 +406,7 @@ namespace NotchPeninsula
         // ── 「一键更新全部插件」条：贴卡片底缘，仅有可更新插件时出现 ──
         // 出现时列表高度让位（GetMarketListLayout 扣掉 Reserve），渲染 / 命中 / 滚轮三处同源。
         private const int MarketUpdateBarH = 30;
-        private const int MarketUpdateBarPad = 10;                       // 距卡片底缘
+        private const float MarketUpdateBarPad = CARD_GAP;                       // 距卡片底缘
         private float MarketUpdateBarTop => ContentBottom - MarketUpdateBarPad - MarketUpdateBarH;
         private SKRect MarketUpdateBarRect
             => new SKRect(CONTENT_TEXT_X, MarketUpdateBarTop, WIDTH - CONTENT_TEXT_RM, MarketUpdateBarTop + MarketUpdateBarH);
@@ -477,7 +477,7 @@ namespace NotchPeninsula
 
         private void GetMarketListLayout(out int visibleRows, out int maxFirstRow)
         {
-            int reserve = MarketUpdateCount > 0 ? MarketUpdateBarH + MarketUpdateBarPad : 0;
+            float reserve = MarketUpdateCount > 0 ? MarketUpdateBarH + MarketUpdateBarPad : 0;
             MeasurePluginTiles(_marketView.Count, _marketScroll, MarketRowsTop, ContentBottom - reserve,
                 out visibleRows, out maxFirstRow);
         }

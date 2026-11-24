@@ -4,25 +4,25 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        private const float PluginTileGap = 18f;
         private const float PluginLayoutButtonWidth = 78f;
         private bool _showPluginCards;
         private float PluginTileLeft => CONTENT_L + 6f;
         private float PluginTileSpace => WIDTH - CONTENT_RM - 12f - PluginTileLeft;
         private int PluginColumns => _showPluginCards
-            ? Math.Max(2, (int)((PluginTileSpace + PluginTileGap) / (272f + PluginTileGap)))
+            ? Math.Max(2, (int)((PluginTileSpace + CARD_GAP) / (272f + CARD_GAP)))
             : 2;
-        private float PluginTileWidth => (PluginTileSpace - (PluginColumns - 1) * PluginTileGap) / PluginColumns;
-        private float PluginTileHeight => _showPluginCards ? 88f : 58f;
+        private float PluginTileWidth => (PluginTileSpace - (PluginColumns - 1) * CARD_GAP) / PluginColumns;
+        private float PluginTileHeight => _showPluginCards ? 76f : 50f;
+        private float PluginTilePitch => PluginTileHeight + CARD_GAP;
         private float PluginButtonsTop => _showPluginCards ? 48f : 21f;
 
         private SKRect PluginTile(float top, int slot)
         {
             int columns = PluginColumns;
             float width = PluginTileWidth;
-            float x = PluginTileLeft + (slot % columns) * (width + PluginTileGap);
-            float y = top + (slot / columns) * PluginTileHeight;
-            return SKRect.Create(x, y, width, PluginTileHeight - (_showPluginCards ? 12f : 8f));
+            float x = PluginTileLeft + (slot % columns) * (width + CARD_GAP);
+            float y = top + (slot / columns) * PluginTilePitch;
+            return SKRect.Create(x, y, width, PluginTileHeight);
         }
 
         private void DrawPluginTile(SKCanvas canvas, SKRect tile)
@@ -42,21 +42,24 @@ namespace NotchPeninsula
         {
             if (x < PluginTileLeft || y < top)
                 return -1;
-            int col = (int)((x - PluginTileLeft) / (PluginTileWidth + PluginTileGap));
+            int col = (int)((x - PluginTileLeft) / (PluginTileWidth + CARD_GAP));
             if (col >= PluginColumns)
                 return -1;
-            int slot = (int)((y - top) / PluginTileHeight) * PluginColumns + col;
+            int slot = (int)((y - top) / PluginTilePitch) * PluginColumns + col;
             return PluginTile(top, slot).Contains(x, y) ? slot : -1;
         }
 
         private void MeasurePluginTiles(int total, int first, float top, float bottom, out int visible, out int maxFirst)
         {
             int columns = PluginColumns;
-            int rows = Math.Max(1, (int)((bottom - top) / PluginTileHeight));
+            int rows = Math.Max(1, (int)((bottom - top + CARD_GAP) / PluginTilePitch));
             int totalRows = (total + columns - 1) / columns;
             maxFirst = Math.Max(0, totalRows - rows) * columns;
             visible = Math.Min(total - Math.Clamp(first, 0, maxFirst), rows * columns);
         }
+
+        private float GetPluginRowsHeight(int visible)
+            => ((visible + PluginColumns - 1) / PluginColumns) * PluginTilePitch - CARD_GAP;
 
         private SKRect PluginLayoutButton(bool cards, float y)
         {

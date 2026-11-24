@@ -19,6 +19,13 @@ namespace NotchPeninsula
             return new SKColor(tone, tone, tone, alpha);
         }
 
+        private static float MeasureInkMidY(SKPaint paint, string text)
+        {
+            SKRect bounds = default;
+            paint.MeasureText(text, ref bounds);
+            return bounds.MidY;
+        }
+
         private static bool IsLightPreviewCapsule()
             => Renderer.ThemeMode == 2 ? Renderer.SystemIsLightTheme : Renderer.ThemeMode == 1;
 

@@ -974,7 +974,7 @@ namespace NotchPeninsula
             }
 
             DrawStyleOption(0, "经典刘海", STYLE_OPT_X, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
-            DrawStyleOption(1, "悬浮灵动岛", STYLE_OPT_X + STYLE_OPT_W + STYLE_OPT_GAP, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
+            DrawStyleOption(1, "悬浮灵动岛", STYLE_OPT_X + STYLE_OPT_W + CARD_GAP, TITLE_BAR_HEIGHT + STYLE_OPT_Y + page);
 
             var displayOptions = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + MONITOR_ROW_Y + page,
                 LeftColumnRight, TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_H + 8);
@@ -2095,7 +2095,7 @@ namespace NotchPeninsula
             if (visibleRows > 0 && maxFirstRow > 0)
             {
                 float trackTop = listY + PluginRowsTopPad - 2f;
-                float trackH = ((visibleRows + PluginColumns - 1) / PluginColumns) * PluginTileHeight - 8f;
+                float trackH = GetPluginRowsHeight(visibleRows);
                 DrawScrollBar(canvas, WIDTH - 26, trackTop, trackH,
                     visibleRows / (float)_pluginView.Count, _pluginScroll / (float)maxFirstRow);
             }
@@ -2412,7 +2412,7 @@ namespace NotchPeninsula
             if (mVisibleRows > 0 && mMaxFirst > 0)
             {
                 float trackTop = rowsTop - 2f;
-                float trackH = ((mVisibleRows + PluginColumns - 1) / PluginColumns) * PluginTileHeight - 8f;
+                float trackH = GetPluginRowsHeight(mVisibleRows);
                 DrawScrollBar(canvas, WIDTH - 26, trackTop, trackH,
                     mVisibleRows / (float)_marketView.Count, _marketScroll / (float)mMaxFirst);
             }
