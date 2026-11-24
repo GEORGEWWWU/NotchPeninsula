@@ -622,7 +622,7 @@ namespace NotchPeninsula
             var rect = new SKRect(x, y, x + w, y + h);
 
             _dynamicFillPaint.Color = hovered ? Overlay(30) : Overlay(15);
-            canvas.DrawRoundRect(rect, 5f, 5f, _dynamicFillPaint);
+            canvas.DrawRoundRect(rect, SettingsButtonRadius, SettingsButtonRadius, _dynamicFillPaint);
 
             _dynamicTextPaint.TextAlign = SKTextAlign.Center;
             if (SidebarCollapsed)

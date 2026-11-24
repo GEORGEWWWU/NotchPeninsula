@@ -7,6 +7,9 @@ namespace NotchPeninsula
         private const float SettingsCardRadius = 8f;
         private const float SettingsControlRadius = 4f;
 
+        // 按钮：无描边，圆角比下拉框 / 输入框这类同排控件大 2px，填充统一是很淡的一层。
+        private const float SettingsButtonRadius = SettingsControlRadius + 2f;
+
         private enum SettingsButtonKind { Standard, Primary, Danger }
 
         private SKColor SecondaryText => Neutral(200);
@@ -44,21 +47,38 @@ namespace NotchPeninsula
             _dynamicStrokePaint.StrokeWidth = previousWidth;
         }
 
+        /// <summary>
+        /// 按钮表面：低不透明度填充 + 无描边。主要 / 危险 / 选中这些状态也只做一层淡色，
+        /// 不再整块铺蓝 —— 全页十几颗按钮时，蓝色填充会把整页的对比度顶得过高。
+        /// </summary>
+        private void DrawButtonSurface(SKCanvas canvas, SKRect rect, bool hovered, bool enabled,
+            SettingsButtonKind kind, bool selected)
+        {
+            bool hot = enabled && hovered;
+            bool pressed = SettingsControlPressed(hot);
+
+            byte idle, hotAlpha, pressedAlpha;
+            if (kind == SettingsButtonKind.Primary) (idle, hotAlpha, pressedAlpha) = (30, 42, 54);
+            else if (kind == SettingsButtonKind.Danger) (idle, hotAlpha, pressedAlpha) = (20, 30, 40);
+            else if (selected) (idle, hotAlpha, pressedAlpha) = (20, 28, 36);
+            else (idle, hotAlpha, pressedAlpha) = (12, 20, 28);
+
+            byte alpha = !enabled ? (byte)5 : pressed ? pressedAlpha : hot ? hotAlpha : idle;
+            _dynamicFillPaint.Color = kind == SettingsButtonKind.Primary ? AccentText.WithAlpha(alpha)
+                : kind == SettingsButtonKind.Danger ? DangerText.WithAlpha(alpha)
+                : selected ? AccentText.WithAlpha(alpha) : Overlay(alpha);
+            canvas.DrawRoundRect(rect, SettingsButtonRadius, SettingsButtonRadius, _dynamicFillPaint);
+        }
+
         private void DrawSettingsButton(SKCanvas canvas, SKRect rect, string label, bool hovered, bool enabled = true,
             SettingsButtonKind kind = SettingsButtonKind.Standard, bool selected = false)
         {
-            if (kind == SettingsButtonKind.Primary && enabled)
-            {
-                _dynamicFillPaint.Color = AccentFill(hovered, SettingsControlPressed(hovered));
-                canvas.DrawRoundRect(rect, SettingsControlRadius, SettingsControlRadius, _dynamicFillPaint);
-            }
-            else
-            {
-                DrawControlSurface(canvas, rect, hovered, enabled, selected: selected);
-            }
+            DrawButtonSurface(canvas, rect, hovered, enabled, kind, selected);
 
-            _uiTextPaint.Color = !enabled ? DisabledText : kind == SettingsButtonKind.Primary ? OnAccent
-                : kind == SettingsButtonKind.Danger ? DangerText : selected ? AccentText : _fgColor;
+            _uiTextPaint.Color = !enabled ? DisabledText
+                : kind == SettingsButtonKind.Danger ? DangerText
+                : kind == SettingsButtonKind.Primary ? AccentText
+                : selected ? AccentText : _fgColor;
             DrawCenteredButtonLabel(canvas, TruncateText(label, _uiTextPaint, rect.Width - 6f), rect, _uiTextPaint);
         }
 
