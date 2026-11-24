@@ -23,23 +23,29 @@ namespace NotchPeninsula
 
         public static int HoveredExpandedButton = -1; // -1:无, 0:上一首, 1:播放/暂停, 2:下一首
 
-        // ---- 播放控件命中几何（唯一真源） ----
-        private const float MediaButtonSpacing = 54f;
-        private const float MediaButtonRadius = 20f;
-        private const float MediaButtonCenterOffsetY = 26f;
-
-        private static float MediaButtonCenterY(float currentHeight) => currentHeight - MediaButtonCenterOffsetY;
+        private const float MediaControlsRevealHeight = 122f;
 
         public static int HitExpandedButton(float x, float y, float currentHeight)
         {
-            float centerX = WINDOW_WIDTH / 2f;
-            float centerY = MediaButtonCenterY(currentHeight);
+            var zones = HitZones;
+            return HitMediaPanelButton(x, y, zones.MediaL, zones.MediaR, currentHeight);
+        }
 
+        private static SKRect MediaButtonBounds(float centerX, float height, int index)
+        {
+            float x = centerX + (index - 1) * 62f;
+            float y = height - 30f;
+            float halfWidth = index == 1 ? 27f : 22f;
+            return new SKRect(x - halfWidth, y - 18f, x + halfWidth, y + 18f);
+        }
+
+        private static int HitMediaPanelButton(float x, float y, float left, float right, float height)
+        {
+            if (right <= left || height <= MediaControlsRevealHeight) return -1;
+            float centerX = (left + right) / 2f;
             for (int i = 0; i < 3; i++)
             {
-                float cx = centerX + (i - 1) * MediaButtonSpacing;
-                float dx = x - cx, dy = y - centerY;
-                if (dx * dx + dy * dy <= MediaButtonRadius * MediaButtonRadius) return i;
+                if (MediaButtonBounds(centerX, height, i).Contains(x, y)) return i;
             }
             return -1;
         }
@@ -58,39 +64,20 @@ namespace NotchPeninsula
             return -1;
         }
 
-        // ---- 展开态歌曲时间轴 ----
+        private const float TimelineBottomGap = 68f;
+        private const float TimelineRevealHeight = 152f;
 
-        private const float TL_SIDE_PAD = 22f;    // 时间文本距岛体左右边缘的留白
-
-        private const float TL_TEXT_GAP = 8f;     // 时间文本与进度条之间的间距
-
-        private const float TL_BOTTOM_GAP = 68f;  // 进度条距岛体底边的距离（加高 28px 后正好落在封面与按钮之间的空档）
-
-        private const float TL_MIN_HEIGHT = 140f; // 高度涨到这条线之前不画，避免与底部按钮叠字
-
-        // ---- 展开态媒体面板的统一尺寸（主岛 / 实况窗详情页必须同一份）----
-        // 宽度固定 350；高度看有没有时间轴（进度条）：有 158，没有 130。
-        // 两边都从这里取，别再各写一套数字 —— 否则浮层和主岛差一条进度条就是「两套东西」。
+        // 主岛和媒体实况窗使用同一尺寸。
         public const float MEDIA_EXPANDED_WIDTH = 350f;
-
-        public const float MEDIA_EXPANDED_HEIGHT_TIMELINE = 158f;
-
+        public const float MEDIA_EXPANDED_HEIGHT_TIMELINE = 164f;
         public const float MEDIA_EXPANDED_HEIGHT_PLAIN = 130f;
-
-        /// <summary>
-        /// 实况窗详情页专用：它本身就是「展开态媒体面板」，页面一打开就该有进度条，
-        /// 不该被主岛的交互方式（直接交互 / 展开交互）决定。绘制与命中期间用这个标记按展开态算。
-        /// </summary>
-        internal static bool ForceMediaPanelExpanded;
 
         /// <summary>展开态要不要带时间轴（进度条）：主岛展开面板 / 实况窗详情页共用同一判据。</summary>
         public static bool MediaPanelTimelineVisible(MediaController media, bool forceExpanded = false)
             => (forceExpanded || MediaInteractionMode == 1) && media.HasTimeline;
 
-        // 刻意不再排除组合模式：组合模式现在也能展开媒体面板，
-
         public static bool TimelineVisible(MediaController media)
-            => IsMediaExpanded && MediaPanelTimelineVisible(media, ForceMediaPanelExpanded);
+            => IsMediaExpanded && MediaPanelTimelineVisible(media);
 
         public static float GetExpandedHeight(MediaController media, bool forceExpanded = false)
             => MediaPanelTimelineVisible(media, forceExpanded)
@@ -100,7 +87,10 @@ namespace NotchPeninsula
         public static bool HitTimeline(float x, float y) => HitTimeline(HitZones, x, y);
 
         private static bool HitTimeline(NativeHitZones z, float x, float y)
-            => z.TlX2 > z.TlX1 && x >= z.TlX1 - 8f && x <= z.TlX2 + 8f && Math.Abs(y - z.TlY) <= 13f;
+            => HitTimeline(x, y, z.TlX1, z.TlX2, z.TlY);
+
+        private static bool HitTimeline(float x, float y, float left, float right, float centerY)
+            => right > left && x >= left - 8f && x <= right + 8f && Math.Abs(y - centerY) <= 13f;
 
         // ---- 歌词翻译（上下两行） ----
 
@@ -238,33 +228,48 @@ namespace NotchPeninsula
 
         private static bool _krSlot;
 
-        private static void DrawTimeline(SKCanvas canvas, MediaController media, float left, float right, float currentHeight, byte alpha)
+        private static SKRect MediaTimelineTrack(float left, float right, float height, string duration)
         {
-            float barY = currentHeight - TL_BOTTOM_GAP;
-            float baseline = barY + 3.6f;              // 10px 字号的视觉居中基线
-            float padL = left + TL_SIDE_PAD, padR = right - TL_SIDE_PAD;
+            // 两端按总时长的位数留白，时间更新时轨道和拖动坐标保持稳定。
+            float labelWidth = Math.Max(34f, (duration.Length + 1) * 6.5f);
+            float inset = MediaPanelInset + labelWidth + 7f;
+            float y = height - TimelineBottomGap;
+            return new SKRect(left + inset, y - 2.5f, right - inset, y + 2.5f);
+        }
 
-            _tlTextPaint.Color = _currentSubTextColor.WithAlpha(alpha);
-            string elapsed = media.TimelineElapsed, total = media.TimelineTotal;
-            DrawToneText(canvas, elapsed, padL, baseline, _tlTextPaint, alpha);
-            float totalW = _tlTextPaint.MeasureText(total);
-            DrawToneText(canvas, total, padR - totalW, baseline, _tlTextPaint, alpha);
+        private static SKColor MediaAccent(SKRect area, byte alpha)
+            => ToneColor(area, 255).Red < 128
+                ? new SKColor(29, 85, 146, alpha)
+                : new SKColor(152, 202, 255, alpha);
 
-            float x1 = padL + _tlTextPaint.MeasureText(elapsed) + TL_TEXT_GAP;
-            float x2 = padR - totalW - TL_TEXT_GAP;
-            if (x2 - x1 < 20f) return;                 // 岛体太窄：宁可不画，也不画一条糊掉的条
+        private static void DrawTimeline(SKCanvas canvas, MediaController media, float left, float right, float height,
+            byte alpha, bool floating)
+        {
+            var track = MediaTimelineTrack(left, right, height, media.TimelineTotal);
+            if (track.Width < 20f) return;
 
-            float h = 3.5f, top = barY - h / 2f, radius = h / 2f;
-            var barArea = new SKRect(x1, top, x2, top + h);
-            _barBgPaint.Color = ToneColor(barArea, (byte)(alpha * 0.22f), sub: true);
-            canvas.DrawRoundRect(barArea, radius, radius, _barBgPaint);
+            float baseline = track.MidY + 3.5f;
+            string elapsed = media.TimelineElapsed, remaining = media.TimelineRemaining;
+            DrawToneText(canvas, elapsed, left + MediaPanelInset, baseline, _tlTextPaint, alpha);
+            DrawToneText(canvas, remaining, right - MediaPanelInset - _tlTextPaint.MeasureText(remaining), baseline, _tlTextPaint, alpha);
 
-            float head = x1 + (x2 - x1) * media.TimelineProgress;
-            _barPaint.Color = ToneColor(barArea, alpha);
-            if (head > x1) canvas.DrawRoundRect(new SKRect(x1, top, head, top + h), radius, radius, _barPaint);
-            if (media.IsDragging) canvas.DrawCircle(head, barY, 4.5f, _barPaint); // 拖动时才亮出圆点：常态极简，操作时给足抓取反馈
+            const float radius = 2.5f;
+            _barBgPaint.Color = ToneColor(track, (byte)(alpha * 0.23f));
+            canvas.DrawRoundRect(track, radius, radius, _barBgPaint);
 
-            _hitDraft.TlX1 = x1; _hitDraft.TlX2 = x2; _hitDraft.TlY = barY;
+            float head = track.Left + track.Width * media.TimelineProgress;
+            _barPaint.Color = MediaAccent(track, alpha);
+            if (head > track.Left)
+                canvas.DrawRoundRect(new SKRect(track.Left, track.Top, head, track.Bottom), radius, radius, _barPaint);
+            if (media.IsDragging)
+                canvas.DrawCircle(head, track.MidY, 4.5f, _barPaint);
+
+            if (!floating)
+            {
+                _hitDraft.TlX1 = track.Left;
+                _hitDraft.TlX2 = track.Right;
+                _hitDraft.TlY = track.MidY;
+            }
         }
 
         private static void DrawKaraoke(SKCanvas canvas, string text, float x, float y, SKPaint paint, byte targetAlpha, float progress, bool isLyric)

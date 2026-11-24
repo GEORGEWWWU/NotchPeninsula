@@ -17,16 +17,12 @@ namespace NotchPeninsula
         /// </summary>
         internal static void DrawMediaFloatingPanel(SKCanvas canvas, SKRect panel, MediaController media, byte alpha)
         {
-            bool oldExpanded = IsMediaExpanded;
-            bool oldForce = ForceMediaPanelExpanded;
-            IsMediaExpanded = true;   // TimelineVisible() 按展开态判断：浮层要画时间轴和更大的媒体布局
-            ForceMediaPanelExpanded = true;   // 详情页永远按「展开态媒体面板」画，不受主岛交互方式影响
             int depth = canvas.SaveCount;
             canvas.Save();
             try
             {
                 canvas.Translate(panel.Left, panel.Top);
-                DrawMediaPanel(canvas, media, _lastBars, new MediaBlockGeometry(0f, 0f, panel.Width), panel.Height, alpha);
+                DrawMediaPanel(canvas, media, _lastBars, new MediaBlockGeometry(0f, 0f, panel.Width), panel.Height, alpha, floating: true);
             }
             catch (Exception ex)
             {
@@ -35,31 +31,25 @@ namespace NotchPeninsula
             finally
             {
                 canvas.RestoreToCount(depth);
-                IsMediaExpanded = oldExpanded;
-                ForceMediaPanelExpanded = oldForce;
-                // 面板登记的是局部坐标命中区：清掉，别污染主岛自己的媒体右键 / 封面拖放判定。
-                _hitDraft.MediaL = _hitDraft.MediaR = -1f;
-                _hitDraft.MediaBlockL = _hitDraft.MediaBlockR = -1f;
-                _hitDraft.MediaCover = default;
             }
         }
 
-        /// <summary>
-        /// 浮层面板的播放控件命中（面板局部坐标）：与岛内同一套中心距 / 间距 / 半径，
-        /// 只是中心从窗口中心换成面板中心。
-        /// </summary>
         internal static int HitMediaFloatingButton(float x, float y, float width, float height)
-        {
-            float centerX = width / 2f;
-            float centerY = height - MediaButtonCenterOffsetY;
+            => HitMediaPanelButton(x, y, 0f, width, height);
 
-            for (int i = 0; i < 3; i++)
-            {
-                float cx = centerX + (i - 1) * MediaButtonSpacing;
-                float dx = x - cx, dy = y - centerY;
-                if (dx * dx + dy * dy <= MediaButtonRadius * MediaButtonRadius) return i;
-            }
-            return -1;
+        internal static bool HitMediaFloatingTimeline(MediaController media, float x, float y, SKRect panel)
+        {
+            if (panel.Height <= TimelineRevealHeight || !MediaPanelTimelineVisible(media, forceExpanded: true))
+                return false;
+
+            var track = MediaTimelineTrack(0f, panel.Width, panel.Height, media.TimelineTotal);
+            return track.Width >= 20f && HitTimeline(x, y, track.Left, track.Right, track.MidY);
+        }
+
+        internal static float MediaFloatingTimelineRatio(MediaController media, float x, float width, float height)
+        {
+            var track = MediaTimelineTrack(0f, width, height, media.TimelineTotal);
+            return track.Width >= 20f ? Math.Clamp((x - track.Left) / track.Width, 0f, 1f) : 0f;
         }
     }
 }

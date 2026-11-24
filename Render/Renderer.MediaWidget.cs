@@ -11,13 +11,12 @@ namespace NotchPeninsula
 
         // 展开态封面在媒体面板里的几何（相对面板左缘）。岛内展开面板与实况窗详情页共用：
         // 双击封面跳转既要画得对，也要点得中，不能再各写一套 20 / 50。
-        internal const float MediaPanelCoverLeft = 20f;
-        internal const float MediaPanelCoverTop = 20f;
-        internal const float MediaPanelCoverSize = 50f;
+        private const float MediaPanelInset = 22f;
+        private const float MediaPanelCoverTop = 18f;
+        private const float MediaPanelCoverSize = 54f;
 
         internal static SKRect MediaPanelCoverRect(float panelLeft)
-            => new(panelLeft + MediaPanelCoverLeft, MediaPanelCoverTop,
-                panelLeft + MediaPanelCoverLeft + MediaPanelCoverSize, MediaPanelCoverTop + MediaPanelCoverSize);
+            => SKRect.Create(panelLeft + MediaPanelInset, MediaPanelCoverTop, MediaPanelCoverSize, MediaPanelCoverSize);
 
         /// <summary>
         /// 实况窗展开面板里的封面双击命中（面板局部坐标）。
@@ -47,15 +46,18 @@ namespace NotchPeninsula
 
         private static string _titleMeasureText = "";
         private static SKTypeface? _titleMeasureFace;
+        private static float _titleMeasureSize;
         private static float _titleMeasureWidth;
 
         private static float MeasureMediaTitleWidth(string text)
         {
             var face = _titlePaint.Typeface;
-            if (_titleMeasureText == text && ReferenceEquals(_titleMeasureFace, face)) return _titleMeasureWidth;
+            if (_titleMeasureText == text && ReferenceEquals(_titleMeasureFace, face) && _titleMeasureSize == _titlePaint.TextSize)
+                return _titleMeasureWidth;
             BuildTextRuns(text, _titlePaint, face, _measureRuns, out _titleMeasureWidth);
             _titleMeasureText = text;
             _titleMeasureFace = face;
+            _titleMeasureSize = _titlePaint.TextSize;
             return _titleMeasureWidth;
         }
 
@@ -203,44 +205,56 @@ namespace NotchPeninsula
         // ---- 展开态面板 ----
 
         private static void DrawMediaPanel(SKCanvas canvas, MediaController media, float[]? bars,
-            MediaBlockGeometry geometry, float currentHeight, byte alpha)
+            MediaBlockGeometry geometry, float currentHeight, byte alpha, bool floating = false)
         {
             float left = geometry.ZoneLeft;
             float right = geometry.AnchorRight;
 
-            _hitDraft.MediaL = left;
-            _hitDraft.MediaR = right;
-
-            float coverSize = MediaPanelCoverSize; // 1. 封面缩小 10px
-            float coverX = left + MediaPanelCoverLeft;
-            float coverY = MediaPanelCoverTop;    // 封面微调光学居中
-
-            // 封面
             var coverRect = MediaPanelCoverRect(left);
-            RegisterMediaCover(coverRect);
+            if (!floating)
+            {
+                _hitDraft.MediaL = left;
+                _hitDraft.MediaR = right;
+                RegisterMediaCover(coverRect);
+            }
+
+            const float coverRadius = 10f;
             var cover = media.Thumbnail;
             if (cover != null)
             {
-                canvas.DrawRoundRect(coverRect, 8f, 8f, _shadowPaint);
+                canvas.DrawRoundRect(coverRect, coverRadius, coverRadius, _shadowPaint);
                 canvas.Save();
-                _clipPath.Rewind(); _clipPath.AddRoundRect(coverRect, 8f, 8f);
+                _clipPath.Rewind(); _clipPath.AddRoundRect(coverRect, coverRadius, coverRadius);
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
                 canvas.DrawBitmap(cover, coverRect, _highQualitySampling);
                 canvas.Restore();
             }
             else
             {
-                canvas.DrawRoundRect(coverRect, 8f, 8f, _fallbackIconPaint);
+                var accent = MediaAccent(coverRect, alpha);
+                _barBgPaint.Color = accent.WithAlpha((byte)(alpha * 0.18f));
+                canvas.DrawRoundRect(coverRect, coverRadius, coverRadius, _barBgPaint);
+
+                _mediaIconPaint.Color = accent;
+                float x = coverRect.MidX, y = coverRect.MidY;
+                canvas.DrawOval(SKRect.Create(x - 8f, y + 3f, 10f, 6f), _mediaIconPaint);
+                canvas.DrawRect(SKRect.Create(x, y - 9f, 2f, 15f), _mediaIconPaint);
+                canvas.DrawRoundRect(SKRect.Create(x, y - 9f, 8f, 3f), 1.5f, 1.5f, _mediaIconPaint);
             }
 
             // 双行文字：左右都用真裁切收口（右侧让给频谱，左侧挡住跑马灯，别让标题滚到封面上）。
-            float textStartX = coverX + coverSize + 12f;
-            float titleViewRight = right - 55f;
+            var spectrum = SKRect.Create(right - MediaPanelInset - 34f, coverRect.MidY - 14f, 34f, 28f);
+            float textStartX = coverRect.Right + 14f;
+            float titleViewRight = spectrum.Left - 12f;
+            float titleBaseline = coverRect.MidY - 6f;
+            bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
+            float subBaseline = coverRect.MidY + (isLyricDisplay ? 15f : 13f);
+
             canvas.Save();
-            canvas.ClipRect(new SKRect(textStartX, 0, titleViewRight, currentHeight), SKClipOperation.Intersect, true);
+            canvas.ClipRect(new SKRect(textStartX, 0f, titleViewRight, coverRect.Bottom + 5f), SKClipOperation.Intersect, true);
 
             _titlePaint.Color = _currentTextColor.WithAlpha(alpha);
-            _titlePaint.TextSize = 14.5f;
+            _titlePaint.TextSize = 16f;
 
             // 标题超长：向左匀速滚，滚完整条 + 几个空格后接下一轮。
             // 可视宽度与上面的裁切线同源，避免文字滚到频谱底下才被切掉的观感。
@@ -250,7 +264,7 @@ namespace NotchPeninsula
             float titleScroll = MediaTitleScrollOffset(title, titleWidth, titleViewWidth);
             if (titleScroll <= 0f)
             {
-                DrawKaraoke(canvas, title, textStartX, coverY + 18f, _titlePaint, alpha, 0f, false); // 歌名也做 emoji/多语言回退
+                DrawKaraoke(canvas, title, textStartX, titleBaseline, _titlePaint, alpha, 0f, false); // 歌名也做 emoji/多语言回退
             }
             else
             {
@@ -264,23 +278,23 @@ namespace NotchPeninsula
                     float gap = Math.Max(_titlePaint.MeasureText(TITLE_MARQUEE_GAP), 16f);
                     float period = titleWidth + gap;
                     float x = textStartX - titleScroll;
-                    DrawKaraoke(canvas, title, x, coverY + 18f, _titlePaint, alpha, 0f, false);
-                    DrawKaraoke(canvas, title, x + period, coverY + 18f, _titlePaint, alpha, 0f, false);
+                    DrawKaraoke(canvas, title, x, titleBaseline, _titlePaint, alpha, 0f, false);
+                    DrawKaraoke(canvas, title, x + period, titleBaseline, _titlePaint, alpha, 0f, false);
                 }
                 finally { _titlePaint.SubpixelText = prevSubpixel; }
             }
 
+            // 歌词切换时的位移限制在副标题行，避免两行歌词滑过歌名。
+            canvas.ClipRect(new SKRect(textStartX, titleBaseline + 3f, titleViewRight, coverRect.Bottom + 5f));
             _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
             _bodyPaint.TextSize = 12.5f;
-            string displaySub = string.IsNullOrEmpty(_lastLyric) ? _lastMediaArtist : _lastLyric;
-            string displaySubTrans = string.IsNullOrEmpty(_lastLyric) ? "" : _lastLyricTrans;
+            string displaySub = isLyricDisplay ? _lastLyric : _lastMediaArtist;
+            string displaySubTrans = isLyricDisplay ? _lastLyricTrans : "";
 
             // 展开模式下的平滑叠化渲染 (带卡拉OK)
             // 展开态面板宽度固定、歌词可能比可视区宽：把「正在唱的位置」滚到左侧 40% 处，
             // 翻译按同一进度、按自身宽度跟着滚；滚到底就停（逐字没走完也不再滚）。
             // 没有逐字歌词时 CurrentLyricProgress 本身就是「按本行时长」的线性进度（见 ComputeScanProgress）。
-            float lyricViewWidth = Math.Max(0f, titleViewRight - textStartX);
-            bool isLyricDisplay = !string.IsNullOrEmpty(_lastLyric);
             // 连续进度：250ms 的采样值只做基准，帧间由本地时钟补间 —— 否则滚动是一跳一跳的。
             float lyricProgress = SmoothLyricProgress(media, media.CurrentLyricProgress);
             if (_lyricAnimProgress < 1f && isLyricDisplay)
@@ -289,67 +303,81 @@ namespace NotchPeninsula
                 if (!string.IsNullOrEmpty(_prevLyric))
                 {
                     // 旧歌词淡出时进度直接锁定 100% (1f)
-                    DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textStartX, coverY + 46f - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true, lyricViewWidth);
+                    DrawLyricLine(canvas, _prevLyric, _prevLyricTrans, textStartX, subBaseline - (8f * easeOut), _bodyPaint, (byte)(alpha * (1f - easeOut)), 1f, true, titleViewWidth);
                 }
                 // 新歌词套用连续进度
-                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 46f + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), lyricProgress, true, lyricViewWidth);
+                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, subBaseline + (8f * (1f - easeOut)), _bodyPaint, (byte)(alpha * easeOut), lyricProgress, true, titleViewWidth);
                 _bodyPaint.Color = _currentSubTextColor.WithAlpha(alpha);
             }
             else
             {
-                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, coverY + 46f, _bodyPaint, alpha, lyricProgress, isLyricDisplay, lyricViewWidth);
+                DrawLyricLine(canvas, displaySub, displaySubTrans, textStartX, subBaseline, _bodyPaint, alpha, lyricProgress, isLyricDisplay, titleViewWidth);
             }
 
             canvas.Restore();   // 结束文字裁切
 
-            // 复用律动频谱 (放右上角)
-            if (bars != null)
+            if (bars is { Length: >= 5 })
             {
-                float barWidth = 2.5f, spacing = 3.5f, maxH = 18f, totalBarWidth = 26.5f;
-                float startX = right - 20f - totalBarWidth;
-                _barPaint.Color = ToneColor(new SKRect(startX, coverY + 22f - maxH / 2f,
-                    startX + totalBarWidth, coverY + 22f + maxH / 2f), alpha);
+                _barBgPaint.Color = ToneColor(spectrum, (byte)(alpha * 0.09f));
+                canvas.DrawRoundRect(spectrum, 8f, 8f, _barBgPaint);
+                _barPaint.Color = MediaAccent(spectrum, alpha);
                 for (int i = 0; i < 5; i++)
                 {
-                    float h = Math.Max(2f, bars[i] * maxH);
-                    float barY = coverY + 22f + (maxH - h) / 2f;
-                    canvas.DrawRoundRect(new SKRect(startX + i * (barWidth + spacing), barY, startX + i * (barWidth + spacing) + barWidth, barY + h), 1.5f, 1.5f, _barPaint);
+                    float h = Math.Clamp(bars[i] * 16f, 2f, 16f);
+                    float x = spectrum.MidX + (i - 2) * 4.5f - 1f;
+                    canvas.DrawRoundRect(SKRect.Create(x, spectrum.MidY - h / 2f, 2f, h), 1f, 1f, _barPaint);
                 }
             }
 
-            // 3. 底部放大媒体控件
-            float centerX = (left + right) / 2f;
-            float scale = 1.6f;
-            // 底圆中心 / 图标中心 / 命中中心必须是同一个点，统一取自「播放控件命中几何」那条真源
-            //（Renderer.Media.cs 的 MediaButtonCenterY + MediaButtonSpacing）。
-            // 之前图标按左上角画、底圆却拿同一个 x 当圆心 → 底圆比图标偏左半个图标宽（约 8px），
-            // 悬停时还会再比光标偏左 6~9px（画的位置是 centerX-60/-7/+45，命中是 centerX±54）。
-            float centerY = MediaButtonCenterY(currentHeight);
-
-            void DrawControl(int index, SKPath path, float opticalDx = 0f)
+            if (MediaPanelTimelineVisible(media, forceExpanded: floating) && currentHeight > TimelineRevealHeight)
             {
-                float cx = centerX + (index - 1) * MediaButtonSpacing;
-                var hit = new SKRect(cx - MediaButtonRadius, centerY - MediaButtonRadius,
-                    cx + MediaButtonRadius, centerY + MediaButtonRadius);
-                if (HoveredExpandedButton == index)
-                {
-                    _hoverCirclePaint.Color = ToneColor(hit, 25);
-                    canvas.DrawCircle(cx, centerY, MediaButtonRadius, _hoverCirclePaint);
-                }
-                _mediaIconPaint.Color = ToneColor(hit, alpha);
-                DrawSvgPathCentered(canvas, _mediaIconPaint, cx + opticalDx, centerY, path, scale);
+                float reveal = Math.Clamp((currentHeight - TimelineRevealHeight) /
+                    (MEDIA_EXPANDED_HEIGHT_TIMELINE - TimelineRevealHeight), 0f, 1f);
+                DrawTimeline(canvas, media, left, right, currentHeight, (byte)(alpha * reveal), floating);
             }
 
-            DrawControl(0, _prevPath);
-            // 播放三角的包围盒中心在底圆正中，但它的面积重心在包围盒左侧 1/6 处（重心 x=w/3，盒心 w/2），
-            // 所以几何居中看着仍然「偏左」；暂停的两根竖条左右对称，才显得居中。
-            // 右移一点做光学补偿 —— 只挪图标，底圆和命中区仍压在中心上。
-            DrawControl(1, media.IsPlaying ? _pausePath : _playPath, media.IsPlaying ? 0f : PlayOpticalDx);
-            DrawControl(2, _nextPath);
-            _mediaIconPaint.Color = _currentTextColor.WithAlpha(alpha);
+            if (currentHeight > MediaControlsRevealHeight)
+            {
+                float reveal = Math.Clamp((currentHeight - MediaControlsRevealHeight) /
+                    (MEDIA_EXPANDED_HEIGHT_PLAIN - MediaControlsRevealHeight), 0f, 1f);
+                byte controlsAlpha = (byte)(alpha * reveal);
+                float centerX = (left + right) / 2f;
+                DrawExpandedControl(canvas, centerX, currentHeight, 0, _prevPath, controlsAlpha);
+                DrawExpandedControl(canvas, centerX, currentHeight, 1, media.IsPlaying ? _pausePath : _playPath,
+                    controlsAlpha, media.IsPlaying ? 0f : PlayOpticalDx);
+                DrawExpandedControl(canvas, centerX, currentHeight, 2, _nextPath, controlsAlpha);
+                _mediaIconPaint.Color = _currentTextColor.WithAlpha(alpha);
+            }
+        }
 
-            if (TimelineVisible(media) && currentHeight > TL_MIN_HEIGHT)
-                DrawTimeline(canvas, media, left, right, currentHeight, alpha);
+        private static void DrawExpandedControl(SKCanvas canvas, float centerX, float height, int index, SKPath icon,
+            byte alpha, float opticalDx = 0f)
+        {
+            var bounds = MediaButtonBounds(centerX, height, index);
+            bool hovered = HoveredExpandedButton == index;
+            if (index == 1)
+            {
+                var accent = MediaAccent(bounds, alpha);
+                _barBgPaint.Color = accent;
+                canvas.DrawRoundRect(bounds, 12f, 12f, _barBgPaint);
+                _mediaIconPaint.Color = accent.Red < 128 ? SKColors.White.WithAlpha(alpha) : new SKColor(17, 40, 64, alpha);
+                if (hovered)
+                {
+                    _hoverCirclePaint.Color = _mediaIconPaint.Color.WithAlpha((byte)(alpha * 0.13f));
+                    canvas.DrawRoundRect(bounds, 12f, 12f, _hoverCirclePaint);
+                }
+            }
+            else
+            {
+                _mediaIconPaint.Color = ToneColor(bounds, alpha);
+                if (hovered)
+                {
+                    _hoverCirclePaint.Color = _mediaIconPaint.Color.WithAlpha((byte)(alpha * 0.12f));
+                    canvas.DrawRoundRect(bounds, 12f, 12f, _hoverCirclePaint);
+                }
+            }
+
+            DrawSvgPathCentered(canvas, _mediaIconPaint, bounds.MidX + opticalDx, bounds.MidY, icon, index == 1 ? 1.55f : 1.45f);
         }
     }
 }

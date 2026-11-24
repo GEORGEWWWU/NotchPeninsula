@@ -129,9 +129,7 @@ internal sealed class MediaLiveWindow : ILiveWindow
                 string action = button == 0 ? "prev" : button == 1 ? "toggle" : "next";
                 return new WidgetHit(action);
             }
-            // _tlBar* 是上一帧浮层绘制时登记的局部坐标（桥里已把 left/right 设成面板坐标）。
-            // 这里不能调 TimelineVisible()：桥画完就把 IsMediaExpanded 复原了，命中侧读到的是复原后的值。
-            if (Renderer.MediaPanelTimelineVisible(_media, forceExpanded: true) && Renderer.HitTimeline(x, y))
+            if (Renderer.HitMediaFloatingTimeline(_media, x, y, rect))
                 return new WidgetHit("seek");
             return WidgetHit.None;
         }
@@ -145,7 +143,8 @@ internal sealed class MediaLiveWindow : ILiveWindow
                 case "next": _media.Next(); break;
                 case "seek":
                     // 单击时间轴 = 跳到该位置并提交；拖动由岛内面板负责，浮层只做点击跳转。
-                    if (_media.BeginDrag(Renderer.TimelineRatio(x))) _media.EndDrag();
+                    if (_media.BeginDrag(Renderer.MediaFloatingTimelineRatio(_media, x, MeasureWidth(), MeasureHeight())))
+                        _media.EndDrag();
                     break;
             }
         }

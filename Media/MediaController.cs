@@ -180,12 +180,13 @@ namespace NotchPeninsula
         public TimeSpan Duration { get; private set; }
         public string TimelineElapsed { get; private set; } = "0:00";
         public string TimelineTotal { get; private set; } = "0:00";
+        internal string TimelineRemaining { get; private set; } = "−0:00";
         private TimeSpan _timelinePos;
 
         private volatile bool _isDragging;
         public bool IsDragging => _isDragging;
 
-        private int _shownSec = -1, _shownTotal = -1;
+        private int _shownSec = -1, _shownTotal = -1, _shownRemaining = -1;
 
         private const double SmtcProbeIntervalSec = 0.2;
         private DateTime _smtcProbeAt = DateTime.MinValue;   // 只由后台采样时钟读写
@@ -3373,6 +3374,12 @@ namespace NotchPeninsula
             if (sec != _shownSec) { _shownSec = sec; TimelineElapsed = FormatClock(sec); }
             int total = (int)Duration.TotalSeconds;
             if (total != _shownTotal) { _shownTotal = total; TimelineTotal = FormatClock(total); }
+            int remaining = (int)Math.Ceiling(Math.Max(0d, (Duration - _timelinePos).TotalSeconds));
+            if (remaining != _shownRemaining)
+            {
+                _shownRemaining = remaining;
+                TimelineRemaining = "−" + FormatClock(remaining);
+            }
         }
 
         private void AdvanceSuspendedTimeline(DateTime now)
