@@ -243,6 +243,9 @@ namespace NotchPeninsula
                 return;
             }
 
+            if (clickX >= CONTENT_L && clickY > ContentBottom)
+                return;
+
             if (SidebarToggleRect.Contains(clickX, clickY))
             {
                 _sidebarCollapsed = !_sidebarCollapsed;

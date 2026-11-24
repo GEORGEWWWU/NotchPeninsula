@@ -51,7 +51,7 @@ namespace NotchPeninsula
             var info = GetPluginSettingsPage();
             if (info == null) return 0;
             int total = 28 + info.Value.Page.Controls.Count * (int)SETTINGS_ROW_H + 12;
-            int visible = Math.Max(1, (int)((HEIGHT - 20f) - GetSettingsListTop() - 28f));
+            int visible = Math.Max(1, (int)((ContentBottom) - GetSettingsListTop() - 28f));
             return Math.Max(0, total - visible);
         }
 
@@ -102,7 +102,7 @@ namespace NotchPeninsula
             if (info == null) return;
 
             float top = GetSettingsListTop() + 28f;
-            if (x < RightColumnLeft || x > WIDTH - CONTENT_RM || y < top || y > HEIGHT - 20f) return;
+            if (x < RightColumnLeft || x > WIDTH - CONTENT_RM || y < top || y > ContentBottom) return;
             int idx = (int)((y - top + _settingsScroll) / SETTINGS_ROW_H);
             if (idx < 0 || idx >= info.Value.Page.Controls.Count) return;
             var row = GetSettingsRowRect(idx);
@@ -174,7 +174,7 @@ namespace NotchPeninsula
             _uiTextPaint.Color = _fgColor;
 
             float listY = GetSettingsListTop();
-            var listRect = new SKRect(RightColumnLeft, listY, WIDTH - CONTENT_RM, HEIGHT - 20f);
+            var listRect = new SKRect(RightColumnLeft, listY, WIDTH - CONTENT_RM, ContentBottom);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
 

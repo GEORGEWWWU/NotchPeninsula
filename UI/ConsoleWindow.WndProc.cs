@@ -453,13 +453,13 @@ namespace NotchPeninsula
                 if (!sceneListOpen && GetDisplayPageMaxScroll() > 0f)
                 {
                     GetPageScrollbarLayout(out float pageBarTop, out float pageBarH);
-                    if (x >= WIDTH - 14 && x <= WIDTH && y >= pageBarTop && y <= pageBarTop + pageBarH)
+                    if (x >= DisplayPageScrollbarX - 6f && x <= WIDTH - CONTENT_RM && y >= pageBarTop && y <= pageBarTop + pageBarH)
                         newPageScrollbarHovered = true;
                 }
 
                 GetListScrollbarLayout(out float listBarTop, out float listBarH);
                 if (!sceneListOpen && listBarH > 0f && ScrollBarAlpha() > 0.01f
-                    && x >= WIDTH - 20 && x <= WIDTH - 8
+                    && x >= DisplayListScrollbarX - 6f && x <= WIDTH - CONTENT_RM
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
 

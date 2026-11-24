@@ -30,7 +30,7 @@ namespace NotchPeninsula
         private void GetPluginListLayout(out int visibleRows, out int maxFirstRow)
         {
             GetPluginListCardTop(out float listY);
-            MeasurePluginTiles(_pluginView.Count, _pluginScroll, listY + PluginRowsTopPad, HEIGHT - 20,
+            MeasurePluginTiles(_pluginView.Count, _pluginScroll, listY + PluginRowsTopPad, ContentBottom,
                 out visibleRows, out maxFirstRow);
         }
 

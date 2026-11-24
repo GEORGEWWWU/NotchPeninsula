@@ -27,7 +27,8 @@ namespace NotchPeninsula
         // 想各挪十几像素得改上百处）。
         private float CONTENT_L => SidebarWidth + 4f;          // 卡片左边界（与侧栏之间留一点缝）
         private float CONTENT_TEXT_X => CONTENT_L + 16f;     // 卡片内文字左缩进（= CONTENT_L + 16）
-        private const float CONTENT_RM = 12f;          // 卡片右边界距窗口右边
+        private const float CONTENT_RM = 12f;               // 内容区右边和底边的统一外边距
+        private float ContentBottom => HEIGHT - CONTENT_RM;
         private const float CONTENT_TEXT_RM = 28f;     // 卡片内文字右缩进（距窗口右边）
 
         //   DeleteObject → DeleteDC
@@ -42,31 +43,19 @@ namespace NotchPeninsula
 
         // 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
 
-        // 34 → 33：行槽只让 1px（item 高 30 不变，行间距 4 → 3），
-        // 配合卡片底延到窗底上 6px，正好凑出第 10 行（9.29 行 → 10 行）。
         private const float DISPLAY_ROW_H = 33f;
 
         private const float DISPLAY_ITEM_H = 30f;
 
-        // 13 → 9：列表与上面「双击空白切换待机模式」行离得太远，整体上移 4px；
-    // 卡高分分支 min(9+10*33=339, 343) 仍够 10 行。
-    private const float DISPLAY_FIRST_ROW_Y = 36f;     // 列表卡片顶部到首件 item 的距离（卡片无标题行）
-
-        // 8 → 10：卡片底部原本空着两行多的高度，列表却只排 8 行。
-        // 多出来的两行靠**列表内部滚动**看，卡片本身不再变高 —— 显示设置页是整页排布的，
-        // 卡片一高就会把整页顶出滚动（那是不对的：该滚的是列表，不是整页）。
+        private const float DISPLAY_FIRST_ROW_Y = 36f;
         private const int DISPLAY_MAX_ROWS = 10;
-
-        // 列表卡顶 = 双击切换行控件实际底（ROW_ANCHOR_Y + TOGGLE_TRACK_H/2，比 ROW_H 槽位低 2px）
-        // 再留 CARD_GAP —— 槽位底只有 38，控制底在 +40，按槽位算间距会缩水成 8。
         private const float DISPLAY_CARD_Y = CARD_TOP_Y;
 
-        // 卡片高度取「窗口剩余空间」，不再由行数派生：
-        // 行数多了让列表自己滚（GetDisplayListLayout 按这个高度算可视行数），整页不滚。
-        // 底部只留 6px：预留 20px 时 fitRows = 9.29 截成 9 行，末行底下白一大条。
-        private float DISPLAY_CARD_H => Math.Min(
+        private float DISPLAY_CARD_H => Math.Max(0, Math.Min(
             DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H,
-            HEIGHT - 6f - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y));
+            ContentBottom - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y)));
+        private float DisplayListScrollbarX => WIDTH - CONTENT_RM - 7f;
+        private float DisplayPageScrollbarX => WIDTH - CONTENT_RM - 3f;
 
         // ---- 页签 8：实况窗管理（侧边栏「显示设置」下面一项）----
         private const float LW_INTRO_CARD_H = 62f;
@@ -80,7 +69,13 @@ namespace NotchPeninsula
 
         private static float LiveWindowPluginRowTop => LiveWindowPluginCardTop + LW_CARD_HEADER_H;
         private int _liveWindowScroll;
-        private int LiveWindowVisibleRows => Math.Max(1, (int)((HEIGHT - LiveWindowPluginRowTop - 22f) / LW_ROW_H));
+        private const float LiveWindowCardBottomPadding = 10f;
+        private int LiveWindowVisibleRows
+            => Math.Max(0, (int)((ContentBottom - LiveWindowPluginRowTop - LiveWindowCardBottomPadding) / LW_ROW_H));
+
+        private float GetLiveWindowCardBottom(int visibleRows)
+            => visibleRows >= LiveWindowVisibleRows ? ContentBottom
+                : LiveWindowPluginRowTop + Math.Max(1, visibleRows) * LW_ROW_H + LiveWindowCardBottomPadding;
 
         private float DISPLAY_ITEM_L => RightColumnLeft + 6f;
 
@@ -619,7 +614,7 @@ namespace NotchPeninsula
         {
             int total = ToastSoundConfig.OptionCount;
             menuTop = TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H + 2f;
-            int maxRows = Math.Max(1, (int)((HEIGHT - 12 - menuTop) / DROPDOWN_ROW_H));
+            int maxRows = Math.Max(1, (int)((ContentBottom - menuTop) / DROPDOWN_ROW_H));
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
         }
@@ -817,12 +812,12 @@ namespace NotchPeninsula
         }
 
         private float GetDisplayPageMaxScroll()
-            => Math.Max(0f, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f - HEIGHT);
+            => Math.Max(0f, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H - ContentBottom);
 
         private void GetPageScrollbarLayout(out float trackTop, out float trackH)
         {
             trackTop = TITLE_BAR_HEIGHT + 6f;
-            trackH = HEIGHT - TITLE_BAR_HEIGHT - 12f;
+            trackH = ContentBottom - trackTop;
         }
 
         private void GetListScrollbarLayout(out float trackTop, out float trackH)
@@ -960,7 +955,7 @@ namespace NotchPeninsula
         {
             int total = _sceneChoices.Length;
             menuTop = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f + SCENE_DD_H + 2f - _displayPageScroll;
-            int maxRows = Math.Max(1, (int)((HEIGHT - 12f - menuTop) / DROPDOWN_ROW_H));
+            int maxRows = Math.Max(1, (int)((ContentBottom - menuTop) / DROPDOWN_ROW_H));
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
         }
@@ -1940,6 +1935,9 @@ namespace NotchPeninsula
             // 重绘消息不至于把队列卡死（EndDragMove 补的那一帧会继续走）。
             KickUpdateAllQueue();
 
+            canvas.Save();
+            // 即使工作区过小，页内绘制也保留一致的右侧和底部外边距。
+            canvas.ClipRect(new SKRect(CONTENT_L, TITLE_BAR_HEIGHT, WIDTH - CONTENT_RM + 0.5f, ContentBottom + 0.5f));
             if (_selectedTab == 0) RenderTabGeneral(canvas);
             else if (_selectedTab == 1) RenderTabDisplay(canvas);
             else if (_selectedTab == 2) RenderTabMedia(canvas);
@@ -1950,6 +1948,7 @@ namespace NotchPeninsula
             else if (_selectedTab == 7) RenderTabMarket(canvas);
             else if (_selectedTab == 8) RenderTabLiveWindows(canvas);
             else if (_selectedTab == 9) RenderTabSilentMode(canvas);
+            canvas.Restore();
 
             // 弹窗统一画在页内容之上，不分页签：只画在 6、7 会变成
             // 「模态已经拦下所有点击、画面上却什么都没有」的假死。

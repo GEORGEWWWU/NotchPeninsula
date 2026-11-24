@@ -210,10 +210,8 @@ namespace NotchPeninsula
             // ── 插件：逐个开关 ──
             int visible = Math.Min(owners.Count, LiveWindowVisibleRows);
             _liveWindowScroll = Math.Clamp(_liveWindowScroll, 0, owners.Count - visible);
-            int rowCount = Math.Max(1, visible);
             float cardTop = LiveWindowPluginCardTop;
-            float cardH = LW_CARD_HEADER_H + rowCount * LW_ROW_H + 10f;
-            var cardRect = new SKRect(RightColumnLeft, cardTop, WIDTH - CONTENT_RM, cardTop + cardH);
+            var cardRect = new SKRect(RightColumnLeft, cardTop, WIDTH - CONTENT_RM, GetLiveWindowCardBottom(visible));
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
             canvas.DrawText("插件", RightColumnText, cardTop + 23, _uiTextPaint);
@@ -1053,7 +1051,7 @@ namespace NotchPeninsula
             if (maxFirstRow > 0 && visibleRows > 0)
             {
                 GetListScrollbarLayout(out float listTrackTop, out float listTrackH);
-                DrawScrollBar(canvas, WIDTH - 14, listTrackTop, listTrackH,
+                DrawScrollBar(canvas, DisplayListScrollbarX, listTrackTop, listTrackH,
                     visibleRows / (float)displayItems.Count, _displayScroll / (float)maxFirstRow);
             }
 
@@ -1062,7 +1060,7 @@ namespace NotchPeninsula
             {
                 GetPageScrollbarLayout(out float pageTrackTop, out float pageTrackH);
                 float contentH = TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f;
-                DrawScrollBar(canvas, WIDTH - 8, pageTrackTop, pageTrackH,
+                DrawScrollBar(canvas, DisplayPageScrollbarX, pageTrackTop, pageTrackH,
                     HEIGHT / contentH, _displayPageScroll / pageMaxScroll, minThumbH: 24f);
             }
         }
@@ -1088,7 +1086,7 @@ namespace NotchPeninsula
 
         private const float SilentListCardY = CARD_TOP_Y;
 
-        private float SilentListCardH => HEIGHT - 6f - (TITLE_BAR_HEIGHT + SilentListCardY);
+        private float SilentListCardH => ContentBottom - (TITLE_BAR_HEIGHT + SilentListCardY);
 
         // 与显示设置页的列表同高，行内控件位置也完全复用 DrawDisplayItem。
         private const float SILENT_LIST_ROW_H = 33f;
@@ -1990,7 +1988,7 @@ namespace NotchPeninsula
 
             // ── 已安装插件列表卡片（可滚动，整卡高度）──
             GetPluginListCardTop(out float listY);
-            var listRect = new SKRect(CONTENT_L, listY, WIDTH - CONTENT_RM, HEIGHT - 20);
+            var listRect = new SKRect(CONTENT_L, listY, WIDTH - CONTENT_RM, ContentBottom);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
             canvas.DrawText($"已安装插件 ({_pluginView.Count})", CONTENT_TEXT_X, listY + 26, _uiTextPaint);
@@ -2132,7 +2130,7 @@ namespace NotchPeninsula
             if (_marketDataDirty) { _marketDataDirty = false; RefreshMarketFilter(); }   // UI 线程重建过滤视图
 
             float cardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
-            var cardRect = new SKRect(CONTENT_L, cardTop, WIDTH - CONTENT_RM, HEIGHT - 20);
+            var cardRect = new SKRect(CONTENT_L, cardTop, WIDTH - CONTENT_RM, ContentBottom);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(cardRect, 6, 6, _cardBorder);
 
@@ -2819,7 +2817,7 @@ namespace NotchPeninsula
             float availFrom = upward ? y - 2 : y;
             int maxRows = upward
                 ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12) / DROPDOWN_ROW_H))
-                : Math.Max(1, (int)((HEIGHT - 12 - availFrom) / DROPDOWN_ROW_H));
+                : Math.Max(1, (int)((ContentBottom - availFrom) / DROPDOWN_ROW_H));
 
             int visible;
             if (total == 0)

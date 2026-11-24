@@ -28,7 +28,7 @@ namespace NotchPeninsula
         private bool _pluginHintIsError;
 
         private SKRect GetPluginDropZone()
-            => new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + CARD_TOP_Y, WIDTH - CONTENT_RM, HEIGHT - 20f);
+            => new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + CARD_TOP_Y, WIDTH - CONTENT_RM, ContentBottom);
 
         // 登记 / 注销
 

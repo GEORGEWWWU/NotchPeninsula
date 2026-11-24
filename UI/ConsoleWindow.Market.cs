@@ -407,7 +407,7 @@ namespace NotchPeninsula
         // 出现时列表高度让位（GetMarketListLayout 扣掉 Reserve），渲染 / 命中 / 滚轮三处同源。
         private const int MarketUpdateBarH = 30;
         private const int MarketUpdateBarPad = 10;                       // 距卡片底缘
-        private float MarketUpdateBarTop => HEIGHT - 20f - MarketUpdateBarPad - MarketUpdateBarH;
+        private float MarketUpdateBarTop => ContentBottom - MarketUpdateBarPad - MarketUpdateBarH;
         private SKRect MarketUpdateBarRect
             => new SKRect(CONTENT_TEXT_X, MarketUpdateBarTop, WIDTH - CONTENT_TEXT_RM, MarketUpdateBarTop + MarketUpdateBarH);
 
@@ -478,7 +478,7 @@ namespace NotchPeninsula
         private void GetMarketListLayout(out int visibleRows, out int maxFirstRow)
         {
             int reserve = MarketUpdateCount > 0 ? MarketUpdateBarH + MarketUpdateBarPad : 0;
-            MeasurePluginTiles(_marketView.Count, _marketScroll, MarketRowsTop, HEIGHT - 20 - reserve,
+            MeasurePluginTiles(_marketView.Count, _marketScroll, MarketRowsTop, ContentBottom - reserve,
                 out visibleRows, out maxFirstRow);
         }
 
