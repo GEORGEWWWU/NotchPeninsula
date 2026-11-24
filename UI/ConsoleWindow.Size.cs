@@ -23,7 +23,7 @@ namespace NotchPeninsula
         private bool _backdropMinimized;
 
         private const int AspectWidth = 16;
-        private const int AspectHeight = 9;
+        private const int AspectHeight = 8;
         private const int MinimumWindowWidth = 896;
         private const int MaximumWindowWidth = 1200;
         private static float _sessionWindowWidth = DefaultWidth;

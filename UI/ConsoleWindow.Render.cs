@@ -33,7 +33,7 @@ namespace NotchPeninsula
             _dynamicTextPaint.Color = _fgColor;
         }
 
-        // 选中态的整体：背景方块 + 左侧蓝色竖条，一起滑到选中行。
+        // 选中背景滑到新页签，展开侧栏时同时绘制蓝色竖条。
         // 急出缓入位移（先快后慢）。**只有蓝条做「拉丝」**：背景块保持 36 高，方块跟着拉长反而显得不跟手。
         private void DrawTabSelection(SKCanvas canvas)
         {
@@ -42,6 +42,8 @@ namespace NotchPeninsula
             float top = _tabSlideFromY + d * p;
 
             canvas.DrawRoundRect(new SKRect(TabButtonLeft, TITLE_BAR_HEIGHT + top, TabButtonRight, TITLE_BAR_HEIGHT + top + TAB_ROW_H), 4, 4, _tabBgSelected);
+            if (SidebarCollapsed)
+                return;
 
             // 蓝条以自身中线为中心对称外扩：中点最强、两端归零，所以起止两端没有跳变。
             // 幅度固定、与滑动距离无关，最大伸展时 20 + 10 = 30 仍稳稳落在 36 高的方块里。
