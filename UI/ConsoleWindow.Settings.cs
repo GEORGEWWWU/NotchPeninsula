@@ -120,7 +120,7 @@ namespace NotchPeninsula
         {
             DropdownKind.Theme => (ThemeLabels, Renderer.ThemeMode),
             DropdownKind.Material => (MaterialLabels, Renderer.IslandMaterialIndex),
-            _ => (OpacityLabels, Renderer.BgOpacityLevel)
+            _ => (OpacityLabels, Renderer.IslandImmersiveMode ? Renderer.ImmersiveCoverOpacity : Renderer.BgOpacityLevel)
         };
 
         private int HitPersonalizeOption(int x, int y)

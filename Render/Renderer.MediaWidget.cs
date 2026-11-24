@@ -237,7 +237,8 @@ namespace NotchPeninsula
 
         private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media, SKRect island)
         {
-            if (!media.IsActive || SuppressMediaInIsland) return;
+            int opacity = ImmersiveCoverOpacity;
+            if (opacity == 0 || !media.IsActive || SuppressMediaInIsland) return;
             bool mediaVisible = SilentActive ? SilentMode.MediaImportantEnabled
                 : StandbyActive ? StandbySceneKey == Plugins.BuiltinWidgets.Media
                 : CompShowMedia;
@@ -265,6 +266,7 @@ namespace NotchPeninsula
             canvas.Save();
             canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
             canvas.ClipRect(image);
+            _immersiveArtworkPaint.Color = SKColors.White.WithAlpha((byte)(255 * opacity / 4));
             canvas.DrawRect(blurInput, _immersiveArtworkPaint);
             canvas.Restore();
         }

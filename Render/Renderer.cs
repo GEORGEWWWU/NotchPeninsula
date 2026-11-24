@@ -340,7 +340,16 @@ namespace NotchPeninsula
             set => _opacityAcrylic = Math.Clamp(value, 0, 4);
         }
 
-        /// <summary>当前材质那一份透明度档位（滑轨读它）。</summary>
+        internal const string ImmersiveCoverOpacityKey = "ImmersiveCoverOpacity";
+        private static volatile int _immersiveCoverOpacity = 4;
+
+        internal static int ImmersiveCoverOpacity
+        {
+            get => _immersiveCoverOpacity;
+            set => _immersiveCoverOpacity = Math.Clamp(value, 0, 4);
+        }
+
+        /// <summary>当前材质的纯色叠层档位。</summary>
         public static int BgOpacityLevel
         {
             get => IslandAcrylic ? _opacityAcrylic : _opacitySolid;

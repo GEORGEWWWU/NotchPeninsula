@@ -251,6 +251,12 @@ namespace NotchPeninsula
                     NotchWindow.RequestAcrylicRebuild();
                     break;
                 case DropdownKind.Opacity:
+                    if (Renderer.IslandImmersiveMode)
+                    {
+                        Renderer.ImmersiveCoverOpacity = option;
+                        Program.SaveSetting(Renderer.ImmersiveCoverOpacityKey, Renderer.ImmersiveCoverOpacity);
+                        break;
+                    }
                     Renderer.BgOpacityLevel = option;
                     Renderer.ApplyThemeColors();
                     Program.SaveSetting(Renderer.BgOpacityKey, option);
