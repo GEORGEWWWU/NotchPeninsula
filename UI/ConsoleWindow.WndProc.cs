@@ -85,110 +85,39 @@ namespace NotchPeninsula
             // 已按下把手、还在等长按判定：保持当前画面，别让底下的 hover 抢先亮。
             if (_displayDragPendingRow >= 0) return;
 
-            int newHoveredTheme = -1;            int newHoveredMaterial = -1;
-            int newHoveredOpacityIndex = -1;
-            int newHoveredGlassParam = -1;
-            int newHoveredGlassParamLevel = -1;   // 悬停到的档位
-            bool newHoveredGlassReset = false;    // 卡底「恢复默认参数」
-            int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
-            if (_selectedTab == 5)
+            if (_draggedGlassParam >= 0 && dragging)
             {
-                float themeSegY = TITLE_BAR_HEIGHT + THEME_SEG_Y;
-                // 液态玻璃下主题恒为自动，这一排是只读的：不给悬停高亮，点击也就不可能命中。
-                if (!Renderer.IslandLiquidGlass
-                    && y >= themeSegY && y <= themeSegY + SEG_H
-                    && x >= THEME_SEG_X && x <= THEME_SEG_X + THEME_SEG_W)
-                    newHoveredTheme = Math.Min(2, (int)((x - THEME_SEG_X) / (THEME_SEG_W / 3f)));
-
-                float matSegY = TITLE_BAR_HEIGHT + MAT_SEG_Y;
-                if (y >= matSegY && y <= matSegY + SEG_H
-                    && x >= MAT_SEG_X && x <= MAT_SEG_X + MAT_SEG_W)
-                    newHoveredMaterial = SegmentIndexAt(MaterialLabels, MAT_SEG_W, fitLabels: true, dx: x - MAT_SEG_X);
-
-                float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
-                float sliderX = CONTENT_TEXT_X;
-                float sliderW = (LeftColumnRight - 16f) - CONTENT_TEXT_X;
-
-                if (ShowOpacityCard)
+                int level = GlassLevelAt(_draggedGlassParam, x);
+                _hoveredGlassParamLevel = level;
+                if (GlassMaterial.GetLevel(_draggedGlassParam) != level)
                 {
-                    // 放宽 Y 轴的判定区域，提升拖拽时的手感，防止手抖断触
-                    if (x >= sliderX - 20 && x <= sliderX + sliderW + 20 && y >= sliderY - 20 && y <= sliderY + 20)
-                    {
-                        newHoveredOpacityIndex = (int)Math.Round((x - sliderX) / (sliderW / 4));
-                        if (newHoveredOpacityIndex < 0) newHoveredOpacityIndex = 0;
-                        if (newHoveredOpacityIndex > 4) newHoveredOpacityIndex = 4;
-
-                        if (dragging)
-                        {
-                            if (Renderer.BgOpacityLevel != newHoveredOpacityIndex)
-                            {
-                                Renderer.BgOpacityLevel = newHoveredOpacityIndex;
-                                Renderer.ApplyThemeColors();
-                                Program.SaveSetting(Renderer.BgOpacityKey, newHoveredOpacityIndex);
-                                Render(); // 数据一旦跨越档位，立刻触发重绘，实现跟手滑动
-                            }
-                        }
-                    }
-                } 
-
-                // 玻璃卡：材质不是玻璃时整张卡都不画，命中也跟着关掉
-                if (Renderer.IslandLiquidGlass)
-                {
-                    float gCardY = TITLE_BAR_HEIGHT + GLASS_CARD_Y;
-                    int glassRows = GlassRowCount;
-                    for (int row = 0; row < glassRows; row++)
-                    {
-                        float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
-                        if (y < ry - 12 || y > ry + 12) continue;
-
-                        for (int col = 0; col < GlassColumnCount; col++)
-                        {
-                            int idx = row * GlassColumnCount + col;
-                            if (idx >= GlassMaterial.Keys.Length || !GlassParameterAvailable(idx)) continue;
-
-                            float gx0 = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP) + GLASS_SLIDER_DX;
-                            float gx1 = gx0 + GLASS_SLIDER_W;
-                            if (x < gx0 - 16 || x > gx1 + 16) continue;
-
-                            int maxLevel = GlassMaterial.MaxLevel(idx);
-                            int lvl = Math.Clamp((int)Math.Round((x - gx0) * maxLevel / GLASS_SLIDER_W), 0, maxLevel);
-
-                            newHoveredGlassParam = idx;
-                            newHoveredGlassParamLevel = lvl;
-                            if (dragging && GlassMaterial.GetLevel(idx) != lvl)
-                            {
-                                ApplyGlassLevel(idx, lvl);
-                                Render();   // 与透明度滑轨同款：跨档立刻跟手
-                            }
-                            break;
-                        }
-                        break;
-                    }
-
-                    // 恢复默认按钮在卡片右上角（与说明文字同一行，见 GLASS_RESET_TOP_Y）。
-                    float grY = gCardY + GlassResetTopY;
-                    if (x >= GLASS_RESET_X && x <= GLASS_RESET_X + GLASS_RESET_W
-                        && y >= grY && y <= grY + GLASS_RESET_H)
-                    {
-                        newHoveredGlassParam = -1;
-                        newHoveredGlassParamLevel = -1;
-                        newHoveredGlassReset = true;
-                    }
+                    ApplyGlassLevel(_draggedGlassParam, level);
+                    Render();
                 }
+                return;
+            }
 
-                int newHintRow = -1;
-                // 这句提示属于右列「底部圆角」那一行。命中必须同时收在右列之内，
-                // 否则鼠标停在左列同一高度（主题卡 / 背景材质）时右列也会亮起提示。
-                if (x >= RightColumnLeft && x <= WIDTH - CONTENT_RM)
-                {
-                    float hy = GetBtnY(7);
-                    if (y >= hy && y <= hy + 34) newHintRow = 7;
-                }
-                if (newHintRow != _hintRow)
-                {
-                    _hintRow = newHintRow;
-                    StartDisplayHoverAnim();   // 与列表行底共用同一张 16ms 表，跑完自己停
-                }
+            var newPersonalizeDropdown = DropdownKind.None;
+            int newPersonalizeOption = -1;
+            int newHoveredGlassParam = -1;
+            int newHoveredGlassParamLevel = -1;
+            bool newHoveredGlassReset = false;
+            int newHoverMinus = -1, newHoverPlus = -1, newHoverReset = -1;
+            if (_selectedTab == 5 && _personalizeDropdownOpen != DropdownKind.None)
+            {
+                newPersonalizeOption = HitPersonalizeOption(x, y);
+            }
+            else if (_selectedTab == 5)
+            {
+                newPersonalizeDropdown = HitDropdownTrigger(x, y);
+                newHoveredGlassParam = HitGlassTrack(x, y);
+                if (newHoveredGlassParam >= 0)
+                    newHoveredGlassParamLevel = GlassLevelAt(newHoveredGlassParam, x);
+
+                float resetY = TITLE_BAR_HEIGHT + GLASS_CARD_Y + GlassResetTopY;
+                newHoveredGlassReset = Renderer.IslandLiquidGlass
+                    && x >= GLASS_RESET_X && x <= GLASS_RESET_X + GLASS_RESET_W
+                    && y >= resetY && y <= resetY + GLASS_RESET_H;
 
                 for (int i = 0; i < 8; i++)
                 {
@@ -933,8 +862,8 @@ namespace NotchPeninsula
                 newHoverMinus != _hoveredMinusIndex || newHoverPlus != _hoveredPlusIndex ||
                 newHoverReset != _hoveredResetIndex || newMediaExpToggleHovered != _mediaExpToggleHovered ||
                 newAppLaunchToggleHovered != _appLaunchToggleHovered ||
-                newHoveredTheme != _hoveredThemeIndex || newHoveredOpacityIndex != _hoveredOpacityIndex ||
-                newHoveredMaterial != _hoveredMaterialIndex ||
+                newPersonalizeDropdown != _personalizeDropdownHovered ||
+                newPersonalizeOption != _hoveredPersonalizeOption ||
                 newHoveredGlassParam != _hoveredGlassParamIndex ||
                 newHoveredGlassParamLevel != _hoveredGlassParamLevel ||
                 newHoveredGlassReset != _hoveredGlassReset ||
@@ -1026,14 +955,13 @@ namespace NotchPeninsula
                 _hoveredMinusIndex = newHoverMinus;
                 _hoveredPlusIndex = newHoverPlus;
                 _hoveredResetIndex = newHoverReset;
-                _hoveredThemeIndex = newHoveredTheme;
-                _hoveredMaterialIndex = newHoveredMaterial;
+                _personalizeDropdownHovered = newPersonalizeDropdown;
+                _hoveredPersonalizeOption = newPersonalizeOption;
                 _hoveredGlassParamIndex = newHoveredGlassParam;
                 _hoveredGlassParamLevel = newHoveredGlassParamLevel;
                 _hoveredGlassReset = newHoveredGlassReset;
                 _mediaExpToggleHovered = newMediaExpToggleHovered;
                 _appLaunchToggleHovered = newAppLaunchToggleHovered;
-                _hoveredOpacityIndex = newHoveredOpacityIndex;
                 _monitorDropdownHovered = newMonitorDropdownHovered;
                 _hoveredMonitorDropdownIndex = newHoveredMonitorDropdownIndex;
                 _toastModeDropdownHovered = newToastModeDropdownHovered;

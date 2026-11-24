@@ -186,9 +186,11 @@ namespace NotchPeninsula
                     || _fsHideToggleHovered || _mediaExpToggleHovered || _appLaunchToggleHovered || _passToggleHovered
                     || _islandHotkeyHovered || _islandHotkeyToggleHovered || _silentHotkeyHovered || _silentHotkeyToggleHovered,
                 4 => _hoveredLinkIndex >= 0,
-                5 => _hoveredThemeIndex >= 0 || _hoveredMaterialIndex >= 0 || _hoveredOpacityIndex >= 0
-                    || _hoveredMinusIndex >= 0 || _hoveredPlusIndex >= 0 || _hoveredResetIndex >= 0
-                    || _hoveredGlassParamIndex >= 0 || _hoveredGlassReset,
+                5 => _personalizeDropdownOpen != DropdownKind.None
+                    ? _hoveredPersonalizeOption >= 0
+                    : _personalizeDropdownHovered != DropdownKind.None
+                        || _hoveredMinusIndex >= 0 || _hoveredPlusIndex >= 0 || _hoveredResetIndex >= 0
+                        || _hoveredGlassParamIndex >= 0 || _hoveredGlassReset,
                 6 => _settingsPluginId != null
                     ? _settingsBackHovered || _hoveredSettingControl >= 0
                     : _hoveredPluginLayout >= 0 || _hoveredPluginAction >= 0 || _hoveredPluginToggle >= 0

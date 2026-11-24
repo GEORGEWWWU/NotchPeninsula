@@ -317,6 +317,8 @@ namespace NotchPeninsula
             _appDropdownOpen = false;
             _marketSortOpen = false;
             _sceneDropdownOpen = false;
+            _personalizeDropdownOpen = _personalizeDropdownHovered = DropdownKind.None;
+            _hoveredPersonalizeOption = -1;
         }
     }
 }

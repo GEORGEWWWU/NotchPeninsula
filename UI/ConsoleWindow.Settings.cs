@@ -1,3 +1,5 @@
+using SkiaSharp;
+
 namespace NotchPeninsula
 {
     public partial class ConsoleWindow
@@ -72,49 +74,93 @@ namespace NotchPeninsula
         private const float THEME_CARD_Y = CARD_TOP_Y;
         private const float THEME_CARD_H = 112f;
         private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
-        private const float OPACITY_CARD_H = 78f;
+        private const float OPACITY_CARD_H = 48f;
         private static bool ShowOpacityCard => !Renderer.IslandLiquidGlass && !Renderer.IslandPluginBackground;
         private const float GLASS_CARD_Y = SIZE_CARD_Y + 150f + CARD_GAP;
 
-        private const float THEME_SEG_W = 150f;
+        private const float PERSONALIZE_DD_W = 110f;
+        private const float PERSONALIZE_DD_H = 28f;
+        private const float MAT_TITLE_DY = 76f;
+        private const float MAT_SUB_DY = 96f;
 
-        private float THEME_SEG_X => LeftColumnRight - 16f - THEME_SEG_W;   // 422
+        private static readonly string[] ThemeLabels = ["黑", "白", "系统"];
+        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "插件背景"];
+        private static readonly string[] OpacityLabels = ["0%", "25%", "50%", "75%", "100%"];
+        private static readonly string[] GlassRefreshLabels = LiquidGlass.ValueTexts(LiquidGlass.P_CaptureHz);
 
-        private const float THEME_SEG_Y = 28f;
+        private DropdownKind _personalizeDropdownOpen;
+        private DropdownKind _personalizeDropdownHovered;
+        private int _hoveredPersonalizeOption = -1;
+        private int _draggedGlassParam = -1;
 
-        // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟。
-        private float MAT_SEG_W =>
-            (LeftColumnRight - 16f) - (CONTENT_TEXT_X
-                + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X
-                + _badgeTextPaint.MeasureText("实验性") + BADGE_PAD_X * 2f + 8f);
+        private SKRect PersonalizeDropdownBox(DropdownKind kind)
+        {
+            float right = LeftColumnRight - 16f;
+            float y = TITLE_BAR_HEIGHT + (kind switch
+            {
+                DropdownKind.Theme => THEME_CARD_Y + 16f,
+                DropdownKind.Material => THEME_CARD_Y + 66f,
+                _ => OPACITY_CARD_Y + (OPACITY_CARD_H - PERSONALIZE_DD_H) / 2f
+            });
+            return new SKRect(right - PERSONALIZE_DD_W, y, right, y + PERSONALIZE_DD_H);
+        }
 
-        private float MAT_SEG_X => LeftColumnRight - 16f - MAT_SEG_W;
+        private static (string[] Options, int Selected) PersonalizeDropdownOptions(DropdownKind kind) => kind switch
+        {
+            DropdownKind.Theme => (ThemeLabels, Renderer.ThemeMode),
+            DropdownKind.Material => (MaterialLabels, Renderer.IslandMaterialIndex),
+            _ => (OpacityLabels, Renderer.BgOpacityLevel)
+        };
 
-        // 两行之间的行距：原 42 两行贴太近，2026-10-10 加大到 50；
-        private const float THEME_ROW_GAP = 50f;
+        private int HitPersonalizeOption(int x, int y)
+        {
+            var box = PersonalizeDropdownBox(_personalizeDropdownOpen);
+            return x >= box.Left && x < box.Right
+                ? DropdownRowAt(box.Bottom + 2f, PersonalizeDropdownOptions(_personalizeDropdownOpen).Options.Length, y)
+                : -1;
+        }
 
-        private const float MAT_SEG_Y = THEME_SEG_Y + THEME_ROW_GAP;   // 78
-
-        // 「背景材质」两行基线：与分段控件同一套派生（标题 −2 / 副标题 +18）
-        private const float MAT_TITLE_DY = MAT_SEG_Y - 2f;   // 76
-
-        private const float MAT_SUB_DY = MAT_SEG_Y + 18f;    // 96
-
-        // ---- 尺寸卡：四种材质下都固定排最下 ----
-        // 实体 / 亚克力挂在「背景透明度」卡后，液态玻璃挂在玻璃参数卡后，
-        // 插件背景没有底色可调，直接挂在主题卡后 ——
         private const float SIZE_CARD_Y = CARD_TOP_Y;
 
         private const float GLASS_ROW0_Y = 42f;
         private const float GLASS_ROW_H = 32f;
-        private float GLASS_COL_X => RightColumnText;
-        private const float GLASS_COL_GAP = 8f;
-        private int GlassColumnCount => WIDTH - CONTENT_TEXT_RM - RightColumnText >= 418f ? 3 : 2;
+        private const float GLASS_COL_GAP = 12f;
+        private const int GlassColumnCount = 2;
         private float GLASS_COL_W =>
-            (WIDTH - CONTENT_TEXT_RM - RightColumnText - (GlassColumnCount - 1) * GLASS_COL_GAP) / GlassColumnCount;
-        private const float GLASS_SLIDER_DX = 38f;
-        private const float GLASS_SLIDER_W = 40f;
-        private float GLASS_VALUE_RIGHT => GLASS_COL_W - 4f;
+            (WIDTH - CONTENT_TEXT_RM - RightColumnText - GLASS_COL_GAP) / GlassColumnCount;
+        private const float GLASS_LABEL_W = 38f;
+        private const float GLASS_VALUE_W = 52f;
+        private const float GLASS_TRACK_HIT_PAD = 6f;
+
+        private SKRect GlassTrackBounds(int index)
+        {
+            int column = index % GlassColumnCount;
+            int row = index / GlassColumnCount;
+            float x = RightColumnText + column * (GLASS_COL_W + GLASS_COL_GAP);
+            float y = TITLE_BAR_HEIGHT + GLASS_CARD_Y + GLASS_ROW0_Y + row * GLASS_ROW_H + 12.5f;
+            return new SKRect(x + GLASS_LABEL_W, y - 12f, x + GLASS_COL_W - GLASS_VALUE_W, y + 12f);
+        }
+
+        private int HitGlassTrack(int x, int y)
+        {
+            if (!Renderer.IslandLiquidGlass || y >= ContentBottom) return -1;
+            for (int i = 0; i < GlassMaterial.Keys.Length; i++)
+            {
+                var hit = GlassTrackBounds(i);
+                hit.Inflate(GLASS_TRACK_HIT_PAD, 0f);
+                if (hit.Contains(x, y)) return i;
+            }
+            return -1;
+        }
+
+        private int GlassLevelAt(int index, int x)
+        {
+            var track = GlassTrackBounds(index);
+            int maxLevel = GlassMaterial.MaxLevel(index);
+            float progress = Math.Clamp((x - track.Left) / track.Width, 0f, 1f);
+            return (int)MathF.Round(progress * maxLevel);
+        }
+
         private const float GLASS_RESET_W = 96f;
         private const float GLASS_RESET_H = 26f;
         private float GLASS_RESET_X => WIDTH - CONTENT_TEXT_RM - GLASS_RESET_W;
@@ -124,8 +170,6 @@ namespace NotchPeninsula
         private int GlassRowCount => (GlassMaterial.Keys.Length + GlassColumnCount - 1) / GlassColumnCount;
         private static float GlassResetTopY => GLASS_RESET_TOP_Y;
         private float GlassCardH => GLASS_ROW0_Y + GlassRowCount * GLASS_ROW_H + 12f;
-
-        private const float OPACITY_SLIDER_DY = 44f;
 
         // 个性化中心各行控件的 Y 坐标（index → 行）：
         // 这四项合并成一张卡，卡高 = 12 + 行数×34。

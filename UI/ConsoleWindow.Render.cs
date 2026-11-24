@@ -440,16 +440,6 @@ namespace NotchPeninsula
                 animating = true;
             }
 
-            for (int i = 0; i < _hintAnim.Length; i++)
-            {
-                float target = i == _hintRow ? 1f : 0f;
-                float cur = _hintAnim[i];
-                if (Math.Abs(target - cur) <= 0.01f) { _hintAnim[i] = target; continue; }
-
-                _hintAnim[i] = cur + (target - cur) * DISPLAY_HOVER_EASE;
-                animating = true;
-            }
-
             // 侧边栏：选中块的滑动 —— 进度由 SyncTabSlide 在每帧 Render 里按时钟推进，
             // 这里只提供「还在滑」这个事实（别在这儿算 T，否则和渲染那侧的口径就分家了）。
             if (_tabSlideT < 1f) animating = true;
@@ -1502,23 +1492,6 @@ namespace NotchPeninsula
                         _dynamicTextPaint.Color = AccentText;
                         canvas.DrawText("已生效", afterLabelX + 4, cardBtnY + 16, _dynamicTextPaint);
                         _dynamicTextPaint.TextSize = 13f; // 还原字号，防止污染后续文字渲染
-                        afterLabelX += 46;
-                    }
-
-                    if (index == 7)
-                    {
-                        float hintA = GetHintAlpha(index);
-                        if (hintA > 0.01f)
-                        {
-                            // ⚠️ 必须存/还原调用前的颜色，不能写死 SecondaryText：
-                            //    这一行画完还有第 3、4 行（消息通知弹出高度 / 视觉比例）要画，
-                            //    写死灰色会让它们整行跟着变暗 —— 而且只在悬停时触发（hintA>0 才会进来），
-                            //    观感就是「鼠标一放上去，下面两行突然变灰」。
-                            var hintPrev = _subTextPaint.Color;
-                            _subTextPaint.Color = AccentText.WithAlpha((byte)(255 * hintA));
-                            canvas.DrawText("刘海模式下生效", afterLabelX, cardBtnY + 17, _subTextPaint);
-                            _subTextPaint.Color = hintPrev;
-                        }
                     }
 
                     float cardRightX = WIDTH - CONTENT_TEXT_RM;
@@ -1549,10 +1522,7 @@ namespace NotchPeninsula
                     : "可固定黑白或跟随系统主题",
                 CONTENT_TEXT_X, themeY + 46, _subTextPaint);
 
-            bool themeLocked = Renderer.IslandLiquidGlass;
-            DrawSegmented(canvas, THEME_SEG_X, TITLE_BAR_HEIGHT + THEME_SEG_Y, THEME_SEG_W, SEG_H,
-                ["黑", "白", themeLocked ? "自动" : "系统"], Renderer.ThemeMode,
-                themeLocked ? -1 : _hoveredThemeIndex, disabled: themeLocked);
+            DrawPersonalizeDropdown(canvas, DropdownKind.Theme, enabled: !Renderer.IslandLiquidGlass);
 
             // 第二行：背景材质（独立选项，与主题配色互不影响）
             canvas.DrawText("背景材质", CONTENT_TEXT_X, themeY + MAT_TITLE_DY, _uiTextPaint);
@@ -1560,39 +1530,14 @@ namespace NotchPeninsula
             DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X,
                 themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
             canvas.DrawText("胶囊内背景材质", CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
-            DrawSegmented(canvas, MAT_SEG_X, TITLE_BAR_HEIGHT + MAT_SEG_Y, MAT_SEG_W, SEG_H,
-                MaterialLabels, Renderer.IslandMaterialIndex, _hoveredMaterialIndex, fitLabels: true);
+            DrawPersonalizeDropdown(canvas, DropdownKind.Material);
 
             if (ShowOpacityCard)
             {
                 float opaY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y;
                 DrawSettingsCard(canvas, new SKRect(CONTENT_L, opaY, LeftColumnRight, opaY + OPACITY_CARD_H));
-
-                canvas.DrawText("背景透明度", CONTENT_TEXT_X, opaY + 26, _subTextPaint);
-                float sliderY = opaY + OPACITY_SLIDER_DY;
-                float sliderX = CONTENT_TEXT_X;
-                float sliderW = (LeftColumnRight - 16f) - CONTENT_TEXT_X;
-                float activePx = sliderX + (sliderW / 4) * Renderer.BgOpacityLevel;
-                DrawSliderTrack(canvas, sliderX, sliderX + sliderW, sliderY, activePx,
-                    _hoveredOpacityIndex == Renderer.BgOpacityLevel);
-
-                for (int i = 0; i < 5; i++)
-                {
-                    float px = sliderX + (sliderW / 4) * i;
-                    bool isSelected = Renderer.BgOpacityLevel == i;
-                    bool isHovered = _hoveredOpacityIndex == i;
-                    if (!isSelected && isHovered)
-                    {
-                        _dynamicFillPaint.Color = Overlay(80);
-                        canvas.DrawCircle(px, sliderY, 4, _dynamicFillPaint);
-                    }
-                    _dynamicTextPaint.Color = isSelected ? _fgColor : SecondaryText;
-                    _dynamicTextPaint.TextSize = 11f;
-                    string pct = OpacityStopLabels[i];   // 复用静态刻度文案，避免每帧插值
-                    float tw = _dynamicTextPaint.MeasureText(pct);
-                    canvas.DrawText(pct, px - tw / 2, sliderY + 18, _dynamicTextPaint);
-                    _dynamicTextPaint.TextSize = 13f;
-                }
+                canvas.DrawText("背景透明度", CONTENT_TEXT_X, opaY + 29f, _uiTextPaint);
+                DrawPersonalizeDropdown(canvas, DropdownKind.Opacity);
             }
             DrawMultiCard(SIZE_CARD_Y, ["全局折叠态高度", "底部圆角", "消息通知弹出高度", "视觉比例"], [3, 7, 5, 6]);
 
@@ -1609,69 +1554,47 @@ namespace NotchPeninsula
                 DrawSettingsButton(canvas, new SKRect(GLASS_RESET_X, rY, GLASS_RESET_X + GLASS_RESET_W, rY + GLASS_RESET_H),
                     "恢复默认参数", _hoveredGlassReset);
 
-                int rows = GlassRowCount;
-                for (int row = 0; row < rows; row++)
-                {
-                    float rowY = gY + GLASS_ROW0_Y + row * GLASS_ROW_H;
-                    for (int col = 0; col < GlassColumnCount; col++)
-                        DrawGlassSlider(canvas, rowY, col, row * GlassColumnCount + col);
-                }
+                for (int index = 0; index < GlassMaterial.Keys.Length; index++)
+                    DrawGlassSlider(canvas, index);
             }
         }
 
-        private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "插件背景"];
-
-        private void DrawGlassSlider(SKCanvas canvas, float rowY, int col, int paramIndex)
+        private void DrawPersonalizeDropdown(SKCanvas canvas, DropdownKind kind, bool enabled = true)
         {
-            if (paramIndex >= GlassMaterial.Keys.Length) return;
+            var box = PersonalizeDropdownBox(kind);
+            var (options, selected) = PersonalizeDropdownOptions(kind);
+            DrawDropdownBox(canvas, box.Left, box.Top, box.Width, box.Height,
+                enabled ? options[selected] : "自动", _personalizeDropdownHovered == kind, enabled,
+                open: _personalizeDropdownOpen == kind);
+        }
 
-            int level = GlassMaterial.GetLevel(paramIndex);
-            int maxLevel = GlassMaterial.MaxLevel(paramIndex);
-            bool available = GlassParameterAvailable(paramIndex);
-            float colX = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP);
-            float x0 = colX + GLASS_SLIDER_DX;
-            float textY = rowY + 17f;
-            float railY = textY - 4.5f;
+        private void DrawGlassSlider(SKCanvas canvas, int index)
+        {
+            var track = GlassTrackBounds(index);
+            int level = GlassMaterial.GetLevel(index);
+            float step = track.Width / GlassMaterial.MaxLevel(index);
+            bool hovered = _hoveredGlassParamIndex == index || _draggedGlassParam == index;
+            float railY = track.MidY;
+            float textY = railY + 4.5f;
 
-            _subTextPaint.TextSize = 13f;
-            _subTextPaint.Color = available ? _fgColor : Neutral(110);
-            canvas.DrawText(GlassMaterial.Labels[paramIndex], colX, textY, _subTextPaint);
-            if (available)
+            canvas.DrawText(GlassMaterial.Labels[index], track.Left - GLASS_LABEL_W, textY, _uiTextPaint);
+            DrawSliderTrack(canvas, track.Left, track.Right, railY, track.Left + step * level, hovered);
+            if (hovered && _hoveredGlassParamLevel >= 0 && _hoveredGlassParamLevel != level)
             {
-                float step = GLASS_SLIDER_W / maxLevel;
-                float active = x0 + step * level;
-                bool hovered = _hoveredGlassParamIndex == paramIndex;
-                DrawSliderTrack(canvas, x0, x0 + GLASS_SLIDER_W, railY, active, hovered);
-                if (hovered && _hoveredGlassParamLevel >= 0 && _hoveredGlassParamLevel != level)
-                {
-                    _dynamicFillPaint.Color = Overlay(80);
-                    canvas.DrawCircle(x0 + step * _hoveredGlassParamLevel, railY, 4.5f, _dynamicFillPaint);
-                }
+                _dynamicFillPaint.Color = Overlay(80);
+                canvas.DrawCircle(track.Left + step * _hoveredGlassParamLevel, railY, 4.5f, _dynamicFillPaint);
             }
 
-            else
+            string[] values = index switch
             {
-                canvas.DrawLine(x0, railY, x0 + GLASS_SLIDER_W, railY, _separatorPaint);
-            }
-
-            string[] values = paramIndex switch
-            {
-                GlassMaterial.Blur => GlassMaterial.BlurLabels,
-                GlassMaterial.CaptureRate => LiquidGlass.ValueTexts(LiquidGlass.P_CaptureHz),
-                GlassMaterial.Refraction => GlassMaterial.BlurLabels,
+                GlassMaterial.Blur or GlassMaterial.Refraction => GlassMaterial.BlurLabels,
+                GlassMaterial.CaptureRate => GlassRefreshLabels,
                 GlassMaterial.FrameRate => GlassMaterial.FpsLabels,
                 _ => GlassMaterial.Levels
             };
-            string value = available ? values[level] : "—";
-            float valueW = _subTextPaint.MeasureText(value);
-            // 纯右对齐时，像「60ms」这种较长的值会顶到滑轨末端的圆点上。
-            // 给它一个「离滑轨末端至少 10px」的下限，短值仍然保持右对齐，列与列之间不会错位。
-            float valueX = Math.Max(
-                colX + GLASS_VALUE_RIGHT - valueW,
-                colX + GLASS_SLIDER_DX + GLASS_SLIDER_W + 10f);
-            canvas.DrawText(value, valueX, textY, _subTextPaint);
-            _subTextPaint.TextSize = 12f;
-            _subTextPaint.Color = SecondaryText;
+            string value = values[level];
+            float valueX = track.Right + GLASS_VALUE_W - _uiTextPaint.MeasureText(value);
+            canvas.DrawText(value, valueX, textY, _uiTextPaint);
         }
 
         private void RenderTabPlugins(SKCanvas canvas)
@@ -2551,6 +2474,14 @@ namespace NotchPeninsula
 
         private void RenderDropdowns(SKCanvas canvas)
         {
+            if (_selectedTab == 5 && _personalizeDropdownOpen != DropdownKind.None)
+            {
+                var box = PersonalizeDropdownBox(_personalizeDropdownOpen);
+                var (options, selected) = PersonalizeDropdownOptions(_personalizeDropdownOpen);
+                RenderDropdownList(canvas, box.Left, box.Bottom + 2f, box.Width,
+                    options, selected, _hoveredPersonalizeOption, dimmedIndex: -1);
+            }
+
             if (_selectedTab == 2 && _dropdownOpen)
             {
                 RenderDropdownList(canvas, PlatformBoxX, PlatformMenuY, 110,

@@ -230,6 +230,73 @@ namespace NotchPeninsula
             _soundHint = "";
         }
 
+        private void SelectPersonalizeOption(DropdownKind kind, int option)
+        {
+            switch (kind)
+            {
+                case DropdownKind.Theme:
+                    Renderer.ThemeMode = option;
+                    Renderer.ApplyThemeColors();
+                    Program.SaveSetting("ThemeMode", option);
+                    NotchWindow.RequestAcrylicRebuild();
+                    break;
+                case DropdownKind.Material:
+                    Renderer.IslandMaterialIndex = option;
+                    Renderer.ApplyThemeColors();
+                    Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
+                    Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
+                    Program.SaveSetting("IslandPluginBackground", Renderer.IslandPluginBackground ? 1 : 0);
+                    Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
+                    NotchWindow.RequestAcrylicRebuild();
+                    break;
+                case DropdownKind.Opacity:
+                    Renderer.BgOpacityLevel = option;
+                    Renderer.ApplyThemeColors();
+                    Program.SaveSetting(Renderer.BgOpacityKey, option);
+                    break;
+            }
+        }
+
+        private bool HandlePersonalizeClick(IntPtr hwnd, int x, int y)
+        {
+            if (_personalizeDropdownOpen != DropdownKind.None)
+            {
+                var open = _personalizeDropdownOpen;
+                int option = HitPersonalizeOption(x, y);
+                if (option >= 0)
+                {
+                    CloseAllDropdowns();
+                    SelectPersonalizeOption(open, option);
+                    Render();
+                }
+                else
+                {
+                    CloseDropdownAndOpenHit(x, y, open);
+                }
+                return true;
+            }
+
+            var trigger = HitDropdownTrigger(x, y);
+            if (trigger != DropdownKind.None)
+            {
+                OpenDropdown(trigger);
+                _hoveredGlassParamIndex = _hoveredGlassParamLevel = -1;
+                _hoveredGlassReset = false;
+                Render();
+                return true;
+            }
+
+            int index = HitGlassTrack(x, y);
+            if (index < 0) return false;
+
+            _draggedGlassParam = _hoveredGlassParamIndex = index;
+            _hoveredGlassParamLevel = GlassLevelAt(index, x);
+            Win32.SetCapture(hwnd);
+            ApplyGlassLevel(index, _hoveredGlassParamLevel);
+            Render();
+            return true;
+        }
+
         // 鼠标左键按下：整窗点击分派。
         private void OnLeftButtonDown(IntPtr hwnd, int clickX, int clickY)
         {
@@ -291,6 +358,10 @@ namespace NotchPeninsula
             {
                 Win32.ReleaseCapture();
                 Win32.SendMessage(hwnd, Win32.WM_NCLBUTTONDOWN, Win32.HTCAPTION, 0);
+            }
+            else if (_selectedTab == 5 && clickedTab < 0 && HandlePersonalizeClick(hwnd, clickX, clickY))
+            {
+                return;
             }
             else if (_dropdownOpen && _hoveredDropdownIndex == -1)
             {
@@ -561,47 +632,11 @@ namespace NotchPeninsula
 
                 Render();
             }
-            else if (_selectedTab == 5 && _hoveredThemeIndex != -1)
-            {
-                // 液态玻璃下主题恒为自动：控件已置灰，这里再兜一道，避免旧 hover 状态漏进来。
-                if (Renderer.IslandLiquidGlass) return;
-                Renderer.ThemeMode = _hoveredThemeIndex;
-                Renderer.ApplyThemeColors(); // 立即反转画笔颜色
-                Program.SaveSetting("ThemeMode", _hoveredThemeIndex);
-                NotchWindow.RequestAcrylicRebuild(); // 明暗换了，亚克力色调也要重贴
-                Render(); // 刷新控制台UI
-            }
-            else if (_selectedTab == 5 && _hoveredMaterialIndex != -1)
-            {
-                Renderer.IslandMaterialIndex = _hoveredMaterialIndex;
-                Renderer.ApplyThemeColors();
-                Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
-                Program.SaveSetting("IslandLiquidGlass", Renderer.IslandLiquidGlass ? 1 : 0);
-                Program.SaveSetting("IslandPluginBackground", Renderer.IslandPluginBackground ? 1 : 0);
-                // 切到玻璃时 ThemeMode 已被钳成自动：把钳制结果写回，注册表里不留旧的黑/白。
-                Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
-                NotchWindow.RequestAcrylicRebuild();
-                _hoveredGlassParamIndex = _hoveredGlassParamLevel = -1;
-                _hoveredGlassReset = false;
-                Render();
-            }
-            else if (_selectedTab == 5 && Renderer.IslandLiquidGlass && _hoveredGlassParamIndex != -1 && _hoveredGlassParamLevel >= 0)
-            {
-                ApplyGlassLevel(_hoveredGlassParamIndex, _hoveredGlassParamLevel);
-                Render();
-            }
             else if (_selectedTab == 5 && Renderer.IslandLiquidGlass && _hoveredGlassReset)
             {
                 ResetGlassDefaults();
                 _hoveredGlassReset = false;   // 一次性动作：留着会连点两下又按一遍
                 Render();
-            }
-            else if (_selectedTab == 5 && _hoveredOpacityIndex != -1)
-            {
-                Renderer.BgOpacityLevel = _hoveredOpacityIndex;
-                Renderer.ApplyThemeColors(); // 立刻应用透明度
-                Program.SaveSetting(Renderer.BgOpacityKey, _hoveredOpacityIndex); // 只存当前材质那一份
-                Render(); // 刷新UI
             }
             else if (_cacheCleanHovered)
             {

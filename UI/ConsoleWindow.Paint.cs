@@ -108,8 +108,5 @@ namespace NotchPeninsula
             for (int i = 0; i < labels.Length; i++) labels[i] = $"{options[i]}%";
             return labels;
         }
-
-        private static readonly string[] OpacityStopLabels = ["0%", "25%", "50%", "75%", "100%"];
-
     }
 }

@@ -884,13 +884,6 @@ namespace NotchPeninsula
 
         private bool _animWant;
 
-        private readonly float[] _hintAnim = new float[8];
-
-        private int _hintRow = -1;
-
-        private float GetHintAlpha(int row)
-            => row >= 0 && row < _hintAnim.Length ? _hintAnim[row] : 0f;
-
         // 侧边栏：选中块（背景方块 + 蓝色竖条）的滑动位置。
 
         private float _tabSlideFromY, _tabSlideToY;   // 行首坐标（相对标题栏）的起点 / 终点
@@ -1102,7 +1095,7 @@ namespace NotchPeninsula
 
         // ---- 下拉切换：展开着 A 时点到 B 的框，收起 A 并展开 B ----
         // 只靠「点外部收起」那条分支会把这一下直接吃掉，表现为第二下点了没反应。
-        private enum DropdownKind { None, ToastMode, ToastSound, Volume, Platform, MatchMode, App, Monitor, Scene }
+        private enum DropdownKind { None, ToastMode, ToastSound, Volume, Platform, MatchMode, App, Monitor, Scene, Theme, Material, Opacity }
 
         private DropdownKind HitDropdownTrigger(int x, int y)
         {
@@ -1144,6 +1137,16 @@ namespace NotchPeninsula
                     && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H)
                     return DropdownKind.App;
             }
+            else if (_selectedTab == 5)
+            {
+                if (y >= ContentBottom) return DropdownKind.None;
+                if (!Renderer.IslandLiquidGlass && PersonalizeDropdownBox(DropdownKind.Theme).Contains(x, y))
+                    return DropdownKind.Theme;
+                if (PersonalizeDropdownBox(DropdownKind.Material).Contains(x, y))
+                    return DropdownKind.Material;
+                if (ShowOpacityCard && PersonalizeDropdownBox(DropdownKind.Opacity).Contains(x, y))
+                    return DropdownKind.Opacity;
+            }
             return DropdownKind.None;
         }
 
@@ -1163,6 +1166,11 @@ namespace NotchPeninsula
                 case DropdownKind.App:
                     _appOptions = MediaController.Instance?.GetAvailableAppIds() ?? Array.Empty<string>();
                     _appDropdownOpen = true;
+                    break;
+                case DropdownKind.Theme:
+                case DropdownKind.Material:
+                case DropdownKind.Opacity:
+                    _personalizeDropdownOpen = kind;
                     break;
                 case DropdownKind.Monitor: _monitorDropdownOpen = true; break;
                 case DropdownKind.Scene:
@@ -1227,14 +1235,9 @@ namespace NotchPeninsula
 
         private readonly string[] _valStrCache = new string[8];
 
-        private int _hoveredThemeIndex = -1; // -1:无, 0:黑, 1:白, 2:系统
-
-        private int _hoveredMaterialIndex = -1; // -1:无, 0:实体, 1:亚克力, 2:液态玻璃, 3:插件背景
-        private int _hoveredGlassParamIndex = -1;        // 11 根滑轨里悬停的是哪一根（-1 = 没有）
-        private int _hoveredGlassParamLevel = -1;        // 悬停到的档位 0..4
-        private bool _hoveredGlassReset;                 // 「恢复默认参数」（质量分段同一行右侧）
-
-        private int _hoveredOpacityIndex = -1;
+        private int _hoveredGlassParamIndex = -1;
+        private int _hoveredGlassParamLevel = -1;
+        private bool _hoveredGlassReset;
         // DPI 缩放相关
 
         private float _dpiScale = 1f;
@@ -1734,7 +1737,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_MOUSELEAVE:
                     _trackingSidebarMouse = false;
-                    if (!_dragMoving)
+                    if (!_dragMoving && _draggedGlassParam < 0)
                         OnMouseMove(-1, -1, false);
                     break;
 
@@ -1746,6 +1749,15 @@ namespace NotchPeninsula
                         (int)((short)((lp >> 16) & 0xFFFF) / _dpiScale));
                     break;
                 }
+
+                case Win32.WM_CAPTURECHANGED:
+                    if (_draggedGlassParam >= 0)
+                    {
+                        _draggedGlassParam = -1;
+                        SyncHoverFromCursor();
+                        Render();
+                    }
+                    break;
 
                 case Win32.WM_LBUTTONUP:
                     // 长按拖动排序的收尾（没在拖时 EndDisplayDrag 什么都不做）。
