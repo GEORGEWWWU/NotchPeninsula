@@ -1910,7 +1910,7 @@ namespace NotchPeninsula
             canvas.ClipRoundRect(outline, SKClipOperation.Intersect, true);
 
             DrawSidebarToggle(canvas);
-            float textX = CONTENT_L;
+            float textX = 58f;
             if (_appIconBitmap != null)
             {
                 var iconRect = new SKRect(textX, 8, textX + 16, 24);
