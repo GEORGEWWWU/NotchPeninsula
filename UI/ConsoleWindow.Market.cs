@@ -95,8 +95,8 @@ namespace NotchPeninsula
         private int MarketSelEnd => Math.Max(_marketSearchCaret, _marketSearchSelAnchor);
         private bool MarketHasSelection => _marketSearchCaret != _marketSearchSelAnchor;
 
-        private const float MarketSearchTextX = MarketSearchX + 26f;
-        private const float MarketSearchTextMax = MarketSearchW - 34f;
+        private float MarketSearchTextX => MarketSearchX + 26f;
+        private float MarketSearchTextMax => MarketSearchW - 34f;
 
         // ── 搜索串的逐字符前缀宽度（缓存）──
         //    往搜索框里粘一整段文字再拖选会把界面直接拖卡。
@@ -367,7 +367,6 @@ namespace NotchPeninsula
         //    收到 50 后两张卡各多显示一行。
         // 48 而不是 50：列表区的可用高度只差一点点，"多放一行"就是靠这 2px 换来的
         // （市场页 580/50=11 行 → 580/48=12 行；行内元素最大偏移 44，48 仍放得下）。
-        private const float PluginListRowH = 48f;
 
         private const float PluginTopCardH = 96f;   // 「我的插件」顶部操作卡高度
 
@@ -381,38 +380,35 @@ namespace NotchPeninsula
         private const float MarketControlsY = TITLE_BAR_HEIGHT + 22f;   // 第一行顶（54，卡顶下留 10）
         private const float MarketControlH = 26f;                       // 控件行高（两行共用）
         private const float MarketCatBtnW = 132f;                       // 分类按钮宽（左起 CONTENT_TEXT_X）
-        private const float MarketSearchX = CONTENT_TEXT_X + MarketCatBtnW + 16f;       // 350
-        private const float MarketSearchW = WIDTH - MarketRightPad - MarketSearchX;     // 214
+        private float MarketSearchX => CONTENT_TEXT_X + MarketCatBtnW + 16f;       // 350
+        private float MarketSearchW => PluginLayoutButton(false, MarketControlsY).Left - 10 - MarketSearchX;     // 214
 
         private const float MarketStatusRowY = TITLE_BAR_HEIGHT + 58f;  // 第二行顶（90）
         private const float MarketStatusBaseline = MarketStatusRowY + 17f;
         private const float MarketRefreshW = 50f;
-        private const float MarketRefreshX = WIDTH - MarketRightPad - MarketRefreshW;   // 514
+        private float MarketRefreshX => WIDTH - MarketRightPad - MarketRefreshW;   // 514
         private const float MarketRowsTop = TITLE_BAR_HEIGHT + 96f;   // 92 → 96：首行离「只看已安装」那排太近，整体下移 4px
 
-        private const float MarketChkX = CONTENT_TEXT_X;
+        private float MarketChkX => CONTENT_TEXT_X;
         private const float MarketChkBoxSize = 16f;
         private const string MarketChkLabel = "只看已安装";
         private const float MarketChkLabelGap = 7f;
-        private static float MarketChkLabelX => MarketChkX + MarketChkBoxSize + MarketChkLabelGap;
+        private float MarketChkLabelX => MarketChkX + MarketChkBoxSize + MarketChkLabelGap;
         private const float MarketChkY = MarketStatusRowY + 5f;
 
         private const float MarketBtnW = 50f;
         private const float MarketRightPad = CONTENT_TEXT_RM + 8f;                      // 市场行右侧基准（36）
-        private const float MarketBtn3X = WIDTH - MarketRightPad - MarketBtnW;          // 514 详情
-        private const float MarketBtn2X = MarketBtn3X - 6f - MarketBtnW;                // 458 卸载
-        private const float MarketBtn1X = MarketBtn2X - 6f - MarketBtnW;                // 402 下载/更新/重装
 
         // 排序下拉：贴着刷新按钮左侧，同一行高。
         private const float MarketSortW = 76f;
-        private const float MarketSortX = MarketRefreshX - 10f - MarketSortW;           // 428
+        private float MarketSortX => MarketRefreshX - 10f - MarketSortW;           // 428
 
         // ── 「一键更新全部插件」条：贴卡片底缘，仅有可更新插件时出现 ──
         // 出现时列表高度让位（GetMarketListLayout 扣掉 Reserve），渲染 / 命中 / 滚轮三处同源。
         private const int MarketUpdateBarH = 30;
         private const int MarketUpdateBarPad = 10;                       // 距卡片底缘
-        private static float MarketUpdateBarTop => HEIGHT - 20f - MarketUpdateBarPad - MarketUpdateBarH;
-        private static SKRect MarketUpdateBarRect
+        private float MarketUpdateBarTop => HEIGHT - 20f - MarketUpdateBarPad - MarketUpdateBarH;
+        private SKRect MarketUpdateBarRect
             => new SKRect(CONTENT_TEXT_X, MarketUpdateBarTop, WIDTH - CONTENT_TEXT_RM, MarketUpdateBarTop + MarketUpdateBarH);
 
         private static readonly (string Key, string Name)[] MarketCategories =
@@ -481,12 +477,9 @@ namespace NotchPeninsula
 
         private void GetMarketListLayout(out int visibleRows, out int maxFirstRow)
         {
-            // 有更新时底部给「一键更新」条让位；没有就列表吃满，一行不多占。
             int reserve = MarketUpdateCount > 0 ? MarketUpdateBarH + MarketUpdateBarPad : 0;
-            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - MarketRowsTop - reserve) / PluginListRowH));
-            int total = _marketView.Count;
-            visibleRows = Math.Min(total, maxRows);
-            maxFirstRow = Math.Max(0, total - visibleRows);
+            MeasurePluginTiles(_marketView.Count, _marketScroll, MarketRowsTop, HEIGHT - 20 - reserve,
+                out visibleRows, out maxFirstRow);
         }
 
         private void EnsureMarketData()
@@ -757,7 +750,7 @@ namespace NotchPeninsula
 
             // 详情是浮在列表上的：把对应行滚到可见范围中间，关掉弹窗后一眼能看到它。
             GetMarketListLayout(out int rows, out int maxFirst);
-            _marketScroll = Math.Clamp(idx - Math.Max(0, rows / 2), 0, maxFirst);
+            _marketScroll = Math.Clamp((idx - rows / 2) / PluginColumns * PluginColumns, 0, maxFirst);
 
             _marketDialog = MarketDialog.Detail;
             _marketDialogIndex = idx;
@@ -794,7 +787,7 @@ namespace NotchPeninsula
 
         private static float DialogInnerW => DialogW - DialogPad * 2;
 
-        private static SKRect GetMarketDialogRect(float bodyLines, bool buttons)
+        private SKRect GetMarketDialogRect(float bodyLines, bool buttons)
         {
             // 标题行 → 正文区的起点与 DrawDialogHeader 的返回值严格一致（Top + DialogTitleH + 8），
             // 否则按钮会按一个高度算、正文按另一个高度画，留白忽大忽小。
@@ -829,7 +822,7 @@ namespace NotchPeninsula
             return GetMarketDialogRect(lines, true);
         }
 
-        private static SKRect GetRateDialogRect() => GetMarketDialogRect(4f, false);
+        private SKRect GetRateDialogRect() => GetMarketDialogRect(4f, false);
 
         // ---- 「插件加载失败」弹窗 ----
         //
@@ -1043,10 +1036,10 @@ namespace NotchPeninsula
         }
 
         /// <summary>卸载第一级：只问「确定卸载吗」。</summary>
-        private static SKRect GetUninstallConfirmDialogRect() => GetMarketDialogRect(2f, true);
+        private SKRect GetUninstallConfirmDialogRect() => GetMarketDialogRect(2f, true);
 
         /// <summary>卸载第二级：多一行路径，所以多一行高度。</summary>
-        private static SKRect GetUninstallDirDialogRect() => GetMarketDialogRect(3f, true);
+        private SKRect GetUninstallDirDialogRect() => GetMarketDialogRect(3f, true);
 
         private SKRect GetCurrentDialogRect()
         {

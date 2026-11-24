@@ -7,39 +7,39 @@ namespace NotchPeninsula
     {
         // 「全局快捷键」卡片的命中几何：绘制（DrawHotkeyCard）、悬停（OnMouseMove）、
         // 点击（落点重算）三处共用，避免任何一处改了 y 值对不上。
-        private static bool HitMediaHotkeyToggle(int x, int y, bool anyPopupOpen)
+        private bool HitMediaHotkeyToggle(int x, int y, bool anyPopupOpen)
             => !anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30
-               && y >= HOTKEY_CARD_Y + 16 && y <= HOTKEY_CARD_Y + 36;
+               && y >= HOTKEY_CARD_Y + 12 && y <= HOTKEY_CARD_Y + 32;
 
-        private static int HitMediaHotkeyRow(int x, int y, bool anyPopupOpen)
+        private int HitMediaHotkeyRow(int x, int y, bool anyPopupOpen)
         {
             if (anyPopupOpen || x < HOTKEY_BOX_X || x > HOTKEY_BOX_RIGHT) return -1;
             for (int i = 0; i < MediaHotkeys.Count; i++)
             {
-                float rowTop = HOTKEY_CARD_Y + HOTKEY_HEAD_H + i * HOTKEY_ROW_H + 4;
+                float rowTop = HOTKEY_CARD_Y + MediaHotkeyHeadHeight + i * HOTKEY_ROW_H + 4;
                 if (y >= rowTop && y <= rowTop + HOTKEY_BOX_H) return i;
             }
             return -1;
         }
 
-        private static bool HitIslandHotkeyToggle(int x, int y)
+        private bool HitIslandHotkeyToggle(int x, int y)
             => x >= WIDTH - 80 && x <= WIDTH - 30
                && y >= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 16
                && y <= TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + 36;
 
-        private static bool HitIslandHotkeyBox(int x, int y)
+        private bool HitIslandHotkeyBox(int x, int y)
         {
             float top = TITLE_BAR_HEIGHT + ISLAND_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
             return x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT && y >= top && y <= top + HOTKEY_BOX_H;
         }
 
         // 「静默模式」快捷键卡（交互页最下面）：几何与 DrawSilentHotkeyCard 严格同源。
-        private static bool HitSilentHotkeyToggle(int x, int y)
+        private bool HitSilentHotkeyToggle(int x, int y)
             => x >= WIDTH - 80 && x <= WIDTH - 30
                && y >= TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y + 16
                && y <= TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y + 36;
 
-        private static bool HitSilentHotkeyBox(int x, int y)
+        private bool HitSilentHotkeyBox(int x, int y)
         {
             float top = TITLE_BAR_HEIGHT + SILENT_HOTKEY_CARD_Y + HOTKEY_HEAD_H + 4;
             return x >= HOTKEY_BOX_X && x <= HOTKEY_BOX_RIGHT && y >= top && y <= top + HOTKEY_BOX_H;
@@ -243,8 +243,20 @@ namespace NotchPeninsula
                 return;
             }
 
+            if (SidebarToggleRect.Contains(clickX, clickY))
+            {
+                _sidebarCollapsed = !_sidebarCollapsed;
+                CloseAllDropdowns();
+                SyncHoverFromCursor();
+                Render();
+                return;
+            }
+
+            if (HandlePluginLayoutClick(clickX, clickY)) return;
+
             SyncHotkeyHoverFromPoint(clickX, clickY);
             SyncExportHoverFromPoint(clickX, clickY);
+            int clickedTab = HitSidebarTab(clickX, clickY);
 
             // 「显示内容」列表的 ≡ 把手：长按拖动排序。短按吃掉这次点击，不触发行的显隐切换。
             if (TryStartDisplayDrag(clickX, clickY)) return;
@@ -398,9 +410,9 @@ namespace NotchPeninsula
                 SyncHoverFromCursor();
                 Render();
             }
-            else if (_hoveredTab >= 0 && _hoveredTab <= 9 && _selectedTab != _hoveredTab)
+            else if (clickedTab >= 0 && _selectedTab != clickedTab)
             {
-                SwitchTab(_hoveredTab);
+                SwitchTab(clickedTab);
             }
             else if (_toastModeDropdownHovered) { _toastModeDropdownOpen = true; Render(); }
             else if (_toastModeDropdownOpen && _hoveredToastModeIndex != -1)

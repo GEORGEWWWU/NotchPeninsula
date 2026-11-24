@@ -22,8 +22,7 @@ namespace NotchPeninsula
         private enum BackdropMaterialMode
         {
             SolidDark,
-            Acrylic,
-            Mica
+            Acrylic
         }
 
         private BackdropMaterialMode _backdropMode = BackdropMaterialMode.SolidDark;
@@ -165,11 +164,6 @@ namespace NotchPeninsula
 
         private void ApplyAppearance()
         {
-            Renderer.InvalidateSystemThemeCache();
-            _isLightAppearance = IsSystemLightAppearance();
-
-            _fgColor = Neutral(255);   // 深色 = 白，浅色 = 纯黑
-
             _uiTextPaint.Color = _fgColor;
             _subTextPaint.Color = Neutral(170);
             _titleTextPaint.Color = Neutral(200);
@@ -187,37 +181,15 @@ namespace NotchPeninsula
 
         private void ApplyBackdropPalette()
         {
-            bool light = _isLightAppearance;
-
-            _menuBg.Color = light ? new SKColor(252, 252, 252) : new SKColor(48, 48, 48);
-            _menuBorder.Color = light ? new SKColor(200, 200, 200) : new SKColor(88, 88, 88);
-
-            if (_backdropMode == BackdropMaterialMode.SolidDark)
-            {
-                _bgPaint.Color = light ? new SKColor(243, 243, 243) : new SKColor(32, 32, 32);
-                _titleBarPaint.Color = light ? new SKColor(235, 235, 235) : new SKColor(40, 40, 40);
-                _cardBg.Color = Overlay(8);
-                _cardBorder.Color = Overlay(15);
-                _globalBorderPaint.Color = light ? new SKColor(205, 205, 205) : new SKColor(60, 60, 60);
-                return;
-            }
-
-            bool mica = _backdropMode == BackdropMaterialMode.Mica;
-            if (!mica && _nativeConsoleBackdrop != null)
-            {
-                // 合并旧 Accent 亚克力色调（140/255）和前景底色（112/255）。
-                _bgPaint.Color = light ? new SKColor(244, 244, 244, 191) : new SKColor(19, 19, 19, 191);
-            }
-            else
-            {
-                _bgPaint.Color = light
-                    ? (mica ? new SKColor(248, 248, 248, 164) : new SKColor(245, 245, 245, 112))
-                    : (mica ? new SKColor(22, 22, 22, 164) : new SKColor(18, 18, 18, 112));
-            }
-            _titleBarPaint.Color = SKColors.Transparent;
-            _cardBg.Color = Overlay(mica ? (byte)18 : (byte)22);
-            _cardBorder.Color = Overlay(mica ? (byte)30 : (byte)38);
-            _globalBorderPaint.Color = Overlay(mica ? (byte)34 : (byte)40);
+            _menuBg.Color = new SKColor(48, 48, 48);
+            _menuBorder.Color = new SKColor(88, 88, 88);
+            bool acrylic = _backdropMode == BackdropMaterialMode.Acrylic;
+            _bgPaint.Color = acrylic
+                ? (_nativeConsoleBackdrop != null ? new SKColor(19, 19, 19, 191) : new SKColor(18, 18, 18, 112))
+                : new SKColor(32, 32, 32);
+            _cardBg.Color = Overlay(acrylic ? (byte)22 : (byte)8);
+            _cardBorder.Color = Overlay(acrylic ? (byte)38 : (byte)15);
+            _globalBorderPaint.Color = acrylic ? Overlay(40) : new SKColor(60, 60, 60);
         }
 
         private void TryEnableBackdropMaterial()
@@ -233,24 +205,12 @@ namespace NotchPeninsula
                 return;
             }
 
-            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621) && TryEnableSystemBackdropMica())
-            {
-                _backdropMode = BackdropMaterialMode.Mica;
-                return;
-            }
-
-            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) && TryEnableLegacyMica())
-            {
-                _backdropMode = BackdropMaterialMode.Mica;
-                return;
-            }
-
             _backdropMode = BackdropMaterialMode.SolidDark;
         }
 
         private void TrySetDarkMode()
         {
-            int enabled = _isLightAppearance ? 0 : 1;
+            int enabled = 1;
             int size = Marshal.SizeOf<int>();
             if (_backdropHwnd == IntPtr.Zero) return;
             _ = Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, size);
@@ -271,23 +231,7 @@ namespace NotchPeninsula
             _ = Win32.DwmExtendFrameIntoClientArea(_backdropHwnd, ref margins);
         }
 
-        private bool TryEnableSystemBackdropMica()
-        {
-            if (_backdropHwnd == IntPtr.Zero) return false;
-            int backdrop = Win32.DWMSBT_MAINWINDOW;
-            return Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, Marshal.SizeOf<int>()) == 0;
-        }
-
-        private bool TryEnableLegacyMica()
-        {
-            if (_backdropHwnd == IntPtr.Zero) return false;
-            int enabled = 1;
-            return Win32.DwmSetWindowAttribute(_backdropHwnd, Win32.DWMWA_MICA_EFFECT, ref enabled, Marshal.SizeOf<int>()) == 0;
-        }
-
-        private static uint AcrylicTint => _isLightAppearance
-            ? ColorToAbgr(0x8C, 0xF2, 0xF2, 0xF2)   // 0x8CF2F2F2
-            : ColorToAbgr(0x8C, 0x14, 0x14, 0x14);  // 0x8C141414
+        private const uint AcrylicTint = 0x8C141414;
 
         private bool TryEnableAcrylicBackdrop()
             => ApplyAccentPolicy(Win32.ACCENT_ENABLE_ACRYLICBLURBEHIND, AcrylicTint);
@@ -345,11 +289,6 @@ namespace NotchPeninsula
                         ApplyBackdropPalette();
                         Render();
                     }
-                    break;
-
-                case BackdropMaterialMode.Mica:
-                    if (!TryEnableSystemBackdropMica())
-                        TryEnableLegacyMica();
                     break;
 
                 // SolidDark 是自绘的实色外观，没有系统材质可补
@@ -427,9 +366,5 @@ namespace NotchPeninsula
             ReapplyBackdropMaterial();
         }
 
-        private static uint ColorToAbgr(byte a, byte r, byte g, byte b)
-        {
-            return ((uint)a << 24) | ((uint)b << 16) | ((uint)g << 8) | r;
-        }
     }
 }

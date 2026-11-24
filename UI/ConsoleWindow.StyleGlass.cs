@@ -24,7 +24,7 @@ namespace NotchPeninsula
         /// <summary>把预览里的岛体（刘海 / 胶囊）画成一块液态玻璃。形状由调用方按形态构造。</summary>
         private static void DrawLiquidGlassPreview(SKCanvas canvas, SKPath shape)
         {
-            bool light = _isLightAppearance;
+            bool light = IsLightPreviewCapsule();
             var bounds = shape.Bounds;
             float top = bounds.Top;
             float bottom = bounds.Bottom;

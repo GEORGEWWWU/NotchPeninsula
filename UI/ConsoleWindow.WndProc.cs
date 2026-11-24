@@ -38,6 +38,13 @@ namespace NotchPeninsula
         private void OnMouseMove(int x, int y, bool dragging)
         {
 
+            bool toggleHovered = !IsConfirmDialogOpen && SidebarToggleRect.Contains(x, y);
+            if (_sidebarToggleHovered != toggleHovered)
+            {
+                _sidebarToggleHovered = toggleHovered;
+                Render();
+            }
+
             bool newMinHovered = x >= WIDTH - 92 && x < WIDTH - 46 && y <= TITLE_BAR_HEIGHT;
             bool newCloseHovered = x >= WIDTH - 46 && x <= WIDTH && y <= TITLE_BAR_HEIGHT;
 
@@ -99,7 +106,7 @@ namespace NotchPeninsula
 
                 float sliderY = TITLE_BAR_HEIGHT + OPACITY_CARD_Y + OPACITY_SLIDER_DY;
                 float sliderX = CONTENT_TEXT_X;
-                float sliderW = (WIDTH - CONTENT_TEXT_RM) - CONTENT_TEXT_X;
+                float sliderW = (LeftColumnRight - 16f) - CONTENT_TEXT_X;
 
                 if (ShowOpacityCard)
                 {
@@ -133,9 +140,9 @@ namespace NotchPeninsula
                         float ry = gCardY + GLASS_ROW0_Y + (row * GLASS_ROW_H) + 17f;
                         if (y < ry - 12 || y > ry + 12) continue;
 
-                        for (int col = 0; col < 3; col++)
+                        for (int col = 0; col < GlassColumnCount; col++)
                         {
-                            int idx = row * 3 + col;
+                            int idx = row * GlassColumnCount + col;
                             if (idx >= GlassMaterial.Keys.Length || !GlassParameterAvailable(idx)) continue;
 
                             float gx0 = GLASS_COL_X + col * (GLASS_COL_W + GLASS_COL_GAP) + GLASS_SLIDER_DX;
@@ -276,10 +283,10 @@ namespace NotchPeninsula
             if (_selectedTab == 0) // 通用设置
             {
                 // 开机自启
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                if (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newToggleHovered = true;
                 // 窗口置顶开关
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
+                if (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 104 && y <= TITLE_BAR_HEIGHT + 124)
                     newTopmostToggleHovered = true;
 
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
@@ -340,7 +347,7 @@ namespace NotchPeninsula
                 }
 
                 // MSP 接入：卡片行首 MSP_CARD_Y + 开关位移
-                if (x >= WIDTH - 80 && x <= WIDTH - 30
+                if (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14
                     && y >= TITLE_BAR_HEIGHT + MSP_CARD_Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
                     && y <= TITLE_BAR_HEIGHT + MSP_CARD_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
                     newMspToggleHovered = true;
@@ -414,14 +421,14 @@ namespace NotchPeninsula
                 float modeToggleCy = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page + ROW_ANCHOR_Y;
                 // 静默模式下这一整行置灰（岛本来就退场，双击切换没有意义）。
                 if (!monitorListOpen && !sceneListOpen && !Renderer.SilentActive
-                    && x >= WIDTH - 80 && x <= WIDTH - 30
+                    && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14
                     && y >= modeToggleCy - TOGGLE_TRACK_H / 2f && y <= modeToggleCy + TOGGLE_TRACK_H / 2f)
                     newStandbyToggleHovered = true;
 
                 // 整行悬停只服务右侧那句蓝字提示（悬浮才显示，点击仍只认开关本体）。
                 float standbyRowTop = TITLE_BAR_HEIGHT + TOGGLE_ROW_Y + page;
                 if (!monitorListOpen && !sceneListOpen && !Renderer.SilentActive
-                    && x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_RM
+                    && x >= CONTENT_TEXT_X && x <= LeftColumnRight
                     && y >= standbyRowTop && y <= standbyRowTop + ROW_H)
                     newStandbyRowHovered = true;
 
@@ -456,7 +463,7 @@ namespace NotchPeninsula
                     && y >= listBarTop && y <= listBarTop + listBarH)
                     newListScrollbarHovered = true;
 
-                var displayCardHit = new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page,
+                var displayCardHit = new SKRect(RightColumnLeft, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + page,
                     WIDTH - CONTENT_RM, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + page);
                 bool inDisplayCard = x >= displayCardHit.Left && x <= displayCardHit.Right
                     && y >= displayCardHit.Top && y <= displayCardHit.Bottom;
@@ -474,23 +481,23 @@ namespace NotchPeninsula
                 bool anyPopupOpen = _dropdownOpen || _matchModeDropdownOpen || _appDropdownOpen;
 
                 // 媒体控制
-                if (!anyPopupOpen && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                if (!anyPopupOpen && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + MediaRowStart + ROW_ANCHOR_Y - 10 && y <= TITLE_BAR_HEIGHT + MediaRowStart + ROW_ANCHOR_Y + 10)
                     newMediaToggleHovered = true;
 
                 // 「使用实况窗展示媒体」（首卡第二行，槽位与 DrawToggleRow 同源）
                 if (!anyPopupOpen
-                    && x >= WIDTH - 80 && x <= WIDTH - 30
-                    && y >= TITLE_BAR_HEIGHT + CARD_TOP_Y + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
-                    && y <= TITLE_BAR_HEIGHT + CARD_TOP_Y + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
+                    && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14
+                    && y >= TITLE_BAR_HEIGHT + MediaRowStart + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
+                    && y <= TITLE_BAR_HEIGHT + MediaRowStart + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
                     newMediaLiveToggleHovered = true;
 
-                if (!anyPopupOpen && x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 98 + MEDIA_LIVE_ROW_DY && y <= TITLE_BAR_HEIGHT + 128 + MEDIA_LIVE_ROW_DY)
+                if (!anyPopupOpen && x >= PlatformBoxX && x <= PlatformBoxX + 110 && y >= PlatformBoxY && y <= PlatformBoxY + 32)
                     newDropdownHovered = true;
 
                 if (_dropdownOpen)
                 {
-                    if (x >= WIDTH - 140 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY && y < TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY + _platforms.Length * 26)
-                        newHoveredDropdownIndex = (int)((y - (TITLE_BAR_HEIGHT + 130 + MEDIA_LIVE_ROW_DY)) / 26);
+                    if (x >= PlatformBoxX && x <= PlatformBoxX + 110 && y >= PlatformMenuY && y < PlatformMenuY + _platforms.Length * 26)
+                        newHoveredDropdownIndex = (int)((y - PlatformMenuY) / 26);
                 }
 
                 bool matchRowEnabled = MediaController.TargetPlatform == "other";
@@ -513,14 +520,14 @@ namespace NotchPeninsula
                 }
 
                 // 歌词设置卡片（坐标常量与 Render() 同源；四行统一 34px 行距）
-                float lyricY = LYRIC_CARD_Y;
-                bool newLyricToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 33 && y <= lyricY + 53);
-                bool newTransToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 67 && y <= lyricY + 87);
-                bool newScanToggleHovered = !anyPopupOpen && (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= lyricY + 101 && y <= lyricY + 121);
+                float lyricY = LYRIC_CARD_Y - 33f + MediaLyricsTopInset;
+                bool newLyricToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + 33 && y <= lyricY + 53);
+                bool newTransToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + 67 && y <= lyricY + 87);
+                bool newScanToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + 101 && y <= lyricY + 121);
 
                 // 延迟补偿按钮整行排在最后（歌词卡片里第四行）
                 float btnY = lyricY + 133;
-                float cardRightX = WIDTH - CONTENT_TEXT_RM;
+                float cardRightX = LeftColumnRight - 16;
                 bool newLyricMinusHovered = !anyPopupOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
                 bool newLyricPlusHovered = !anyPopupOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
                 bool newLyricResetHovered = !anyPopupOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
@@ -553,23 +560,23 @@ namespace NotchPeninsula
                 // 静默模式：自动隐藏整块 + 唤出灵动岛整卡一起置灰，所以这里一个 hover 都不置。
                 bool silent = Renderer.SilentActive;
                 // 行 1：自动隐藏总开关
-                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
+                if (!silent && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 32 && y <= TITLE_BAR_HEIGHT + 52)
                     newAutoHideToggleHovered = true;
                 // 行 2：当焦点离开时自动隐藏岛
-                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
+                if (!silent && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 94 && y <= TITLE_BAR_HEIGHT + 114)
                     newFocusHideToggleHovered = true;
                 // 行 3：暂停播放后自动隐藏
-                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
+                if (!silent && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 156 && y <= TITLE_BAR_HEIGHT + 176)
                     newPauseHideToggleHovered = true;
                 // 行 4：全屏自动隐藏
-                if (!silent && x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
+                if (!silent && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + 218 && y <= TITLE_BAR_HEIGHT + 238)
                     newFsHideToggleHovered = true;
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 290 && y <= TITLE_BAR_HEIGHT + 310)
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + MEDIA_EXP_CARD_Y + 20 && y <= TITLE_BAR_HEIGHT + MEDIA_EXP_CARD_Y + 40)
                     newMediaExpToggleHovered = true;
-                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 362 && y <= TITLE_BAR_HEIGHT + 382)
+                if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + APP_LAUNCH_CARD_Y + 20 && y <= TITLE_BAR_HEIGHT + APP_LAUNCH_CARD_Y + 40)
                     newAppLaunchToggleHovered = true;
                 // 使用局部变量，防止状态死锁
-                newPassToggleHovered = x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + 434 && y <= TITLE_BAR_HEIGHT + 454;
+                newPassToggleHovered = x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + PASS_CARD_Y + 20 && y <= TITLE_BAR_HEIGHT + PASS_CARD_Y + 40;
 
                 // 「唤出灵动岛」：总开关在卡片头部右侧，键位框在下面那行
                 //（y 值与 DrawIslandHotkeyCard 严格同源）
@@ -686,26 +693,25 @@ namespace NotchPeninsula
                 {
                     GetMarketListLayout(out int mRows, out int mMaxFirst);
                     _marketScroll = Math.Clamp(_marketScroll, 0, mMaxFirst);
-                    float marketRowsTop = MarketRowsTop;   // 与 RenderTabMarket / GetMarketListLayout 严格同源
-                    if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= marketRowsTop)
+                    int slot = HitPluginTile(MarketRowsTop, x, y);
+                    if (slot >= 0 && slot < mRows)
                     {
-                        int slot = (int)((y - marketRowsTop) / PluginListRowH);
-                        int idx = slot + _marketScroll;
-                        if (slot >= 0 && slot < mRows)
+                        var rect = PluginTile(MarketRowsTop, slot);
+                        float actionY = rect.Top + PluginButtonsTop;
+                        if (y >= actionY && y <= actionY + 20)
                         {
-                            float rowY = marketRowsTop + slot * PluginListRowH;
-                            if (y >= rowY + 18 && y <= rowY + 44)
-                            {
-                                var mp = _marketView[idx];
-                                bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
-                                var local = MatchLocalPlugin(mp);
-                                if (x >= MarketBtn1X && x <= MarketBtn1X + MarketBtnW)
-                                { if (!busy) newHoveredMarketInstall = idx; }
-                                else if (x >= MarketBtn2X && x <= MarketBtn2X + MarketBtnW)
-                                { if (local != null && !busy) newHoveredMarketUninstall = idx; }
-                                else if (x >= MarketBtn3X && x <= MarketBtn3X + MarketBtnW)
-                                    newHoveredMarketDetail = idx;
-                            }
+                            int idx = slot + _marketScroll;
+                            var mp = _marketView[idx];
+                            bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
+                            float detailX = rect.Right - 10f - MarketBtnW;
+                            float uninstallX = detailX - 6f - MarketBtnW;
+                            float installX = uninstallX - 6f - MarketBtnW;
+                            if (x >= installX && x <= installX + MarketBtnW && !busy)
+                                newHoveredMarketInstall = idx;
+                            else if (x >= uninstallX && x <= uninstallX + MarketBtnW && !busy && MatchLocalPlugin(mp) != null)
+                                newHoveredMarketUninstall = idx;
+                            else if (x >= detailX && x <= detailX + MarketBtnW)
+                                newHoveredMarketDetail = idx;
                         }
                     }
                 }
@@ -746,21 +752,20 @@ namespace NotchPeninsula
                     GetPluginListCardTop(out float listY);
                     GetPluginListLayout(out int rows, out int pluginMaxFirst);
                     _pluginScroll = Math.Clamp(_pluginScroll, 0, pluginMaxFirst);
-                    if (x >= CONTENT_TEXT_X && x <= WIDTH - CONTENT_TEXT_RM && y >= listY + PluginRowsTopPad)
+                    float rowsTop = listY + PluginRowsTopPad;
+                    int slot = HitPluginTile(rowsTop, x, y);
+                    if (slot >= 0 && slot < rows)
                     {
-                        int slot = (int)((y - (listY + PluginRowsTopPad)) / PluginListRowH);
-                        int idx = slot + _pluginScroll;
-                        if (slot >= 0 && slot < rows)
+                        var rect = PluginTile(rowsTop, slot);
+                        float actionY = rect.Top + PluginButtonsTop;
+                        if (y >= actionY && y <= actionY + 20)
                         {
-                            float rowY = listY + PluginRowsTopPad + slot * PluginListRowH;
-                            if (y >= rowY + 18 && y <= rowY + 44)
-                            {
-                                // 从左到右：设置 | 重载 | 卸载 | 开关
-                                if (x >= PLUGIN_BTN_SETTINGS_X && x <= PLUGIN_BTN_SETTINGS_X + 50) newHoveredPluginSettings = idx;
-                                else if (x >= PLUGIN_BTN_RELOAD_X && x <= PLUGIN_BTN_RELOAD_X + 50) newHoveredPluginReload = idx;
-                                else if (x >= PLUGIN_BTN_REMOVE_X && x <= PLUGIN_BTN_REMOVE_X + 50) newHoveredPluginRemove = idx;
-                                else if (x >= PLUGIN_BTN_TOGGLE_X && x <= PLUGIN_BTN_TOGGLE_X + 42) newHoveredPluginToggle = idx;
-                            }
+                            int idx = slot + _pluginScroll;
+                            float settingsX = rect.Right - 224f;
+                            if (x >= settingsX && x <= settingsX + 50) newHoveredPluginSettings = idx;
+                            else if (x >= settingsX + 56 && x <= settingsX + 106) newHoveredPluginReload = idx;
+                            else if (x >= settingsX + 112 && x <= settingsX + 162) newHoveredPluginRemove = idx;
+                            else if (x >= settingsX + 168 && x <= settingsX + 210) newHoveredPluginToggle = idx;
                         }
                     }
                 }
@@ -768,17 +773,18 @@ namespace NotchPeninsula
             else if (_selectedTab == 8) // 实况窗管理
             {
                 float mediaTop = LiveWindowMediaCardTop;
-                if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM && y >= mediaTop && y <= mediaTop + LW_MEDIA_CARD_H)
+                if (x >= CONTENT_L && x <= LeftColumnRight && y >= mediaTop && y <= mediaTop + LW_MEDIA_CARD_H)
                     newLiveWindowMediaHovered = true;
 
                 var owners = LiveWindowHost.KnownPluginOwners;
-                if (owners.Count > 0 && x >= CONTENT_L && x <= WIDTH - CONTENT_RM)
+                if (owners.Count > 0 && x >= RightColumnLeft && x <= WIDTH - CONTENT_RM)
                 {
                     float rowTop = LiveWindowPluginRowTop;
                     if (y >= rowTop)
                     {
                         int idx = (int)((y - rowTop) / LW_ROW_H);
-                        if (idx >= 0 && idx < owners.Count) newLiveWindowHoverRow = idx;
+                        if (idx >= 0 && idx < LiveWindowVisibleRows && idx + _liveWindowScroll < owners.Count)
+                            newLiveWindowHoverRow = idx + _liveWindowScroll;
                     }
                 }
             }
@@ -789,11 +795,11 @@ namespace NotchPeninsula
                     && y >= SilentSwitchTop && y <= SilentSwitchTop + SILENT_SWITCH_H)
                     newSilentSwitchHovered = true;
 
-                if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM
+                if (x >= CONTENT_L && x <= LeftColumnRight
                     && y >= SilentToastTop && y <= SilentToastTop + SILENT_TOAST_CARD_H)
                     newSilentToastHovered = true;
 
-                if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM
+                if (x >= CONTENT_L && x <= LeftColumnRight
                     && y >= SilentMediaTop && y <= SilentMediaTop + SILENT_MEDIA_CARD_H)
                     newSilentMediaHovered = true;
 

@@ -30,13 +30,8 @@ namespace NotchPeninsula
         private void GetPluginListLayout(out int visibleRows, out int maxFirstRow)
         {
             GetPluginListCardTop(out float listY);
-            // 最后一行按**行内容底**（开关底 = rowY+22+20）对齐卡片底判定，不按整槽 48：
-            // (478)/48 = 9.96 会把第 10 行整槽截掉，而第 10 行内容底 668 明明在卡片底 672 之内。
-            const float RowContentH = 42f;   // 行内最深元素：开关 rowY+22 + 高 20
-            int maxRows = Math.Max(1, (int)((HEIGHT - 20 - (listY + PluginRowsTopPad) - RowContentH) / PluginListRowH) + 1);
-            int total = _pluginView.Count;
-            visibleRows = Math.Min(total, maxRows);
-            maxFirstRow = Math.Max(0, total - visibleRows);
+            MeasurePluginTiles(_pluginView.Count, _pluginScroll, listY + PluginRowsTopPad, HEIGHT - 20,
+                out visibleRows, out maxFirstRow);
         }
 
         // ---- 插件中心辅助逻辑 ----

@@ -74,21 +74,21 @@ namespace NotchPeninsula
         private const float OPACITY_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
         private const float OPACITY_CARD_H = 78f;
         private static bool ShowOpacityCard => !Renderer.IslandLiquidGlass && !Renderer.IslandPluginBackground;
-        private const float GLASS_CARD_Y = OPACITY_CARD_Y;
+        private const float GLASS_CARD_Y = SIZE_CARD_Y + 150f + CARD_GAP;
 
         private const float THEME_SEG_W = 150f;
 
-        private const float THEME_SEG_X = WIDTH - CONTENT_TEXT_RM - THEME_SEG_W;   // 422
+        private float THEME_SEG_X => LeftColumnRight - 16f - THEME_SEG_W;   // 422
 
         private const float THEME_SEG_Y = 28f;
 
         // 第二行「背景材质」：位置全由 THEME_SEG_Y 派生，改一处其余自动跟。
-        private static float MAT_SEG_W =>
-            (WIDTH - CONTENT_TEXT_RM) - (CONTENT_TEXT_X
+        private float MAT_SEG_W =>
+            (LeftColumnRight - 16f) - (CONTENT_TEXT_X
                 + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X
                 + _badgeTextPaint.MeasureText("实验性") + BADGE_PAD_X * 2f + 8f);
 
-        private static float MAT_SEG_X => WIDTH - CONTENT_TEXT_RM - MAT_SEG_W;
+        private float MAT_SEG_X => LeftColumnRight - 16f - MAT_SEG_W;
 
         // 两行之间的行距：原 42 两行贴太近，2026-10-10 加大到 50；
         private const float THEME_ROW_GAP = 50f;
@@ -103,29 +103,27 @@ namespace NotchPeninsula
         // ---- 尺寸卡：四种材质下都固定排最下 ----
         // 实体 / 亚克力挂在「背景透明度」卡后，液态玻璃挂在玻璃参数卡后，
         // 插件背景没有底色可调，直接挂在主题卡后 ——
-        private static float SIZE_CARD_Y => Renderer.IslandLiquidGlass
-            ? GLASS_CARD_Y + GlassCardH + CARD_GAP
-            : ShowOpacityCard ? OPACITY_CARD_Y + OPACITY_CARD_H + CARD_GAP
-            : THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
+        private const float SIZE_CARD_Y = CARD_TOP_Y;
 
         private const float GLASS_ROW0_Y = 42f;
         private const float GLASS_ROW_H = 32f;
-        private const float GLASS_COL_X = CONTENT_TEXT_X;
+        private float GLASS_COL_X => RightColumnText;
         private const float GLASS_COL_GAP = 8f;
-        private const float GLASS_COL_W =
-            (WIDTH - CONTENT_TEXT_RM - CONTENT_TEXT_X - 2f * GLASS_COL_GAP) / 3f;
+        private int GlassColumnCount => WIDTH - CONTENT_TEXT_RM - RightColumnText >= 418f ? 3 : 2;
+        private float GLASS_COL_W =>
+            (WIDTH - CONTENT_TEXT_RM - RightColumnText - (GlassColumnCount - 1) * GLASS_COL_GAP) / GlassColumnCount;
         private const float GLASS_SLIDER_DX = 38f;
         private const float GLASS_SLIDER_W = 40f;
-        private const float GLASS_VALUE_RIGHT = GLASS_COL_W - 4f;
+        private float GLASS_VALUE_RIGHT => GLASS_COL_W - 4f;
         private const float GLASS_RESET_W = 96f;
         private const float GLASS_RESET_H = 26f;
-        private const float GLASS_RESET_X = WIDTH - CONTENT_TEXT_RM - GLASS_RESET_W;
+        private float GLASS_RESET_X => WIDTH - CONTENT_TEXT_RM - GLASS_RESET_W;
         // 「恢复默认参数」上移到卡片右上角、和说明文字同一行：
         // 原来压在最后一行滑轨下面，既多占一条卡高，又容易在拖完最后一根滑轨时顺手点到。
         private const float GLASS_RESET_TOP_Y = 8f;
-        private static int GlassRowCount => (GlassMaterial.Keys.Length + 2) / 3;
+        private int GlassRowCount => (GlassMaterial.Keys.Length + GlassColumnCount - 1) / GlassColumnCount;
         private static float GlassResetTopY => GLASS_RESET_TOP_Y;
-        private static float GlassCardH => GLASS_ROW0_Y + GlassRowCount * GLASS_ROW_H + 12f;
+        private float GlassCardH => GLASS_ROW0_Y + GlassRowCount * GLASS_ROW_H + 12f;
 
         private const float OPACITY_SLIDER_DY = 44f;
 

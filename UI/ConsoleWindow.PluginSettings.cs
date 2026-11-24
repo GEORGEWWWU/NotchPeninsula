@@ -16,7 +16,7 @@ namespace NotchPeninsula
 
         private const float SETTINGS_HEADER_H = 96f;
         private const float SETTINGS_ROW_H = 34f;
-        private const float SETTINGS_VALUE_X = 410f;
+        private float SettingsValueX => RightColumnText + (WIDTH - CONTENT_TEXT_RM - RightColumnText) * 0.43f;
         private const float SETTINGS_BACK_W = 64f;
 
         private (string PluginId, ISettingsPage Page)? GetPluginSettingsPage()
@@ -44,7 +44,7 @@ namespace NotchPeninsula
             _settingsBackHovered = false;
         }
 
-        private float GetSettingsListTop() => TITLE_BAR_HEIGHT + CARD_TOP_Y + SETTINGS_HEADER_H + 8f;
+        private static float GetSettingsListTop() => TITLE_BAR_HEIGHT + CARD_TOP_Y;
 
         private int GetSettingsMaxScroll()
         {
@@ -64,13 +64,13 @@ namespace NotchPeninsula
         private SKRect GetSettingsRowRect(int index)
         {
             float y = GetSettingsListTop() + 28f + index * SETTINGS_ROW_H - _settingsScroll;
-            return new SKRect(CONTENT_L + 8f, y, WIDTH - CONTENT_RM - 8f, y + SETTINGS_ROW_H - 4f);
+            return new SKRect(RightColumnLeft + 8f, y, WIDTH - CONTENT_RM - 8f, y + SETTINGS_ROW_H - 4f);
         }
 
         private SKRect GetSettingsValueRect(int index)
         {
             var row = GetSettingsRowRect(index);
-            return new SKRect(SETTINGS_VALUE_X, row.Top + 5f, row.Right - 8f, row.Bottom - 5f);
+            return new SKRect(SettingsValueX, row.Top + 5f, row.Right - 8f, row.Bottom - 5f);
         }
 
         private static int SegmentCount(SettingControl c) => c switch
@@ -102,7 +102,7 @@ namespace NotchPeninsula
             if (info == null) return;
 
             float top = GetSettingsListTop() + 28f;
-            if (y < top || y > HEIGHT - 20f) return;
+            if (x < RightColumnLeft || x > WIDTH - CONTENT_RM || y < top || y > HEIGHT - 20f) return;
             int idx = (int)((y - top + _settingsScroll) / SETTINGS_ROW_H);
             if (idx < 0 || idx >= info.Value.Page.Controls.Count) return;
             var row = GetSettingsRowRect(idx);
@@ -157,13 +157,13 @@ namespace NotchPeninsula
             var info = GetPluginSettingsPage();
             float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
 
-            var header = new SKRect(CONTENT_L, topY, WIDTH - CONTENT_RM, topY + SETTINGS_HEADER_H);
+            var header = new SKRect(CONTENT_L, topY, LeftColumnRight, topY + SETTINGS_HEADER_H);
             canvas.DrawRoundRect(header, 6, 6, _cardBg);
             canvas.DrawRoundRect(header, 6, 6, _cardBorder);
             canvas.DrawText("插件设置", CONTENT_TEXT_X, topY + 26, _uiTextPaint);
 
             string name = info == null ? "(插件未提供设置页)" : PluginManager.Instance.Host.GetPluginDisplayName(info.Value.PluginId);
-            canvas.DrawText(TruncateText(name, _uiTextPaint, WIDTH - CONTENT_TEXT_RM - CONTENT_TEXT_X - SETTINGS_BACK_W - 24f),
+            canvas.DrawText(TruncateText(name, _uiTextPaint, LeftColumnRight - CONTENT_TEXT_X - 16f),
                 CONTENT_TEXT_X, topY + 48, _subTextPaint);
 
             var back = GetSettingsBackRect();
@@ -174,13 +174,14 @@ namespace NotchPeninsula
             _uiTextPaint.Color = _fgColor;
 
             float listY = GetSettingsListTop();
-            var listRect = new SKRect(CONTENT_L, listY, WIDTH - CONTENT_RM, HEIGHT - 20f);
+            var listRect = new SKRect(RightColumnLeft, listY, WIDTH - CONTENT_RM, HEIGHT - 20f);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBg);
             canvas.DrawRoundRect(listRect, 6, 6, _cardBorder);
 
+            canvas.DrawText("插件参数", RightColumnText, listY + 23, _uiTextPaint);
             if (info == null)
             {
-                canvas.DrawText("这个插件没有提供设置页。", CONTENT_TEXT_X, listY + 40, _subTextPaint);
+                canvas.DrawText("这个插件没有提供设置页。", RightColumnText, listY + 48, _subTextPaint);
                 return;
             }
 
@@ -198,8 +199,8 @@ namespace NotchPeninsula
                 if (row.Bottom < listRect.Top || row.Top > listRect.Bottom) continue;
 
                 var c = controls[i];
-                canvas.DrawText(TruncateText(c.Label, _subTextPaint, SETTINGS_VALUE_X - CONTENT_TEXT_X - 16f),
-                    CONTENT_TEXT_X + 4f, row.Top + 19f, _subTextPaint);
+                canvas.DrawText(TruncateText(c.Label, _subTextPaint, SettingsValueX - RightColumnText - 16f),
+                    RightColumnText + 4f, row.Top + 19f, _subTextPaint);
 
                 var valueRect = GetSettingsValueRect(i);
                 string raw = host.GetSetting(info.Value.PluginId, c.Key, DefaultOf(c));
@@ -207,6 +208,7 @@ namespace NotchPeninsula
                 if (c is ToggleSetting || c is ChoiceSetting)
                 {
                     string[] labels = c is ToggleSetting ? ["关", "开"] : ((ChoiceSetting)c).Options;
+                    if (labels.Length == 0) continue;
                     int selected = int.TryParse(raw, out int si) ? Math.Clamp(si, 0, labels.Length - 1) : 0;
                     DrawSettingSegments(canvas, labels, selected,
                         _hoveredSettingControl == i ? _hoveredSettingSegment : -1, valueRect);

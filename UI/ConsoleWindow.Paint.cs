@@ -4,37 +4,17 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // ----  ----
-        //  明暗外观（跟随系统「应用模式」自动切换）
-        //  中性色的取反规则只有两条，别各写各的：
-        // ----  ----
+        private static readonly SKColor _fgColor = SKColors.White;
 
-        private static bool _isLightAppearance;
+        private static SKColor Neutral(byte value) => new(value, value, value);
 
-        private static SKColor _fgColor = SKColors.White;
-
-        private static SKColor Neutral(byte v)
-            => _isLightAppearance
-                ? new SKColor((byte)(255 - v), (byte)(255 - v), (byte)(255 - v))
-                : new SKColor(v, v, v);
-
-        private static SKColor Overlay(byte alpha)
-            => _isLightAppearance
-                ? new SKColor(0, 0, 0, alpha)
-                : new SKColor(255, 255, 255, alpha);
-
-        private static bool IsSystemLightAppearance()
-        {
-            return Renderer.SystemIsLightTheme;
-        }
+        private static SKColor Overlay(byte alpha) => new(255, 255, 255, alpha);
 
         private static bool IsLightPreviewCapsule()
             => Renderer.ThemeMode == 2 ? Renderer.SystemIsLightTheme : Renderer.ThemeMode == 1;
 
         // 极致内存优化：全局复用画笔缓存
         private static readonly SKPaint _bgPaint = new SKPaint { Color = new SKColor(32, 32, 32), IsAntialias = true };
-
-        private static readonly SKPaint _titleBarPaint = new SKPaint { Color = new SKColor(40, 40, 40) };
 
         // 设置窗正文的字体 / 字号：正文画笔与「下拉框要留多宽」的实测量共用这一份 ——
         // 只改这里，画出来的字和算出来的框宽会一起变，不会再各写一个 13.5。
@@ -99,15 +79,6 @@ namespace NotchPeninsula
         private static readonly SKPaint _dynamicStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
 
         private static readonly SKPaint _dynamicTextPaint = new SKPaint { TextSize = 13f, IsAntialias = true, Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT) };
-
-        private static readonly SKPath WindowClipPath = CreateWindowClipPath();
-
-        private static SKPath CreateWindowClipPath()
-        {
-            var path = new SKPath();
-            path.AddRoundRect(new SKRect(0, 0, WIDTH, HEIGHT), 8f, 8f);
-            return path;
-        }
 
         // 音量档位下拉的标签（"0%" … "100%"）：来源是固定的 ToastSoundConfig.VolumeOptions，
         private static readonly string[] VolumeOptionLabels = BuildVolumeOptionLabels();

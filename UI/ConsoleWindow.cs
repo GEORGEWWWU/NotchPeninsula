@@ -16,18 +16,17 @@ namespace NotchPeninsula
 
         private static bool _classRegistered = false;
 
-        private const int WIDTH = 600;
+        private const int DefaultWidth = 1008;
 
-        // 高 692 = 660 + 32：2026-10-24 液态玻璃卡加「恢复默认参数」时加高；
-        // 后该按钮挪进卡内第一行（抓屏设置移除腾位），卡高收回 176，窗口高度保留 692 不动。
-        private const int HEIGHT = 692;
+        private float WIDTH => _scaledWidth / _dpiScale;
+        private float HEIGHT => _scaledHeight / _dpiScale;
 
         private const int TITLE_BAR_HEIGHT = 32;
 
         // ---- 内容区横向边界（窗口右侧那一列）----
         // 想各挪十几像素得改上百处）。
-        private const float CONTENT_L = 186f;          // 卡片左边界（与侧栏之间留一点缝）
-        private const float CONTENT_TEXT_X = 202f;     // 卡片内文字左缩进（= CONTENT_L + 16）
+        private float CONTENT_L => SidebarWidth + 12f;          // 卡片左边界（与侧栏之间留一点缝）
+        private float CONTENT_TEXT_X => CONTENT_L + 16f;     // 卡片内文字左缩进（= CONTENT_L + 16）
         private const float CONTENT_RM = 12f;          // 卡片右边界距窗口右边
         private const float CONTENT_TEXT_RM = 28f;     // 卡片内文字右缩进（距窗口右边）
 
@@ -43,14 +42,6 @@ namespace NotchPeninsula
 
         // 插件中心行内按钮（渲染与鼠标命中必须使用同一组坐标）
 
-        private const float PLUGIN_BTN_SETTINGS_X = 348f; // 设置按钮
-
-        private const float PLUGIN_BTN_RELOAD_X = 404f;  // 重载按钮
-
-        private const float PLUGIN_BTN_REMOVE_X = 460f;  // 卸载按钮
-
-        private const float PLUGIN_BTN_TOGGLE_X = 516f;  // 开关按钮
-
         // 34 → 33：行槽只让 1px（item 高 30 不变，行间距 4 → 3），
         // 配合卡片底延到窗底上 6px，正好凑出第 10 行（9.29 行 → 10 行）。
         private const float DISPLAY_ROW_H = 33f;
@@ -59,7 +50,7 @@ namespace NotchPeninsula
 
         // 13 → 9：列表与上面「双击空白切换待机模式」行离得太远，整体上移 4px；
     // 卡高分分支 min(9+10*33=339, 343) 仍够 10 行。
-    private const float DISPLAY_FIRST_ROW_Y = 9f;     // 列表卡片顶部到首件 item 的距离（卡片无标题行）
+    private const float DISPLAY_FIRST_ROW_Y = 36f;     // 列表卡片顶部到首件 item 的距离（卡片无标题行）
 
         // 8 → 10：卡片底部原本空着两行多的高度，列表却只排 8 行。
         // 多出来的两行靠**列表内部滚动**看，卡片本身不再变高 —— 显示设置页是整页排布的，
@@ -68,13 +59,12 @@ namespace NotchPeninsula
 
         // 列表卡顶 = 双击切换行控件实际底（ROW_ANCHOR_Y + TOGGLE_TRACK_H/2，比 ROW_H 槽位低 2px）
         // 再留 CARD_GAP —— 槽位底只有 38，控制底在 +40，按槽位算间距会缩水成 8。
-        private const float DISPLAY_CARD_Y =
-            TOGGLE_ROW_Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f + CARD_GAP;
+        private const float DISPLAY_CARD_Y = CARD_TOP_Y;
 
         // 卡片高度取「窗口剩余空间」，不再由行数派生：
         // 行数多了让列表自己滚（GetDisplayListLayout 按这个高度算可视行数），整页不滚。
         // 底部只留 6px：预留 20px 时 fitRows = 9.29 截成 9 行，末行底下白一大条。
-        private static float DISPLAY_CARD_H => Math.Min(
+        private float DISPLAY_CARD_H => Math.Min(
             DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H,
             HEIGHT - 6f - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y));
 
@@ -86,11 +76,13 @@ namespace NotchPeninsula
 
         private static float LiveWindowMediaCardTop => TITLE_BAR_HEIGHT + CARD_TOP_Y + LW_INTRO_CARD_H + CARD_GAP;
 
-        private static float LiveWindowPluginCardTop => LiveWindowMediaCardTop + LW_MEDIA_CARD_H + CARD_GAP;
+        private static float LiveWindowPluginCardTop => TITLE_BAR_HEIGHT + CARD_TOP_Y;
 
         private static float LiveWindowPluginRowTop => LiveWindowPluginCardTop + LW_CARD_HEADER_H;
+        private int _liveWindowScroll;
+        private int LiveWindowVisibleRows => Math.Max(1, (int)((HEIGHT - LiveWindowPluginRowTop - 22f) / LW_ROW_H));
 
-        private const float DISPLAY_ITEM_L = CONTENT_L;
+        private float DISPLAY_ITEM_L => RightColumnLeft + 6f;
 
         private const int DISPLAY_WHEEL_STEP_ROWS = 3;
 
@@ -123,7 +115,7 @@ namespace NotchPeninsula
         // 两选项框整组在卡内水平居中（组内间距 STYLE_OPT_GAP 保持不变，动的是整组不是框）。
         private const float STYLE_GROUP_W = STYLE_OPT_W * 2f + STYLE_OPT_GAP;
 
-        private const float STYLE_OPT_X = CONTENT_L + ((WIDTH - CONTENT_RM - CONTENT_L) - STYLE_GROUP_W) / 2f;   // 227
+        private float STYLE_OPT_X => CONTENT_L + ((LeftColumnRight - CONTENT_L) - STYLE_GROUP_W) / 2f;   // 227
 
         private const float ROW_H = 38f;
 
@@ -141,21 +133,21 @@ namespace NotchPeninsula
 
         // 显示页控件右缘：与卡片文字同一右缩进（WIDTH - CONTENT_TEXT_RM）。
         // 之前用 WIDTH - CONTENT_RM（顶着卡片边线），比开关 / 列表箭头凸出一截，整行看起来偏右。
-        private const float DISPLAY_CTRL_RIGHT = WIDTH - CONTENT_TEXT_RM;
+        private float DISPLAY_CTRL_RIGHT => LeftColumnRight - 16f;
 
         // 三段：待机 / 普通 / 静默（新增静默模式后从 2×92 扩到 3×92）。
         // 左缘 296 落在「显示模式」标签（202 起，约 250 终）右侧，仍留 46px 呼吸。
-        private const float MODE_SEG_W = 276f;                                  // 3 段 × 92
+        private float MODE_SEG_W => MathF.Min(276f, DISPLAY_CTRL_RIGHT - CONTENT_TEXT_X - 100f);
 
-        private const float MODE_SEG_X = DISPLAY_CTRL_RIGHT - MODE_SEG_W;       // 296
+        private float MODE_SEG_X => DISPLAY_CTRL_RIGHT - MODE_SEG_W;       // 296
 
         private const float SCENE_ROW_Y = MODE_ROW_Y + 44f;                     // 228
 
-        private const float SCENE_SEG_W = 240f;                                 // 待机显示内容下拉：占满原来三个按钮的整行宽度
+        private float SCENE_SEG_W => MathF.Min(240f, DISPLAY_CTRL_RIGHT - CONTENT_TEXT_X - 100f);
 
         private const float SCENE_DD_H = 32f;                                   // 和其它下拉框统一高度
 
-        private const float SCENE_SEG_X = DISPLAY_CTRL_RIGHT - SCENE_SEG_W;     // 332
+        private float SCENE_SEG_X => DISPLAY_CTRL_RIGHT - SCENE_SEG_W;     // 332
 
         private const float TOGGLE_ROW_Y = SCENE_ROW_Y + 33f;                   // 261
 
@@ -176,16 +168,16 @@ namespace NotchPeninsula
 
         private static int Sign(int v) => v > 0 ? 1 : v < 0 ? -1 : 0;
 
-        private const float DISPLAY_ITEM_R = WIDTH - CONTENT_RM;
+        private float DISPLAY_ITEM_R => WIDTH - CONTENT_RM;
 
         private const float DISPLAY_MOVE_PAD_R = 12f;   // 排序箭头槽右缩进：让箭头图形右缘落在 DISPLAY_CTRL_RIGHT（572）
 
-        private const float DISPLAY_MOVE_DOWN_X = DISPLAY_ITEM_R - DISPLAY_MOVE_PAD_R - SORT_TRI_W;          // 562（槽 562..580）
+        private float DISPLAY_MOVE_DOWN_X => DISPLAY_ITEM_R - DISPLAY_MOVE_PAD_R - SORT_TRI_W;          // 562（槽 562..580）
 
-        private const float DISPLAY_MOVE_UP_X = DISPLAY_MOVE_DOWN_X - SORT_TRI_W - 8f;                      // 536（槽 536..554）
+        private float DISPLAY_MOVE_UP_X => DISPLAY_MOVE_DOWN_X - SORT_TRI_W - 8f;                      // 536（槽 536..554）
 
         /// <summary>长按拖动把手：在上下箭头左边再让一格（槽 510..528），与箭头同宽、同高。</summary>
-        private const float DISPLAY_DRAG_X = DISPLAY_MOVE_UP_X - SORT_TRI_W - 8f;                           // 510
+        private float DISPLAY_DRAG_X => DISPLAY_MOVE_UP_X - SORT_TRI_W - 8f;                           // 510
 
         /// <summary>长按多久才进入拖动（毫秒）。短按只当作普通点击，不会误触排序。</summary>
         private const int DISPLAY_DRAG_HOLD_MS = 180;
@@ -214,13 +206,13 @@ namespace NotchPeninsula
         /// <summary>页签行首（相对标题栏），**按页签号索引**——顺序与侧边栏视觉顺序不同，
         ///    绘制顺序见 RenderSidebar。绘制 / 命中 / 滑动动画三处都从这里取，别再写死数字。
         ///    9 = 静默模式设置（插在显示设置下面，实况窗管理及其后整体下移 40）。</summary>
-        private static readonly float[] SidebarTabY = { 60f, 100f, 220f, 260f, 400f, 10f, 310f, 350f, 180f, 140f };
+        private static readonly float[] SidebarTabY = { 48f, 86f, 200f, 238f, 352f, 10f, 276f, 314f, 162f, 124f };
 
         private const float TAB_ROW_H = 36f;          // 页签行高
 
         private const float TAB_BOX_L = 10f;          // 页签选中块 / 悬停块的左右边界
 
-        private const float TAB_BOX_R = 170f;
+        private float TAB_BOX_R => SidebarWidth - 10f;
 
         private const float TAB_BAR_DY = 8f;          // 蓝色竖条相对行首的上下内缩（竖条高 = 36 - 2×8）
 
@@ -232,7 +224,7 @@ namespace NotchPeninsula
             => index >= 0 && index < SidebarTabY.Length ? SidebarTabY[index] : 0f;
 
         /// <summary>侧边栏命中（画布 DIP 坐标）。绘制 / 悬停 / 光标三处都走它，别再各写一遍区间。</summary>
-        private static int HitSidebarTab(int x, int y)
+        private int HitSidebarTab(int x, int y)
         {
             if (x < TAB_BOX_L || x > TAB_BOX_R) return -1;
             for (int i = 0; i < SidebarTabY.Length; i++)
@@ -279,7 +271,7 @@ namespace NotchPeninsula
 
         private const float TOPMOST_CARD_Y = CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;          // 84 窗口置顶
 
-        private const float TOAST_ROW1_Y = CARD_TOP_Y + (TOGGLE_CARD_H + CARD_GAP) * 2f;     // 156
+        private const float TOAST_ROW1_Y = CARD_TOP_Y;     // 156
 
         private const float TOAST_ROW2_Y = TOAST_ROW1_Y + 54f;
 
@@ -335,7 +327,7 @@ namespace NotchPeninsula
 
         private const float TOAST_MODE_CTRL_W = 110f;
 
-        private const float TOAST_MODE_CTRL_X = WIDTH - CARD_PAD_RIGHT - TOAST_MODE_CTRL_W;
+        private float TOAST_MODE_CTRL_X => WIDTH - CARD_PAD_RIGHT - TOAST_MODE_CTRL_W;
 
         private const float SOUND_ROW3_Y = TOAST_ROW2_Y + 54f;
 
@@ -349,11 +341,11 @@ namespace NotchPeninsula
 
         private const float SOUND_ROW_Y = SOUND_ROW3_Y + 54f;
 
-        private const float SOUND_ROW_TITLE_Y = SOUND_ROW_Y + ROW_TEXT_BASELINE_SINGLE;
+        private const float SOUND_ROW_TITLE_Y = SOUND_ROW_Y + 17f;
 
         private const float SOUND_ROW_H = 32f;
 
-        private const float SOUND_BOX_Y = SOUND_ROW_Y + ROW_DROPDOWN_TOP;
+        private const float SOUND_BOX_Y = SOUND_ROW_Y + 26f;
 
         private const float TOAST_CARD_BOTTOM = SOUND_BOX_Y + SOUND_ROW_H + 10f;
 
@@ -365,19 +357,17 @@ namespace NotchPeninsula
 
         private const float SOUND_BTN_W = 46f;
 
-        private const float SOUND_RESET_X = WIDTH - CARD_PAD_RIGHT - SOUND_BTN_W;
+        private float SOUND_RESET_X => WIDTH - CARD_PAD_RIGHT - SOUND_BTN_W;
 
-        private const float SOUND_PREVIEW_X = SOUND_RESET_X - SOUND_BTN_GAP - SOUND_BTN_W;
+        private float SOUND_PREVIEW_X => SOUND_RESET_X - SOUND_BTN_GAP - SOUND_BTN_W;
 
-        private const float SOUND_LABEL_X = CONTENT_TEXT_X;
+        private float SOUND_LABEL_X => RightColumnText;
 
-        private const float SOUND_LABEL_GAP = 8f;
-
-        private const float SOUND_CTRL_X = SOUND_LABEL_X + 40f + SOUND_LABEL_GAP;
+        private float SOUND_CTRL_X => SOUND_LABEL_X;
 
         // 来源框宽度固定为上一版的结果（250 → 385）：音量框再宽也不去抢它的宽度，
         // 多出来的宽度由音量框向自己左右两侧的间隙里「撑开」。
-        private const float SOUND_CTRL_W = 135f;
+        private float SOUND_CTRL_W => MathF.Min(135f, SOUND_PREVIEW_X - SOUND_VOL_W - SOUND_CTRL_X - 12f);
 
         // 音量框宽度：按「最宽档位标签」实测算出来，不再手调数字。
         // 58 时「100%」被截成「10…」；上一版「中心不动」补到 72 仍然差一点 ——
@@ -388,7 +378,7 @@ namespace NotchPeninsula
 
         // 音量框夹在「来源框右缘」与「试听左缘」之间：左右剩余空间均分 ——
         // 框向两侧长出来的量一样多，两侧间隙始终相等（当前 5.5px）。
-        private static readonly float SOUND_VOL_X =
+        private float SOUND_VOL_X =>
             (SOUND_CTRL_X + SOUND_CTRL_W + SOUND_PREVIEW_X) / 2f - SOUND_VOL_W / 2f;
 
         private static float MeasureVolumeBoxWidth()
@@ -401,7 +391,7 @@ namespace NotchPeninsula
 
         // MSP 接入（实验性）：通知卡之后，与本页同一节奏（卡高 62 + 间隙 10）。
         // 本页内容底边 = FONT_CARD_Y + 62，必须 ≤ HEIGHT - TITLE_BAR_HEIGHT（现 548 ≤ 628）。
-        private const float MSP_CARD_Y = TOAST_CARD_BOTTOM + CARD_GAP;
+        private const float MSP_CARD_Y = TOPMOST_CARD_Y + TOGGLE_CARD_H + CARD_GAP;
 
         // 标题后面的「实验性」小标签（目前只有 MSP 卡用）：位置跟着标题文字走，见 DrawInlineBadge
         private const float BADGE_H = 15f;
@@ -442,9 +432,9 @@ namespace NotchPeninsula
 
         private const float FONT_PICK_W = 78f;         // [选择字体] 按钮宽度
 
-        private const float FONT_RESET_X = WIDTH - CONTENT_TEXT_RM - FONT_RESET_W;
+        private float FONT_RESET_X => LeftColumnRight - 16f - FONT_RESET_W;
 
-        private const float FONT_PICK_X = FONT_RESET_X - 10 - FONT_PICK_W;
+        private float FONT_PICK_X => FONT_RESET_X - 10 - FONT_PICK_W;
 
         // 交互设置页卡片（大卡与单行开关卡混排，间距同一来源）：
 
@@ -452,13 +442,13 @@ namespace NotchPeninsula
 
         private const float AUTOHIDE_CARD_H = 248f;   // 总开关 + 三行模式 + 两条内分隔线
 
-        private const float MEDIA_EXP_CARD_Y = AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H + CARD_GAP;   // 270
+        private const float MEDIA_EXP_CARD_Y = CARD_TOP_Y;   // 270
 
         private const float APP_LAUNCH_CARD_Y = MEDIA_EXP_CARD_Y + TOGGLE_CARD_H + CARD_GAP;   // 342
 
-        private const float PASS_CARD_Y = APP_LAUNCH_CARD_Y + TOGGLE_CARD_H + CARD_GAP;        // 414
+        private const float PASS_CARD_Y = AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H + CARD_GAP;        // 414
 
-        private const float ISLAND_HOTKEY_CARD_Y = PASS_CARD_Y + TOGGLE_CARD_H + CARD_GAP;     // 486
+        private const float ISLAND_HOTKEY_CARD_Y = APP_LAUNCH_CARD_Y + TOGGLE_CARD_H + CARD_GAP;     // 486
 
         private const float ISLAND_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;               // 76
 
@@ -470,35 +460,41 @@ namespace NotchPeninsula
 
         // 媒体设置页卡片顺序（合并后）：
 
-        private const float PLATFORM_CARD_Y = TITLE_BAR_HEIGHT + CARD_TOP_Y + TOGGLE_CARD_H + MEDIA_LIVE_ROW_DY + CARD_GAP;   // 合并卡片顶部
+        private const float MediaCardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
+        private const float MediaRowStart = CARD_TOP_Y + 4f;
+        private const float MediaTopCardHeight = 118f;
+        private const float ColumnGap = 16f;
+        private const float PlatformBoxY = MediaCardTop + 18f;
+        private const float PlatformMenuY = PlatformBoxY + 34f;
+        private float PlatformBoxX => WIDTH - 140f;
+        private float LeftColumnRight => (CONTENT_L + WIDTH - CONTENT_RM - ColumnGap) / 2f;
+        private float RightColumnLeft => LeftColumnRight + ColumnGap;
+        private float RightColumnText => RightColumnLeft + 16f;
+        private const float PLATFORM_ROW2_Y = MediaCardTop + 52f;
+        private const float LYRIC_CARD_Y = MediaCardTop + MediaTopCardHeight + 12f;
 
-        private const float PLATFORM_CARD_H = 124f;
-
-        private const float PLATFORM_ROW2_Y = TITLE_BAR_HEIGHT + 146f + MEDIA_LIVE_ROW_DY;   // 第 2 行「匹配方式」行首
-
-        private const float LYRIC_CARD_Y = PLATFORM_CARD_Y + PLATFORM_CARD_H + CARD_GAP;   // 218 歌词设置卡片顶部
-
-        private const float LYRIC_CARD_H = 160f;
 
         private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
 
         private const float MATCH_BOX_H = 32f;
 
-        private const float MATCH_MODE_X = 340f;       // 左框：自动匹配 / 手动选择软件
+        private float MATCH_MODE_X => WIDTH - 260f;       // 左框：自动匹配 / 手动选择软件
 
-        private const float MATCH_APP_X = 460f;        // 右框：手动模式下的目标软件
+        private float MATCH_APP_X => WIDTH - 140f;        // 右框：手动模式下的目标软件
 
-        private const float MATCH_ROW_Y = TITLE_BAR_HEIGHT + 158f + MEDIA_LIVE_ROW_DY;   // 选项框顶部（= 第 2 行行首 +12）
+        private const float MATCH_ROW_Y = MediaCardTop + 76f;   // 选项框顶部（= 第 2 行行首 +12）
 
-        private const float MATCH_MENU_Y = TITLE_BAR_HEIGHT + 192f + MEDIA_LIVE_ROW_DY;  // 下拉菜单顶部（= 选项框底 +2）
+        private const float MATCH_MENU_Y = MATCH_ROW_Y + MATCH_BOX_H + 2f;  // 下拉菜单顶部（= 选项框底 +2）
 
-        private const float MATCH_MENU_RIGHT = 570f;   // 软件菜单右边界
+        private float MATCH_MENU_RIGHT => WIDTH - 30f;   // 软件菜单右边界
 
         private const float APP_MENU_W = 280f;         // 软件菜单宽度
 
-        private const float HOTKEY_CARD_Y = LYRIC_CARD_Y + LYRIC_CARD_H + CARD_GAP;   // 404
+        private const float HOTKEY_CARD_Y = LYRIC_CARD_Y;   // 404
 
-        private const float HOTKEY_CARD_H = 214f;
+        private const float MediaLyricsTopInset = 12f;
+        private const float MediaHotkeyHeadHeight = 40f;
+        private const float HOTKEY_CARD_H = 206f;
 
         // 卡片头部留白：标题 + 副标题 + 总开关整体下移 4px，顶部留一点呼吸
         private const float HOTKEY_HEAD_H = 48f;
@@ -509,9 +505,9 @@ namespace NotchPeninsula
 
         private const float HOTKEY_BOX_H = 24f;
 
-        private const float HOTKEY_BOX_RIGHT = WIDTH - CONTENT_TEXT_RM;
+        private float HOTKEY_BOX_RIGHT => WIDTH - CONTENT_TEXT_RM;
 
-        private const float HOTKEY_BOX_X = HOTKEY_BOX_RIGHT - HOTKEY_BOX_W;
+        private float HOTKEY_BOX_X => HOTKEY_BOX_RIGHT - HOTKEY_BOX_W;
 
         private bool _minHovered = false;
 
@@ -725,9 +721,9 @@ namespace NotchPeninsula
         // 绘制 / 悬停 / 点击三处共用这套几何。
         // 左下两个方向的留白取同一个值 —— 底部写死数字会和左边一点点对不上，所以由 X 和按钮高推出来。
         private const float EXPORT_BTN_X = TAB_BOX_L;                     // 10，与页签块左缘对齐
-        private const float EXPORT_BTN_W = 96f;                           // 「导出诊断包」5 字 + 左右呼吸，别占满整行
+        private float EXPORT_BTN_W => _sidebarCollapsed ? 40f : 96f;                           // 「导出诊断包」5 字 + 左右呼吸，别占满整行
         private const float EXPORT_BTN_H = 28f;
-        private const float EXPORT_BTN_Y = HEIGHT - EXPORT_BTN_X - EXPORT_BTN_H;   // 622，下边留白 == 左边留白
+        private float EXPORT_BTN_Y => HEIGHT - EXPORT_BTN_X - EXPORT_BTN_H;   // 622，下边留白 == 左边留白
 
         private bool _aboutExportHovered = false;
         private bool _aboutExporting = false;
@@ -737,9 +733,9 @@ namespace NotchPeninsula
         // 单文件发布每次换 exe 都会在 %TEMP%\.net\<名>\ 下多解包一份，旧的从不回收，
         // 没有这个入口用户根本不知道那 1.4GB 是谁占的。
         private const float CACHE_BTN_X = EXPORT_BTN_X;
-        private const float CACHE_BTN_W = EXPORT_BTN_W;
+        private float CACHE_BTN_W => EXPORT_BTN_W;
         private const float CACHE_BTN_H = EXPORT_BTN_H;
-        private const float CACHE_BTN_Y = EXPORT_BTN_Y - EXPORT_BTN_H - 6f;
+        private float CACHE_BTN_Y => EXPORT_BTN_Y - EXPORT_BTN_H - 6f;
 
         // 后台清理线程只写这三个，UI 线程读来画（同 WM_ASYNC_RERENDER 那套铁律）
         private volatile bool _cacheCleanHovered = false;
@@ -820,10 +816,10 @@ namespace NotchPeninsula
             maxFirstRow = Math.Max(0, total - visibleRows);
         }
 
-        private static float GetDisplayPageMaxScroll()
+        private float GetDisplayPageMaxScroll()
             => Math.Max(0f, TITLE_BAR_HEIGHT + DISPLAY_CARD_Y + DISPLAY_CARD_H + 6f - HEIGHT);
 
-        private static void GetPageScrollbarLayout(out float trackTop, out float trackH)
+        private void GetPageScrollbarLayout(out float trackTop, out float trackH)
         {
             trackTop = TITLE_BAR_HEIGHT + 6f;
             trackH = HEIGHT - TITLE_BAR_HEIGHT - 12f;
@@ -1032,8 +1028,8 @@ namespace NotchPeninsula
             }
             else if (_selectedTab == 2)
             {
-                if (x >= WIDTH - 140 && x <= WIDTH - 30
-                    && y >= TITLE_BAR_HEIGHT + 98 + MEDIA_LIVE_ROW_DY && y <= TITLE_BAR_HEIGHT + 128 + MEDIA_LIVE_ROW_DY)
+                if (x >= PlatformBoxX && x <= PlatformBoxX + 110
+                    && y >= PlatformBoxY && y <= PlatformBoxY + 32)
                     return DropdownKind.Platform;
                 bool matchEnabled = MediaController.TargetPlatform == "other";
                 if (matchEnabled
@@ -1276,15 +1272,8 @@ namespace NotchPeninsula
                 _classRegistered = true;
             }
 
-            _dpiScale = Win32.GetDpiForSystem() / 96f;
-            _scaledWidth = (int)(WIDTH * _dpiScale);
-            _scaledHeight = (int)(HEIGHT * _dpiScale);
-
-            int screenWidth = Screen.PrimaryScreen?.Bounds.Width ?? 1920;
-            int screenHeight = Screen.PrimaryScreen?.Bounds.Height ?? 1080;
-
-            int left = (screenWidth - _scaledWidth) / 2;
-            int top = (screenHeight - _scaledHeight) / 2;
+            var workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+            var bounds = SetInitialGeometry(workArea, Win32.GetDpiForSystem());
             IntPtr hInstance = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero;
 
             // 采用“双窗口”结构：
@@ -1294,7 +1283,7 @@ namespace NotchPeninsula
                     Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE,
                     "NotchConsoleClass", string.Empty,
                     Win32.WS_POPUP | Win32.WS_VISIBLE,
-                    left, top,
+                    bounds.Left, bounds.Top,
                     _scaledWidth, _scaledHeight,
                     IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
                 );
@@ -1308,12 +1297,20 @@ namespace NotchPeninsula
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_LAYERED | Win32.WS_EX_APPWINDOW,
                 "NotchConsoleClass", "NotchPeninsula",
-                Win32.WS_POPUP | Win32.WS_VISIBLE | Win32.WS_MINIMIZEBOX,
-                left, top,
+                Win32.WS_POPUP | Win32.WS_VISIBLE | Win32.WS_MINIMIZEBOX | WsThickFrame,
+                bounds.Left, bounds.Top,
                 _scaledWidth, _scaledHeight,
                 IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero
             );
 
+            uint actualDpi = Win32.GetDpiForWindow(_hwnd);
+            if (actualDpi > 0 && _monitorScale != actualDpi / 96f)
+            {
+                bounds = SetInitialGeometry(workArea, actualDpi);
+                Win32.SetWindowPos(_hwnd, IntPtr.Zero, bounds.Left, bounds.Top,
+                    bounds.Width, bounds.Height, Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+                ApplyRoundedRegion(_backdropHwnd);
+            }
             SyncBackdropToContent();
 
             SetupPluginDropTarget();
@@ -1443,6 +1440,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_EXITSIZEMOVE:
+                    RememberWindowSize();
                     EndDragMove();
                     break;
 
@@ -1455,16 +1453,48 @@ namespace NotchPeninsula
                     }
                     break;
 
+                case WmNcCalcSize:
+                    return IntPtr.Zero;
+
+                case WmGetMinMaxInfo:
+                    ApplyTrackLimits(hwnd, lParam);
+                    return IntPtr.Zero;
+
+                case Win32.WM_NCHITTEST:
+                    if (TryHitResizeBorder(hwnd, lParam, out int hit))
+                        return (IntPtr)hit;
+                    break;
+
+                case WmWindowPosChanging:
+                    if (_hwnd != IntPtr.Zero)
+                        ConstrainWindowPosition(hwnd, lParam);
+                    break;
+
+                case WmSizing:
+                    ConstrainSizingRect(hwnd, Win32.Low32(wParam), lParam);
+                    return (IntPtr)1;
+
+                case WmDpiChanged:
+                    if (_hwnd != IntPtr.Zero)
+                        ApplyMonitorDpi(wParam, lParam);
+                    return IntPtr.Zero;
+
                 case Win32.WM_SIZE:
                     if (Win32.Low32(wParam) == Win32.SIZE_MINIMIZED)
                     {
+                        _backdropMinimized = true;
                         HideBackdrop();
                     }
                     else if (_hwnd != IntPtr.Zero)
                     {
-                        ShowBackdrop();
-                        ReapplyBackdropMaterial();
-                        Render();
+                        if (_backdropMinimized)
+                        {
+                            _backdropMinimized = false;
+                            CenterRestoredWindow();
+                            ShowBackdrop();
+                            ReapplyBackdropMaterial();
+                        }
+                        RefreshWindowGeometry();
                     }
                     break;
 
@@ -1533,15 +1563,9 @@ namespace NotchPeninsula
                 {
                     _consoleAdvancedEffectsEnabled = null;
                     SyncBackdropToContent(keepZOrder: _dragMoving);
-                    bool wasLight = _isLightAppearance;
-                    ApplyAppearance();
-                    if (_isLightAppearance != wasLight)
-                    {
-                        Logger.Debug($"[外观] 主题切换 → {(_isLightAppearance ? "浅色" : "深色")} sel={_selectedTab} slideT={_tabSlideT:F2}");
-                        ReapplyBackdropMaterial();
-                        ApplyBackdropPalette();
-                        Render();
-                    }
+                    Renderer.InvalidateSystemThemeCache();
+                    ReapplyBackdropMaterial();
+                    Render();
                     break;
                 }
 
@@ -1557,10 +1581,17 @@ namespace NotchPeninsula
                     // hover 一变就 Render，而 Render 走 UpdateLayeredWindow（顺手把窗口重定位一次），
                     // 等于在拖动循环里插一次窗口搬移 —— 越拖越跟不上。
                     if (_dragMoving) break;
+                    TrackSidebarMouseLeave(hwnd);
                     OnMouseMove(
                         (int)((short)(Win32.Low32(lParam) & 0xFFFF) / _dpiScale),
                         (int)((short)((Win32.Low32(lParam) >> 16) & 0xFFFF) / _dpiScale),
                         (Win32.Low32(wParam) & 0x0001) != 0);
+                    break;
+
+                case Win32.WM_MOUSELEAVE:
+                    _trackingSidebarMouse = false;
+                    if (!_dragMoving)
+                        OnMouseMove(-1, -1, false);
                     break;
 
                 case Win32.WM_LBUTTONDOWN:
@@ -1677,6 +1708,26 @@ namespace NotchPeninsula
                         return IntPtr.Zero;
                     }
 
+                    if (_selectedTab == 9)
+                    {
+                        int steps = (short)((wParam.ToInt64() >> 16) & 0xFFFF) / 120;
+                        int max = Math.Max(0, PluginManager.Instance.SilentDisplayItems.Count - SilentListVisibleRows());
+                        _silentListScroll = Math.Clamp(_silentListScroll - steps * 3, 0, max);
+                        SyncHoverFromCursor();
+                        Render();
+                        return IntPtr.Zero;
+                    }
+
+                    if (_selectedTab == 8)
+                    {
+                        int steps = (short)((wParam.ToInt64() >> 16) & 0xFFFF) / 120;
+                        int max = Math.Max(0, LiveWindowHost.KnownPluginOwners.Count - LiveWindowVisibleRows);
+                        _liveWindowScroll = Math.Clamp(_liveWindowScroll - steps * 3, 0, max);
+                        SyncHoverFromCursor();
+                        Render();
+                        return IntPtr.Zero;
+                    }
+
                     if (_selectedTab == 6 || _selectedTab == 7)
                     {
                         if (_marketDialog != MarketDialog.None) return IntPtr.Zero;   // 弹窗打开：吞掉滚轮
@@ -1694,14 +1745,14 @@ namespace NotchPeninsula
                         else if (_selectedTab == 7)
                         {
                             GetMarketListLayout(out _, out int marketMaxFirst);
-                            int mTarget = Math.Clamp(_marketScroll - steps, 0, marketMaxFirst);
+                            int mTarget = Math.Clamp(_marketScroll - steps * PluginColumns, 0, marketMaxFirst);
                             moved = mTarget != _marketScroll;
                             _marketScroll = mTarget;
                         }
                         else
                         {
                             GetPluginListLayout(out _, out int pluginMaxFirst);
-                            int pTarget = Math.Clamp(_pluginScroll - steps, 0, pluginMaxFirst);
+                            int pTarget = Math.Clamp(_pluginScroll - steps * PluginColumns, 0, pluginMaxFirst);
                             moved = pTarget != _pluginScroll;
                             _pluginScroll = pTarget;
                         }
@@ -1814,12 +1865,10 @@ namespace NotchPeninsula
             return Win32.DefWindowProc(hwnd, msg, wParam, lParam);
         }
 
-        private void Render()
+        private void Render(bool resizing = false)
         {
-            // 拖动期间一次都不要上传位图：UpdateLayeredWindow 会把窗口重新定位一次，
-            // 和系统拖动循环的移动撞在一起，就是「半张窗口空掉、直接看到下面」。
-            // 拖动中该显示的状态变化不会丢 —— EndDragMove 收尾会补一帧。
-            if (_dragMoving) return;
+            // 移动中延迟普通重绘，尺寸变化则必须上传与新尺寸匹配的位图。
+            if (_dragMoving && !resizing) return;
 
             lock (_renderLock)
             {
@@ -1846,15 +1895,14 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(windowRect, cornerRadius, cornerRadius, _bgPaint);
 
             canvas.Save();
-            canvas.ClipPath(WindowClipPath, SKClipOperation.Intersect, true);
+            using var outline = new SKRoundRect(windowRect, cornerRadius, cornerRadius);
+            canvas.ClipRoundRect(outline, SKClipOperation.Intersect, true);
 
-            if (_backdropMode == BackdropMaterialMode.SolidDark)
-                canvas.DrawRect(0, 0, WIDTH, TITLE_BAR_HEIGHT, _titleBarPaint);
-
-            float textX = 14f;
+            DrawSidebarToggle(canvas);
+            float textX = 58f;
             if (_appIconBitmap != null)
             {
-                var iconRect = new SKRect(14, 8, 14 + 16, 8 + 16);
+                var iconRect = new SKRect(textX, 8, textX + 16, 24);
                 canvas.DrawBitmap(_appIconBitmap, iconRect, _hqSamplingOpts);
                 textX += 24f;
             }
@@ -1897,6 +1945,7 @@ namespace NotchPeninsula
             canvas.Restore();
 
             RenderDropdowns(canvas);
+            DrawSidebarTooltip(canvas);
 
             canvas.DrawRoundRect(new SKRect(0.5f, 0.5f, WIDTH - 0.5f, HEIGHT - 0.5f), cornerRadius, cornerRadius, _globalBorderPaint);
 
@@ -1953,6 +2002,7 @@ namespace NotchPeninsula
             }
             catch (Exception ex)
             {
+                DisposeRenderBuffer();
                 Logger.Error("[ConsoleWindow] 创建渲染缓冲失败", ex);
                 return false;
             }
