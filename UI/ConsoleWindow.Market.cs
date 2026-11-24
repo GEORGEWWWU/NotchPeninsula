@@ -381,13 +381,13 @@ namespace NotchPeninsula
         private const float MarketControlH = 26f;                       // 控件行高（两行共用）
         private const float MarketCatBtnW = 132f;                       // 分类按钮宽（左起 CONTENT_TEXT_X）
         private float MarketSearchX => CONTENT_TEXT_X + MarketCatBtnW + 16f;       // 350
-        private float MarketSearchW => PluginLayoutButton(false, MarketControlsY).Left - 10 - MarketSearchX;     // 214
+        private float MarketSearchW => MarketRefreshX + MarketRefreshW - MarketSearchX;
 
         private const float MarketStatusRowY = TITLE_BAR_HEIGHT + 58f;  // 第二行顶（90）
         private const float MarketStatusBaseline = MarketStatusRowY + 17f;
         private const float MarketRefreshW = 50f;
         private float MarketRefreshX => WIDTH - MarketRightPad - MarketRefreshW;   // 514
-        private float MarketTileTop => TITLE_BAR_HEIGHT + (_showPluginCards ? 102f : 96f);
+        private const float MarketTileTop = TITLE_BAR_HEIGHT + 96f;
 
         private float MarketChkX => CONTENT_TEXT_X;
         private const float MarketChkBoxSize = 16f;

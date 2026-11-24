@@ -323,8 +323,6 @@ namespace NotchPeninsula
                 return;
             }
 
-            if (HandlePluginLayoutClick(clickX, clickY)) return;
-
             SyncHotkeyHoverFromPoint(clickX, clickY);
             SyncExportHoverFromPoint(clickX, clickY);
             int clickedTab = HitSidebarTab(clickX, clickY);

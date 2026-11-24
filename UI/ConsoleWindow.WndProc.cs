@@ -187,7 +187,6 @@ namespace NotchPeninsula
             bool newSoundPreviewHovered = false;
             bool newSoundResetHovered = false;
             int newHoveredPluginAction = -1;
-            int newHoveredPluginLayout = HitPluginLayoutButton(x, y);
             bool newLiveWindowMediaHovered = false;   // 实况窗管理页：媒体行
             int newLiveWindowHoverRow = -1;           // 实况窗管理页：插件行
             int newHoveredMarketSortIndex = -1;   // 市场排序：菜单内悬停项；-2 = 框本体
@@ -880,7 +879,6 @@ namespace NotchPeninsula
                 newMspToggleHovered != _mspToggleHovered ||
                 newMspWikiHovered != _mspWikiHovered ||
                 newHoveredPluginAction != _hoveredPluginAction ||
-                newHoveredPluginLayout != _hoveredPluginLayout ||
                 newHoveredPluginToggle != _hoveredPluginToggle ||
                 newHoveredPluginReload != _hoveredPluginReload ||
                 newHoveredPluginRemove != _hoveredPluginRemove ||
@@ -974,7 +972,6 @@ namespace NotchPeninsula
                 _mspToggleHovered = newMspToggleHovered;
                 _mspWikiHovered = newMspWikiHovered;
                 _hoveredPluginAction = newHoveredPluginAction;
-                _hoveredPluginLayout = newHoveredPluginLayout;
                 _hoveredPluginToggle = newHoveredPluginToggle;
                 _hoveredPluginReload = newHoveredPluginReload;
                 _hoveredPluginRemove = newHoveredPluginRemove;

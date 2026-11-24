@@ -193,11 +193,11 @@ namespace NotchPeninsula
                         || _hoveredGlassParamIndex >= 0 || _hoveredGlassReset,
                 6 => _settingsPluginId != null
                     ? _settingsBackHovered || _hoveredSettingControl >= 0
-                    : _hoveredPluginLayout >= 0 || _hoveredPluginAction >= 0 || _hoveredPluginToggle >= 0
+                    : _hoveredPluginAction >= 0 || _hoveredPluginToggle >= 0
                         || _hoveredPluginReload >= 0 || _hoveredPluginRemove >= 0 || _hoveredPluginSettings >= 0,
                 7 => _marketCategoryOpen || _marketSortOpen
                     ? _hoveredMarketCategoryIndex >= 0 || _hoveredMarketSortIndex >= 0
-                    : _hoveredPluginLayout >= 0 || _hoveredMarketSortBox || _hoveredMarketCategoryIndex == -2
+                    : _hoveredMarketSortBox || _hoveredMarketCategoryIndex == -2
                         || _hoveredMarketChk || (_hoveredMarketRefresh && !_marketFetching)
                         || (_hoveredMarketUpdateAll && !_updateAllRunning && _marketBusyId.Length == 0)
                         || _hoveredMarketInstall >= 0 || _hoveredMarketUninstall >= 0 || _hoveredMarketDetail >= 0,

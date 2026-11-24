@@ -1623,7 +1623,6 @@ namespace NotchPeninsula
             DrawPluginButton(0, "导入插件", CONTENT_TEXT_X, topY + 60, 96);
             DrawPluginButton(1, "打开目录", CONTENT_TEXT_X + 104, topY + 60, 96);
             DrawPluginButton(2, "插件市场", CONTENT_TEXT_X + 208, topY + 60, 96);
-            DrawPluginLayoutButtons(canvas, topY + 60);
 
             // ── 已安装插件列表卡片（可滚动，整卡高度）──
             GetPluginListCardTop(out float listY);
@@ -1812,7 +1811,6 @@ namespace NotchPeninsula
                 canvas.DrawRect(new SKRect(caretX + 1, MarketControlsY + 6, caretX + 2.4f, MarketControlsY + 20), _dynamicFillPaint);
             }
 
-            DrawPluginLayoutButtons(canvas, MarketControlsY);
 
             var chkBox = new SKRect(MarketChkX, MarketChkY, MarketChkX + MarketChkBoxSize, MarketChkY + MarketChkBoxSize);
             DrawSettingsCheckBox(canvas, chkBox, _marketOnlyInstalled, _hoveredMarketChk);
