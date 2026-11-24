@@ -1288,6 +1288,18 @@ namespace NotchPeninsula
                 Win32.PostMessage(inst._hwnd, WM_ASYNC_RERENDER, IntPtr.Zero, IntPtr.Zero);
         }
 
+        /// <summary>
+        /// 供其它模块调用：改了会影响设置窗外观的数据（例如插件登记 / 注销实况窗，
+        /// 它决定侧栏「实况窗管理」那一行在不在）时，让设置窗补一帧。
+        /// 线程无关：只投一条消息，真正的重绘在 UI 线程发生。
+        /// </summary>
+        internal static void RequestRerender()
+        {
+            var inst = _instance;
+            if (inst != null && inst._hwnd != IntPtr.Zero)
+                Win32.PostMessage(inst._hwnd, WM_ASYNC_RERENDER, IntPtr.Zero, IntPtr.Zero);
+        }
+
         private bool IsInMarketSearchBox()
         {
             if (!TryGetCursorClientPos(out int x, out int y)) return false;

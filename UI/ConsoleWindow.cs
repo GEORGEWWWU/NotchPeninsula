@@ -206,10 +206,9 @@ namespace NotchPeninsula
 
         // ---- 侧边栏页签：几何 + 滑动动画 ----
 
-        /// <summary>页签行首（相对标题栏），**按页签号索引**——顺序与侧边栏视觉顺序不同，
-        ///    绘制顺序见 RenderSidebar。绘制 / 命中 / 滑动动画三处都从这里取，别再写死数字。
-        ///    9 = 静默模式设置（插在显示设置下面，实况窗管理及其后整体下移 40）。</summary>
-        private static readonly float[] SidebarTabY = { 48f, 86f, 200f, 238f, 352f, 10f, 276f, 314f, 162f, 124f };
+        // 页签列不再是一张固定表：用不到的页签整行收起，后面的整体上移，把高度还给侧栏。
+        private const float SIDEBAR_TAB_TOP = 10f;    // 第一个页签相对标题栏的偏移
+        private const float SIDEBAR_TAB_STEP = 38f;   // 页签行距（行高 36 + 2）
 
         private const float TAB_ROW_H = 36f;          // 页签行高
 
@@ -225,19 +224,64 @@ namespace NotchPeninsula
 
         private const float TAB_SLIDE_STRETCH = 10f;  // 蓝条滑动途中两端各外扩的像素（中点最强、两端归零）→ 拉丝感
 
+        /// <summary>
+        /// 静默模式是否算「在用」：正处在静默模式里，或者开过「切换静默模式」快捷键
+        /// （后者在普通模式下也用得上，页面得留着让他能改键 / 关掉）。
+        /// </summary>
+        private static bool UsesSilentMode => Renderer.SilentActive || SilentHotkey.IsEnabled;
+
+        /// <summary>实况窗是否算「在用」：媒体实况窗开着，或者有插件登记过实况窗。</summary>
+        private static bool UsesLiveWindows =>
+            MediaLiveWindowController.IsEnabled || LiveWindowHost.KnownPluginOwners.Count > 0;
+
+        /// <summary>
+        /// 页签是否出现在侧栏。静默模式设置（9）与实况窗管理（8）平时整行收起 ——
+        /// 这两页只在真用到时才占位置；判据取「已启用 / 正在用」，所以退出静默模式后
+        /// 只要快捷键还开着，那一页依然进得去。
+        /// </summary>
+        private static bool IsSidebarTabVisible(int tab) => tab switch
+        {
+            8 => UsesLiveWindows,
+            9 => UsesSilentMode,
+            _ => tab >= 0 && tab < SidebarLabels.Length
+        };
+
+        /// <summary>上一帧侧栏是否画了「静默模式设置」那一行：静默状态一变就得重画侧栏。</summary>
+        private static bool _sidebarSilentTabShown;
+
+        /// <summary>页签行首（相对标题栏）。不可见页签不占位，它后面的整体上移一行。</summary>
         private static float TabRowY(int index)
-            => index >= 0 && index < SidebarTabY.Length ? SidebarTabY[index] : 0f;
+        {
+            float top = SIDEBAR_TAB_TOP;
+            foreach (int tab in SidebarOrder)
+            {
+                if (!IsSidebarTabVisible(tab)) continue;
+                if (tab == index) return top;
+                top += SIDEBAR_TAB_STEP;
+            }
+            return SIDEBAR_TAB_TOP;   // 收起的页签正常不会被问到，给个安全值
+        }
 
         /// <summary>侧边栏命中（画布 DIP 坐标）。绘制 / 悬停 / 光标三处都走它，别再各写一遍区间。</summary>
         private int HitSidebarTab(int x, int y)
         {
             if (x < TabButtonLeft || x > TabButtonRight) return -1;
-            for (int i = 0; i < SidebarTabY.Length; i++)
+            float top = TITLE_BAR_HEIGHT + SIDEBAR_TAB_TOP;
+            foreach (int tab in SidebarOrder)
             {
-                float tabY = TITLE_BAR_HEIGHT + TabRowY(i);
-                if (y >= tabY && y <= tabY + TAB_ROW_H) return i;
+                if (!IsSidebarTabVisible(tab)) continue;
+                if (y >= top && y <= top + TAB_ROW_H) return tab;
+                top += SIDEBAR_TAB_STEP;
             }
             return -1;
+        }
+
+        /// <summary>当前页签被收起时（退出静默模式、实况窗全部关掉）落到一个还存在的页上。</summary>
+        private void EnsureSelectedTabVisible()
+        {
+            if (IsSidebarTabVisible(_selectedTab)) return;
+            // 静默模式 → 显示设置（模式在那儿切）；实况窗 → 媒体设置（开关在那儿）。
+            SwitchTab(_selectedTab == 9 ? 1 : 2);
         }
 
         private long _scrollBarShownAt;
@@ -1972,6 +2016,10 @@ namespace NotchPeninsula
             // 移动中延迟普通重绘，尺寸变化则必须上传与新尺寸匹配的位图。
             if (_dragMoving && !resizing) return;
 
+            // 页签刚被收起来（退出静默模式 / 实况窗全关）：先换到一个还存在的页，
+            // 否则画布左边没有对应行、正文却还是那一页的内容。
+            EnsureSelectedTabVisible();
+
             lock (_renderLock)
             {
                 RenderCore();
@@ -2179,8 +2227,10 @@ namespace NotchPeninsula
         private static void OnStandbyActiveChanged()
         {
             if (_instance == null || _instance._hwnd == IntPtr.Zero) return;
-            if (_instance._selectedTab != 1) return;
-            _instance.Render();
+            // 显示设置页整页都跟着模式变；另外「静默模式设置」那一行是否出现在侧栏也由它决定，
+            // 所以在别的页签上也得重画一帧，否则侧栏会停在旧的样子上。
+            if (_instance._selectedTab == 1 || _sidebarSilentTabShown != UsesSilentMode)
+                _instance.Render();
         }
     }
 }

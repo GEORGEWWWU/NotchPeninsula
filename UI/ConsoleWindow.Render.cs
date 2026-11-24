@@ -83,6 +83,14 @@ namespace NotchPeninsula
                 _tabSlideT = 0f;
                 Logger.Debug($"[侧边栏] 起滑 from={_tabSlideFromY:F0} to={_tabSlideToY:F0}");
             }
+            else if (_tabSlideT >= 1f)
+            {
+                // 页签没换、但整列位置变了（某个页签被收起 / 出现，后面的整体上移）：
+                // 已经停稳的选中块直接跟着走，别让它留在旧位置。
+                float targetY = TabRowY(_selectedTab);
+                if (Math.Abs(_tabSlideToY - targetY) > 0.01f)
+                    _tabSlideFromY = _tabSlideToY = targetY;
+            }
 
             // 进度**每帧按时钟现算**（不靠「拍了多少帧」累计）：掉帧、节拍晚到都只是少画几帧，
             // 位置永远对；哪怕节拍彻底停了，下一次 Render 也会把它推到终点，不会把块悬在半路。
@@ -569,8 +577,12 @@ namespace NotchPeninsula
             SyncTabSlide();
             DrawTabSelection(canvas);   // 先铺选中块：它在悬停底与文字之下，才不会被盖住
 
+            // 记下这一帧画没画静默页那一行：静默状态变了要主动补一帧（见 OnStandbyActiveChanged）。
+            _sidebarSilentTabShown = UsesSilentMode;
+
             foreach (int tab in SidebarOrder)
             {
+                if (!IsSidebarTabVisible(tab)) continue;
                 float top = TITLE_BAR_HEIGHT + TabRowY(tab);
                 if (tab == _hoveredTab && tab != _selectedTab)
                 {

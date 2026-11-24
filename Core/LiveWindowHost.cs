@@ -327,6 +327,8 @@ public static class LiveWindowHost
             if (changed) SaveOwnerSettingsLocked();
         }
         if (changed) Logger.Info($"[实况窗] 插件 {ownerId} 已卸载，它的开关记录已删除");
+        // 名单空了之后，侧栏「实况窗管理」那一页就该收起来。
+        if (changed) ConsoleWindow.RequestRerender();
     }
 
     /// <summary>
@@ -360,6 +362,8 @@ public static class LiveWindowHost
         }
 
         Logger.Info($"[实况窗] 已清理 {stale.Count} 条失效的插件开关记录：{string.Join(", ", stale)}");
+        // 名单变了 → 侧栏「实况窗管理」的显隐跟着变，让设置窗补一帧。
+        ConsoleWindow.RequestRerender();
     }
 
     /// <summary>
@@ -597,9 +601,10 @@ public static class LiveWindowHost
         if (!ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase))
         {
             EnsureOwnerSettingsLoaded();
+            bool added = false;
             lock (_ownerGate)
             {
-                bool added = _knownOwners.Add(ownerId);
+                added = _knownOwners.Add(ownerId);
                 if (added) SaveOwnerSettingsLocked();
                 if (_disabledOwners.Contains(ownerId))
                 {
@@ -607,6 +612,9 @@ public static class LiveWindowHost
                     return null;
                 }
             }
+
+            // 名单多了一行 → 侧栏「实况窗管理」那一页该出现了。
+            if (added) ConsoleWindow.RequestRerender();
 
             // 静默模式：未勾选插件的重要信息气泡注册即挂起（静默页勾选是重要信息总开关）。
             // 启动即静默的场景在这里兜住 —— Program 读回注册表时插件还没加载。
