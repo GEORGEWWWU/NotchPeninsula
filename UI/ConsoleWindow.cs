@@ -1496,6 +1496,9 @@ namespace NotchPeninsula
                             _backdropMinimized = false;
                             CenterRestoredWindow();
                             ShowBackdrop();
+                            // 从最小化回来同样要走一次「重新显示并归位」，否则宿主窗可能停在
+                            // 「已显示但没有合成内容」的状态，表现为窗口背后直接透出桌面。
+                            SyncBackdropToContent(forceRestack: true);
                             ReapplyBackdropMaterial();
                         }
                         RefreshWindowGeometry();
@@ -1506,7 +1509,12 @@ namespace NotchPeninsula
                     if ((Win32.Low32(wParam) & 0xFFFF) != Win32.WA_INACTIVE && _hwnd != IntPtr.Zero)
                     {
                         ShowBackdrop();
+                        // 失焦再回来是亚克力最容易掉的时候：宿主窗看着还在、Z 序也对，
+                        // 但 DWM 已经把它的合成内容丢了。当场强制重新显示并归位一次，
+                        // 150ms 后定时器再补一次（DWM 有时要等这一帧之后才认账）。
+                        if (!_dragMoving) SyncBackdropToContent(forceRestack: true);
                         ReapplyBackdropMaterial();
+                        _backdropRepairPass = 0;
                         Win32.SetTimer(hwnd, BACKDROP_REFRESH_TIMER_ID, 150, IntPtr.Zero);
                     }
                     else
@@ -1531,6 +1539,13 @@ namespace NotchPeninsula
                     {
                         Win32.KillTimer(hwnd, BACKDROP_REFRESH_TIMER_ID);
                         RepairBackdropAfterActivate();
+                        // 150ms 那一次有时赶在 DWM 稳定之前，300~800ms 之间再补一枪。
+                        // 两枪都是一次 SetWindowPos，画面不动，但能把「掉过就再也不回来」捞回来。
+                        if (_backdropRepairPass < 1)
+                        {
+                            _backdropRepairPass++;
+                            Win32.SetTimer(hwnd, BACKDROP_REFRESH_TIMER_ID, 600, IntPtr.Zero);
+                        }
                         return IntPtr.Zero;
                     }
                     if (wParam == DISPLAY_DRAG_TIMER_ID)
@@ -1580,6 +1595,17 @@ namespace NotchPeninsula
                     Render();
                     break;
                 }
+
+                case Win32.WM_DWMCOMPOSITIONCHANGED:
+                    // DWM 重新合成会让材质窗的内容失效（表现为窗口背后直接透出桌面）。
+                    // 这里不重建任何东西，只把宿主窗重新显示并归位一次。
+                    if (_hwnd != IntPtr.Zero && !_dragMoving)
+                    {
+                        SyncBackdropToContent(forceRestack: true);
+                        ReapplyBackdropMaterial();
+                        Render();
+                    }
+                    break;
 
                 case Win32.WM_DISPLAYCHANGE:
                     // 显示器拔插 / 分辨率变化：列表与越界下标都要重算。

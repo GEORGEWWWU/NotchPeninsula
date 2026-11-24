@@ -19,6 +19,9 @@ namespace NotchPeninsula
 
         private static readonly IntPtr BACKDROP_REFRESH_TIMER_ID = new IntPtr(0x4E50); // "NP"
 
+        // 激活后补修材质的轮次（见 WM_TIMER / WM_ACTIVATE）：0 = 还没补，1 = 已补过一次。
+        private int _backdropRepairPass;
+
         private enum BackdropMaterialMode
         {
             Solid,
@@ -41,11 +44,17 @@ namespace NotchPeninsula
                 Win32.DeleteObject(region);
         }
 
-        private void SyncBackdropToContent(bool keepZOrder = false)
+        /// <param name="forceRestack">
+        /// 强制让宿主窗「重新显示并归位」。失焦 / 还原 / DWM 重合成之后必须来一次：
+        /// 宿主窗看着还在、Z 序也对，但 DWM 可能已经把它的合成内容丢了 —— 这时
+        /// 画面就是「窗口半透明，后面桌面原样透上来」。只归位不显示（或只 ShowWindow
+        /// 再单独归位）都救不回来，必须带 SWP_SHOWWINDOW 一次到位。
+        /// </param>
+        private void SyncBackdropToContent(bool keepZOrder = false, bool forceRestack = false)
         {
             if (NativeAcrylic.IsSupported)
             {
-                SyncNativeConsoleBackdrop();
+                SyncNativeConsoleBackdrop(forceRestack);
                 return;
             }
             if (_backdropHwnd == IntPtr.Zero || _hwnd == IntPtr.Zero)
@@ -59,11 +68,13 @@ namespace NotchPeninsula
             // 拖动中不再重申 Z 序：每次重排都要 DWM 重新合成一遍，
             // 亚克力窗会有一帧「重新贴材质」的空档，看起来就是窗口中间劈开、露出下面。
             uint flags = Win32.SWP_NOACTIVATE | (keepZOrder ? Win32.SWP_NOZORDER : 0u);
+            if (forceRestack && !keepZOrder)
+                flags |= Win32.SWP_SHOWWINDOW;
             _ = Win32.SetWindowPos(_backdropHwnd, keepZOrder ? IntPtr.Zero : _hwnd,
                 rect.Left, rect.Top, width, height, flags);
         }
 
-        private void SyncNativeConsoleBackdrop()
+        private void SyncNativeConsoleBackdrop(bool forceRestack = false)
         {
             if (_hwnd == IntPtr.Zero || !Win32.IsWindowVisible(_hwnd) || Win32.IsIconic(_hwnd)) return;
             if (!Win32.GetWindowRect(_hwnd, out var rect)) return;
@@ -91,11 +102,15 @@ namespace NotchPeninsula
                                 _consoleBackdropDispatcher = NativeAcrylic.CreateDispatcher();
                             _nativeConsoleBackdrop = new NativeAcrylic(_hwnd);
                         }
+                        else if (forceRestack && !_nativeConsoleBackdrop.IsShown)
+                        {
+                            Logger.Debug("[设置窗口] 宿主材质窗被隐藏，重新显示");
+                        }
 
                         float radius = 8f * _dpiScale;
                         _nativeConsoleBackdrop.Present(_hwnd, rect.Left, rect.Top, width, height,
                             default, new System.Numerics.Vector2(width, height), new IslandOutline(radius, radius, radius),
-                            capsule: true, opacity: 1f);
+                            capsule: true, opacity: 1f, forceRestack: forceRestack);
                         _backdropMode = BackdropMaterialMode.Acrylic;
                     }
                 }
@@ -352,12 +367,33 @@ namespace NotchPeninsula
 
         private void RepairBackdropAfterActivate()
         {
+            if (_hwnd == IntPtr.Zero)
+                return;
+
+            // 原生 Composition 宿主：窗口还在、Z 序也对，但 DWM 可能已经把这块的合成内容
+            // 丢掉了，画面就变成「半透明窗口直接透出桌面」。这里强制重新显示并归位一次。
+            if (NativeAcrylic.IsSupported)
+            {
+                SyncNativeConsoleBackdrop(forceRestack: true);
+                return;
+            }
+
             if (_backdropHwnd == IntPtr.Zero)
                 return;
 
             if (_backdropMode == BackdropMaterialMode.Acrylic && !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
             {
-                Logger.Debug("Win10 亚克力激活修复：重建材质窗");
+                // Win10 的丢失用「重新贴一次材质」基本就能救回来，重建材质窗是最重的一招：
+                // 每激活一次就铲掉重建，正是以前「窗口闪一下」的来源，所以先试轻的。
+                ApplyWindowTheme(_backdropHwnd);
+                if (TryEnableAcrylicBackdrop() && Win32.IsWindowVisible(_backdropHwnd))
+                {
+                    ApplyBackdropPalette();
+                    Render();
+                    return;
+                }
+
+                Logger.Debug("Win10 亚克力激活修复：重贴材质无效，重建材质窗");
                 RebuildBackdropWindow();
                 return;
             }

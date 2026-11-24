@@ -85,7 +85,7 @@ internal sealed class NativeAcrylic : IDisposable
     }
 
     internal void Present(IntPtr foreground, int x, int y, int width, int height,
-        Vector2 offset, Vector2 size, IslandOutline outline, bool capsule, float opacity)
+        Vector2 offset, Vector2 size, IslandOutline outline, bool capsule, float opacity, bool forceRestack = false)
     {
         var bounds = (x, y, width, height);
         bool resized = width != _bounds.Width || height != _bounds.Height;
@@ -128,12 +128,14 @@ internal sealed class NativeAcrylic : IDisposable
             0, 0, 0, 0, Win32.SWP_NOACTIVATE | Win32.SWP_NOMOVE_NOSIZE))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
-        bool needsRestack = bandChanged || !_visible || GetWindow(foreground, NextWindow) != _window;
+        bool needsRestack = bandChanged || !_visible || forceRestack || GetWindow(foreground, NextWindow) != _window;
         if (needsRestack || bounds != _bounds)
         {
             uint flags = Win32.SWP_NOACTIVATE;
             if (needsRestack) flags |= Win32.SWP_SHOWWINDOW;
             else flags |= Win32.SWP_NOZORDER;
+            // 归位必须带 SWP_SHOWWINDOW 一次到位：先 ShowWindow 再单独归位时，
+            // DWM 不会重新合成这块宿主窗，亚克力的内容就一直空着（见 forcerestack 的调用点）。
             if (!Win32.SetWindowPos(_window, foreground, x, y, width, height,
                 flags))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
@@ -148,6 +150,9 @@ internal sealed class NativeAcrylic : IDisposable
         Win32.ShowWindow(_window, Win32.SW_HIDE);
         _visible = false;
     }
+
+    /// <summary>宿主窗当前是否真的显示在屏幕上（用来判断材质是不是掉了）。</summary>
+    internal bool IsShown => _visible && Win32.IsWindowVisible(_window);
 
     public void Dispose()
     {
