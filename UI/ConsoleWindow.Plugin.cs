@@ -320,6 +320,8 @@ namespace NotchPeninsula
             _appDropdownOpen = false;
             _marketSortOpen = false;
             _sceneDropdownOpen = false;
+            _passthroughDropdownOpen = _passthroughDropdownHovered = false;
+            _hoveredPassthroughOption = -1;
             _personalizeDropdownOpen = _personalizeDropdownHovered = DropdownKind.None;
             _hoveredPersonalizeOption = -1;
         }

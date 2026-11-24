@@ -1127,7 +1127,7 @@ namespace NotchPeninsula
         private bool HitWakeButton(int mx, int my)
         {
             // 手动隐藏期间没有唤醒按钮可点（Renderer 那边也不画），别凭空留一块热区。
-            if (Renderer.IslandHidden) return false;
+            if (Renderer.IslandHidden || Renderer.FullPassthroughActive) return false;
 
             float x = Renderer.WakeButtonX;
             float y = 12f * _currentStyleProgress + (_currentHeight - Renderer.WAKE_BTN_SIZE) / 2f;
@@ -1299,7 +1299,8 @@ namespace NotchPeninsula
                     Win32.GetCursorPos(out var pt);
                     bool isOverNotch = IsOverIslandScreenPoint(pt);
 
-                    if (_isPassthroughAwake && !isOverNotch && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0)
+                    if (Renderer.FullPassthroughActive
+                        || (_isPassthroughAwake && !isOverNotch && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0))
                         _isPassthroughAwake = false;
 
                     // 第五个例外：任一展开态存在时一律不淡出。
@@ -1419,9 +1420,11 @@ namespace NotchPeninsula
                 //    UI 线程的 Render()（持 _renderLock）撞成死锁 —— 所以只置意愿 + PostMessage。
                 bool silentInvisible = Renderer.SilentActive && silentHiding && Renderer.SilentScale < 0.02f
                                        && !LiveWindowHost.HasVisibleBubble;
-                if (silentInvisible != Renderer.WantSilentClickThrough)
+                Renderer.WantSilentClickThrough = silentInvisible;
+                bool clickThrough = silentInvisible || Renderer.FullPassthroughActive;
+                if (clickThrough != _requestedClickThrough)
                 {
-                    Renderer.WantSilentClickThrough = silentInvisible;
+                    _requestedClickThrough = clickThrough;
                     if (_hwnd != IntPtr.Zero)
                         Win32.PostMessage(_hwnd, WM_APPLY_CLICK_THROUGH, IntPtr.Zero, IntPtr.Zero);
                 }
@@ -2024,7 +2027,7 @@ namespace NotchPeninsula
         internal bool TryScreenToIslandLogical(Win32.POINT screenPt, out float x, out float y)
         {
             x = y = 0f;
-            if (_hwnd == IntPtr.Zero || _dpiScale <= 0f) return false;
+            if (Renderer.FullPassthroughActive || _hwnd == IntPtr.Zero || _dpiScale <= 0f) return false;
 
             var p = new Win32.POINT(screenPt.x, screenPt.y);
             if (!Win32.ScreenToClient(_hwnd, ref p)) return false;
@@ -2326,16 +2329,16 @@ namespace NotchPeninsula
 
                 case WM_APPLY_CLICK_THROUGH:
                     {
-                        bool want = Renderer.WantSilentClickThrough;
-                        if (want != _silentClickThrough)
+                        bool want = Renderer.WantSilentClickThrough || Renderer.FullPassthroughActive;
+                        if (want != _windowClickThrough)
                         {
                             // 成功才记下状态：SetClickThrough 失败时保持旧值，下一次意愿变化
                             // 还会再试一遍。先赋值的话失败就永久不同步了（窗口实际没穿透，
                             // 标志却说已经穿透），鼠标会在「看不见的岛」上继续被吃掉。
                             if (Win32.SetClickThrough(_hwnd, want))
                             {
-                                _silentClickThrough = want;
-                                Logger.Info($"[静默模式] 窗口鼠标穿透 = {want}");
+                                _windowClickThrough = want;
+                                Logger.Info($"[灵动岛] 窗口鼠标穿透 = {want}");
                             }
                         }
                         return (IntPtr)0;
@@ -2830,7 +2833,7 @@ namespace NotchPeninsula
             Renderer.IslandHidden = false;
             _isManuallyExpanded = true;
             _suppressOutsideCollapse = true;
-            _isPassthroughAwake = true;
+            _isPassthroughAwake = !Renderer.FullPassthroughActive;
         }
 
         // 全局快捷键「唤出灵动岛」：显 → 藏，藏 → 显。
@@ -2890,7 +2893,8 @@ namespace NotchPeninsula
         private long _silentScaleStartTs;
         private bool _silentScaleAnimating;
         private bool _silentWindowSlidOut;   // 已经缩没（保留字段给日志 / 兼容）
-        private bool _silentClickThrough;    // 静默完全隐藏时窗口是否已设为鼠标穿透
+        private bool _requestedClickThrough; // 渲染线程发布的穿透意愿
+        private bool _windowClickThrough;    // 窗口线程成功应用的穿透状态
 
         // 渲染线程 → UI 线程：应用「静默完全隐藏时的鼠标穿透」。
         private const int WM_APPLY_CLICK_THROUGH = 0x8000 + 0x61;

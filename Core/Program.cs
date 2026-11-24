@@ -212,6 +212,7 @@ namespace NotchPeninsula
                         Program.SaveSetting("CompositeMode_Enabled", 1);
                     }
 
+                    Renderer.FullPassthroughSelected = (int)key.GetValue("FullPassthrough", 0) != 0;
                     Renderer.PassthroughModeEnabled = (int)key.GetValue("PassthroughMode", 0) != 0;
 
                     MediaHotkeys.Load(key);

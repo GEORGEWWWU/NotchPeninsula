@@ -171,6 +171,8 @@ namespace NotchPeninsula
             bool newMediaExpToggleHovered = false;
             bool newAppLaunchToggleHovered = false; // 「双击媒体控制跳转应用」（媒体交互方式下面一格）
             bool newPassToggleHovered = false;
+            bool passthroughDropdownHovered = false;
+            int hoveredPassthroughOption = -1;
             bool newIslandHotkeyHovered = false;       // 交互页「唤出灵动岛」的键位框
             bool newIslandHotkeyToggleHovered = false; // 同一张卡的总开关
             bool newSilentHotkeyHovered = false;       // 交互页「静默模式」的键位框
@@ -497,6 +499,10 @@ namespace NotchPeninsula
                     Render();
                 }
             }
+            else if (_selectedTab == 3 && _passthroughDropdownOpen)
+            {
+                hoveredPassthroughOption = HitPassthroughOption(x, y);
+            }
             else if (_selectedTab == 3) // 交互设置
             {
                 // 本段的 y 值必须与下面 tab 3 的渲染保持同步
@@ -519,7 +525,8 @@ namespace NotchPeninsula
                 if (x >= WIDTH - 80 && x <= WIDTH - 30 && y >= TITLE_BAR_HEIGHT + APP_LAUNCH_CARD_Y + 20 && y <= TITLE_BAR_HEIGHT + APP_LAUNCH_CARD_Y + 40)
                     newAppLaunchToggleHovered = true;
                 // 使用局部变量，防止状态死锁
-                newPassToggleHovered = x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= TITLE_BAR_HEIGHT + PASS_CARD_Y + 20 && y <= TITLE_BAR_HEIGHT + PASS_CARD_Y + 40;
+                newPassToggleHovered = PassthroughToggleBox.Contains(x, y);
+                passthroughDropdownHovered = PassthroughDropdownBox.Contains(x, y);
 
                 // 「唤出灵动岛」：总开关在卡片头部右侧，键位框在下面那行
                 //（y 值与 DrawIslandHotkeyCard 严格同源）
@@ -858,6 +865,8 @@ namespace NotchPeninsula
                 newSoundPreviewHovered != _soundPreviewHovered ||
                 newSoundResetHovered != _soundResetHovered ||
                 newPassToggleHovered != _passToggleHovered ||
+                passthroughDropdownHovered != _passthroughDropdownHovered ||
+                hoveredPassthroughOption != _hoveredPassthroughOption ||
                 newIslandHotkeyHovered != _islandHotkeyHovered ||
                 newIslandHotkeyToggleHovered != _islandHotkeyToggleHovered ||
                 newSilentHotkeyHovered != _silentHotkeyHovered ||
@@ -952,6 +961,8 @@ namespace NotchPeninsula
                 _soundResetHovered = newSoundResetHovered;
                 _topmostToggleHovered = newTopmostToggleHovered;
                 _passToggleHovered = newPassToggleHovered;
+                _passthroughDropdownHovered = passthroughDropdownHovered;
+                _hoveredPassthroughOption = hoveredPassthroughOption;
                 _islandHotkeyHovered = newIslandHotkeyHovered;
                 _islandHotkeyToggleHovered = newIslandHotkeyToggleHovered;
                 _silentHotkeyHovered = newSilentHotkeyHovered;

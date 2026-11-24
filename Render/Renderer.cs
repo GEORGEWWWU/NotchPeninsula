@@ -374,7 +374,9 @@ namespace NotchPeninsula
 
         public static bool CompShowMedia { get; set; } = true;     // 显示媒体控制器(含频谱)
 
-        public static bool PassthroughModeEnabled = false; // 穿透模式总开关
+        public static volatile bool PassthroughModeEnabled = false; // 穿透模式总开关
+        internal static volatile bool FullPassthroughSelected;
+        internal static bool FullPassthroughActive => PassthroughModeEnabled && FullPassthroughSelected;
 
         /// <summary>
         /// 媒体内容已交给左侧实况窗显示：岛体不再画媒体（避免「左边显示、右边重复」）。
@@ -765,7 +767,7 @@ namespace NotchPeninsula
                 // 独立于本体之外，绘制隐形物理热区与极速渐变唤醒按钮。
                 // 手动隐藏时连唤醒按钮一起收掉：此时「唤回」只认全局快捷键与托盘菜单，
                 // 屏幕上不该再留一颗亮着的小圆（那就不叫隐藏了）。
-                if (!IslandHidden
+                if (!IslandHidden && !FullPassthroughActive
                     && ((PassthroughModeEnabled && PassthroughAlpha < 0.99f) || FullHideAlpha < 0.99f))
                     DrawWakeButton(canvas, currentHeight);
 

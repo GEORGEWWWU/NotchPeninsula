@@ -264,6 +264,28 @@ namespace NotchPeninsula
             }
         }
 
+        private bool HandlePassthroughDropdownClick(int x, int y)
+        {
+            if (_passthroughDropdownOpen)
+            {
+                int option = HitPassthroughOption(x, y);
+                CloseAllDropdowns();
+                if (option >= 0)
+                {
+                    Renderer.FullPassthroughSelected = option == 1;
+                    Program.SaveSetting("FullPassthrough", option);
+                }
+                Render();
+                return true;
+            }
+
+            if (!PassthroughDropdownBox.Contains(x, y)) return false;
+            CloseAllDropdowns();
+            _passthroughDropdownOpen = true;
+            Render();
+            return true;
+        }
+
         private bool HandlePersonalizeClick(IntPtr hwnd, int x, int y)
         {
             if (_personalizeDropdownOpen == DropdownKind.None && HitImmersiveToggle(x, y))
@@ -375,6 +397,10 @@ namespace NotchPeninsula
             {
                 Win32.ReleaseCapture();
                 Win32.SendMessage(hwnd, Win32.WM_NCLBUTTONDOWN, Win32.HTCAPTION, 0);
+            }
+            else if (_selectedTab == 3 && clickedTab < 0 && HandlePassthroughDropdownClick(clickX, clickY))
+            {
+                return;
             }
             else if (_selectedTab == 5 && clickedTab < 0 && HandlePersonalizeClick(hwnd, clickX, clickY))
             {
@@ -868,7 +894,7 @@ namespace NotchPeninsula
                 Program.SaveSetting("MediaAppLaunchEnabled", MediaController.IsAppLaunchEnabled ? 1 : 0);
                 Render();
             }
-            else if (_passToggleHovered)
+            else if (_selectedTab == 3 && PassthroughToggleBox.Contains(clickX, clickY))
             {
                 Renderer.PassthroughModeEnabled = !Renderer.PassthroughModeEnabled;
                 Program.SaveSetting("PassthroughMode", Renderer.PassthroughModeEnabled ? 1 : 0);

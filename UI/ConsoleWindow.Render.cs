@@ -1288,7 +1288,14 @@ namespace NotchPeninsula
             DrawToggleCard(canvas, APP_LAUNCH_CARD_Y, "双击封面跳转应用", appLaunchSub,
                 MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered, rightColumn: true);
 
-            DrawToggleCard(canvas, PASS_CARD_Y, "穿透模式", "悬停时透明并允许鼠标穿透本体与底层窗口交互", Renderer.PassthroughModeEnabled, _passToggleHovered, leftColumn: true);
+            float passY = TITLE_BAR_HEIGHT + PASS_CARD_Y;
+            DrawSettingsCard(canvas, new SKRect(CONTENT_L, passY, LeftColumnRight, passY + TOGGLE_CARD_H));
+            DrawToggleRow(canvas, PASS_CARD_Y, "穿透模式", "悬停淡出，鼠标可穿透",
+                Renderer.PassthroughModeEnabled, _passToggleHovered, cardRight: PassthroughToggleBox.Right + 16f);
+            var passBox = PassthroughDropdownBox;
+            DrawDropdownBox(canvas, passBox.Left, passBox.Top, passBox.Width, passBox.Height,
+                PassthroughLabels[Renderer.FullPassthroughSelected ? 1 : 0], _passthroughDropdownHovered, enabled: true,
+                open: _passthroughDropdownOpen);
 
             DrawIslandHotkeyCard(canvas, Renderer.SilentActive);
             DrawSilentHotkeyCard(canvas);
@@ -2509,6 +2516,13 @@ namespace NotchPeninsula
 
         private void RenderDropdowns(SKCanvas canvas)
         {
+            if (_selectedTab == 3 && _passthroughDropdownOpen)
+            {
+                var box = PassthroughDropdownBox;
+                RenderDropdownList(canvas, box.Left, box.Bottom + 2f, box.Width, PassthroughLabels,
+                    Renderer.FullPassthroughSelected ? 1 : 0, _hoveredPassthroughOption, dimmedIndex: -1);
+            }
+
             if (_selectedTab == 5 && _personalizeDropdownOpen != DropdownKind.None)
             {
                 var box = PersonalizeDropdownBox(_personalizeDropdownOpen);

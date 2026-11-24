@@ -182,7 +182,8 @@ namespace NotchPeninsula
                         || _appDropdownHovered || _lyricToggleHovered || _transToggleHovered || _scanToggleHovered
                         || _lyricMinusHovered || _lyricPlusHovered || _lyricResetHovered || _hotkeyToggleHovered
                         || _hoveredHotkeyRow >= 0,
-                3 => _autoHideToggleHovered || _focusHideToggleHovered || _pauseHideToggleHovered
+                3 => _passthroughDropdownOpen ? _hoveredPassthroughOption >= 0
+                    : _passthroughDropdownHovered || _autoHideToggleHovered || _focusHideToggleHovered || _pauseHideToggleHovered
                     || _fsHideToggleHovered || _mediaExpToggleHovered || _appLaunchToggleHovered || _passToggleHovered
                     || _islandHotkeyHovered || _islandHotkeyToggleHovered || _silentHotkeyHovered || _silentHotkeyToggleHovered,
                 4 => _hoveredLinkIndex >= 0,

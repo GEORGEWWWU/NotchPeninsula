@@ -71,6 +71,37 @@ namespace NotchPeninsula
                 ApplyGlassLevel(i, GlassMaterial.DefaultLevel(i));
         }
 
+        private static readonly string[] PassthroughLabels = ["可交互", "完全穿透"];
+        private bool _passthroughDropdownOpen;
+        private bool _passthroughDropdownHovered;
+        private int _hoveredPassthroughOption = -1;
+
+        private SKRect PassthroughDropdownBox
+        {
+            get
+            {
+                float centerY = TITLE_BAR_HEIGHT + PASS_CARD_Y + ROW_ANCHOR_Y;
+                return SKRect.Create(LeftColumnRight - 16f - 110f, centerY - 14f, 110f, 28f);
+            }
+        }
+
+        private SKRect PassthroughToggleBox
+        {
+            get
+            {
+                var box = PassthroughDropdownBox;
+                return SKRect.Create(box.Left - 10f - 42f, box.MidY - TOGGLE_TRACK_H / 2f, 42f, TOGGLE_TRACK_H);
+            }
+        }
+
+        private int HitPassthroughOption(int x, int y)
+        {
+            var box = PassthroughDropdownBox;
+            return x >= box.Left && x < box.Right
+                ? DropdownRowAt(box.Bottom + 2f, PassthroughLabels.Length, y)
+                : -1;
+        }
+
         private const float THEME_CARD_Y = CARD_TOP_Y;
         private const float THEME_CARD_H = 112f;
         private const float IMMERSIVE_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
