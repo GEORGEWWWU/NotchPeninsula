@@ -503,8 +503,8 @@ namespace NotchPeninsula
                 // 「使用实况窗展示媒体」（首卡第二行，槽位与 DrawToggleRow 同源）
                 if (!anyPopupOpen
                     && x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14
-                    && y >= TITLE_BAR_HEIGHT + MediaRowStart + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
-                    && y <= TITLE_BAR_HEIGHT + MediaRowStart + MEDIA_LIVE_ROW_DY + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
+                    && y >= TITLE_BAR_HEIGHT + MediaTopLeftRow2Y + ROW_ANCHOR_Y - TOGGLE_TRACK_H / 2f
+                    && y <= TITLE_BAR_HEIGHT + MediaTopLeftRow2Y + ROW_ANCHOR_Y + TOGGLE_TRACK_H / 2f)
                     newMediaLiveToggleHovered = true;
 
                 if (!anyPopupOpen && x >= PlatformBoxX && x <= PlatformBoxX + 110 && y >= PlatformBoxY && y <= PlatformBoxY + 32)
@@ -543,17 +543,17 @@ namespace NotchPeninsula
                 }
 
                 // 歌词设置卡片（坐标常量与 Render() 同源；四行统一 34px 行距）
-                float lyricY = LYRIC_CARD_Y - 33f + MediaLyricsTopInset;
-                bool newLyricToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + 33 && y <= lyricY + 53);
-                bool newTransToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + 67 && y <= lyricY + 87);
-                bool newScanToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + 101 && y <= lyricY + 121);
+                float lyricY = LyricCardContentTop;
+                bool newLyricToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + LYRIC_TOGGLE1_DY && y <= lyricY + LYRIC_TOGGLE1_DY + 20);
+                bool newTransToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + LYRIC_TOGGLE2_DY && y <= lyricY + LYRIC_TOGGLE2_DY + 20);
+                bool newScanToggleHovered = !anyPopupOpen && (x >= LeftColumnRight - 62 && x <= LeftColumnRight - 14 && y >= lyricY + LYRIC_TOGGLE3_DY && y <= lyricY + LYRIC_TOGGLE3_DY + 20);
 
                 // 延迟补偿按钮整行排在最后（歌词卡片里第四行）
-                float btnY = lyricY + 133;
+                float btnY = lyricY + LYRIC_DELAY_DY;
                 float cardRightX = LeftColumnRight - 16;
-                bool newLyricMinusHovered = !anyPopupOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + 24);
-                bool newLyricPlusHovered = !anyPopupOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + 24);
-                bool newLyricResetHovered = !anyPopupOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + 24);
+                bool newLyricMinusHovered = !anyPopupOpen && (x >= cardRightX - 175 && x <= cardRightX - 145 && y >= btnY && y <= btnY + LYRIC_BTN_H);
+                bool newLyricPlusHovered = !anyPopupOpen && (x >= cardRightX - 80 && x <= cardRightX - 50 && y >= btnY && y <= btnY + LYRIC_BTN_H);
+                bool newLyricResetHovered = !anyPopupOpen && (x >= cardRightX - 40 && x <= cardRightX && y >= btnY && y <= btnY + LYRIC_BTN_H);
 
                 if (newLyricToggleHovered != _lyricToggleHovered || newTransToggleHovered != _transToggleHovered || newScanToggleHovered != _scanToggleHovered || newLyricMinusHovered != _lyricMinusHovered || newLyricPlusHovered != _lyricPlusHovered || newLyricResetHovered != _lyricResetHovered)
                 {

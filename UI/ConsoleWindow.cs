@@ -53,9 +53,17 @@ namespace NotchPeninsula
         private const int DISPLAY_MAX_ROWS = 10;
         private const float DISPLAY_CARD_Y = CARD_TOP_Y;
 
-        private float DISPLAY_CARD_H => Math.Max(0, Math.Min(
-            DISPLAY_FIRST_ROW_Y + DISPLAY_MAX_ROWS * DISPLAY_ROW_H,
-            ContentBottom - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y)));
+        // 「显示内容」列表卡片的高度只装得下真实行数（最多 DISPLAY_MAX_ROWS，最多到内容区底边）：
+        // 只有三条内容时，卡片就停在第三条下面一点，不再按行数上限撑满右栏。
+        private float DISPLAY_CARD_H
+        {
+            get
+            {
+                int rows = Math.Clamp(CurrentDisplayList.Count, 1, DISPLAY_MAX_ROWS);
+                float contentH = DISPLAY_FIRST_ROW_Y + rows * DISPLAY_ROW_H + CARD_BOTTOM_PAD;
+                return Math.Max(0f, Math.Min(contentH, ContentBottom - (TITLE_BAR_HEIGHT + DISPLAY_CARD_Y)));
+            }
+        }
         private float DisplayListScrollbarX => WIDTH - CONTENT_RM - 7f;
         private float DisplayPageScrollbarX => WIDTH - CONTENT_RM - 3f;
 
@@ -455,11 +463,18 @@ namespace NotchPeninsula
 
         private const float SILENT_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;               // 76
 
+        // ---- 卡片高度：由卡内内容决定 ----
+        // 卡高 = 最后一行内容的下沿 + CARD_BOTTOM_PAD。左右两栏各排各的，不再拿对面那一列的
+        // 高度当自己的高度（旧版媒体页左卡被拉到和右卡一样高，底下空出一大块）。
+        private const float CARD_BOTTOM_PAD = 10f;
+
+        // 文字行的下沿比基线再低一点：字形最低点大约落在基线下方 3~4 DIP。
+        private const float TEXT_INK_BOTTOM = 4f;
+
         // 媒体设置页卡片顺序（合并后）：
 
         private const float MediaCardTop = TITLE_BAR_HEIGHT + CARD_TOP_Y;
         private const float MediaRowStart = CARD_TOP_Y + 4f;
-        private const float MediaTopCardHeight = 118f;
         private const float PlatformBoxY = MediaCardTop + 18f;
         private const float PlatformMenuY = PlatformBoxY + 34f;
         private float PlatformBoxX => WIDTH - 140f;
@@ -467,7 +482,18 @@ namespace NotchPeninsula
         private float RightColumnLeft => LeftColumnRight + CARD_GAP;
         private float RightColumnText => RightColumnLeft + 16f;
         private const float PLATFORM_ROW2_Y = MediaCardTop + 52f;
-        private const float LYRIC_CARD_Y = MediaCardTop + MediaTopCardHeight + CARD_GAP;
+
+        // 左栏首卡：媒体控制 + 使用实况窗展示媒体（两行开关，第二行带副标题）
+        private const float MediaTopLeftRow2Y = MediaRowStart + MEDIA_LIVE_ROW_DY;
+        private float MediaTopLeftCardH =>
+            MediaTopLeftRow2Y + ROW_TEXT_BASELINE + ROW_SUB_OFFSET + TEXT_INK_BOTTOM + CARD_BOTTOM_PAD;
+        // 右栏首卡：目标媒体平台 + 匹配方式（两行下拉，按第二行选项框的下沿算）
+        private float MediaTopRightCardH =>
+            (MATCH_ROW_Y - MediaCardTop) + MATCH_BOX_H + CARD_BOTTOM_PAD;
+
+        // 第二排两张卡各自紧跟自己那一列的首卡，中间只留一个 CARD_GAP：
+        // 两列高度本来就不一样，硬把顶边对上只会让其中一列凭空多出一段空隙。
+        private float LYRIC_CARD_Y => MediaCardTop + MediaTopLeftCardH + CARD_GAP;
 
 
         private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
@@ -486,11 +512,27 @@ namespace NotchPeninsula
 
         private const float APP_MENU_W = 280f;         // 软件菜单宽度
 
-        private const float HOTKEY_CARD_Y = LYRIC_CARD_Y;   // 404
+        private float HOTKEY_CARD_Y => MediaCardTop + MediaTopRightCardH + CARD_GAP;
 
         private const float MediaLyricsTopInset = 12f;
         private const float MediaHotkeyHeadHeight = 40f;
-        private const float HOTKEY_CARD_H = 206f;
+
+        // 歌词卡：三行开关 + 一行延迟补偿，行距 34；内容顶端比卡顶低 21（= 33 − 顶部内缩 12）。
+        private const float LYRIC_CARD_TOP_INSET = 33f;
+        private const float LYRIC_TOGGLE1_DY = 33f;
+        private const float LYRIC_TOGGLE2_DY = 67f;
+        private const float LYRIC_TOGGLE3_DY = 101f;
+        private const float LYRIC_DELAY_DY = 133f;
+        private const float LYRIC_BTN_H = 24f;
+        private float LyricCardContentTop => LYRIC_CARD_Y - LYRIC_CARD_TOP_INSET + MediaLyricsTopInset;
+
+        // 内容到「延迟补偿」按钮行就结束了，卡高也到此为止（旧版借的是右边键位卡的 206）。
+        private float LyricCardHeight =>
+            (LYRIC_DELAY_DY + LYRIC_BTN_H - LYRIC_CARD_TOP_INSET + MediaLyricsTopInset) + CARD_BOTTOM_PAD;
+
+        // 全局快捷键卡：头部（标题 + 副标题 + 开关）+ 每行一个键位框，按最后一行键位框的下沿算高。
+        private float MediaHotkeyCardHeight =>
+            MediaHotkeyHeadHeight + (MediaHotkeys.Count - 1) * HOTKEY_ROW_H + 4f + HOTKEY_BOX_H + CARD_BOTTOM_PAD;
 
         // 卡片头部留白：标题 + 副标题 + 总开关整体下移 4px，顶部留一点呼吸
         private const float HOTKEY_HEAD_H = 48f;

@@ -959,7 +959,17 @@ namespace NotchPeninsula
 
         private const float SilentListCardY = CARD_TOP_Y;
 
-        private float SilentListCardH => ContentBottom - (TITLE_BAR_HEIGHT + SilentListCardY);
+        // 重要信息列表：与「显示内容」列表同一条规则 —— 卡片只装得下真实条数，
+        // 条数多到装不下才一直排到内容区底边并改成内部滚动。
+        private float SilentListCardH
+        {
+            get
+            {
+                int rows = Math.Max(1, PluginManager.Instance.SilentDisplayItems.Count);
+                float contentH = SILENT_LIST_FIRST_ROW_Y + rows * SILENT_LIST_ROW_H + CARD_BOTTOM_PAD;
+                return Math.Clamp(contentH, 0f, ContentBottom - (TITLE_BAR_HEIGHT + SilentListCardY));
+            }
+        }
 
         // 与显示设置页的列表同高，行内控件位置也完全复用 DrawDisplayItem。
         private const float SILENT_LIST_ROW_H = 33f;
@@ -1094,15 +1104,15 @@ namespace NotchPeninsula
         // 页签：媒体设置
         private void RenderTabMedia(SKCanvas canvas)
         {
-            var mediaCard = new SKRect(CONTENT_L, MediaCardTop, LeftColumnRight, MediaCardTop + MediaTopCardHeight);
+            var mediaCard = new SKRect(CONTENT_L, MediaCardTop, LeftColumnRight, MediaCardTop + MediaTopLeftCardH);
             DrawSettingsCard(canvas, mediaCard);
             DrawToggleRow(canvas, MediaRowStart, "媒体控制", "允许在刘海中显示和控制系统媒体播放",
                 MediaController.IsMediaControlEnabled, _mediaToggleHovered, cardRight: LeftColumnRight);
-            DrawToggleRow(canvas, MediaRowStart + MEDIA_LIVE_ROW_DY, "使用实况窗展示媒体",
+            DrawToggleRow(canvas, MediaTopLeftRow2Y, "使用实况窗展示媒体",
                 "检测到媒体先显示 3 秒，再收进左侧实况窗（封面旋转）",
                 MediaLiveWindowController.IsEnabled, _mediaLiveToggleHovered, cardRight: LeftColumnRight);
 
-            var platformCard = new SKRect(RightColumnLeft, MediaCardTop, WIDTH - CONTENT_RM, MediaCardTop + MediaTopCardHeight);
+            var platformCard = new SKRect(RightColumnLeft, MediaCardTop, WIDTH - CONTENT_RM, MediaCardTop + MediaTopRightCardH);
             DrawSettingsCard(canvas, platformCard);
             canvas.DrawText("目标媒体平台", RightColumnText, PlatformBoxY + 10, _uiTextPaint);
             string platformHint = MediaController.TargetPlatform == "browser" ? "仅接管浏览器内的播放会话" : "多平台共存时，优先截获并接管的平台";
@@ -1134,42 +1144,42 @@ namespace NotchPeninsula
             DrawDropdownBox(canvas, appX, mBoxY, mBoxW, mBoxH, appLabel,
                 _appDropdownHovered, enabled: appBoxEnabled, open: _appDropdownOpen);
 
-            float lyricY = LYRIC_CARD_Y - 33f + MediaLyricsTopInset;
-            var lyricRect = new SKRect(CONTENT_L, LYRIC_CARD_Y, LeftColumnRight, LYRIC_CARD_Y + HOTKEY_CARD_H);
+            float lyricY = LyricCardContentTop;
+            var lyricRect = new SKRect(CONTENT_L, LYRIC_CARD_Y, LeftColumnRight, LYRIC_CARD_Y + LyricCardHeight);
             DrawSettingsCard(canvas, lyricRect);
 
             // 歌词开关（四行统一 34px 行距：原 40px 在 692 高窗口里显得太空）
             canvas.DrawText("在刘海中显示歌词", CONTENT_TEXT_X, lyricY + 48, _subTextPaint);
             float tW = 42, tH = 20;
-            float tX = LeftColumnRight - 16 - tW, tY = lyricY + 33;
+            float tX = LeftColumnRight - 16 - tW, tY = lyricY + LYRIC_TOGGLE1_DY;
             var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
             DrawSettingsSwitch(canvas, tRect, MediaController.IsLyricsEnabled, _lyricToggleHovered);
 
             canvas.DrawText("显示翻译歌词（上下两行）", CONTENT_TEXT_X, lyricY + 82, _subTextPaint);
-            float trY = lyricY + 67;
+            float trY = lyricY + LYRIC_TOGGLE2_DY;
             var trRect = new SKRect(tX, trY, tX + tW, trY + tH);
             DrawSettingsSwitch(canvas, trRect, MediaController.IsTranslationEnabled, _transToggleHovered);
 
             canvas.DrawText("逐字歌词（不可用时自动回退卡拉OK）", CONTENT_TEXT_X, lyricY + 116, _subTextPaint);
-            float kY = lyricY + 101;
+            float kY = lyricY + LYRIC_TOGGLE3_DY;
             var kRect = new SKRect(tX, kY, tX + tW, kY + tH);
             DrawSettingsSwitch(canvas, kRect, MediaController.IsLyricScanEnabled, _scanToggleHovered);
 
             // 延迟调整
             canvas.DrawText("歌词延迟补偿", CONTENT_TEXT_X, lyricY + 150, _subTextPaint);
             float cardRightX = LeftColumnRight - 16;
-            float btnY = lyricY + 133;
+            float btnY = lyricY + LYRIC_DELAY_DY;
 
-            DrawSettingsButton(canvas, new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + 24), "-", _lyricMinusHovered);
+            DrawSettingsButton(canvas, new SKRect(cardRightX - 175, btnY, cardRightX - 145, btnY + LYRIC_BTN_H), "-", _lyricMinusHovered);
 
             string valStr = $"{MediaController.LyricDelayOffset:F1} s";
             if (MediaController.LyricDelayOffset > 0) valStr = "+" + valStr;
             float textW = _uiTextPaint.MeasureText(valStr);
             canvas.DrawText(valStr, cardRightX - 90 - textW, btnY + 17, _uiTextPaint);
 
-            DrawSettingsButton(canvas, new SKRect(cardRightX - 80, btnY, cardRightX - 50, btnY + 24), "+", _lyricPlusHovered);
+            DrawSettingsButton(canvas, new SKRect(cardRightX - 80, btnY, cardRightX - 50, btnY + LYRIC_BTN_H), "+", _lyricPlusHovered);
 
-            DrawSettingsButton(canvas, new SKRect(cardRightX - 40, btnY, cardRightX, btnY + 24), "重置", _lyricResetHovered);
+            DrawSettingsButton(canvas, new SKRect(cardRightX - 40, btnY, cardRightX, btnY + LYRIC_BTN_H), "重置", _lyricResetHovered);
 
             DrawHotkeyCard(canvas);
         }
@@ -1177,7 +1187,7 @@ namespace NotchPeninsula
         private void DrawHotkeyCard(SKCanvas canvas)
         {
             float cardY = HOTKEY_CARD_Y;
-            var cardRect = new SKRect(RightColumnLeft, cardY, WIDTH - CONTENT_RM, cardY + HOTKEY_CARD_H);
+            var cardRect = new SKRect(RightColumnLeft, cardY, WIDTH - CONTENT_RM, cardY + MediaHotkeyCardHeight);
             DrawSettingsCard(canvas, cardRect);
 
 
@@ -1398,41 +1408,57 @@ namespace NotchPeninsula
         }
 
         // 页签：关于软件
+        // 两张卡各按自己的内容收高：左卡是图标 + 名称 + 版本号，右卡是标题 + 一排链接按钮。
+        // （旧版两张都是写死的 196，右卡底下空出一大半。）
+        private const float ABOUT_ICON_TOP = 30f;
+        private const float ABOUT_ICON_SIZE = 64f;
+        private const float ABOUT_TITLE_BASELINE = 128f;
+        private const float ABOUT_VERSION_BASELINE = 153f;
+        private const float ABOUT_LINKS_TITLE_BASELINE = 30f;
+        private const float ABOUT_LINKS_BASELINE = 82f;
+        private const float ABOUT_LINK_BTN_TOP = 20f;      // 按钮上沿相对基线
+        private const float ABOUT_LINK_BTN_BOTTOM = 9f;    // 按钮下沿相对基线
+
+        private float AboutIdentityCardH => ABOUT_VERSION_BASELINE + TEXT_INK_BOTTOM + CARD_BOTTOM_PAD;
+        private float AboutResourcesCardH => ABOUT_LINKS_BASELINE + ABOUT_LINK_BTN_BOTTOM + CARD_BOTTOM_PAD;
+
         private void RenderTabAbout(SKCanvas canvas)
         {
             float top = TITLE_BAR_HEIGHT + CARD_TOP_Y;
-            var identity = new SKRect(CONTENT_L, top, LeftColumnRight, top + 196);
-            var resources = new SKRect(RightColumnLeft, top, WIDTH - CONTENT_RM, top + 196);
+            var identity = new SKRect(CONTENT_L, top, LeftColumnRight, top + AboutIdentityCardH);
+            var resources = new SKRect(RightColumnLeft, top, WIDTH - CONTENT_RM, top + AboutResourcesCardH);
             DrawSettingsCard(canvas, identity);
             DrawSettingsCard(canvas, resources);
 
             if (_appIconBitmap != null)
-                canvas.DrawBitmap(_appIconBitmap, new SKRect(identity.MidX - 32, top + 30, identity.MidX + 32, top + 94), _hqSamplingOpts);
+                canvas.DrawBitmap(_appIconBitmap,
+                    new SKRect(identity.MidX - ABOUT_ICON_SIZE / 2f, top + ABOUT_ICON_TOP,
+                        identity.MidX + ABOUT_ICON_SIZE / 2f, top + ABOUT_ICON_TOP + ABOUT_ICON_SIZE), _hqSamplingOpts);
 
             _dynamicTextPaint.Color = _fgColor;
             _dynamicTextPaint.TextSize = 20f;
             _dynamicTextPaint.TextAlign = SKTextAlign.Center;
-            canvas.DrawText("NotchPeninsula", identity.MidX, top + 128, _dynamicTextPaint);
+            canvas.DrawText("NotchPeninsula", identity.MidX, top + ABOUT_TITLE_BASELINE, _dynamicTextPaint);
             _dynamicTextPaint.Color = SecondaryText;
             _dynamicTextPaint.TextSize = 13f;
-            canvas.DrawText(_appTitleWithVersion.Replace("NotchPeninsula ", "NPS v"), identity.MidX, top + 153, _dynamicTextPaint);
+            canvas.DrawText(_appTitleWithVersion.Replace("NotchPeninsula ", "NPS v"), identity.MidX, top + ABOUT_VERSION_BASELINE, _dynamicTextPaint);
             _dynamicTextPaint.TextAlign = SKTextAlign.Left;
 
-            canvas.DrawText("更新与项目链接", RightColumnText, top + 30, _uiTextPaint);
+            canvas.DrawText("更新与项目链接", RightColumnText, top + ABOUT_LINKS_TITLE_BASELINE, _uiTextPaint);
             float x = RightColumnText;
-            float baseline = top + 82;
+            float baseline = top + ABOUT_LINKS_BASELINE;
             string[] links = ["检测更新", "项目主页", "项目仓库", "开发者"];
             for (int i = 0; i < links.Length; i++)
             {
                 float width = _dynamicTextPaint.MeasureText(links[i]) + 20;
-                var button = new SKRect(x, baseline - 20, x + width, baseline + 9);
+                var button = new SKRect(x, baseline - ABOUT_LINK_BTN_TOP, x + width, baseline + ABOUT_LINK_BTN_BOTTOM);
                 DrawSettingsButton(canvas, button, links[i], _hoveredLinkIndex == i);
                 _aboutLinkLeft[i] = button.Left;
                 _aboutLinkRight[i] = button.Right;
                 x += width + 8;
             }
-            _aboutLinkTop = baseline - 20;
-            _aboutLinkBottom = baseline + 9;
+            _aboutLinkTop = baseline - ABOUT_LINK_BTN_TOP;
+            _aboutLinkBottom = baseline + ABOUT_LINK_BTN_BOTTOM;
         }
 
         // 页签：个性化中心
