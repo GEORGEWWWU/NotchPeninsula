@@ -1416,12 +1416,15 @@ namespace NotchPeninsula
         private const float AboutButtonGap = 8f;
         private const float AboutCardHeight = AboutButtonTop + AboutButtonHeight + 16f;
 
+        private const int AboutProjectLinkCount = 3;
+
         private static readonly (string Label, string? Url)[] AboutLinks =
         [
             ("检测更新", null),
             ("项目主页", "https://nps.georgewu.top/"),
             ("项目仓库", "https://github.com/GEORGEWWWU/NotchPeninsula"),
-            ("个人主页", "https://georgewu.top/")
+            ("个人主页", "https://georgewu.top/"),
+            ("个人博客", "https://blog.georgewu.top/")
         ];
 
         private static readonly Lazy<SKBitmap?> AboutAuthorAvatar = new(() =>
@@ -1433,16 +1436,14 @@ namespace NotchPeninsula
         private SKRect AboutLinkRect(int index)
         {
             float y = TITLE_BAR_HEIGHT + CARD_TOP_Y + AboutButtonTop;
-            float left;
-            if (index == AboutLinks.Length - 1)
-                left = (RightColumnLeft + WIDTH - CONTENT_RM - AboutButtonWidth) / 2f;
-            else
-            {
-                int count = AboutLinks.Length - 1;
-                float groupWidth = count * AboutButtonWidth + (count - 1) * AboutButtonGap;
-                left = (CONTENT_L + LeftColumnRight - groupWidth) / 2f
-                    + index * (AboutButtonWidth + AboutButtonGap);
-            }
+            bool authorLink = index >= AboutProjectLinkCount;
+            int first = authorLink ? AboutProjectLinkCount : 0;
+            int count = authorLink ? AboutLinks.Length - first : AboutProjectLinkCount;
+            float cardLeft = authorLink ? RightColumnLeft : CONTENT_L;
+            float cardRight = authorLink ? WIDTH - CONTENT_RM : LeftColumnRight;
+            float groupWidth = count * AboutButtonWidth + (count - 1) * AboutButtonGap;
+            float left = (cardLeft + cardRight - groupWidth) / 2f
+                + (index - first) * (AboutButtonWidth + AboutButtonGap);
             return SKRect.Create(left, y, AboutButtonWidth, AboutButtonHeight);
         }
 
