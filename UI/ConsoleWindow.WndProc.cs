@@ -177,10 +177,12 @@ namespace NotchPeninsula
                 }
 
                 int newHintRow = -1;
-                if (x >= CONTENT_L && x <= WIDTH - CONTENT_RM)
+                // 这句提示属于右列「底部圆角」那一行。命中必须同时收在右列之内，
+                // 否则鼠标停在左列同一高度（主题卡 / 背景材质）时右列也会亮起提示。
+                if (x >= RightColumnLeft && x <= WIDTH - CONTENT_RM)
                 {
                     float hy = GetBtnY(7);
-                    if (y >= hy - 6 && y <= hy + 30) newHintRow = 7;
+                    if (y >= hy && y <= hy + 34) newHintRow = 7;
                 }
                 if (newHintRow != _hintRow)
                 {
@@ -859,7 +861,9 @@ namespace NotchPeninsula
 
             bool newIsHoveringDisabledArea = false;
             // 否则就会出现「明明能点、却显示禁止指针」。
-            if (x >= 200 && x <= WIDTH - CONTENT_RM)
+            // 左边界必须跟右列卡片对齐：从 CONTENT_L 起算的话，左列同高度的卡片
+            //（通用页的 MSP 卡）也会被这层禁止指针盖住。
+            if (x >= RightColumnLeft && x <= WIDTH - CONTENT_RM)
             {
                 if (_selectedTab == 0 && !ToastSoundConfig.IsRowEnabled
                     && y >= TITLE_BAR_HEIGHT + SOUND_ROW_Y && y <= TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H)
