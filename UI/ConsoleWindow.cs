@@ -25,7 +25,7 @@ namespace NotchPeninsula
 
         // ---- 内容区横向边界（窗口右侧那一列）----
         // 想各挪十几像素得改上百处）。
-        private float CONTENT_L => SidebarWidth + 12f;          // 卡片左边界（与侧栏之间留一点缝）
+        private float CONTENT_L => SidebarWidth + 4f;          // 卡片左边界（与侧栏之间留一点缝）
         private float CONTENT_TEXT_X => CONTENT_L + 16f;     // 卡片内文字左缩进（= CONTENT_L + 16）
         private const float CONTENT_RM = 12f;          // 卡片右边界距窗口右边
         private const float CONTENT_TEXT_RM = 28f;     // 卡片内文字右缩进（距窗口右边）
@@ -212,7 +212,7 @@ namespace NotchPeninsula
 
         private const float TAB_BOX_L = 10f;          // 页签选中块 / 悬停块的左右边界
 
-        private float TAB_BOX_R => SidebarWidth - 10f;
+        private float TAB_BOX_R => SidebarWidth - 6f;
 
         private const float TAB_BAR_DY = 8f;          // 蓝色竖条相对行首的上下内缩（竖条高 = 36 - 2×8）
 
@@ -1910,7 +1910,7 @@ namespace NotchPeninsula
             canvas.ClipRoundRect(outline, SKClipOperation.Intersect, true);
 
             DrawSidebarToggle(canvas);
-            float textX = 58f;
+            float textX = CONTENT_L;
             if (_appIconBitmap != null)
             {
                 var iconRect = new SKRect(textX, 8, textX + 16, 24);

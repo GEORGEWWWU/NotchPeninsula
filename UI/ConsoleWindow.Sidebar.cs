@@ -5,7 +5,7 @@ namespace NotchPeninsula
     public partial class ConsoleWindow
     {
         private bool _sidebarCollapsed;
-        private float SidebarWidth => _sidebarCollapsed ? 60f : 208f;
+        private float SidebarWidth => _sidebarCollapsed ? 60f : 160f;
         private bool _sidebarToggleHovered;
         private bool _trackingSidebarMouse;
         private static readonly SKRect SidebarToggleRect = new(10, 5, 50, 28);
