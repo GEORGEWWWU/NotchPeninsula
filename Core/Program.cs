@@ -18,6 +18,7 @@ namespace NotchPeninsula
                 using var key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\NotchPeninsula");
                 if (key != null)
                 {
+                    ConsoleWindow.SidebarCollapsed = key.GetValue(ConsoleWindow.SidebarCollapsedSetting) is 1;
                     FontConfig.Restore(key.GetValue("CustomFontPath", "") as string);
 
                     NotchWindow.IsAutoHideEnabled = (int)key.GetValue("AutoHide", 0) != 0;

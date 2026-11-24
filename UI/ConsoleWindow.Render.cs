@@ -675,7 +675,7 @@ namespace NotchPeninsula
                     canvas.DrawRoundRect(new SKRect(TAB_BOX_L, top, TAB_BOX_R, top + TAB_ROW_H), 4, 4, _dynamicFillPaint);
                 }
                 DrawSidebarIcon(canvas, SidebarIcons[tab], 30, top + TAB_ROW_H / 2);
-                if (!_sidebarCollapsed)
+                if (!SidebarCollapsed)
                     canvas.DrawText(SidebarLabels[tab], 54, top + 24, _uiTextPaint);
                 if (tab == 7 && MarketUpdateCount > 0)
                     DrawMarketTabBadge(canvas, top);
@@ -697,7 +697,7 @@ namespace NotchPeninsula
             // 结果行画在按钮组上方：两个按钮共用一行提示（一次只会有一个人说话）。
             // 提示行比按钮宽（可占满侧栏），左对齐 —— 居中放不下时两边会顶到侧栏外。
             string hint = _cacheCleanHint.Length > 0 ? _cacheCleanHint : _aboutExportHint;
-            if (!_sidebarCollapsed && hint.Length > 0)
+            if (!SidebarCollapsed && hint.Length > 0)
             {
                 _dynamicTextPaint.TextSize = 11f;
                 _dynamicTextPaint.TextAlign = SKTextAlign.Left;
@@ -722,7 +722,7 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(rect, 5f, 5f, _dynamicFillPaint);
 
             _dynamicTextPaint.TextAlign = SKTextAlign.Center;
-            if (_sidebarCollapsed)
+            if (SidebarCollapsed)
             {
                 DrawSidebarIcon(canvas, y == CACHE_BTN_Y ? "\uE74D" : "\uE898", rect.MidX, rect.MidY);
                 return;

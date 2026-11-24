@@ -716,7 +716,7 @@ namespace NotchPeninsula
         // 绘制 / 悬停 / 点击三处共用这套几何。
         // 左下两个方向的留白取同一个值 —— 底部写死数字会和左边一点点对不上，所以由 X 和按钮高推出来。
         private const float EXPORT_BTN_X = TAB_BOX_L;                     // 10，与页签块左缘对齐
-        private float EXPORT_BTN_W => _sidebarCollapsed ? 40f : 96f;                           // 「导出诊断包」5 字 + 左右呼吸，别占满整行
+        private float EXPORT_BTN_W => SidebarCollapsed ? 40f : 96f;                           // 「导出诊断包」5 字 + 左右呼吸，别占满整行
         private const float EXPORT_BTN_H = 28f;
         private float EXPORT_BTN_Y => HEIGHT - EXPORT_BTN_X - EXPORT_BTN_H;   // 622，下边留白 == 左边留白
 

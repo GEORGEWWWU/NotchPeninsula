@@ -248,7 +248,8 @@ namespace NotchPeninsula
 
             if (SidebarToggleRect.Contains(clickX, clickY))
             {
-                _sidebarCollapsed = !_sidebarCollapsed;
+                SidebarCollapsed = !SidebarCollapsed;
+                Program.SaveSetting(SidebarCollapsedSetting, SidebarCollapsed ? 1 : 0);
                 CloseAllDropdowns();
                 SyncHoverFromCursor();
                 Render();

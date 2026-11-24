@@ -4,8 +4,9 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        private bool _sidebarCollapsed;
-        private float SidebarWidth => _sidebarCollapsed ? 60f : 160f;
+        internal const string SidebarCollapsedSetting = "SettingsSidebarCollapsed";
+        internal static bool SidebarCollapsed { get; set; }
+        private float SidebarWidth => SidebarCollapsed ? 60f : 160f;
         private bool _sidebarToggleHovered;
         private bool _trackingSidebarMouse;
         private const string SidebarToggleGlyph = "\uE700";
@@ -67,8 +68,8 @@ namespace NotchPeninsula
         {
             if (IsConfirmDialogOpen)
                 return;
-            string? text = _sidebarToggleHovered ? (_sidebarCollapsed ? "展开侧栏" : "收起侧栏")
-                : !_sidebarCollapsed ? null
+            string? text = _sidebarToggleHovered ? (SidebarCollapsed ? "展开侧栏" : "收起侧栏")
+                : !SidebarCollapsed ? null
                 : _hoveredTab >= 0 ? SidebarLabels[_hoveredTab]
                 : _cacheCleanHovered ? "清理解包缓存"
                 : _aboutExportHovered ? "导出诊断包" : null;
