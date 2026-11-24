@@ -612,11 +612,29 @@ namespace NotchPeninsula
 
         private const float DROPDOWN_ROW_H = 26f;
 
+        // 下拉面板的上下内边距：第一行 / 最后一行不再贴着面板边缘。
+        private const float DROPDOWN_PAD_Y = 4f;
+
+        /// <summary>下拉面板总高度（含上下内边距）。</summary>
+        private static float DropdownHeight(int rows) => rows * DROPDOWN_ROW_H + DROPDOWN_PAD_Y * 2f;
+
+        /// <summary>
+        /// y 命中的是面板里的第几行（面板顶端为 menuTop，可见 visibleRows 行，未命中返回 -1）。
+        /// 绘制、悬停、点击三处共用这一份：内边距只在这里定义一次，不会三边对不上。
+        /// </summary>
+        private static int DropdownRowAt(float menuTop, int visibleRows, float y)
+        {
+            float inner = y - menuTop - DROPDOWN_PAD_Y;
+            if (inner < 0f) return -1;
+            int row = (int)(inner / DROPDOWN_ROW_H);
+            return row >= 0 && row < visibleRows ? row : -1;
+        }
+
         private void GetToastSoundMenuLayout(out float menuTop, out int visibleRows, out int maxFirstRow)
         {
             int total = ToastSoundConfig.OptionCount;
             menuTop = TITLE_BAR_HEIGHT + SOUND_BOX_Y + SOUND_ROW_H + 2f;
-            int maxRows = Math.Max(1, (int)((ContentBottom - menuTop) / DROPDOWN_ROW_H));
+            int maxRows = Math.Max(1, (int)((ContentBottom - menuTop - DROPDOWN_PAD_Y * 2f) / DROPDOWN_ROW_H));
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
         }
@@ -624,9 +642,9 @@ namespace NotchPeninsula
         private void GetVolumeMenuLayout(out float menuTop, out float menuBottom, out int visibleRows)
         {
             menuBottom = TITLE_BAR_HEIGHT + SOUND_BOX_Y - 2f;   // 对应 RenderDropdownList 的 anchorY - 2
-            int maxRows = Math.Max(1, (int)((menuBottom - TITLE_BAR_HEIGHT - 12f) / DROPDOWN_ROW_H));
+            int maxRows = Math.Max(1, (int)((menuBottom - TITLE_BAR_HEIGHT - 12f - DROPDOWN_PAD_Y * 2f) / DROPDOWN_ROW_H));
             visibleRows = Math.Min(ToastSoundConfig.VolumeOptions.Length, maxRows);
-            menuTop = menuBottom - visibleRows * DROPDOWN_ROW_H;
+            menuTop = menuBottom - DropdownHeight(visibleRows);
         }
 
         private void ScrollToastSoundMenuToSelected()
@@ -959,7 +977,7 @@ namespace NotchPeninsula
         {
             int total = _sceneChoices.Length;
             menuTop = TITLE_BAR_HEIGHT + SCENE_ROW_Y + (ROW_H - SCENE_DD_H) / 2f + SCENE_DD_H + 2f - _displayPageScroll;
-            int maxRows = Math.Max(1, (int)((ContentBottom - menuTop) / DROPDOWN_ROW_H));
+            int maxRows = Math.Max(1, (int)((ContentBottom - menuTop - DROPDOWN_PAD_Y * 2f) / DROPDOWN_ROW_H));
             visibleRows = Math.Min(total, maxRows);
             maxFirstRow = Math.Max(0, total - visibleRows);
         }

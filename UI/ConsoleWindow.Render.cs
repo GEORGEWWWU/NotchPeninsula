@@ -2417,8 +2417,8 @@ namespace NotchPeninsula
             int total = options.Length;
             float availFrom = upward ? y - 2 : y;
             int maxRows = upward
-                ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12) / DROPDOWN_ROW_H))
-                : Math.Max(1, (int)((ContentBottom - availFrom) / DROPDOWN_ROW_H));
+                ? Math.Max(1, (int)((availFrom - TITLE_BAR_HEIGHT - 12 - DROPDOWN_PAD_Y * 2f) / DROPDOWN_ROW_H))
+                : Math.Max(1, (int)((ContentBottom - availFrom - DROPDOWN_PAD_Y * 2f) / DROPDOWN_ROW_H));
 
             int visible;
             if (total == 0)
@@ -2433,7 +2433,8 @@ namespace NotchPeninsula
                     : Math.Min(total, maxRows);
             }
 
-            float listH = visible * DROPDOWN_ROW_H;
+            // 上下各留一点内边距：第一行和最后一行不再贴着面板边缘。
+            float listH = DropdownHeight(visible);
             float dY = upward ? availFrom - listH : availFrom;
             var dRect = new SKRect(x, dY, x + w, dY + listH);
             canvas.DrawRoundRect(dRect, 8, 8, _menuBg);
@@ -2442,7 +2443,7 @@ namespace NotchPeninsula
             if (total == 0)
             {
                 _dynamicTextPaint.Color = SecondaryText;
-                canvas.DrawText(emptyText!, x + 12, dY + 18, _dynamicTextPaint);
+                canvas.DrawText(emptyText!, x + 12, dY + DROPDOWN_PAD_Y + 18, _dynamicTextPaint);
                 _dynamicTextPaint.Color = _fgColor;
                 return;
             }
@@ -2453,7 +2454,7 @@ namespace NotchPeninsula
             for (int row = 0; row < visible; row++)
             {
                 int i = first + row;
-                float rowTop = dY + row * DROPDOWN_ROW_H;
+                float rowTop = dY + DROPDOWN_PAD_Y + row * DROPDOWN_ROW_H;
                 bool selected = i == selectedIndex;
 
                 var rowRect = new SKRect(x + 4, rowTop + 1, x + w - 4, rowTop + DROPDOWN_ROW_H - 1);

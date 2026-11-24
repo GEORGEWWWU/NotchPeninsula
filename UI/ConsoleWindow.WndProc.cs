@@ -305,9 +305,11 @@ namespace NotchPeninsula
                 if (_toastModeDropdownOpen)
                 {
                     float menuTop = TITLE_BAR_HEIGHT + TOAST_MODE_ROW_Y + TOAST_MODE_ROW_H + 2;
-                    if (x >= TOAST_MODE_CTRL_X && x <= TOAST_MODE_CTRL_X + TOAST_MODE_CTRL_W
-                        && y >= menuTop && y < menuTop + _toastModeOptions.Length * 26)
-                        newHoveredToastModeIndex = (int)((y - menuTop) / 26);
+                    if (x >= TOAST_MODE_CTRL_X && x <= TOAST_MODE_CTRL_X + TOAST_MODE_CTRL_W)
+                    {
+                        int row = DropdownRowAt(menuTop, _toastModeOptions.Length, y);
+                        if (row >= 0) newHoveredToastModeIndex = row;
+                    }
                 }
 
                 if (x >= WIDTH - 80 && x <= WIDTH - 30
@@ -327,9 +329,11 @@ namespace NotchPeninsula
                     //    才会出现「滚两下就断」。
                     GetToastSoundMenuLayout(out float menuTop, out int visible, out int maxFirst);
                     int first = Math.Clamp(_dropdownScroll, 0, maxFirst);
-                    if (x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W
-                        && y >= menuTop && y < menuTop + visible * DROPDOWN_ROW_H)
-                        newHoveredToastSoundIndex = first + (int)((y - menuTop) / DROPDOWN_ROW_H);
+                    if (x >= SOUND_CTRL_X && x <= SOUND_CTRL_X + SOUND_CTRL_W)
+                    {
+                        int row = DropdownRowAt(menuTop, visible, y);
+                        if (row >= 0) newHoveredToastSoundIndex = first + row;
+                    }
                 }
 
                 if (soundReady && !_soundVolumeDropdownOpen
@@ -338,10 +342,13 @@ namespace NotchPeninsula
                     newSoundVolumeDropdownHovered = true;
                 if (soundReady && _soundVolumeDropdownOpen)
                 {
-                    GetVolumeMenuLayout(out float menuTopV, out float menuBottom, out _);
-                    if (x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W
-                        && y >= menuTopV && y < menuBottom)
-                        newHoveredSoundVolumeIndex = (int)((y - menuTopV) / DROPDOWN_ROW_H);
+                    GetVolumeMenuLayout(out float menuTopV, out _, out _);
+                    int volVisible = ToastSoundConfig.VolumeOptions.Length;
+                    if (x >= SOUND_VOL_X && x <= SOUND_VOL_X + SOUND_VOL_W)
+                    {
+                        int row = DropdownRowAt(menuTopV, volVisible, y);
+                        if (row >= 0) newHoveredSoundVolumeIndex = row;
+                    }
                 }
 
                 if (soundReady && y >= TITLE_BAR_HEIGHT + SOUND_BTN_Y && y <= TITLE_BAR_HEIGHT + SOUND_BTN_Y + SOUND_BTN_H)
@@ -390,8 +397,11 @@ namespace NotchPeninsula
                 if (_monitorDropdownOpen)
                 {
                     float listY = mdY + MONITOR_DD_H + 2f;
-                    if (x >= mdX && x <= DISPLAY_CTRL_RIGHT && y >= listY && y < listY + _monitorOptions.Length * 26)
-                        newHoveredMonitorDropdownIndex = (int)((y - listY) / 26);
+                    if (x >= mdX && x <= DISPLAY_CTRL_RIGHT)
+                    {
+                        int row = DropdownRowAt(listY, _monitorOptions.Length, y);
+                        if (row >= 0) newHoveredMonitorDropdownIndex = row;
+                    }
                 }
 
                 // 目标显示器列表展开时它压住下面几行控件（列表 y 209 起，每项 26），
@@ -415,9 +425,11 @@ namespace NotchPeninsula
                 {
                     GetSceneMenuLayout(out float sceneMenuTop, out int sceneVisible, out int sceneMaxFirst);
                     int sceneFirst = Math.Clamp(_sceneScroll, 0, sceneMaxFirst);
-                    if (x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W
-                        && y >= sceneMenuTop && y < sceneMenuTop + sceneVisible * DROPDOWN_ROW_H)
-                        newHoveredStandbySceneIndex = sceneFirst + (int)((y - sceneMenuTop) / DROPDOWN_ROW_H);
+                    if (x >= SCENE_SEG_X && x <= SCENE_SEG_X + SCENE_SEG_W)
+                    {
+                        int row = DropdownRowAt(sceneMenuTop, sceneVisible, y);
+                        if (row >= 0) newHoveredStandbySceneIndex = sceneFirst + row;
+                    }
                 }
 
                 bool sceneListOpen = _sceneDropdownOpen;
@@ -500,8 +512,11 @@ namespace NotchPeninsula
 
                 if (_dropdownOpen)
                 {
-                    if (x >= PlatformBoxX && x <= PlatformBoxX + 110 && y >= PlatformMenuY && y < PlatformMenuY + _platforms.Length * 26)
-                        newHoveredDropdownIndex = (int)((y - PlatformMenuY) / 26);
+                    if (x >= PlatformBoxX && x <= PlatformBoxX + 110)
+                    {
+                        int row = DropdownRowAt(PlatformMenuY, _platforms.Length, y);
+                        if (row >= 0) newHoveredDropdownIndex = row;
+                    }
                 }
 
                 bool matchRowEnabled = MediaController.TargetPlatform == "other";
@@ -510,17 +525,21 @@ namespace NotchPeninsula
                 newAppDropdownHovered = !anyPopupOpen && matchRowEnabled && MediaController.IsManualSessionMatch
                     && x >= MATCH_APP_X && x <= MATCH_APP_X + MATCH_BOX_W && y >= MATCH_ROW_Y && y <= MATCH_ROW_Y + MATCH_BOX_H;
 
-                if (_matchModeDropdownOpen
-                    && x >= MATCH_MODE_X && x <= MATCH_MODE_X + MATCH_BOX_W
-                    && y >= MATCH_MENU_Y && y < MATCH_MENU_Y + _matchModeOptions.Length * 26)
-                    newHoveredMatchModeIndex = (int)((y - MATCH_MENU_Y) / 26);
+                if (_matchModeDropdownOpen && x >= MATCH_MODE_X && x <= MATCH_MODE_X + MATCH_BOX_W)
+                {
+                    int row = DropdownRowAt(MATCH_MENU_Y, _matchModeOptions.Length, y);
+                    if (row >= 0) newHoveredMatchModeIndex = row;
+                }
 
                 if (_appDropdownOpen)
                 {
                     int appRows = Math.Clamp(_appOptions.Length, 1, 8);
                     float appMenuX = MATCH_MENU_RIGHT - APP_MENU_W;
-                    if (x >= appMenuX && x <= MATCH_MENU_RIGHT && y >= MATCH_MENU_Y && y < MATCH_MENU_Y + appRows * 26)
-                        newHoveredAppIndex = (int)((y - MATCH_MENU_Y) / 26);
+                    if (x >= appMenuX && x <= MATCH_MENU_RIGHT)
+                    {
+                        int row = DropdownRowAt(MATCH_MENU_Y, appRows, y);
+                        if (row >= 0) newHoveredAppIndex = row;
+                    }
                 }
 
                 // 歌词设置卡片（坐标常量与 Render() 同源；四行统一 34px 行距）
@@ -630,20 +649,24 @@ namespace NotchPeninsula
 
                     if (_marketCategoryOpen)
                     {
-                        const float rowH = 26f;
                         float mY = MarketControlsY + MarketControlH + 4;
-                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + MarketCatBtnW && y >= mY && y < mY + MarketCategories.Length * rowH)
-                            newHoveredMarketCategoryIndex = (int)((y - mY) / rowH);
+                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + MarketCatBtnW)
+                        {
+                            int row = DropdownRowAt(mY, MarketCategories.Length, y);
+                            if (row >= 0) newHoveredMarketCategoryIndex = row;
+                        }
                     }
                     if (overCatBtn && newHoveredMarketCategoryIndex == -1 && !_marketCategoryOpen)
                         newHoveredMarketCategoryIndex = -2;
 
                     if (_marketSortOpen)
                     {
-                        const float sortRowH = 26f;
                         float sY = MarketStatusRowY + MarketControlH + 4;
-                        if (x >= MarketSortX && x <= MarketSortX + MarketSortW && y >= sY && y < sY + MarketSortOptions.Length * sortRowH)
-                            newHoveredMarketSortIndex = (int)((y - sY) / sortRowH);
+                        if (x >= MarketSortX && x <= MarketSortX + MarketSortW)
+                        {
+                            int row = DropdownRowAt(sY, MarketSortOptions.Length, y);
+                            if (row >= 0) newHoveredMarketSortIndex = row;
+                        }
                     }
                     if (newHoveredMarketSortBox && newHoveredMarketSortIndex == -1 && !_marketSortOpen)
                         newHoveredMarketSortIndex = -2;
