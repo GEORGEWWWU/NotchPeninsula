@@ -1698,16 +1698,18 @@ namespace NotchPeninsula
                 canvas.Save();
                 canvas.ClipRect(tile);
                 float rowY = tile.Top;
-                float textX = tile.Left + 10f;
+                float textX = tile.Left + PluginTextInset;
                 float settingsX = tile.Right - 224f;
-                float nameTextMax = tile.Right - 10f - textX;
+                float nameTextMax = tile.Right - PluginTextInset - textX;
                 float infoTextMax = _showPluginCards ? nameTextMax : settingsX - textX - 8;
                 // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
-                canvas.DrawText(TruncateText(entry.FriendlyName, _uiTextPaint, nameTextMax), textX, rowY + 17, _uiTextPaint);
+                _pluginTitlePaint.Color = _fgColor;
+                canvas.DrawText(TruncateText(entry.FriendlyName, _pluginTitlePaint, nameTextMax),
+                    textX, rowY + PluginTitleBaseline, _pluginTitlePaint);
 
                 string sub = i < _pluginSubTexts.Count ? _pluginSubTexts[i] : "";
                 bool subDisabled = i < _pluginSubDisabled.Count && _pluginSubDisabled[i];
-                float infoBaseline = rowY + 37;
+                float infoBaseline = rowY + PluginMetadataBaseline;
                 string shownSub = TruncateText(sub, _subTextPaint, infoTextMax);
                 if (entry.State == PluginState.Failed && shownSub.StartsWith("加载失败", StringComparison.Ordinal))
                 {
@@ -1736,13 +1738,13 @@ namespace NotchPeninsula
                 const float btnH = 20f;       // 操作按钮矩形
 
                 // 操作按钮（重载 / 卸载）+ 开关
-                void DrawRowButton(float bx, bool hovered, string label, bool danger, bool accent = false)
+                void DrawRowButton(float bx, bool hovered, string label, bool danger = false)
                 {
                     var r = new SKRect(bx, rowY + btnTop, bx + 50, rowY + btnTop + btnH);
                     DrawSettingsButton(canvas, r, label, hovered, kind: danger
-                        ? SettingsButtonKind.Danger : accent ? SettingsButtonKind.Primary : SettingsButtonKind.Standard);
+                        ? SettingsButtonKind.Danger : SettingsButtonKind.Standard);
                 }
-                DrawRowButton(settingsX, _hoveredPluginSettings == i, "设置", false, accent: true);
+                DrawRowButton(settingsX, _hoveredPluginSettings == i, "设置");
                 DrawRowButton((settingsX + 56f), _hoveredPluginReload == i, "重载", false);
                 DrawRowButton((settingsX + 112f), _hoveredPluginRemove == i, "卸载", true);
 
@@ -1890,7 +1892,7 @@ namespace NotchPeninsula
                 enabled: true, open: _marketSortOpen);
             _subTextPaint.Color = SecondaryText;   // 下面列表区继续用这支，保持默认灰
 
-            float rowsTop = MarketRowsTop;
+            float rowsTop = MarketTileTop;
 
             GetMarketListLayout(out int mVisibleRows, out int mMaxFirst);
             _marketScroll = Math.Clamp(_marketScroll, 0, mMaxFirst);
@@ -1912,12 +1914,12 @@ namespace NotchPeninsula
                 canvas.Save();
                 canvas.ClipRect(tile);
                 float rowY = tile.Top;
-                float textX = tile.Left + 10f;
+                float textX = tile.Left + PluginTextInset;
                 float rightEdge = tile.Right - 10f;
                 float detailX = rightEdge - MarketBtnW;
                 float uninstallX = detailX - 6f - MarketBtnW;
                 float installX = uninstallX - 6f - MarketBtnW;
-                float statBaseline = rowY + (_showPluginCards ? 37 : 17);
+                float statBaseline = rowY + (_showPluginCards ? PluginMetadataBaseline : PluginTitleBaseline);
                 var local = MatchLocalPlugin(mp);
                 bool busy = string.Equals(_marketBusyId, mp.Id, StringComparison.Ordinal);
                 bool dim = PluginManager.Instance.IsDisabled(local);
@@ -1966,21 +1968,21 @@ namespace NotchPeninsula
                            + (tagInstalled.Length > 0 ? 8f + _subTextPaint.MeasureText(tagInstalled) : 0f);
                 float nameMaxNow = Math.Max(30f, (_showPluginCards ? rightEdge : ratingLeft) - 12f - tagW - textX);
 
-                string shownName = TruncateText(mp.Name, _uiTextPaint, nameMaxNow);
-                _uiTextPaint.Color = dim ? Neutral(105) : _fgColor;
-                canvas.DrawText(shownName, textX, rowY + 17, _uiTextPaint);
-                float afterNameX = textX + _uiTextPaint.MeasureText(shownName);
+                string shownName = TruncateText(mp.Name, _pluginTitlePaint, nameMaxNow);
+                _pluginTitlePaint.Color = dim ? DisabledText : _fgColor;
+                canvas.DrawText(shownName, textX, rowY + PluginTitleBaseline, _pluginTitlePaint);
+                float afterNameX = textX + _pluginTitlePaint.MeasureText(shownName);
 
                 if (tagOfficial.Length > 0)
                 {
                     _subTextPaint.Color = dim ? Neutral(95) : AccentText;
-                    canvas.DrawText(tagOfficial, afterNameX + 6, rowY + 17, _subTextPaint);
+                    canvas.DrawText(tagOfficial, afterNameX + 6, rowY + PluginTitleBaseline, _subTextPaint);
                     afterNameX += 6 + _subTextPaint.MeasureText(tagOfficial);
                 }
                 if (tagInstalled.Length > 0)
                 {
                     _subTextPaint.Color = dim ? Neutral(95) : AccentText;
-                    canvas.DrawText(tagInstalled, afterNameX + 8, rowY + 17, _subTextPaint);
+                    canvas.DrawText(tagInstalled, afterNameX + 8, rowY + PluginTitleBaseline, _subTextPaint);
                     afterNameX += 8 + _subTextPaint.MeasureText(tagInstalled);
                 }
                 _subTextPaint.Color = SecondaryText;
@@ -1989,21 +1991,21 @@ namespace NotchPeninsula
                 if (busy)
                 {
                     _subTextPaint.Color = AccentText;
-                    canvas.DrawText("正在下载安装…", textX, rowY + 37, _subTextPaint);
+                    canvas.DrawText("正在下载安装…", textX, rowY + PluginMetadataBaseline, _subTextPaint);
                     _subTextPaint.Color = SecondaryText;
                 }
                 else if (dim)
                 {
                     //    同时说明这一行为什么是灰的
                     _subTextPaint.Color = Neutral(95);
-                    canvas.DrawText("已禁用", textX, rowY + 37, _subTextPaint);
+                    canvas.DrawText("已禁用", textX, rowY + PluginMetadataBaseline, _subTextPaint);
                     _subTextPaint.Color = SecondaryText;
                 }
                 else
                 {
                     _subTextPaint.Color = SecondaryText;
                     canvas.DrawText(TruncateText($"v{mp.Version} · {mp.Author}", _subTextPaint, infoTextMax),
-                        textX, rowY + 37, _subTextPaint);
+                        textX, rowY + PluginMetadataBaseline, _subTextPaint);
                 }
 
                 float btnTop = PluginButtonsTop;

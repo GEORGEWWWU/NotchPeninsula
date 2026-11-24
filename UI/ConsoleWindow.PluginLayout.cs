@@ -13,9 +13,21 @@ namespace NotchPeninsula
             ? Math.Max(2, (int)((PluginTileSpace + CARD_GAP) / (272f + CARD_GAP)))
             : 2;
         private float PluginTileWidth => (PluginTileSpace - (PluginColumns - 1) * CARD_GAP) / PluginColumns;
-        private float PluginTileHeight => _showPluginCards ? 76f : 50f;
+        private float PluginTileHeight => _showPluginCards ? 86f : 54f;
         private float PluginTilePitch => PluginTileHeight + CARD_GAP;
-        private float PluginButtonsTop => _showPluginCards ? 48f : 21f;
+        private float PluginButtonsTop => _showPluginCards ? 55f : 23f;
+
+        private float PluginTitleBaseline => _showPluginCards ? 23f : 19f;
+        private float PluginMetadataBaseline => _showPluginCards ? 43f : 39f;
+        private float PluginTextInset => _showPluginCards ? 14f : 10f;
+
+        private static readonly SKPaint _pluginTitlePaint = new()
+        {
+            TextSize = 14f,
+            IsAntialias = true,
+            Typeface = SKTypeface.FromFamilyName(UI_TEXT_FONT, SKFontStyleWeight.SemiBold,
+                SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+        };
 
         private SKRect PluginTile(float top, int slot)
         {
@@ -28,14 +40,14 @@ namespace NotchPeninsula
 
         private void DrawPluginTile(SKCanvas canvas, SKRect tile)
         {
+            _dynamicFillPaint.Color = Overlay(_showPluginCards ? (byte)17 : (byte)8);
+            canvas.DrawRoundRect(tile, SettingsCardRadius, SettingsCardRadius, _dynamicFillPaint);
             if (_showPluginCards)
             {
-                _dynamicFillPaint.Color = _isLightAppearance ? new SKColor(237, 239, 242, 188) : Overlay(13);
-                canvas.DrawRoundRect(tile, SettingsCardRadius, SettingsCardRadius, _dynamicFillPaint);
-            }
-            else
-            {
-                canvas.DrawLine(tile.Left + 10, tile.Bottom, tile.Right - 10, tile.Bottom, _separatorPaint);
+                var footer = new SKRect(tile.Left + 6f, tile.Top + PluginButtonsTop - 4f,
+                    tile.Right - 6f, tile.Bottom - 6f);
+                _dynamicFillPaint.Color = Overlay(9);
+                canvas.DrawRoundRect(footer, SettingsControlRadius, SettingsControlRadius, _dynamicFillPaint);
             }
         }
 

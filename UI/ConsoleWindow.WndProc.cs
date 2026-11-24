@@ -703,10 +703,10 @@ namespace NotchPeninsula
                 {
                     GetMarketListLayout(out int mRows, out int mMaxFirst);
                     _marketScroll = Math.Clamp(_marketScroll, 0, mMaxFirst);
-                    int slot = HitPluginTile(MarketRowsTop, x, y);
+                    int slot = HitPluginTile(MarketTileTop, x, y);
                     if (slot >= 0 && slot < mRows)
                     {
-                        var rect = PluginTile(MarketRowsTop, slot);
+                        var rect = PluginTile(MarketTileTop, slot);
                         float actionY = rect.Top + PluginButtonsTop;
                         if (y >= actionY && y <= actionY + 20)
                         {

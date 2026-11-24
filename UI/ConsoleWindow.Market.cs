@@ -387,7 +387,7 @@ namespace NotchPeninsula
         private const float MarketStatusBaseline = MarketStatusRowY + 17f;
         private const float MarketRefreshW = 50f;
         private float MarketRefreshX => WIDTH - MarketRightPad - MarketRefreshW;   // 514
-        private const float MarketRowsTop = TITLE_BAR_HEIGHT + 96f;   // 92 → 96：首行离「只看已安装」那排太近，整体下移 4px
+        private float MarketTileTop => TITLE_BAR_HEIGHT + (_showPluginCards ? 102f : 96f);
 
         private float MarketChkX => CONTENT_TEXT_X;
         private const float MarketChkBoxSize = 16f;
@@ -478,7 +478,7 @@ namespace NotchPeninsula
         private void GetMarketListLayout(out int visibleRows, out int maxFirstRow)
         {
             float reserve = MarketUpdateCount > 0 ? MarketUpdateBarH + MarketUpdateBarPad : 0;
-            MeasurePluginTiles(_marketView.Count, _marketScroll, MarketRowsTop, ContentBottom - reserve,
+            MeasurePluginTiles(_marketView.Count, _marketScroll, MarketTileTop, ContentBottom - reserve,
                 out visibleRows, out maxFirstRow);
         }
 
