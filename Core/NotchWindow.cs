@@ -47,6 +47,8 @@ namespace NotchPeninsula
 
         // ---- 渲染线程 ----
         private Thread? _renderThread;
+        private readonly AutoResetEvent _passthroughFrameRequested = new(false);
+        private volatile bool _passthroughHoverHidden;
         private readonly Win32.WndProc _wndProcDelegate;
 
         private IslandDropTarget? _islandDropTarget;
@@ -596,10 +598,10 @@ namespace NotchPeninsula
             var clock = Stopwatch.StartNew();
             long nextTick = 0;
 
-            // 帧节拍等待用高精度定时器（不占 CPU）。建不出来就退回 Sleep/Yield，功能不受影响。
             IntPtr frameTimer = Win32.CreateHighResTimer();
+            IntPtr passthroughInterrupt = _passthroughFrameRequested.SafeWaitHandle.DangerousGetHandle();
             if (frameTimer == IntPtr.Zero)
-                Warn("[渲染] 高精度定时器创建失败，帧节拍退回 Sleep/自旋（后台占用会偏高）");
+                Warn("[渲染] 高精度定时器创建失败，帧节拍退回普通等待");
 
             while (!_shuttingDown)
             {
@@ -644,16 +646,20 @@ namespace NotchPeninsula
                 long remainTicks;
                 while (!_shuttingDown && (remainTicks = nextTick - clock.ElapsedTicks) > 0)
                 {
-                    double remainMs = remainTicks * 1000.0 / Stopwatch.Frequency;
-
-                    if (frameTimer != IntPtr.Zero)
+                    int waitMs = (int)Math.Ceiling(remainTicks * 1000.0 / Stopwatch.Frequency);
+                    if (Win32.WaitTimer(frameTimer, waitMs, passthroughInterrupt,
+                            out bool interrupted))
                     {
-                        int waitMs = (int)Math.Ceiling(remainMs);
-                        if (waitMs > 0 && Win32.WaitTimer(frameTimer, waitMs)) continue;
+                        if (!interrupted) continue;
+                    }
+                    else if (!_passthroughFrameRequested.WaitOne(waitMs))
+                    {
+                        continue;
                     }
 
-                    // 高精度定时器不可用时也阻塞等待，避免低配 CPU 忙等。
-                    Thread.Sleep(1);
+                    // 悬停切换直接唤醒渲染线程，不受前景帧率上限约束。
+                    nextTick = clock.ElapsedTicks;
+                    break;
                 }
                 if (nextTick < clock.ElapsedTicks) nextTick = clock.ElapsedTicks;
             }
@@ -777,6 +783,7 @@ namespace NotchPeninsula
         private void ShutdownResources()
         {
             _shuttingDown = true;
+            _passthroughFrameRequested.Set();
 
             // 等渲染线程退出后才能释放它读写的 SKSurface 和 DIB。
             bool renderThreadAlive = false;
@@ -790,6 +797,8 @@ namespace NotchPeninsula
                 }
             }
             catch { }
+
+            if (!renderThreadAlive) _passthroughFrameRequested.Dispose();
 
             // 后台抓屏线程（NPS-Backdrop）：必须在 Environment.Exit 之前显式停掉。
             // 退出走托盘「退出」时不经过 WM_DESTROY，WM_DESTROY 那条 ShutdownIslandBackdrop 不会跑；
@@ -1303,22 +1312,17 @@ namespace NotchPeninsula
                         || (_isPassthroughAwake && !isOverNotch && (Win32.GetAsyncKeyState(0x01) & 0x8000) != 0))
                         _isPassthroughAwake = false;
 
-                    // 第五个例外：任一展开态存在时一律不淡出。
-                    float targetAlpha = 1.0f;
-                    if (!_isPassthroughAwake && isOverNotch && _currentY >= -5f && !isToastActive
-                        && !Renderer.FileDragInProgress && !HasAnyExpanded) targetAlpha = 0.0f;
-
                     if (Renderer.FileDragInProgress && (Win32.GetAsyncKeyState(0x01) & 0x8000) == 0)
                         Renderer.FileDragInProgress = false;
 
-                    Renderer.PassthroughAlpha += (targetAlpha - Renderer.PassthroughAlpha) * 0.18f;
-
-                    if (Renderer.PassthroughAlpha < 0.01f) Renderer.PassthroughAlpha = 0f;
-                    if (Renderer.PassthroughAlpha > 0.99f) Renderer.PassthroughAlpha = 1f;
+                    _passthroughHoverHidden = ShouldHideForPassthrough(isOverNotch);
+                    // 分层窗口只有 alpha 为零的像素才会穿透。首帧清空本体，离开时仍可渐显。
+                    Renderer.PassthroughAlpha = PassthroughFrameAlpha(Renderer.PassthroughAlpha, _passthroughHoverHidden);
                 }
                 else
                 {
                     Renderer.PassthroughAlpha = 1.0f;
+                    _passthroughHoverHidden = false;
                     _isPassthroughAwake = false;
                 }
                 if (!isToastActive && _currentToast != null)
@@ -1341,7 +1345,7 @@ namespace NotchPeninsula
                 PluginManager.Instance.Host.DrainPendingWindowClose();
 
                 // 展开态期间才挂原始输入：挂上之后每条鼠标移动都会进一次窗口过程，不展开就别挂。
-                SetRawMouseSink(HasAnyExpanded);
+                SetRawMouseSink(HasAnyExpanded || Renderer.PassthroughModeEnabled);
 
                 if (!_media.IsDragging
                     && (HasAnyExpanded || _suppressOutsideCollapse))
@@ -1912,6 +1916,27 @@ namespace NotchPeninsula
             _isTrackingMouse = false;
         }
 
+        private bool ShouldHideForPassthrough(bool isOverIsland)
+            => isOverIsland && !_isPassthroughAwake && _currentY >= -5f && !isToastActive
+                && !Renderer.FileDragInProgress && !HasAnyExpanded;
+
+        private static float PassthroughFrameAlpha(float alpha, bool hidden)
+        {
+            if (hidden) return 0f;
+            float restoredAlpha = alpha + (1f - alpha) * 0.18f;
+            return restoredAlpha > 0.99f ? 1f : restoredAlpha;
+        }
+
+        private void NotifyPassthroughPointerChanged()
+        {
+            if (!Renderer.PassthroughModeEnabled || _shuttingDown || !Win32.GetCursorPos(out var point)) return;
+            bool hidden = ShouldHideForPassthrough(IsOverIslandScreenPoint(point));
+            if (hidden == _passthroughHoverHidden) return;
+
+            _passthroughHoverHidden = hidden;
+            _passthroughFrameRequested.Set();
+        }
+
         private bool IsCursorOverIslandNow()
         {
             return Win32.GetCursorPos(out var pt) && IsOverIslandScreenPoint(pt);
@@ -1944,9 +1969,7 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 挂 / 摘「原始鼠标输入」。只在有展开态时挂：RIDEV_INPUTSINK 会把每一条鼠标移动
-        /// 都投成一次 WM_INPUT，没展开时白敲窗口过程。注册是进程级的一次 win32k 调用，
-        /// 不要求调用线程有消息泵，所以渲染线程直接调没问题。
+        /// 在有展开态或开启穿透时接收原始鼠标输入，使岛外点击和穿透悬停都能及时响应。
         /// </summary>
         private void SetRawMouseSink(bool on)
         {
@@ -1977,6 +2000,9 @@ namespace NotchPeninsula
         /// </summary>
         private void OnRawMouseInput(IntPtr lParam)
         {
+            NotifyPassthroughPointerChanged();
+            if (!HasAnyExpanded || _suppressOutsideCollapse || _media.IsDragging) return;
+
             uint size = (uint)Marshal.SizeOf<Win32.RAWINPUTMOUSE>();
             if (Win32.GetRawInputData(lParam, Win32.RID_INPUT, out var raw, ref size,
                     (uint)Marshal.SizeOf<Win32.RAWINPUTHEADER>()) != size) return;
@@ -1984,7 +2010,6 @@ namespace NotchPeninsula
             if (raw.header.dwType != Win32.RIM_TYPEMOUSE) return;
             if ((raw.mouse.usButtonFlags & Win32.RI_MOUSE_LEFT_BUTTON_DOWN) == 0) return;
 
-            if (!HasAnyExpanded || _suppressOutsideCollapse || _media.IsDragging) return;
             if (!Win32.GetCursorPos(out var pt) || IsOverIslandScreenPoint(pt) || IsOverLiveWindowScreenPoint(pt)) return;
 
             _outsideLeftPressPending = true;
@@ -2126,7 +2151,7 @@ namespace NotchPeninsula
                     break;
 
                 case Win32.WM_INPUT:
-                    // 原始鼠标输入：只用来登记「岛外按下了左键」这一个事实（见 OnRawMouseInput）。
+                    // 原始鼠标输入：登记穿透悬停切换或岛外左键按下。
                     // 必须继续走到 DefWindowProc —— 系统要靠它做每次原始输入的收尾清理。
                     OnRawMouseInput(lParam);
                     break;
@@ -2164,6 +2189,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_MOUSEMOVE:
                     {
+                        NotifyPassthroughPointerChanged();
                         TrackIslandMouse(hwnd);
 
                         // 统一提炼坐标，大括号隔离作用域，彻底告别编译报错
@@ -2303,6 +2329,7 @@ namespace NotchPeninsula
 
                 case Win32.WM_MOUSELEAVE:
                     {
+                        NotifyPassthroughPointerChanged();
                         _isTrackingMouse = false;
                         _isHovered = false;
                         _isCursorOverIcon = false;

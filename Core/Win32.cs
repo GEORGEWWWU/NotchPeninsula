@@ -645,7 +645,7 @@ namespace NotchPeninsula
                                                     bool fResume);
 
         [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+        private static extern unsafe uint WaitForMultipleObjects(uint nCount, IntPtr* handles, bool waitAll, uint milliseconds);
 
         /// <summary>
         /// 建一个高精度可等待定时器；系统不支持该标志时退回普通定时器，
@@ -664,9 +664,10 @@ namespace NotchPeninsula
             return h;
         }
 
-        /// <summary>等待一次相对时长（毫秒）。返回 false 表示设置或等待失败。</summary>
-        public static bool WaitTimer(IntPtr hTimer, int ms)
+        /// <summary>等待帧定时器或中断事件。返回 false 表示设置或等待失败。</summary>
+        public static unsafe bool WaitTimer(IntPtr hTimer, int ms, IntPtr interrupt, out bool interrupted)
         {
+            interrupted = false;
             if (hTimer == IntPtr.Zero || ms <= 0) return false;
             try
             {
@@ -674,7 +675,10 @@ namespace NotchPeninsula
                 if (!SetWaitableTimer(hTimer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false)) return false;
                 // 留一点余量后仍不返回就放弃：定时器若被异常重置 / 句柄失效，INFINITE 会把渲染线程永久挂住。
                 // 超时返回 false，调用方回退到 Sleep/Yield，不会卡死。
-                return WaitForSingleObject(hTimer, (uint)(ms + 100)) == WAIT_OBJECT_0;
+                IntPtr* handles = stackalloc IntPtr[2] { interrupt, hTimer };
+                uint result = WaitForMultipleObjects(2, handles, false, (uint)(ms + 100));
+                interrupted = result == WAIT_OBJECT_0;
+                return interrupted || result == WAIT_OBJECT_0 + 1;
             }
             catch { return false; }
         }
