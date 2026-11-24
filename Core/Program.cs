@@ -176,7 +176,7 @@ namespace NotchPeninsula
                     }
                     Renderer.SolidBgOpacity = (int)key.GetValue("BgOpacityLevel", 4);
                     Renderer.AcrylicBgOpacity = (int)key.GetValue("BgOpacityAcrylic", 4);
-                    Renderer.ImmersiveCoverOpacity = (int)key.GetValue(Renderer.ImmersiveCoverOpacityKey, 4);
+                    Renderer.ImmersiveCoverOpacity = (int)key.GetValue(Renderer.ImmersiveCoverOpacityKey, Renderer.DefaultImmersiveCoverOpacity);
                     bool legacyGlass = (int)key.GetValue("IslandLiquidGlass2", 0) != 0;
                     bool glass = legacyGlass || (int)key.GetValue("IslandLiquidGlass", 0) != 0;
                     bool acrylic = (int)key.GetValue("IslandAcrylic", 0) != 0;

@@ -341,7 +341,8 @@ namespace NotchPeninsula
         }
 
         internal const string ImmersiveCoverOpacityKey = "ImmersiveCoverOpacity";
-        private static volatile int _immersiveCoverOpacity = 4;
+        internal const int DefaultImmersiveCoverOpacity = 1;
+        private static volatile int _immersiveCoverOpacity = DefaultImmersiveCoverOpacity;
 
         internal static int ImmersiveCoverOpacity
         {
