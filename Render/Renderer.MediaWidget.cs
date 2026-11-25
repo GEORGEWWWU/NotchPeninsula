@@ -235,9 +235,26 @@ namespace NotchPeninsula
         private static SKBitmap? _immersiveShaderBitmap;
         private static SKRect _immersiveShaderBounds;
 
-        private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media)
+        private const double ImmersiveFadeSeconds = 0.2;
+
+        private sealed record ImmersiveCoverFade(bool Enabled, float From, long StartedAt)
         {
-            int opacity = ImmersiveCoverOpacity;
+            private float Target => Enabled ? 1f : 0f;
+
+            internal bool IsAnimating(long now) => From != Target
+                && now - StartedAt < System.Diagnostics.Stopwatch.Frequency * ImmersiveFadeSeconds;
+
+            internal float OpacityAt(long now)
+            {
+                if (!IsAnimating(now)) return Target;
+                float progress = (float)((now - StartedAt) / (System.Diagnostics.Stopwatch.Frequency * ImmersiveFadeSeconds));
+                return From + (Target - From) * progress;
+            }
+        }
+
+        private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media, float fadeOpacity)
+        {
+            byte opacity = (byte)((255 * ImmersiveCoverOpacity / 4) * fadeOpacity);
             if (opacity == 0 || !media.IsActive || SuppressMediaInIsland) return;
             bool mediaVisible = SilentActive ? SilentMode.MediaImportantEnabled
                 : StandbyActive ? StandbySceneKey == Plugins.BuiltinWidgets.Media
@@ -267,7 +284,7 @@ namespace NotchPeninsula
             blurInput.Inflate(ImmersiveBlurSigma * 4f, ImmersiveBlurSigma * 4f);
             canvas.Save();
             canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-            _immersiveArtworkPaint.Color = SKColors.White.WithAlpha((byte)(255 * opacity / 4));
+            _immersiveArtworkPaint.Color = SKColors.White.WithAlpha(opacity);
             canvas.DrawRect(blurInput, _immersiveArtworkPaint);
             canvas.Restore();
         }

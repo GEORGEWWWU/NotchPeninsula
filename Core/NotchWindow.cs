@@ -640,7 +640,8 @@ namespace NotchPeninsula
                 // 用 Stopwatch ticks 排程（毫秒整数表达不了 144fps），实测帧率才和设置页一致
                 int fps = GlassMaterial.GetForegroundFps(
                     _isAnimating || _isYAnimating || _isStyleAnimating || _isHovered || HasAnyExpanded
-                    || _currentToast != null || _media.IsPlaying || LiveWindowHost.Frame.Count > 0,
+                    || _currentToast != null || _media.IsPlaying || LiveWindowHost.Frame.Count > 0
+                    || Renderer.IsImmersiveCoverAnimating,
                     _invisibleFrameUploaded);
                 nextTick += (long)Math.Round((double)Stopwatch.Frequency / fps);
                 long remainTicks;
