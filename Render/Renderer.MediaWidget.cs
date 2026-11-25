@@ -269,7 +269,8 @@ namespace NotchPeninsula
             bool visible = enabled && hasArtwork;
             if (_immersiveCoverFade.Visible != visible)
                 _immersiveCoverFade = new(visible, fade, now);
-            return (byte)((255 * ImmersiveCoverOpacity / 4) * fade);
+            int percent = ImmersiveCoverOpacityPercents[ImmersiveCoverOpacity];
+            return (byte)((255 * percent / 100) * fade);
         }
 
         private static SKBitmap? GetImmersiveArtwork(MediaController media)

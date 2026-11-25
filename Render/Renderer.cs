@@ -341,14 +341,15 @@ namespace NotchPeninsula
             set => _opacityAcrylic = Math.Clamp(value, 0, 4);
         }
 
-        internal const string ImmersiveCoverOpacityKey = "ImmersiveCoverOpacity";
-        internal const int DefaultImmersiveCoverOpacity = 1;
+        internal const string ImmersiveCoverOpacityKey = "ImmersiveCoverOpacityLevel";
+        internal const int DefaultImmersiveCoverOpacity = 2;
+        internal static readonly int[] ImmersiveCoverOpacityPercents = [0, 10, 25, 60, 100];
         private static volatile int _immersiveCoverOpacity = DefaultImmersiveCoverOpacity;
 
         internal static int ImmersiveCoverOpacity
         {
             get => _immersiveCoverOpacity;
-            set => _immersiveCoverOpacity = Math.Clamp(value, 0, 4);
+            set => _immersiveCoverOpacity = Math.Clamp(value, 0, ImmersiveCoverOpacityPercents.Length - 1);
         }
 
         /// <summary>当前材质的纯色叠层档位。</summary>

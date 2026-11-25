@@ -128,6 +128,8 @@ namespace NotchPeninsula
         private static readonly string[] ThemeLabels = ["黑", "白", "系统"];
         private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "插件背景"];
         private static readonly string[] OpacityLabels = ["0%", "25%", "50%", "75%", "100%"];
+        private static readonly string[] ImmersiveOpacityLabels =
+            Renderer.ImmersiveCoverOpacityPercents.Select(percent => $"{percent}%").ToArray();
         private static readonly string[] GlassRefreshLabels = LiquidGlass.ValueTexts(LiquidGlass.P_CaptureHz);
 
         private DropdownKind _personalizeDropdownOpen;
@@ -151,7 +153,9 @@ namespace NotchPeninsula
         {
             DropdownKind.Theme => (ThemeLabels, Renderer.ThemeMode),
             DropdownKind.Material => (MaterialLabels, Renderer.IslandMaterialIndex),
-            _ => (OpacityLabels, Renderer.IslandImmersiveMode ? Renderer.ImmersiveCoverOpacity : Renderer.BgOpacityLevel)
+            _ => Renderer.IslandImmersiveMode
+                ? (ImmersiveOpacityLabels, Renderer.ImmersiveCoverOpacity)
+                : (OpacityLabels, Renderer.BgOpacityLevel)
         };
 
         private int HitPersonalizeOption(int x, int y)
