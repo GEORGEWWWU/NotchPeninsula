@@ -77,6 +77,10 @@ public static partial class Renderer
         _rhythmBass += (bass - _rhythmBass) * (1f - MathF.Exp(-dt * (bass > _rhythmBass ? 24f : 7f)));
         _rhythmPhase = (_rhythmPhase + dt * ((playing ? 0.65f : 0f) + _rhythmBass * 3f)) % MathF.Tau;
 
+        // 低档保留柔和的叠色，高档给流体留足强度，避免再被上层的亚克力色调压暗。
+        float strength = opacity / 100f;
+        float blobAlpha = (150f + _rhythmBass * 78f) * strength * (0.45f + 0.55f * strength);
+
         var bounds = _bgPath.Bounds;
         canvas.Save();
         canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
@@ -111,7 +115,7 @@ public static partial class Renderer
             }
             RhythmBlob.Close();
             RhythmPaint.Shader = _rhythmShaders[i % _rhythmShaders.Length];
-            RhythmPaint.Color = SKColors.White.WithAlpha((byte)((45f + _rhythmBass * 35f) * opacity / 100f));
+            RhythmPaint.Color = SKColors.White.WithAlpha((byte)MathF.Round(blobAlpha));
             canvas.Save();
             canvas.Translate(x, y);
             canvas.Scale(radiusX, radiusY);
