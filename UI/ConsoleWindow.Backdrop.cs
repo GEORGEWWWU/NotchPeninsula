@@ -87,7 +87,7 @@ namespace NotchPeninsula
             {
                 try
                 {
-                    _consoleAdvancedEffectsEnabled ??= !System.Windows.SystemParameters.HighContrast
+                    _consoleAdvancedEffectsEnabled ??= !System.Windows.Forms.SystemInformation.HighContrast
                         && new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled;
                     if (!_consoleAdvancedEffectsEnabled.Value)
                     {
