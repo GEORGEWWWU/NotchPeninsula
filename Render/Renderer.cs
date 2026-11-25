@@ -574,6 +574,8 @@ namespace NotchPeninsula
                 var cover = mediaBackgroundVisible ? media.AlbumArtwork : null;
                 int rhythmOpacity = rhythm && mediaBackgroundVisible ? MediaBackgroundOpacityPercent : 0;
                 byte coverAlpha = UpdateImmersiveCoverFade(immersive, cover != null, coverGeneration);
+                if (coverAlpha == 0 && (!immersive || media.AlbumArtwork == null || ImmersiveCoverOpacity == 0))
+                    ClearImmersiveArtwork();
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);

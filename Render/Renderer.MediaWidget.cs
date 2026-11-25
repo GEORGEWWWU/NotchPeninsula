@@ -224,18 +224,6 @@ namespace NotchPeninsula
             }
         }
 
-        // 原生亚克力的模糊位于前景窗口之下，前景封面需单独做柔化。
-        private const float ImmersiveBlurSigma = 12f;
-        private static readonly SKImageFilter _immersiveArtworkBlur = SKImageFilter.CreateBlur(ImmersiveBlurSigma, ImmersiveBlurSigma);
-        private static readonly SKPaint _immersiveArtworkPaint = new()
-        {
-            FilterQuality = SKFilterQuality.Medium,
-            ImageFilter = _immersiveArtworkBlur
-        };
-
-        private static SKBitmap? _immersiveShaderBitmap;
-        private static SKRect _immersiveShaderBounds;
-
         private static readonly double ImmersiveFadeTicks = Stopwatch.Frequency * 0.2;
         private static ImmersiveCoverFade _immersiveCoverFade;
         private static int _immersiveCoverGeneration;
@@ -279,35 +267,6 @@ namespace NotchPeninsula
                 : StandbyActive ? StandbySceneKey == Plugins.BuiltinWidgets.Media
                 : CompShowMedia;
             return mediaVisible && Plugins.PluginManager.Instance.Host.ActiveDetailPage == null;
-        }
-
-        private static void DrawImmersiveArtwork(SKCanvas canvas, SKBitmap artwork, byte opacity)
-        {
-            if (artwork.Width <= 0 || artwork.Height <= 0) return;
-
-            // 按轮廓的完整边界等比铺满，包含刘海两侧伸出的倒角。
-            var island = _bgPath.Bounds;
-            float scale = Math.Max(island.Width / artwork.Width, island.Height / artwork.Height);
-            float imageWidth = artwork.Width * scale, imageHeight = artwork.Height * scale;
-            var image = SKRect.Create(island.MidX - imageWidth / 2f, island.MidY - imageHeight / 2f, imageWidth, imageHeight);
-            if (!ReferenceEquals(artwork, _immersiveShaderBitmap) || image != _immersiveShaderBounds)
-            {
-                var matrix = SKMatrix.CreateScaleTranslation(image.Width / artwork.Width, image.Height / artwork.Height,
-                    image.Left, image.Top);
-                using var shader = artwork.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, matrix);
-                _immersiveArtworkPaint.Shader = shader;
-                _immersiveShaderBitmap = artwork;
-                _immersiveShaderBounds = image;
-            }
-
-            // 为卷积补上延伸的边缘像素，防止模糊在封面两侧混入透明像素。
-            var blurInput = island;
-            blurInput.Inflate(ImmersiveBlurSigma * 4f, ImmersiveBlurSigma * 4f);
-            canvas.Save();
-            canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
-            _immersiveArtworkPaint.Color = SKColors.White.WithAlpha(opacity);
-            canvas.DrawRect(blurInput, _immersiveArtworkPaint);
-            canvas.Restore();
         }
 
         // ---- 展开态面板 ----
