@@ -105,14 +105,19 @@ namespace NotchPeninsula
         private const float THEME_CARD_Y = CARD_TOP_Y;
         private const float THEME_CARD_H = 112f;
         private const float IMMERSIVE_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
-        private const float OPACITY_CARD_Y = IMMERSIVE_CARD_Y + TOGGLE_CARD_H + CARD_GAP;
+        private const float RHYTHM_ROW_Y = IMMERSIVE_CARD_Y + TOGGLE_CARD_H;
+        private const float OPACITY_CARD_Y = RHYTHM_ROW_Y + TOGGLE_CARD_H + CARD_GAP;
 
         private bool _immersiveToggleHovered;
+        private bool _rhythmToggleHovered;
 
-        private bool HitImmersiveToggle(int x, int y)
+        private bool HitImmersiveToggle(int x, int y) => HitMediaBackgroundToggle(x, y, IMMERSIVE_CARD_Y);
+        private bool HitRhythmToggle(int x, int y) => HitMediaBackgroundToggle(x, y, RHYTHM_ROW_Y);
+
+        private bool HitMediaBackgroundToggle(int x, int y, float rowY)
         {
             float right = LeftColumnRight - 16f;
-            float centerY = TITLE_BAR_HEIGHT + IMMERSIVE_CARD_Y + ROW_ANCHOR_Y;
+            float centerY = TITLE_BAR_HEIGHT + rowY + ROW_ANCHOR_Y;
             return y < ContentBottom
                 && new SKRect(right - 42f, centerY - TOGGLE_TRACK_H / 2f, right, centerY + TOGGLE_TRACK_H / 2f).Contains(x, y);
         }
@@ -127,6 +132,7 @@ namespace NotchPeninsula
 
         private static readonly string[] ThemeLabels = ["黑", "白", "系统"];
         private static readonly string[] MaterialLabels = ["实体", "亚克力", "液态玻璃", "插件背景"];
+        private static readonly string[] RhythmColorLabels = ["专辑取色", "白色", "黑色", "粉色"];
         private static readonly string[] OpacityLabels = ["0%", "25%", "50%", "75%", "100%"];
         private static readonly string[] ImmersiveOpacityLabels =
             Renderer.ImmersiveCoverOpacityPercents.Select(percent => $"{percent}%").ToArray();
@@ -139,11 +145,12 @@ namespace NotchPeninsula
 
         private SKRect PersonalizeDropdownBox(DropdownKind kind)
         {
-            float right = LeftColumnRight - 16f;
+            float right = LeftColumnRight - (kind == DropdownKind.RhythmColor ? 68f : 16f);
             float y = TITLE_BAR_HEIGHT + (kind switch
             {
                 DropdownKind.Theme => THEME_CARD_Y + 16f,
                 DropdownKind.Material => THEME_CARD_Y + 66f,
+                DropdownKind.RhythmColor => RHYTHM_ROW_Y + ROW_ANCHOR_Y - PERSONALIZE_DD_H / 2f,
                 _ => OPACITY_CARD_Y + (OPACITY_CARD_H - PERSONALIZE_DD_H) / 2f
             });
             return new SKRect(right - PERSONALIZE_DD_W, y, right, y + PERSONALIZE_DD_H);
@@ -153,7 +160,8 @@ namespace NotchPeninsula
         {
             DropdownKind.Theme => (ThemeLabels, Renderer.ThemeMode),
             DropdownKind.Material => (MaterialLabels, Renderer.IslandMaterialIndex),
-            _ => Renderer.IslandImmersiveMode
+            DropdownKind.RhythmColor => (RhythmColorLabels, (int)Renderer.MediaRhythmColor),
+            _ => Renderer.MediaBackgroundNeedsAcrylic
                 ? (ImmersiveOpacityLabels, Renderer.ImmersiveCoverOpacity)
                 : (OpacityLabels, Renderer.BgOpacityLevel)
         };

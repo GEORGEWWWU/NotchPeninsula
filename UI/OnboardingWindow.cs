@@ -548,7 +548,7 @@ namespace NotchPeninsula
 
                 case ACT_MATERIAL:
                     // 所以「点到的还是当前那档」时什么都不做 —— 否则玻璃 2 用户会在这一页被悄悄改回玻璃 1。
-                    if (Renderer.IslandImmersiveMode || val == _material) break;
+                    if (Renderer.MediaBackgroundNeedsAcrylic || val == _material) break;
                     _material = val;
                     Renderer.IslandMaterialIndex = _material;
                     // 切到玻璃会把 ThemeMode 钳成自动，界面上的分段控件跟着回到第 3 格。
@@ -914,7 +914,7 @@ namespace NotchPeninsula
             Row(c, BODY_TOP + ROW_GAP, "主题配色",
                 themeLocked ? ["黑", "白", "自动"] : ["黑", "白", "跟随系统"],
                 _theme, themeLocked ? -1 : ACT_THEME, CTRL_X, CTRL_W);
-            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力", "液态玻璃", "插件背景"], _material, Renderer.IslandImmersiveMode ? -1 : ACT_MATERIAL, CTRL_X, CTRL_W);
+            Row(c, BODY_TOP + ROW_GAP * 2f, "背景材质", ["实体", "亚克力", "液态玻璃", "插件背景"], _material, Renderer.MediaBackgroundNeedsAcrylic ? -1 : ACT_MATERIAL, CTRL_X, CTRL_W);
         }
 
         private void DrawPreview(SKCanvas c, SKRect box)

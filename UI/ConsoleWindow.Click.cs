@@ -241,7 +241,7 @@ namespace NotchPeninsula
                     NotchWindow.RequestAcrylicRebuild();
                     break;
                 case DropdownKind.Material:
-                    if (Renderer.IslandImmersiveMode) break;
+                    if (Renderer.MediaBackgroundNeedsAcrylic) break;
                     Renderer.IslandMaterialIndex = option;
                     Renderer.ApplyThemeColors();
                     Program.SaveSetting("IslandAcrylic", Renderer.IslandAcrylic ? 1 : 0);
@@ -250,8 +250,12 @@ namespace NotchPeninsula
                     Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
                     NotchWindow.RequestAcrylicRebuild();
                     break;
+                case DropdownKind.RhythmColor:
+                    Renderer.MediaRhythmColor = (Renderer.MediaRhythmColorMode)option;
+                    Program.SaveSetting(Renderer.MediaRhythmColorKey, option);
+                    break;
                 case DropdownKind.Opacity:
-                    if (Renderer.IslandImmersiveMode)
+                    if (Renderer.MediaBackgroundNeedsAcrylic)
                     {
                         Renderer.ImmersiveCoverOpacity = option;
                         Program.SaveSetting(Renderer.ImmersiveCoverOpacityKey, Renderer.ImmersiveCoverOpacity);
@@ -288,10 +292,20 @@ namespace NotchPeninsula
 
         private bool HandlePersonalizeClick(IntPtr hwnd, int x, int y)
         {
-            if (_personalizeDropdownOpen == DropdownKind.None && HitImmersiveToggle(x, y))
+            bool immersiveHit = HitImmersiveToggle(x, y);
+            bool rhythmHit = HitRhythmToggle(x, y);
+            if (_personalizeDropdownOpen == DropdownKind.None && (immersiveHit || rhythmHit))
             {
-                Renderer.IslandImmersiveMode = !Renderer.IslandImmersiveMode;
-                Program.SaveSetting("IslandImmersiveMode", Renderer.IslandImmersiveMode ? 1 : 0);
+                if (immersiveHit)
+                {
+                    Renderer.IslandImmersiveMode = !Renderer.IslandImmersiveMode;
+                    Program.SaveSetting("IslandImmersiveMode", Renderer.IslandImmersiveMode ? 1 : 0);
+                }
+                else
+                {
+                    Renderer.MediaRhythmEnabled = !Renderer.MediaRhythmEnabled;
+                    Program.SaveSetting(Renderer.MediaRhythmEnabledKey, Renderer.MediaRhythmEnabled ? 1 : 0);
+                }
                 Program.SaveSetting("ThemeMode", Renderer.ThemeMode);
                 Renderer.ApplyThemeColors();
                 NotchWindow.RequestAcrylicRebuild();

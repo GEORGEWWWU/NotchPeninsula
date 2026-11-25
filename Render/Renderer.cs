@@ -186,9 +186,11 @@ namespace NotchPeninsula
         }
 
 
+        internal static bool MediaBackgroundNeedsAcrylic => IslandImmersiveMode || MediaRhythmEnabled;
+
         public static int IslandMaterialIndex
         {
-            get => IslandImmersiveMode ? 1 : _materialIndex;
+            get => MediaBackgroundNeedsAcrylic ? 1 : _materialIndex;
             set
             {
                 _materialIndex = Math.Clamp(value, 0, 3);
@@ -562,12 +564,15 @@ namespace NotchPeninsula
 
                 // 插件背景：宿主背板 / 涂层一笔不画，内容、裁剪和命中照常走下面的流程。
                 bool immersive = IslandImmersiveMode;
-                int material = immersive ? 1 : _materialIndex;
+                bool rhythm = MediaRhythmEnabled;
+                int material = immersive || rhythm ? 1 : _materialIndex;
                 bool skipBackground = material == 3;
                 bool glass = material == 2;
                 bool acrylic = material == 1;
                 int coverGeneration = media.CoverGeneration;
-                var cover = toast == null ? GetImmersiveArtwork(media) : null;
+                bool mediaBackgroundVisible = toast == null && IsMediaBackgroundVisible(media);
+                var cover = mediaBackgroundVisible ? media.AlbumArtwork : null;
+                int rhythmOpacity = rhythm && mediaBackgroundVisible ? MediaBackgroundOpacityPercent : 0;
                 byte coverAlpha = UpdateImmersiveCoverFade(immersive, cover != null, coverGeneration);
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
@@ -640,6 +645,13 @@ namespace NotchPeninsula
                         canvas.Restore();
                     }
 
+                    if (rhythmOpacity > 0)
+                    {
+                        // 封面在流体之下，两者使用同一个透明度档位。纯色叠层最后盖住流体。
+                        if (cover != null && coverAlpha > 0)
+                            DrawImmersiveArtwork(canvas, cover, coverAlpha);
+                        DrawMediaRhythm(canvas, cover, media.IsPlaying, bars, rhythmOpacity);
+                    }
 
                     BeginToneGrid(canvas, backdrop, destination, source, material);
                     if (glass && ThemeMode == 2)
@@ -663,8 +675,8 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 所有材质都先画底色，再以同一图层顺序合成封面，切换材质时封面透明度才连续。
-                if (cover != null && coverAlpha > 0)
+                // 单独使用封面时沿用同一图层顺序，切换材质时保持淡出连续。
+                if (rhythmOpacity == 0 && cover != null && coverAlpha > 0)
                     DrawImmersiveArtwork(canvas, cover, coverAlpha);
 
                 canvas.Save();

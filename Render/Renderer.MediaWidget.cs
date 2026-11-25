@@ -269,18 +269,16 @@ namespace NotchPeninsula
             bool visible = enabled && hasArtwork;
             if (_immersiveCoverFade.Visible != visible)
                 _immersiveCoverFade = new(visible, fade, now);
-            int percent = ImmersiveCoverOpacityPercents[ImmersiveCoverOpacity];
-            return (byte)((255 * percent / 100) * fade);
+            return (byte)((255 * MediaBackgroundOpacityPercent / 100) * fade);
         }
 
-        private static SKBitmap? GetImmersiveArtwork(MediaController media)
+        private static bool IsMediaBackgroundVisible(MediaController media)
         {
-            if (!media.IsActive || SuppressMediaInIsland) return null;
+            if (!media.IsActive || SuppressMediaInIsland) return false;
             bool mediaVisible = SilentActive ? SilentMode.MediaImportantEnabled
                 : StandbyActive ? StandbySceneKey == Plugins.BuiltinWidgets.Media
                 : CompShowMedia;
-            return mediaVisible && Plugins.PluginManager.Instance.Host.ActiveDetailPage == null
-                ? media.AlbumArtwork : null;
+            return mediaVisible && Plugins.PluginManager.Instance.Host.ActiveDetailPage == null;
         }
 
         private static void DrawImmersiveArtwork(SKCanvas canvas, SKBitmap artwork, byte opacity)
@@ -431,7 +429,7 @@ namespace NotchPeninsula
             {
                 _barPaint.Color = ToneColor(spectrum, 255).Red < 128
                     ? new SKColor(117, 68, 85, alpha)
-                    : new SKColor(130, 88, 97, alpha);
+                    : MediaSpectrumPink.WithAlpha(alpha);
                 for (int i = 0; i < 5; i++)
                 {
                     float h = Math.Clamp(bars[i] * 16f, 2f, 16f);

@@ -1106,7 +1106,7 @@ namespace NotchPeninsula
 
         // ---- 下拉切换：展开着 A 时点到 B 的框，收起 A 并展开 B ----
         // 只靠「点外部收起」那条分支会把这一下直接吃掉，表现为第二下点了没反应。
-        private enum DropdownKind { None, ToastMode, ToastSound, Volume, Platform, MatchMode, App, Monitor, DisplayMode, Scene, Theme, Material, Opacity }
+        private enum DropdownKind { None, ToastMode, ToastSound, Volume, Platform, MatchMode, App, Monitor, DisplayMode, Scene, Theme, Material, Opacity, RhythmColor }
 
         private DropdownKind HitDropdownTrigger(int x, int y)
         {
@@ -1154,8 +1154,10 @@ namespace NotchPeninsula
                 if (y >= ContentBottom) return DropdownKind.None;
                 if (!Renderer.IslandLiquidGlass && PersonalizeDropdownBox(DropdownKind.Theme).Contains(x, y))
                     return DropdownKind.Theme;
-                if (!Renderer.IslandImmersiveMode && PersonalizeDropdownBox(DropdownKind.Material).Contains(x, y))
+                if (!Renderer.MediaBackgroundNeedsAcrylic && PersonalizeDropdownBox(DropdownKind.Material).Contains(x, y))
                     return DropdownKind.Material;
+                if (PersonalizeDropdownBox(DropdownKind.RhythmColor).Contains(x, y))
+                    return DropdownKind.RhythmColor;
                 if (ShowOpacityCard && PersonalizeDropdownBox(DropdownKind.Opacity).Contains(x, y))
                     return DropdownKind.Opacity;
             }
@@ -1181,6 +1183,7 @@ namespace NotchPeninsula
                     break;
                 case DropdownKind.Theme:
                 case DropdownKind.Material:
+                case DropdownKind.RhythmColor:
                 case DropdownKind.Opacity:
                     _personalizeDropdownOpen = kind;
                     break;

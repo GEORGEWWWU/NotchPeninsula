@@ -1569,12 +1569,17 @@ namespace NotchPeninsula
             // 亚克力仍是实验特性：复用通用设置里 MSP 那枚「实验性」标签
             DrawInlineBadge(canvas, CONTENT_TEXT_X + _uiTextPaint.MeasureText("背景材质") + BADGE_GAP_X,
                 themeY + MAT_TITLE_DY - TEXT_INK_MID_OFFSET, "实验性");
-            canvas.DrawText(Renderer.IslandImmersiveMode ? "沉浸模式已锁定亚克力" : "胶囊内背景材质",
+            canvas.DrawText(Renderer.MediaBackgroundNeedsAcrylic ? "媒体背景效果使用亚克力" : "胶囊内背景材质",
                 CONTENT_TEXT_X, themeY + MAT_SUB_DY, _subTextPaint);
-            DrawPersonalizeDropdown(canvas, DropdownKind.Material, enabled: !Renderer.IslandImmersiveMode);
+            DrawPersonalizeDropdown(canvas, DropdownKind.Material, enabled: !Renderer.MediaBackgroundNeedsAcrylic);
 
-            DrawToggleCard(canvas, IMMERSIVE_CARD_Y, "沉浸模式", "使用专辑封面作为灵动岛背景",
-                Renderer.IslandImmersiveMode, _immersiveToggleHovered, leftColumn: true);
+            DrawSettingsCard(canvas, new SKRect(CONTENT_L, TITLE_BAR_HEIGHT + IMMERSIVE_CARD_Y,
+                LeftColumnRight, TITLE_BAR_HEIGHT + RHYTHM_ROW_Y + TOGGLE_CARD_H));
+            DrawToggleRow(canvas, IMMERSIVE_CARD_Y, "沉浸模式", "使用专辑封面作为灵动岛背景",
+                Renderer.IslandImmersiveMode, _immersiveToggleHovered, cardRight: LeftColumnRight, textLeft: CONTENT_TEXT_X);
+            DrawToggleRow(canvas, RHYTHM_ROW_Y, "背景律动", "随音乐低频变化",
+                Renderer.MediaRhythmEnabled, _rhythmToggleHovered, cardRight: LeftColumnRight, textLeft: CONTENT_TEXT_X);
+            DrawPersonalizeDropdown(canvas, DropdownKind.RhythmColor);
 
             if (ShowOpacityCard)
             {
