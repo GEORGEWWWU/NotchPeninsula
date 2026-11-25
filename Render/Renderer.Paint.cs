@@ -501,6 +501,8 @@ namespace NotchPeninsula
             => ReferenceEquals(paint, _bodyPaint) || ReferenceEquals(paint, _tlTextPaint)
             || ReferenceEquals(paint, _datePaint) || ReferenceEquals(paint, _compactAppPaint);
 
+        private const int AcrylicTintMaxAlpha = 140;
+
         public static void ApplyThemeColors()
         {
             int material = IslandMaterialIndex;
@@ -508,7 +510,7 @@ namespace NotchPeninsula
             if (material == 2 && ThemeMode == 2 && _glassTextKnown)
                 isLight = _glassTextIsLight;
 
-            byte bgAlpha = (byte)(BgOpacityLevel * (material == 1 ? 140 : 255) / 4);
+            byte bgAlpha = (byte)(BgOpacityLevel * (material == 1 ? AcrylicTintMaxAlpha : 255) / 4);
             if (material != _loggedMaterial)
             {
                 _loggedMaterial = material;

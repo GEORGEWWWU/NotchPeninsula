@@ -641,7 +641,7 @@ namespace NotchPeninsula
                 int fps = GlassMaterial.GetForegroundFps(
                     _isAnimating || _isYAnimating || _isStyleAnimating || _isHovered || HasAnyExpanded
                     || _currentToast != null || _media.IsPlaying || LiveWindowHost.Frame.Count > 0
-                    || Renderer.IsImmersiveCoverAnimating,
+                    || Renderer.IsMediaBackgroundAnimating,
                     _invisibleFrameUploaded);
                 nextTick += (long)Math.Round((double)Stopwatch.Frequency / fps);
                 long remainTicks;

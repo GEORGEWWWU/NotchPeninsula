@@ -224,23 +224,33 @@ namespace NotchPeninsula
             }
         }
 
-        private static readonly double ImmersiveFadeTicks = Stopwatch.Frequency * 0.2;
-        private static ImmersiveCoverFade _immersiveCoverFade;
+        private static readonly double MediaBackgroundFadeTicks = Stopwatch.Frequency * 0.2;
+        private static MediaBackgroundFade _immersiveCoverFade;
         private static int _immersiveCoverGeneration;
 
-        internal static bool IsImmersiveCoverAnimating => _immersiveCoverFade.IsAnimating(Stopwatch.GetTimestamp());
+        internal static bool IsMediaBackgroundAnimating
+        {
+            get
+            {
+                long now = Stopwatch.GetTimestamp();
+                return _immersiveCoverFade.IsAnimating(now) || _mediaRhythmFade.IsAnimating(now);
+            }
+        }
 
-        private readonly record struct ImmersiveCoverFade(bool Visible, float From, long StartedAt)
+        private readonly record struct MediaBackgroundFade(bool Visible, float From, long StartedAt)
         {
             private float Target => Visible ? 1f : 0f;
 
             internal bool IsAnimating(long now) => From != Target
-                && now - StartedAt < ImmersiveFadeTicks;
+                && now - StartedAt < MediaBackgroundFadeTicks;
+
+            internal MediaBackgroundFade Retarget(bool visible, long now)
+                => Visible == visible ? this : new(visible, OpacityAt(now), now);
 
             internal float OpacityAt(long now)
             {
                 if (!IsAnimating(now)) return Target;
-                float progress = (float)((now - StartedAt) / ImmersiveFadeTicks);
+                float progress = (float)((now - StartedAt) / MediaBackgroundFadeTicks);
                 return From + (Target - From) * progress;
             }
         }
@@ -253,11 +263,8 @@ namespace NotchPeninsula
             _immersiveCoverGeneration = generation;
 
             long now = Stopwatch.GetTimestamp();
-            float fade = _immersiveCoverFade.OpacityAt(now);
-            bool visible = enabled && hasArtwork;
-            if (_immersiveCoverFade.Visible != visible)
-                _immersiveCoverFade = new(visible, fade, now);
-            return (byte)((255 * MediaBackgroundOpacityPercent / 100) * fade);
+            _immersiveCoverFade = _immersiveCoverFade.Retarget(enabled && hasArtwork, now);
+            return (byte)((255 * MediaBackgroundOpacityPercent / 100) * _immersiveCoverFade.OpacityAt(now));
         }
 
         private static bool IsMediaBackgroundVisible(MediaController media)

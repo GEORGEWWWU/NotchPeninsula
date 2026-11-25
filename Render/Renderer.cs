@@ -572,10 +572,12 @@ namespace NotchPeninsula
                 int coverGeneration = media.CoverGeneration;
                 bool mediaBackgroundVisible = toast == null && IsMediaBackgroundVisible(media);
                 var cover = mediaBackgroundVisible ? media.AlbumArtwork : null;
-                int rhythmOpacity = rhythm && mediaBackgroundVisible ? MediaBackgroundOpacityPercent : 0;
+                float rhythmFade = UpdateMediaRhythmFade(rhythm, mediaBackgroundVisible);
+                int rhythmOpacity = rhythmFade > 0f ? MediaBackgroundOpacityPercent : 0;
                 byte coverAlpha = UpdateImmersiveCoverFade(immersive, cover != null, coverGeneration);
                 if (coverAlpha == 0 && (!immersive || media.AlbumArtwork == null || ImmersiveCoverOpacity == 0))
                     ClearImmersiveArtwork();
+                bool rhythmUnderTint = acrylic && coverAlpha == 0;
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
@@ -647,13 +649,8 @@ namespace NotchPeninsula
                         canvas.Restore();
                     }
 
-                    if (rhythmOpacity > 0)
-                    {
-                        // 封面在流体之下，两者使用同一个透明度档位。纯色叠层最后盖住流体。
-                        if (cover != null && coverAlpha > 0)
-                            DrawImmersiveArtwork(canvas, cover, coverAlpha);
-                        DrawMediaRhythm(canvas, cover, media.IsPlaying, bars, rhythmOpacity);
-                    }
+                    if (rhythmUnderTint && rhythmOpacity > 0)
+                        DrawMediaRhythm(canvas, cover, media.IsPlaying, bars, rhythmOpacity, rhythmFade);
 
                     BeginToneGrid(canvas, backdrop, destination, source, material);
                     if (glass && ThemeMode == 2)
@@ -677,9 +674,17 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 单独使用封面时沿用同一图层顺序，切换材质时保持淡出连续。
-                if (rhythmOpacity == 0 && cover != null && coverAlpha > 0)
+                if (cover != null && coverAlpha > 0)
                     DrawImmersiveArtwork(canvas, cover, coverAlpha);
+
+                if (!rhythmUnderTint && rhythmOpacity > 0)
+                {
+                    // 叠加封面或恢复原材质时，在新背景上保留律动，同时保留亚克力叠色原有的衰减。
+                    float acrylicTransmission = 1f - (AcrylicTintMaxAlpha * AcrylicBgOpacity / 4) / 255f;
+                    DrawMediaRhythm(canvas, cover, media.IsPlaying, bars, rhythmOpacity,
+                        acrylic ? rhythmFade : rhythmFade * acrylicTransmission,
+                        blobTransmission: acrylic ? acrylicTransmission : 1f);
+                }
 
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);

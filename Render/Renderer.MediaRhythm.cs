@@ -38,6 +38,7 @@ public static partial class Renderer
         IsAntialias = true,
         MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 0.12f)
     };
+    private static readonly SKPaint RhythmFadePaint = new();
     private static readonly SKPath RhythmBlob = new();
     private static SKBitmap? _rhythmSampledArtwork;
     private static SKColor[] _rhythmArtworkPalette = RhythmPinkPalette;
@@ -46,8 +47,23 @@ public static partial class Renderer
     private static long _rhythmLastFrame;
     private static float _rhythmPhase;
     private static float _rhythmBass;
+    private static MediaBackgroundFade _mediaRhythmFade;
 
-    private static void DrawMediaRhythm(SKCanvas canvas, SKBitmap? artwork, bool playing, float[]? bars, int opacity)
+    private static float UpdateMediaRhythmFade(bool enabled, bool mediaVisible)
+    {
+        if (!mediaVisible)
+        {
+            _mediaRhythmFade = default;
+            return 0f;
+        }
+
+        long now = Stopwatch.GetTimestamp();
+        _mediaRhythmFade = _mediaRhythmFade.Retarget(enabled, now);
+        return _mediaRhythmFade.OpacityAt(now);
+    }
+
+    private static void DrawMediaRhythm(SKCanvas canvas, SKBitmap? artwork, bool playing,
+        float[]? bars, int opacity, float layerOpacity, float blobTransmission = 1f)
     {
         if (opacity == 0) return;
         var palette = MediaRhythmColor switch
@@ -79,11 +95,18 @@ public static partial class Renderer
 
         // 低档保留柔和的叠色，高档给流体留足强度，避免再被上层的亚克力色调压暗。
         float strength = opacity / 100f;
-        float blobAlpha = (150f + _rhythmBass * 78f) * strength * (0.45f + 0.55f * strength);
+        float blobAlpha = (150f + _rhythmBass * 78f) * strength * (0.45f + 0.55f * strength) * blobTransmission;
 
         var bounds = _bgPath.Bounds;
         canvas.Save();
         canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);
+        // 淡入淡出作用于整个律动层，避免重叠色团随独立 alpha 改变叠加亮度。
+        bool fadeLayer = layerOpacity < 1f;
+        if (fadeLayer)
+        {
+            RhythmFadePaint.Color = SKColors.White.WithAlpha((byte)MathF.Round(255f * layerOpacity));
+            canvas.SaveLayer(bounds, RhythmFadePaint);
+        }
         const int blobCount = 5;
         Span<SKPoint> points = stackalloc SKPoint[12];
         for (int i = 0; i < blobCount; i++)
@@ -122,6 +145,7 @@ public static partial class Renderer
             canvas.DrawPath(RhythmBlob, RhythmPaint);
             canvas.Restore();
         }
+        if (fadeLayer) canvas.Restore();
         canvas.Restore();
     }
 
