@@ -532,6 +532,22 @@ public static class LiveWindowHost
         get { lock (_lock) return _requiredWindowHeight; }
     }
 
+    /// <summary>
+    /// 展开中的浮层面板需要的横向空间（面板宽 + 左右各 8px 贴边余量）。
+    /// 窗口宽必须 ≥ 它，否则面板会被窗口边界裁掉（窗口外不渲染）。
+    /// </summary>
+    public static float RequiredWindowWidth
+    {
+        get
+        {
+            lock (_lock)
+            {
+                var p = _panel;
+                return p == null ? 0f : p.Width + 16f;
+            }
+        }
+    }
+
     public static bool HasOpenPanel
     {
         get { lock (_lock) return _panel != null; }
@@ -1238,8 +1254,14 @@ public static class LiveWindowHost
 
         float bubbleTop = MathF.Max(2f, islandCenterY - diameter / 2f);
         float bubbleBottom = bubbleTop + diameter;
+        // 可见区间 = 屏幕可见范围 ∩ 窗口内容范围：
+        // 「窗口比屏幕窄」时 _viewLeft 是负数（屏幕可见左缘落在窗口左侧之外），
+        // 直接拿 _viewLeft + 8 当下界会把面板摆到窗口外的负坐标 —— 窗口外不渲染，
+        // 宽详情面板的左缘就被窗口边界切掉。
+        float visLeft = MathF.Max(0f, _viewLeft);
+        float visRight = MathF.Min(Renderer.WINDOW_WIDTH, _viewRight);
         float left = Math.Clamp(entry.X - panel.Width / 2f,
-            _viewLeft + 8f, MathF.Max(_viewLeft + 8f, _viewRight - panel.Width - 8f));
+            visLeft + 8f, MathF.Max(visLeft + 8f, visRight - panel.Width - 8f));
         panel.Target = new SKRect(left, bubbleBottom + 10f, left + panel.Width, bubbleBottom + 10f + panel.Height);
 
         if (panel.Closing)

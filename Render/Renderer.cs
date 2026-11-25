@@ -437,10 +437,15 @@ namespace NotchPeninsula
 
         // 媒体控制器的长度完全放开，因此删掉了两个上限常量：
 
-        // 动态计算最大边界，防止因刘海变大导致出界
+        // 动态计算最大边界，防止因刘海变大导致出界。
+        // 加上 IslandWidthCap（按工作区收窄后的可用宽）与实况窗浮层面板需求：
+        // 窗口必须能横向容纳「整条可用工作区」和「展开的实况窗详情面板」，
+        // 否则面板会被窗口边界裁掉（窗口外不渲染）。
         public static float WINDOW_WIDTH => Math.Max(1200f,
-            Math.Max(MAX_ISLAND_WIDTH,
-                Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))))) + 80f;
+            Math.Max(IslandWidthCap,
+                Math.Max(LiveWindowHost.RequiredWindowWidth,
+                    Math.Max(MAX_ISLAND_WIDTH,
+                        Math.Max(ActiveDetailWidth, Math.Max(STANDBY_WIDTH, Math.Max(MEDIA_WIDTH, TOAST_WIDTH))))))) + 80f;
 
         public static float MAX_WINDOW_HEIGHT => Math.Max(
             Math.Max(220f, Math.Max(ActiveDetailHeight, Math.Max(TOAST_HEIGHT, MEDIA_HEIGHT)) + 45f),
