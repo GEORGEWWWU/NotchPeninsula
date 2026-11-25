@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using SkiaSharp;
 
 namespace NotchPeninsula
@@ -175,21 +174,17 @@ namespace NotchPeninsula
 
         // 材质编号与设置页及引导页一致：0 实体，1 亚克力，2 液态玻璃，3 插件背景（宿主不画背景）。
         private static volatile int _materialIndex;
-        private static volatile ImmersiveCoverFade _immersiveCoverFade = new(false, 0f, 0);
+        private static volatile bool _islandImmersiveMode;
         public static bool IslandImmersiveMode
         {
-            get => _immersiveCoverFade.Enabled;
+            get => _islandImmersiveMode;
             set
             {
-                var previous = _immersiveCoverFade;
-                if (previous.Enabled == value) return;
-                long now = Stopwatch.GetTimestamp();
-                _immersiveCoverFade = new(value, previous.OpacityAt(now), now);
+                _islandImmersiveMode = value;
                 if (IslandLiquidGlass) ThemeMode = 2;
             }
         }
 
-        internal static bool IsImmersiveCoverAnimating => _immersiveCoverFade.IsAnimating(Stopwatch.GetTimestamp());
 
         public static int IslandMaterialIndex
         {
@@ -565,12 +560,14 @@ namespace NotchPeninsula
                     rTopX, rTopY, rBottom, styleProgress, GLOBAL_DPI, NotchWindow.InstanceHandle));
 
                 // 插件背景：宿主背板 / 涂层一笔不画，内容、裁剪和命中照常走下面的流程。
-                var immersiveFade = _immersiveCoverFade;
-                int material = immersiveFade.Enabled ? 1 : _materialIndex;
+                bool immersive = IslandImmersiveMode;
+                int material = immersive ? 1 : _materialIndex;
                 bool skipBackground = material == 3;
                 bool glass = material == 2;
                 bool acrylic = material == 1;
-                float coverAlpha = toast == null ? immersiveFade.OpacityAt(Stopwatch.GetTimestamp()) : 0f;
+                int coverGeneration = media.CoverGeneration;
+                var cover = toast == null ? GetImmersiveArtwork(media) : null;
+                byte coverAlpha = UpdateImmersiveCoverFade(immersive, cover != null, coverGeneration);
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
@@ -642,8 +639,6 @@ namespace NotchPeninsula
                         canvas.Restore();
                     }
 
-                    if (acrylic && coverAlpha > 0f)
-                        DrawImmersiveArtwork(canvas, media, coverAlpha);
 
                     BeginToneGrid(canvas, backdrop, destination, source, material);
                     if (glass && ThemeMode == 2)
@@ -667,9 +662,9 @@ namespace NotchPeninsula
                     }
                 }
 
-                // 切回其他材质时，在新背景上继续淡出，避免被不透明的实体底色盖住。
-                if (!acrylic && coverAlpha > 0f)
-                    DrawImmersiveArtwork(canvas, media, coverAlpha);
+                // 所有材质都先画底色，再以同一图层顺序合成封面，切换材质时封面透明度才连续。
+                if (cover != null && coverAlpha > 0)
+                    DrawImmersiveArtwork(canvas, cover, coverAlpha);
 
                 canvas.Save();
                 canvas.ClipPath(_bgPath, SKClipOperation.Intersect, true);

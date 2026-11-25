@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using SkiaSharp;
 
 namespace NotchPeninsula
@@ -235,34 +236,55 @@ namespace NotchPeninsula
         private static SKBitmap? _immersiveShaderBitmap;
         private static SKRect _immersiveShaderBounds;
 
-        private const double ImmersiveFadeSeconds = 0.2;
+        private static readonly double ImmersiveFadeTicks = Stopwatch.Frequency * 0.2;
+        private static ImmersiveCoverFade _immersiveCoverFade;
+        private static int _immersiveCoverGeneration;
 
-        private sealed record ImmersiveCoverFade(bool Enabled, float From, long StartedAt)
+        internal static bool IsImmersiveCoverAnimating => _immersiveCoverFade.IsAnimating(Stopwatch.GetTimestamp());
+
+        private readonly record struct ImmersiveCoverFade(bool Visible, float From, long StartedAt)
         {
-            private float Target => Enabled ? 1f : 0f;
+            private float Target => Visible ? 1f : 0f;
 
             internal bool IsAnimating(long now) => From != Target
-                && now - StartedAt < System.Diagnostics.Stopwatch.Frequency * ImmersiveFadeSeconds;
+                && now - StartedAt < ImmersiveFadeTicks;
 
             internal float OpacityAt(long now)
             {
                 if (!IsAnimating(now)) return Target;
-                float progress = (float)((now - StartedAt) / (System.Diagnostics.Stopwatch.Frequency * ImmersiveFadeSeconds));
+                float progress = (float)((now - StartedAt) / ImmersiveFadeTicks);
                 return From + (Target - From) * progress;
             }
         }
 
-        private static void DrawImmersiveArtwork(SKCanvas canvas, MediaController media, float fadeOpacity)
+        private static byte UpdateImmersiveCoverFade(bool enabled, bool hasArtwork, int generation)
         {
-            byte opacity = (byte)((255 * ImmersiveCoverOpacity / 4) * fadeOpacity);
-            if (opacity == 0 || !media.IsActive || SuppressMediaInIsland) return;
+            // 换曲或缺图时作废上一张的进度。等封面实际可绘制，再从透明开始淡入。
+            if (!hasArtwork || generation != _immersiveCoverGeneration)
+                _immersiveCoverFade = default;
+            _immersiveCoverGeneration = generation;
+
+            long now = Stopwatch.GetTimestamp();
+            float fade = _immersiveCoverFade.OpacityAt(now);
+            bool visible = enabled && hasArtwork;
+            if (_immersiveCoverFade.Visible != visible)
+                _immersiveCoverFade = new(visible, fade, now);
+            return (byte)((255 * ImmersiveCoverOpacity / 4) * fade);
+        }
+
+        private static SKBitmap? GetImmersiveArtwork(MediaController media)
+        {
+            if (!media.IsActive || SuppressMediaInIsland) return null;
             bool mediaVisible = SilentActive ? SilentMode.MediaImportantEnabled
                 : StandbyActive ? StandbySceneKey == Plugins.BuiltinWidgets.Media
                 : CompShowMedia;
-            if (!mediaVisible || Plugins.PluginManager.Instance.Host.ActiveDetailPage != null) return;
+            return mediaVisible && Plugins.PluginManager.Instance.Host.ActiveDetailPage == null
+                ? media.AlbumArtwork : null;
+        }
 
-            var artwork = media.AlbumArtwork;
-            if (artwork == null || artwork.Width <= 0 || artwork.Height <= 0) return;
+        private static void DrawImmersiveArtwork(SKCanvas canvas, SKBitmap artwork, byte opacity)
+        {
+            if (artwork.Width <= 0 || artwork.Height <= 0) return;
 
             // 按轮廓的完整边界等比铺满，包含刘海两侧伸出的倒角。
             var island = _bgPath.Bounds;

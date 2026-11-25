@@ -113,8 +113,10 @@ namespace NotchPeninsula
         // 换曲时 _coverGen +1；所有异步封面回写都带上世代号，回来对不上就丢弃，
         // 从根上杜绝「上一首的封面贴到新歌上」，也不再依赖歌名字符串比较。
         private int _coverGen;
-        private int _coverPendingGen = -1;            // 当前仍在找封面的世代（两侧只写同一个值，无竞争）
-        private volatile bool _coverPending;          // 该世代是否还没定局
+        internal int CoverGeneration => Volatile.Read(ref _coverGen);
+        private sealed record CoverProbeResult(int Generation, long RetryAt);
+        private volatile CoverProbeResult? _coverProbeResult;
+        private const int MissingCoverRetryMs = 5000;
         private int _coverFetching;                   // 同一时刻只允许一条 SMTC 封面链路
         private int _networkCoverGen = -1;            // 网络封面已经贴上的世代（它比 SMTC 权威）
 
@@ -1040,7 +1042,6 @@ namespace NotchPeninsula
         private void InvalidateCover()
         {
             int gen = Interlocked.Increment(ref _coverGen);
-            _coverPending = false;
             _externalCoverTitle = "";
             _externalCoverAppId = "";
             Logger.Debug($"[封面] 换曲作废 gen={gen} 原图={(Thumbnail == null ? "null" : "有")} 新曲目='{_trackTitle}'");
@@ -1051,35 +1052,27 @@ namespace NotchPeninsula
 
         private void UpdateCover()
         {
-            int gen = Volatile.Read(ref _coverGen);
-            if (gen != _coverPendingGen)
-            {
-                _coverPendingGen = gen;
-                _coverPending = true;
-            }
+            int gen = CoverGeneration;
 
             // 兜底图：只在完全没有封面时补位（也负责把异步解析到的图标最终贴上）。
             // SetAppIcon 自带「同一 AUMID 只贴一次」的闸，不会每帧复制位图；
             // ⚠️ 条件必须是 Thumbnail == null —— 用 _appIconKey 判定会在封面刚贴上时把它盖成应用图标。
             if (Thumbnail == null) SetAppIcon();
 
-            if (!_coverPending) return;                  // 本世代已定局：不再重试
-            if (Volatile.Read(ref _networkCoverGen) == gen) { _coverPending = false; return; }
+            if (Volatile.Read(ref _networkCoverGen) == gen) return;
+            var lastProbe = _coverProbeResult;
+            bool retry = lastProbe?.Generation == gen;
+            if (retry && Environment.TickCount64 < lastProbe!.RetryAt) return;
 
             // 视频模式下 PotPlayer 这类播放器：会话缩略图是视频截图而不是封面，直接用应用图标。
             // 放在启动探测之前，SMTC 图根本没有机会贴上来；上面那一档若已贴过图标，这里的 SetAppIcon 会因
             // _appIconKey 命中而直接返回，不产生多余的位图拷贝。
-            if (IsVideoMode && _isVideoIconOnlySession)
-            {
-                SetAppIcon();
-                _coverPending = false;
-                return;
-            }
+            if (IsVideoMode && _isVideoIconOnlySession) return;
 
             if (_currentSession == null || _trackTitle.Length == 0) return;
             if (Volatile.Read(ref _coverFetching) == 1) return;
 
-            _ = FetchSmtcCoverAsync(_trackTitle, gen, _currentSession);
+            _ = FetchSmtcCoverAsync(_trackTitle, gen, _currentSession, retry);
         }
 
         // 诊断：只在「本世代迟迟没有封面」时每秒打一行，说明卡在哪一环。
@@ -1088,10 +1081,10 @@ namespace NotchPeninsula
             // 没有会话时本来就不该有封面：这条诊断只在"正在放东西却拿不到封面"时才有意义，
             // 否则空闲状态下每秒一行，纯属拿磁盘换噪音。
             if (_currentSession == null) return;
-            if (Thumbnail != null || !_coverPending) return;
+            if (AlbumArtwork != null || Volatile.Read(ref _coverFetching) == 0) return;
             if (now - _lastCoverDiagAt < TimeSpan.FromSeconds(1)) return;
             _lastCoverDiagAt = now;
-            Logger.Debug($"[封面] 未就位 gen={_coverGen} pendingGen={_coverPendingGen} fetching={Volatile.Read(ref _coverFetching)} session={(_currentSession == null ? "null" : "ok")} 曲目='{_trackTitle}'");
+            Logger.Debug($"[封面] 未就位 gen={CoverGeneration} 曲目='{_trackTitle}'");
         }
 
         private string AppNameFromAppId()
@@ -1789,15 +1782,16 @@ namespace NotchPeninsula
         private const int SessionCoverReadTimeoutMs = 2500;
 
         private async Task FetchSmtcCoverAsync(string title, int gen,
-            GlobalSystemMediaTransportControlsSession session)
+            GlobalSystemMediaTransportControlsSession session, bool retry)
         {
             if (Interlocked.CompareExchange(ref _coverFetching, 1, 0) == 1) return;
             try
             {
-                long appliedHash = -1;                  // 本链路已贴上的封面内容指纹
+                long? appliedHash = null;               // 本链路已贴上的封面内容指纹
                 DateTime appliedAt = DateTime.MinValue; // 上次换图的时间（用来判断「稳住了」）
 
-                for (int i = 0; i < SessionCoverProbeMs.Length; i++)
+                int attempts = retry ? 1 : SessionCoverProbeMs.Length;
+                for (int i = 0; i < attempts; i++)
                 {
                     if (i > 0) await Task.Delay(SessionCoverProbeMs[i]);
 
@@ -1805,23 +1799,24 @@ namespace NotchPeninsula
                     // ⚠️ 判据只用世代号 —— 别用 ReferenceEquals(session, _currentSession)：
                     //    WinRT 每次 GetSessions() 给的 session 对象不保证是同一个实例，
                     //    那样会让链路刚起来就自杀，封面永远贴不上。
-                    if (gen != Volatile.Read(ref _coverGen)) return;
+                    if (gen != CoverGeneration) return;
 
                     // 本世代已经有网络封面了：它更准，别再让 SMTC 把它盖掉
-                    if (Volatile.Read(ref _networkCoverGen) == gen) { _coverPending = false; return; }
+                    if (Volatile.Read(ref _networkCoverGen) == gen) return;
 
-                    var read = ReadSessionCoverAsync(session);
-                    // 汽水音乐这类源的 WinRT 读流会「既不返回也不抛」—— 超时就当这一档失败，
-                    // 否则 _coverFetching 被永久占住，整首曲子都不会再找封面。
-                    if (await Task.WhenAny(read, Task.Delay(SessionCoverReadTimeoutMs)) != read)
+                    using var timeout = new CancellationTokenSource(SessionCoverReadTimeoutMs);
+                    SKBitmap? bmp;
+                    long hash;
+                    try
+                    {
+                        (bmp, hash) = await ReadSessionCoverAsync(session, timeout.Token).WaitAsync(timeout.Token);
+                    }
+                    catch (OperationCanceledException) when (timeout.IsCancellationRequested)
                     {
                         CoverLog("会话自带封面：读取超时，本轮跳过");
                         continue;
                     }
-
-                    var (bmp, hash) = read.Result;
-
-                    if (gen != Volatile.Read(ref _coverGen))
+                    if (gen != CoverGeneration || Volatile.Read(ref _networkCoverGen) == gen)
                     {
                         bmp?.Dispose();
                         return;
@@ -1829,7 +1824,7 @@ namespace NotchPeninsula
 
                     Logger.Debug($"[封面] SMTC#{i} [{(bmp == null ? "null" : $"{bmp.Width}x{bmp.Height}")}] h={hash:X8} 曲目='{title}'");
 
-                    if (bmp == null) { bmp?.Dispose(); continue; }   // 还没就绪 / 读失败 → 下一档再看
+                    if (bmp == null) continue;   // 还没就绪 / 读失败 → 下一档再看
 
                     if (hash == appliedHash)
                     {
@@ -1845,7 +1840,9 @@ namespace NotchPeninsula
                     }
                 }
 
-                if (gen == Volatile.Read(ref _coverGen)) _coverPending = false;
+                // 有些播放器在探测窗口结束后才提供封面。缺图时低频补查，按世代判定是否需要重试。
+                if (gen == CoverGeneration)
+                    _coverProbeResult = new(gen, appliedHash.HasValue ? long.MaxValue : Environment.TickCount64 + MissingCoverRetryMs);
             }
             finally
             {
@@ -1856,18 +1853,18 @@ namespace NotchPeninsula
         // 必须用调用方捕获的 session：_currentSession 随时会被换成别的会话，
         // 老代码用 `_currentSession!` 直接取属性，会话消失时就抛 NRE（那段 2 秒一次的刷屏日志）。
         private async Task<(SKBitmap? Bitmap, long Hash)> ReadSessionCoverAsync(
-            GlobalSystemMediaTransportControlsSession session)
+            GlobalSystemMediaTransportControlsSession session, CancellationToken cancellationToken)
         {
             try
             {
-                var props = await session.TryGetMediaPropertiesAsync();
+                var props = await session.TryGetMediaPropertiesAsync().AsTask(cancellationToken);
                 if (props?.Thumbnail is not { } thumbRef)
                 {
                     CoverLog("会话自带封面：本会话当前未提供缩略图");
                     return (null, 0);
                 }
 
-                var raw = await thumbRef.OpenReadAsync();
+                var raw = await thumbRef.OpenReadAsync().AsTask(cancellationToken);
                 if (raw == null)
                 {
                     CoverLog("会话自带封面：打开缩略图流返回 null");
@@ -1876,14 +1873,15 @@ namespace NotchPeninsula
 
                 using (raw)
                 using (var stream = raw.AsStreamForRead())
-                using (var buffer = await ReadLimitedAsync(stream, CoverMaxBytes))
+                using (var buffer = await ReadLimitedAsync(stream, CoverMaxBytes, cancellationToken))
                 {
                     if (buffer == null) return (null, 0);
+                    cancellationToken.ThrowIfCancellationRequested();
                     long hash = Fingerprint(buffer);
                     return (DecodeCover(buffer), hash);
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 CoverLog($"会话自带封面读取失败: {ex.GetType().Name} {ex.Message}");
                 return (null, 0);
@@ -1902,7 +1900,7 @@ namespace NotchPeninsula
             return hash;
         }
 
-        private static async Task<MemoryStream?> ReadLimitedAsync(Stream stream, long maxBytes)
+        private static async Task<MemoryStream?> ReadLimitedAsync(Stream stream, long maxBytes, CancellationToken cancellationToken = default)
         {
             var buffer = new MemoryStream();
             var chunk = new byte[81920];
@@ -1910,7 +1908,7 @@ namespace NotchPeninsula
             try
             {
                 int read;
-                while ((read = await stream.ReadAsync(chunk)) > 0)
+                while ((read = await stream.ReadAsync(chunk, cancellationToken)) > 0)
                 {
                     total += read;
                     if (total > maxBytes)
