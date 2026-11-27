@@ -10,12 +10,13 @@ namespace NotchPeninsula
         // 按钮：无描边，圆角比下拉框 / 输入框这类同排控件大 2px，填充统一是很淡的一层。
         private const float SettingsButtonRadius = SettingsControlRadius + 2f;
 
-        private enum SettingsButtonKind { Standard, Primary, Danger }
+        private enum SettingsButtonKind { Standard, Primary, Update, Danger }
 
         private SKColor SecondaryText => Neutral(200);
         private SKColor DisabledText => Neutral(135);
         private SKColor AccentText => _isLightAppearance ? new SKColor(0, 84, 156) : new SKColor(137, 194, 243);
         private SKColor OnAccent => _isLightAppearance ? SKColors.White : new SKColor(12, 32, 52);
+        private SKColor UpdateText => _isLightAppearance ? new SKColor(16, 118, 58) : new SKColor(122, 214, 154);
         private SKColor DangerText => _isLightAppearance ? new SKColor(157, 36, 40) : new SKColor(255, 162, 157);
 
         private SKColor AccentFill(bool hovered, bool pressed = false) => _isLightAppearance
@@ -59,12 +60,14 @@ namespace NotchPeninsula
 
             byte idle, hotAlpha, pressedAlpha;
             if (kind == SettingsButtonKind.Primary) (idle, hotAlpha, pressedAlpha) = (30, 42, 54);
+            else if (kind == SettingsButtonKind.Update) (idle, hotAlpha, pressedAlpha) = (28, 40, 52);
             else if (kind == SettingsButtonKind.Danger) (idle, hotAlpha, pressedAlpha) = (20, 30, 40);
             else if (selected) (idle, hotAlpha, pressedAlpha) = (20, 28, 36);
             else (idle, hotAlpha, pressedAlpha) = (12, 20, 28);
 
             byte alpha = !enabled ? (byte)5 : pressed ? pressedAlpha : hot ? hotAlpha : idle;
             _dynamicFillPaint.Color = kind == SettingsButtonKind.Primary ? AccentText.WithAlpha(alpha)
+                : kind == SettingsButtonKind.Update ? UpdateText.WithAlpha(alpha)
                 : kind == SettingsButtonKind.Danger ? DangerText.WithAlpha(alpha)
                 : selected ? AccentText.WithAlpha(alpha) : Overlay(alpha);
             canvas.DrawRoundRect(rect, SettingsButtonRadius, SettingsButtonRadius, _dynamicFillPaint);
@@ -77,6 +80,7 @@ namespace NotchPeninsula
 
             _uiTextPaint.Color = !enabled ? DisabledText
                 : kind == SettingsButtonKind.Danger ? DangerText
+                : kind == SettingsButtonKind.Update ? UpdateText
                 : kind == SettingsButtonKind.Primary ? AccentText
                 : selected ? AccentText : _fgColor;
             DrawCenteredButtonLabel(canvas, TruncateText(label, _uiTextPaint, rect.Width - 6f), rect, _uiTextPaint);

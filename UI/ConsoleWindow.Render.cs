@@ -8,24 +8,36 @@ namespace NotchPeninsula
         // ----  ----
         // ----  ----
 
-        // 侧栏「插件市场」右上角的更新数角标：黄底白字小胶囊，>9 显示 9+。
+        // 侧栏「插件市场」可更新提示：
+        // 展开态在按钮内部最右侧与文本同行显示灰底白字角标（>9 显示 9+）；折叠态仅显示最小红点指示器。
         // 纯展示，不单独吃点击（整行本来就是页签热区）。
         private void DrawMarketTabBadge(SKCanvas canvas, float rowTop)
         {
+            if (SidebarCollapsed)
+            {
+                const float dotRadius = 2.5f;
+                _dynamicFillPaint.Color = new SKColor(232, 64, 56);
+                canvas.DrawCircle(SidebarIconCenterX + 10f, rowTop + 9f, dotRadius, _dynamicFillPaint);
+                return;
+            }
+
             string text = MarketUpdateCount > 9 ? "9+" : MarketUpdateCount.ToString();
             const float badgeH = 13f;
             _dynamicTextPaint.TextSize = 9.5f;
             float tw = _dynamicTextPaint.MeasureText(text);
             float w = Math.Max(tw + 8f, badgeH);
-            float right = TabButtonRight - (SidebarCollapsed ? 6f : 12f);
-            var r = new SKRect(right - w, rowTop + 4f, right, rowTop + 4f + badgeH);
+            float right = TabButtonRight - 8f;
+            float centerY = rowTop + 24f - TEXT_INK_MID_OFFSET;
+            var r = new SKRect(right - w, centerY - badgeH / 2f, right, centerY + badgeH / 2f);
 
-            _dynamicFillPaint.Color = new SKColor(232, 168, 48);
+            _dynamicFillPaint.Color = _isLightAppearance
+                ? new SKColor(0, 0, 0, 112)
+                : new SKColor(255, 255, 255, 55);
             canvas.DrawRoundRect(r, badgeH / 2f, badgeH / 2f, _dynamicFillPaint);
 
             _dynamicTextPaint.Color = SKColors.White;
             _dynamicTextPaint.TextAlign = SKTextAlign.Center;
-            canvas.DrawText(text, r.MidX, r.MidY + _dynamicTextPaint.TextSize * 0.35f, _dynamicTextPaint);
+            canvas.DrawText(text, r.MidX, r.MidY - MeasureInkMidY(_dynamicTextPaint, text), _dynamicTextPaint);
 
             // 共用画笔复位：侧栏后面还有别的文字要画
             _dynamicTextPaint.TextAlign = SKTextAlign.Left;
@@ -2035,8 +2047,11 @@ namespace NotchPeninsula
                     bool enabled = !busy;
                     bool hovered = _hoveredMarketInstall == i;
                     var r = new SKRect(installX, rowY + btnTop, installX + MarketBtnW, rowY + btnTop + btnH);
-                    DrawSettingsButton(canvas, r, MarketInstallLabel(mp, local, dim), hovered, enabled,
-                        local != null && dim ? SettingsButtonKind.Standard : SettingsButtonKind.Primary);
+                    string installLabel = MarketInstallLabel(mp, local, dim);
+                    var installKind = installLabel == "更新" ? SettingsButtonKind.Update
+                        : installLabel == "下载" ? SettingsButtonKind.Primary
+                        : SettingsButtonKind.Standard;
+                    DrawSettingsButton(canvas, r, installLabel, hovered, enabled, installKind);
                 }
 
                 // 未安装时禁用卸载
@@ -2071,7 +2086,7 @@ namespace NotchPeninsula
                 bool running = _updateAllRunning;
                 bool enabled = !running && _marketBusyId.Length == 0;
                 DrawSettingsButton(canvas, bar, running ? UpdateAllProgressText : $"一键更新全部插件（{MarketUpdateCount}）",
-                    _hoveredMarketUpdateAll, enabled, SettingsButtonKind.Primary);
+                    _hoveredMarketUpdateAll, enabled, SettingsButtonKind.Update);
             }
 
             if (_marketCategoryOpen)
