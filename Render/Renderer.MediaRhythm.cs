@@ -87,9 +87,10 @@ public static partial class Renderer
         long now = Stopwatch.GetTimestamp();
         float dt = Math.Min(0.05f, (float)Stopwatch.GetElapsedTime(_rhythmLastFrame, now).TotalSeconds);
         _rhythmLastFrame = now;
-        // 起跳直接跟随最左柱的原始目标。回落每帧收掉 45% 的差值，频谱柱只收 12%。
+        // 最左柱的原始目标单独缓动。起跳逐帧跟上，回落仍比频谱柱的 12% 快。
         float bass = playing ? Math.Clamp(lowestBand, 0f, 1f) : 0f;
-        _rhythmBass = bass >= _rhythmBass ? bass : _rhythmBass + (bass - _rhythmBass) * 0.45f;
+        float response = bass > _rhythmBass ? 0.40f : 0.22f;
+        _rhythmBass += (bass - _rhythmBass) * response;
         if (bass == 0f && _rhythmBass < 0.005f) _rhythmBass = 0f;
         _rhythmPhase = (_rhythmPhase + dt * _rhythmBass * 3f) % MathF.Tau;
 
