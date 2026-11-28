@@ -586,10 +586,23 @@ namespace NotchPeninsula
                 var backdrop = acrylic || glass ? AcrylicBackdrop : null;
                 var source = AcrylicBackdropSrc;
                 var destination = new SKRect(islandLeft, 0f, islandRight, currentHeight);
-                // 映射覆盖区扩展为「岛体 ∪ 气泡包围盒」（画布坐标）：气泡在岛体左侧外，
-                // 玻璃采样它下方的桌面 —— src 按岛体比例线性外推（映射是线性的）。
+                // 映射覆盖区扩展为「岛体 ∪ 气泡包围盒 ∪ 实况窗面板」（画布坐标）：
+                // 气泡与展开面板都在岛体左右外侧，玻璃采样它们下方的桌面 —— src 按岛体比例线性外推（映射是线性的）。
                 float mapL = islandLeft, mapR = islandRight;
                 var liveFrame = LiveWindowHost.Frame;
+                if (liveFrame.PanelVisible)
+                {
+                    if (liveFrame.PanelRect.Width >= 1f)
+                    {
+                        mapL = MathF.Min(mapL, liveFrame.PanelRect.Left);
+                        mapR = MathF.Max(mapR, liveFrame.PanelRect.Right);
+                    }
+                    if (liveFrame.PanelRevealRect.Width >= 1f)
+                    {
+                        mapL = MathF.Min(mapL, liveFrame.PanelRevealRect.Left);
+                        mapR = MathF.Max(mapR, liveFrame.PanelRevealRect.Right);
+                    }
+                }
                 for (int i = 0; i < liveFrame.Count; i++)
                 {
                     var r = liveFrame.Items[i].Rect;

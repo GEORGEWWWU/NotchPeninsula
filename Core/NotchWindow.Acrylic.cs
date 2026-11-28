@@ -235,11 +235,24 @@ namespace NotchPeninsula
                 IslandBackdrop.SetExtraMasks(extra.AsSpan(0, n));
             }
 
-            // 气泡组包围盒并入抓取矩形（用户实测「滑行中右半黑」）：气泡在岛体左侧外，
-            // 玻璃要采样它下方的桌面 —— 抓屏区不含气泡的话采样出图必发黑。
+            // 气泡组与实况窗面板包围盒并入抓取矩形（用户实测「滑行中右半黑」）：气泡/面板在岛体左右外侧，
+            // 玻璃要采样它们下方的桌面 —— 抓屏区不含它们的话采样出图必发黑。
             {
                 var lf = LiveWindowHost.Frame;
                 float bL = float.MaxValue, bR = float.MinValue;
+                if (lf.PanelVisible)
+                {
+                    if (lf.PanelRect.Width >= 1f)
+                    {
+                        bL = MathF.Min(bL, lf.PanelRect.Left);
+                        bR = MathF.Max(bR, lf.PanelRect.Right);
+                    }
+                    if (lf.PanelRevealRect.Width >= 1f)
+                    {
+                        bL = MathF.Min(bL, lf.PanelRevealRect.Left);
+                        bR = MathF.Max(bR, lf.PanelRevealRect.Right);
+                    }
+                }
                 for (int i = 0; i < lf.Count; i++)
                 {
                     ref readonly var it = ref lf.Items[i];
