@@ -1622,7 +1622,7 @@ namespace NotchPeninsula
                 LeftColumnRight, TITLE_BAR_HEIGHT + RHYTHM_ROW_Y + TOGGLE_CARD_H));
             DrawToggleRow(canvas, IMMERSIVE_CARD_Y, "沉浸模式", "使用专辑封面作为灵动岛背景",
                 Renderer.IslandImmersiveMode, _immersiveToggleHovered, cardRight: LeftColumnRight, textLeft: CONTENT_TEXT_X);
-            DrawToggleRow(canvas, RHYTHM_ROW_Y, "背景律动", "随音乐低频变化",
+            DrawToggleRow(canvas, RHYTHM_ROW_Y, "背景律动", "跟随频谱最左柱的低音",
                 Renderer.MediaRhythmEnabled, _rhythmToggleHovered, cardRight: LeftColumnRight, textLeft: CONTENT_TEXT_X);
             DrawPersonalizeDropdown(canvas, DropdownKind.RhythmColor);
 

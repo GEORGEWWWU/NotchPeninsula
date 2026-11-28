@@ -1666,9 +1666,11 @@ namespace NotchPeninsula
             _wasUsingSoloSpectrum = useSoloSpectrum;
 
             float[] targetBars = useSoloSpectrum ? MapSoloSpectrum(soloBands) : _audioAnalyzer.GetBars();
+            // 背景和最左柱共用同一份低频采样，只有柱子经过下面的缓动。
+            float rhythmBass = targetBars[0];
             for (int i = 0; i < 5; i++)
             {
-                float target = targetBars[i];
+                float target = i == 0 ? rhythmBass : targetBars[i];
                 if (target > _currentBars[i])
                 {
                     _currentBars[i] += (target - _currentBars[i]) * 0.75f;
@@ -1739,7 +1741,8 @@ namespace NotchPeninsula
                 _media.UpdateLyrics(); // 更新歌词
                 tLyricDone = Environment.TickCount64;
 
-                Renderer.Draw(canvas, _media, _isHovered && !_isOverLiveWindow, _currentWidth, _currentHeight, startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha);
+                Renderer.Draw(canvas, _media, _isHovered && !_isOverLiveWindow, _currentWidth, _currentHeight,
+                    startupProgress, _currentBars, _currentToast, _currentStyleProgress, transitionAlpha, rhythmBass);
                 tDrawDone = Environment.TickCount64;
             }
             finally

@@ -463,6 +463,14 @@ namespace NotchPeninsula
 
         public static void Draw(SKCanvas canvas, MediaController media, bool isHovered, float currentWidth, float currentHeight, float startupProgress = 1f, float[]? bars = null, ToastData? toast = null, float styleProgress = 0f, float transitionAlpha = 1f)
         {
+            Draw(canvas, media, isHovered, currentWidth, currentHeight, startupProgress, bars, toast,
+                styleProgress, transitionAlpha, bars is { Length: > 0 } ? bars[0] : 0f);
+        }
+
+        internal static void Draw(SKCanvas canvas, MediaController media, bool isHovered,
+            float currentWidth, float currentHeight, float startupProgress, float[]? bars, ToastData? toast,
+            float styleProgress, float transitionAlpha, float rhythmBass)
+        {
             if (!System.Threading.Monitor.TryEnter(_renderLock)) return;
             try
             {
@@ -672,7 +680,7 @@ namespace NotchPeninsula
                     }
 
                     if (rhythmUnderTint && rhythmOpacity > 0)
-                        DrawMediaRhythm(canvas, cover, media.IsPlaying, bars, rhythmOpacity, rhythmFade);
+                        DrawMediaRhythm(canvas, cover, media.IsPlaying, rhythmBass, rhythmOpacity, rhythmFade);
 
                     BeginToneGrid(canvas, backdrop, destination, source, material);
                     if (glass && ThemeMode == 2)
@@ -703,7 +711,7 @@ namespace NotchPeninsula
                 {
                     // 叠加封面或恢复原材质时，在新背景上保留律动，同时保留亚克力叠色原有的衰减。
                     float acrylicTransmission = 1f - (AcrylicTintMaxAlpha * AcrylicBgOpacity / 4) / 255f;
-                    DrawMediaRhythm(canvas, cover, media.IsPlaying, bars, rhythmOpacity,
+                    DrawMediaRhythm(canvas, cover, media.IsPlaying, rhythmBass, rhythmOpacity,
                         acrylic ? rhythmFade : rhythmFade * acrylicTransmission,
                         blobTransmission: acrylic ? acrylicTransmission : 1f);
                 }
