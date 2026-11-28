@@ -22,6 +22,10 @@ namespace NotchPeninsula
         private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(3) };
         private static readonly object _lock = new();
 
+        // 借用缓存位图绘制期间，防止后台逐出并释放该位图。
+        internal static bool TryEnterBitmapRead() => System.Threading.Monitor.TryEnter(_lock);
+        internal static void ExitBitmapRead() => System.Threading.Monitor.Exit(_lock);
+
         private static readonly Dictionary<string, SKBitmap?> _cache = new(StringComparer.Ordinal);
         private static readonly Queue<string> _cacheOrder = new();
 

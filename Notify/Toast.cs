@@ -674,6 +674,7 @@ namespace NotchPeninsula
         }
 
         private SKBitmap? _customIcon;
+        internal volatile bool IconsReleased;
 
         public SKBitmap? CustomIcon
         {

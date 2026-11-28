@@ -94,6 +94,32 @@ namespace NotchPeninsula
             return null;
         }
 
+        internal static SKBitmap? ResolveToastVisual(ToastData toast, out bool isAvatar, bool includeDefaultApp = false)
+        {
+            var avatar = toast.Avatar;
+            isAvatar = avatar != null;
+            return avatar ?? toast.CustomIcon ?? ResolvePresetIcon(toast) ?? _defaultToastIcon
+                ?? (includeDefaultApp ? _defaultAppIcon : null);
+        }
+
+        internal static void DrawSharedToastIcon(SKCanvas canvas, ToastData toast, SKRect rect, SKPaint paint)
+        {
+            if (toast.IconsReleased) return;
+            var bitmap = ResolveToastVisual(toast, out bool isAvatar, includeDefaultApp: true);
+            if (bitmap == null || bitmap.Handle == IntPtr.Zero) return;
+
+            float radius = rect.Width * (isAvatar ? 0.5f : (float)TOAST_ICON_RADIUS / TOAST_ICON_SIZE);
+            canvas.Save();
+            try
+            {
+                using var clip = new SKRoundRect(rect, radius, radius);
+                canvas.ClipRoundRect(clip, SKClipOperation.Intersect, true);
+                if (isAvatar) canvas.DrawBitmap(bitmap, SquareSrcOf(bitmap), rect, paint);
+                else canvas.DrawBitmap(bitmap, rect, paint);
+            }
+            finally { canvas.Restore(); }
+        }
+
         private static void DrawToastLayer(SKCanvas canvas, ToastData toast, float left, float right, float currentHeight)
         {
             // 整帧用一份字号快照：改字号的那一帧也不会出现「行高按新值、字形按旧值」。
@@ -129,20 +155,14 @@ namespace NotchPeninsula
                     _compactAppPaint.MeasureText(string.IsNullOrEmpty(_cachedToastAppName) ? "通知" : _cachedToastAppName));
             }
 
+            EnsureIconsLoaded();
+            var targetIcon = ResolveToastVisual(toast, out bool isAvatar);
             // 头像：大 5px + 50% 圆角（正圆）；图标维持原尺寸与原圆角。
-            bool isAvatar = toast.Avatar != null;
             float iconSize = isAvatar ? TOAST_AVATAR_SIZE : TOAST_ICON_SIZE;
             float iconRadius = isAvatar ? iconSize * 0.5f : TOAST_ICON_RADIUS;
             float toastIconX = left + 14f;
             float toastIconY = (currentHeight - iconSize) / 2f;
             var iconRect = new SKRect(toastIconX, toastIconY, toastIconX + iconSize, toastIconY + iconSize);
-
-            EnsureIconsLoaded();
-
-            // 图标三级：头像 > icon > 兜底。任何一条消息带了头像，预设图标就让位。
-            SKBitmap? targetIcon = isAvatar
-                ? toast.Avatar
-                : toast.CustomIcon ?? ResolvePresetIcon(toast) ?? _defaultToastIcon;
 
             // 直接绘制位图，逻辑极其精简
             if (targetIcon != null)

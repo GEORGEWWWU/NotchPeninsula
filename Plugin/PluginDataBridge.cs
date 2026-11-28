@@ -90,6 +90,28 @@ public sealed class MediaSnapshot
 
 public sealed class ToastNotice
 {
+    internal WeakReference<ToastData>? VisualSource { get; init; }
+    public TimeSpan Duration { get; init; } = TimeSpan.FromSeconds(4);
+
+    /// <summary>用于观察宿主异步补齐图标或头像，无需复制或读取像素。</summary>
+    public int IconRevision => VisualSource?.TryGetTarget(out var toast) == true
+        && !toast.IconsReleased && Renderer.ResolveToastVisual(toast, out _, includeDefaultApp: true) is { } bitmap
+        ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(bitmap) : 0;
+
+    /// <summary>在调用方的画布绘制宿主已有的图标。位图的所有权留在宿主。</summary>
+    public void DrawIcon(SKCanvas canvas, SKRect rect, SKPaint paint)
+    {
+        if (VisualSource?.TryGetTarget(out var toast) != true || toast == null
+            || !System.Threading.Monitor.TryEnter(toast)) return;
+        try
+        {
+            if (!ToastIconProvider.TryEnterBitmapRead()) return;
+            try { Renderer.DrawSharedToastIcon(canvas, toast, rect, paint); }
+            finally { ToastIconProvider.ExitBitmapRead(); }
+        }
+        finally { System.Threading.Monitor.Exit(toast); }
+    }
+
     public long NoticeId { get; init; }
 
     public string AppName { get; init; } = "";
@@ -350,12 +372,12 @@ public static class PluginDataBridge
         try
         {
             // 保证组件立刻有画面；拿不到也不阻塞。
-            // 图标不再由宿主推位图：插件拿 Aumid 走 host.GetAppLogo（四级解析 + 宿主缓存，
-            // 与岛内 Toast 同源）自己取 —— 省掉 PNG 编解码和跨程序集拷贝，两端共享一份缓存。
-            // 头像仍推（那是系统通知自带的流，插件没有别的获取途径）。
+            // 新插件直接画宿主位图。保留旧订阅者使用的头像 PNG。
             Publish(new ToastNotice
             {
                 NoticeId = noticeId,
+                VisualSource = new WeakReference<ToastData>(toast),
+                Duration = toast.Duration,
                 AppName = toast.AppName,
                 Title = toast.Title,
                 Body = toast.Body,

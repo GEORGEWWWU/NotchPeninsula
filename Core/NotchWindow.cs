@@ -1126,10 +1126,15 @@ namespace NotchPeninsula
         //（24 条 FIFO + 逐出保留），这里只断引用 —— 否则会删掉别的通知还在用的图。
         private static void ReleaseToastIcons(ToastData toast)
         {
-            var owned = toast.OwnsCustomIcon ? toast.CustomIcon : null;
-            toast.CustomIcon = null;
-            toast.Avatar = null;
-            toast.OwnsCustomIcon = false;
+            SKBitmap? owned;
+            lock (toast)
+            {
+                owned = toast.OwnsCustomIcon ? toast.CustomIcon : null;
+                toast.CustomIcon = null;
+                toast.Avatar = null;
+                toast.OwnsCustomIcon = false;
+                toast.IconsReleased = true;
+            }
             try { owned?.Dispose(); }
             catch (Exception ex) { Logger.Debug($"[Toast] 私有图标释放失败: {ex.Message}"); }
         }
