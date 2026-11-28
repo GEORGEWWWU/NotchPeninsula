@@ -1030,8 +1030,12 @@ namespace NotchPeninsula
                     if (_liveWindowHoverRow < owners.Count)
                     {
                         string owner = owners[_liveWindowHoverRow];
-                        LiveWindowHost.SetOwnerEnabled(owner, !LiveWindowHost.IsOwnerEnabled(owner));
-                        Render();
+                        // 显示清单里没勾选的插件：这一行是置灰的，点了不做事（先让它能被看到，再要求启用）。
+                        if (LiveWindowHost.IsOwnerAllowedByDisplay(owner))
+                        {
+                            LiveWindowHost.SetOwnerEnabled(owner, !LiveWindowHost.IsOwnerEnabled(owner));
+                            Render();
+                        }
                     }
                 }
             }

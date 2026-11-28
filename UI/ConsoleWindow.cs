@@ -229,18 +229,18 @@ namespace NotchPeninsula
         /// </summary>
         private static bool UsesSilentMode => Renderer.SilentActive || SilentHotkey.IsEnabled;
 
-        /// <summary>实况窗是否算「在用」：媒体实况窗开着，或者有插件登记过实况窗。</summary>
-        private static bool UsesLiveWindows =>
-            MediaLiveWindowController.IsEnabled || LiveWindowHost.KnownPluginOwners.Count > 0;
-
         /// <summary>
-        /// 页签是否出现在侧栏。静默模式设置（9）与实况窗管理（8）平时整行收起 ——
-        /// 这两页只在真用到时才占位置；判据取「已启用 / 正在用」，所以退出静默模式后
-        /// 只要快捷键还开着，那一页依然进得去。
+        /// 页签是否出现在侧栏。
+        ///
+        /// <para>「实况窗管理」(8) <b>恒常驻</b>：以前只在「媒体实况窗开着 / 有插件登记过实况窗」
+        /// 时才占位置，没注册实况窗的用户在设置里根本找不到这一页（用户要求：无论有没有注册
+        /// 实况窗，都要能进去看这份设置）。</para>
+        ///
+        /// <para>「静默模式设置」(9) 平时整行收起：只在真用到时才占位置（在静默模式里，
+        /// 或者开过切换静默模式的快捷键 —— 退出静默后仍进得去改键）。</para>
         /// </summary>
         private static bool IsSidebarTabVisible(int tab) => tab switch
         {
-            8 => UsesLiveWindows,
             9 => UsesSilentMode,
             _ => tab >= 0 && tab < SidebarLabels.Length
         };

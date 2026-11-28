@@ -172,9 +172,14 @@ public static class SilentMode
     }
 
     /// <summary>
-    /// 把静默清单的勾选状态同步到实况窗：静默模式下未勾选插件的重要信息气泡**挂起**
-    /// （回调 <c>OnHostEnabledChanged(false)</c>，气泡从屏上撤下），勾选 / 退出静默时恢复。
-    /// 勾选在这里是「重要信息总开关」—— 用户都禁止它使用重要信息了，气泡也不该出现。
+    /// 把「当前显示模式下的清单勾选」同步到实况窗：
+    ///
+    /// <para>普通模式看「显示设置」的勾选，静默模式看「静默模式设置」的勾选 ——
+    /// 没勾选的插件气泡<b>挂起</b>（回调 <c>OnHostEnabledChanged(false)</c>，气泡从屏上撤下），
+    /// 重新勾选 / 退出静默时恢复。勾选在这里是「这个插件的内容到底要不要出现」的总开关：
+    /// 用户都把它从显示清单里撤掉了，气泡也不该单独冒出来（用户要求）。</para>
+    ///
+    /// <para>调用时机：两页的勾选变化、进出静默模式。</para>
     /// </summary>
     public static void SyncLiveWindowGates()
     {
@@ -184,7 +189,8 @@ public static class SilentMode
 
         foreach (var ownerId in LiveWindowHost.KnownPluginOwners)
         {
-            bool allowed = !Renderer.SilentActive || IsOwnerAllowed(ownerId);
+            // 模式判断在 IsOwnerAllowedByDisplay 里：普通模式查显示设置，静默模式查静默清单。
+            bool allowed = LiveWindowHost.IsOwnerAllowedByDisplay(ownerId);
             LiveWindowHost.SetOwnerSuppressed(ownerId, !allowed, out _, out _);
         }
     }

@@ -452,6 +452,24 @@ public sealed class PluginManager
     }
 
     /// <summary>
+    /// 普通模式「显示设置」里这个插件是否启用（勾选）。内置项看自己的开关。
+    ///
+    /// <para>未勾选 = 它的内容不该出现在岛上 —— 实况窗气泡同样不能冒出来，
+    /// 见 <c>LiveWindowHost.IsOwnerAllowedByDisplay</c>。</para>
+    /// </summary>
+    public bool IsDisplayed(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return true;
+        if (BuiltinWidgets.IsBuiltin(key)) return IsBuiltinDisplayed(key);
+        lock (_lock)
+        {
+            var e = FindEntryByKeyOrId(key);
+            if (e == null) return true;   // 已卸载 / 未加载：别顺手把谁挂起
+            return !_hidden.Contains(e.Key);
+        }
+    }
+
+    /// <summary>
     /// 静默模式下这个插件是否被勾选（允许在静默模式出现）。勾选 ≠ 一定显示：
     /// 还要它当前上报了重要信息，见 <see cref="SilentImportantPluginIds"/>。
     /// </summary>
@@ -608,6 +626,10 @@ public sealed class PluginManager
         SaveHiddenList();
         PushOrderToHost(); // 立即重排/收起，灵动岛下一帧生效
         RaiseChanged();
+        // 勾选 = 「这个插件的内容要不要出现」的总开关：普通模式下同步到实况窗
+        //（撤勾选 → 气泡挂起；重新勾选 → 恢复），与静默页同一套逻辑。
+        try { SilentMode.SyncLiveWindowGates(); }
+        catch (Exception ex) { Logger.Error("[显示设置] 同步实况窗挂起状态失败", ex); }
     }
 
     public bool CanMoveDisplay(string key, int delta)

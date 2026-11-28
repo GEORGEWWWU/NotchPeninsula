@@ -240,8 +240,11 @@ namespace NotchPeninsula
             for (int row = 0; row < visible; row++)
             {
                 int i = _liveWindowScroll + row;
+                string owner = owners[i];
+                // 当前模式下的显示清单里没勾选这个插件 → 它的实况窗不会展示，这一行置灰、开关点不动。
+                bool allowed = LiveWindowHost.IsOwnerAllowedByDisplay(owner);
                 float rowY = LiveWindowPluginRowTop + row * LW_ROW_H;
-                bool hovered = _liveWindowHoverRow == i;
+                bool hovered = allowed && _liveWindowHoverRow == i;
                 if (hovered)
                 {
                     _dynamicFillPaint.Color = Overlay(12);
@@ -249,15 +252,17 @@ namespace NotchPeninsula
                         5f, 5f, _dynamicFillPaint);
                 }
                 float baseline = rowY + LW_ROW_H / 2f + 4.5f;
-                string name = PluginManager.Instance.Host.GetPluginDisplayName(owners[i]);
+                string name = PluginManager.Instance.Host.GetPluginDisplayName(owner);
                 float maxNameW = WIDTH - CONTENT_RM - 16f - tW - 14f - RightColumnText;
+                _uiTextPaint.Color = allowed ? _fgColor : Neutral(100);
                 canvas.DrawText(TruncateText(name, _uiTextPaint, maxNameW), RightColumnText, baseline, _uiTextPaint);
+                _uiTextPaint.Color = _fgColor;
 
-                bool on = LiveWindowHost.IsOwnerEnabled(owners[i]);
+                bool on = LiveWindowHost.IsOwnerEnabled(owner);
                 float tX = WIDTH - CONTENT_RM - 16f - tW;
                 float tY = rowY + (LW_ROW_H - tH) / 2f;
                 var tRect = new SKRect(tX, tY, tX + tW, tY + tH);
-                DrawSettingsSwitch(canvas, tRect, on, hovered);
+                DrawSettingsSwitch(canvas, tRect, on, hovered, allowed);
             }
         }
 

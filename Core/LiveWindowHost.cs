@@ -181,6 +181,15 @@ public static class LiveWindowHost
         public float Alpha = 255f;
         public float Scale = 1f;
         public float SpawnProgress = 1f;
+
+        /// <summary>
+        /// 出生起点只锁一次（0.5s 出生动画期间不再重算）。
+        ///
+        /// <para>以前每帧按「岛当前可见否」在 <c>SpawnFromX</c> / <c>TargetX</c> 之间二选一，
+        /// 岛正好在放大（scale 越过 0.08）的那一帧起点会整体跳一段 —— 与「全程无瞬移」冲突。</para>
+        /// </summary>
+        public bool SpawnAnchorLocked;
+        public float SpawnAnchorX;
     }
 
     private sealed class PanelState
@@ -196,6 +205,12 @@ public static class LiveWindowHost
         public SKRect Reveal;
         public SKRect Source;
         public float RevealProgress;
+
+        /// <summary>
+        /// 主人气泡最后已知的 X（画布逻辑坐标）。气泡播退场动画期间它还在列表里，直接跟；
+        /// 气泡被移除后（0.44s 到点）还要靠这份缓存把面板收起动画走完 —— 否则面板会「啪」一下消失。
+        /// </summary>
+        public float AnchorX;
     }
 
     private sealed class Handle : IDisposable
@@ -248,6 +263,26 @@ public static class LiveWindowHost
         lock (_ownerGate) return !_disabledOwners.Contains(ownerId);
     }
 
+    /// <summary>
+    /// 当前显示模式下这个 owner 是否被允许显示实况窗。
+    ///
+    /// <para>普通模式看「显示设置」里该插件有没有勾选；静默模式看「静默模式设置」里的勾选。
+    /// 没勾选 = 这个插件的<b>内容</b>就不该出现，气泡也不能单独冒出来（用户要求），
+    /// 同时「实况窗管理」里那一行置灰、点不动。</para>
+    ///
+    /// <para>内置 owner（媒体等）不参与：媒体走「媒体设置」里自己的开关。</para>
+    /// </summary>
+    public static bool IsOwnerAllowedByDisplay(string ownerId)
+    {
+        if (string.IsNullOrEmpty(ownerId)) return true;
+        if (ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase)) return true;
+
+        var pm = PluginManager.Instance;
+        var entry = pm.FindById(ownerId);
+        if (entry == null || string.IsNullOrEmpty(entry.Key)) return true;   // 插件已卸载：交给卸载 / 清理流程
+        return Renderer.SilentActive ? pm.IsSilentShown(entry.Key) : pm.IsDisplayed(entry.Key);
+    }
+
     public static void SetOwnerEnabled(string ownerId, bool enabled)
     {
         if (string.IsNullOrEmpty(ownerId) || ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase)) return;
@@ -266,7 +301,8 @@ public static class LiveWindowHost
         // 通知放在所有锁之外：插件回调里可能拿自己的锁，甚至重新注册。
         // ⚠️ 静默模式下「禁用插件重要信息」（静默页撤勾选）优先级更高：
         //    撤勾选的插件不管实况窗开关怎么切，气泡都保持挂起、岛体也不出现。
-        bool keepSuppressed = Renderer.SilentActive && !SilentMode.IsOwnerAllowed(ownerId);
+        //    「显示设置」里没勾选的插件在普通模式同理（内容不该出现，气泡也别冒头）。
+        bool keepSuppressed = !IsOwnerAllowedByDisplay(ownerId);
         var windows = SetOwnerSuppressed(ownerId, suppressed: !enabled || keepSuppressed, out var deferredNotify, out var deferredResume);
         if (deferredNotify || deferredResume) windows.Clear();   // 动画完成后由 Tick 补发通知
         foreach (var window in windows)
@@ -427,6 +463,7 @@ public static class LiveWindowHost
                     // 重新启用：与「插件重新注册」完全同一套「岛体挤出水滴」的生成动画。
                     e.SuppressElapsed = 0d;
                     e.SpawnElapsed = 0d;
+                    e.SpawnAnchorLocked = false;   // 新一次出生：起点重新锁一次
                     e.PendingEnableNotify = false;
                     // 恢复（先出后变形，用户定稿）：岛体有东西时 OnHostEnabledChanged(true) 延迟到
                     // 出生动画完成（气泡站稳）再补发；岛已隐藏（编排 B / 居中态）则立即通知。
@@ -449,7 +486,11 @@ public static class LiveWindowHost
                         bubbleOwners.Add(o.Owner);
                     }
                     bubbleOwners.Add(e.Owner);
-                    if (!SilentMode.HasIslandContentBesides(bubbleOwners))
+                    // ⚠️ 只对「媒体」这一个 owner 请求延迟出生：这套编排真跑起来只会「压媒体 + 提前激活媒体气泡」
+                    // （见 MediaLiveWindowController.Tick）。以前任意插件恢复都会请求，媒体没在播时留下一个
+                    // 悬空标志，等下次静默启用媒体时会误走编排 B，把岛上其他内容一起缩掉。
+                    if (string.Equals(e.Owner, MediaLiveWindowController.Owner, StringComparison.OrdinalIgnoreCase)
+                        && !SilentMode.HasIslandContentBesides(bubbleOwners))
                         MediaLiveWindowController.RequestDelayedSpawn();
                     e.DisplayProgress = e.TargetProgress;
                     e.X = e.SpawnFromX = _lastIslandLeft + BubbleDiameter * 0.02f;
@@ -614,6 +655,7 @@ public static class LiveWindowHost
         if (id.Length == 0) id = "live-" + Environment.TickCount64;
 
         // 插件级开关：默认启用；在「显示设置 → 实况窗」里关掉后，注册直接失败（内容只留在主岛）。
+        bool displayAllowed = true;
         if (!ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase))
         {
             EnsureOwnerSettingsLoaded();
@@ -632,10 +674,12 @@ public static class LiveWindowHost
             // 名单多了一行 → 侧栏「实况窗管理」那一页该出现了。
             if (added) ConsoleWindow.RequestRerender();
 
-            // 静默模式：未勾选插件的重要信息气泡注册即挂起（静默页勾选是重要信息总开关）。
-            // 启动即静默的场景在这里兜住 —— Program 读回注册表时插件还没加载。
-            if (Renderer.SilentActive && !SilentMode.IsOwnerAllowed(ownerId))
-                SetOwnerSuppressed(ownerId, true, out _, out _);
+            // 显示设置 / 静默清单里没勾选的插件：气泡注册即挂起（内容本来就不显示，
+            // 气泡不能单独冒出来）。启动即静默、或勾选状态是启动前存下来的，
+            // 这两种情况插件加载时都还没人同步，只能在这里兜住。
+            displayAllowed = IsOwnerAllowedByDisplay(ownerId);
+            if (!displayAllowed)
+                Logger.Info($"[实况窗] 插件 {ownerId} 未在{(Renderer.SilentActive ? "静默模式" : "显示")}设置中启用，气泡不展示");
         }
 
         Entry entry;
@@ -652,7 +696,10 @@ public static class LiveWindowHost
                 existing.Window = window;
                 existing.Broken = false;
                 existing.Completed = false;
-                existing.Suppressed = false;   // 重新启用后插件重注册：解除挂起
+                // 重新启用后插件重注册：解除挂起；显示设置里没勾选的话仍是挂起态
+                //（SuppressElapsed 直接置满 = 收起动画已播完，不重播一遍）。
+                existing.Suppressed = !displayAllowed;
+                existing.SuppressElapsed = displayAllowed ? 0d : ExitSeconds;
                 existing.DisplayProgress = 0f;
                 existing.LastPercentKey = "";
                 return new Handle(existing, window);
@@ -674,7 +721,10 @@ public static class LiveWindowHost
                 Window = window,
                 X = spawnFrom,
                 SpawnFromX = spawnFrom,
-                SpawnElapsed = 0d
+                SpawnElapsed = 0d,
+                // 不展示时直接落成「挂起且收起动画已播完」：既不画气泡，也不播一遍假的收起动画。
+                Suppressed = !displayAllowed,
+                SuppressElapsed = displayAllowed ? 0d : ExitSeconds
             };
             _entries.Add(entry);
             UpdateSizingLocked();
@@ -725,8 +775,10 @@ public static class LiveWindowHost
         e.ExitFromX = e.X;          // 吸入曲线从当前位置起算
         e.Completed = false;
 
+        // 面板跟着气泡一起走正常收起动画。以前这里直接 DropPanelLocked()，
+        // 气泡明明还要滑 0.44s，面板却「啪」一下消失（静默模式下最扎眼）。
         if (_panel != null && string.Equals(_panel.EntryId, e.Id, StringComparison.OrdinalIgnoreCase))
-            DropPanelLocked();
+            ClosePanelLocked();
     }
 
     private static void NotifyRemoved(List<ILiveWindow>? windows)
@@ -903,13 +955,16 @@ public static class LiveWindowHost
 
     public static void ClosePanel()
     {
-        lock (_lock)
-        {
-            if (_panel == null || _panel.Closing) return;
-            _panel.Closing = true;
-            _panel.CloseElapsed = 0d;
-            _panelHitActive = false;
-        }
+        lock (_lock) ClosePanelLocked();
+    }
+
+    /// <summary>调用方已持有 <see cref="_lock"/>。</summary>
+    private static void ClosePanelLocked()
+    {
+        if (_panel == null || _panel.Closing) return;
+        _panel.Closing = true;
+        _panel.CloseElapsed = 0d;
+        _panelHitActive = false;
     }
 
     public static void DispatchPanelMouseDown(float x, float y)
@@ -1104,7 +1159,8 @@ public static class LiveWindowHost
                         // 岛体变形由压制维持或内容回岛的宽度弹簧自然滞后（后变形）。
                         e.SuppressElapsed = Math.Min(SuppressSeconds, e.SuppressElapsed + dt);
                         float t = (float)Math.Clamp(e.SuppressElapsed / SuppressSeconds, 0d, 1f);
-                        // 统一「缩小」语义：原地缩到 0 + 淡出，0.5s（错峰 0.15s 后起步）。
+                        // 统一「缩小」语义：原地缩到 0 + 淡出，0.5s 同帧起跑（没有错峰 ——
+                        // 气泡之间不排先后，谁被撤下谁自己缩，其余气泡同一帧开始补位）。
                         // 岛是否现身承接都一样 —— 气泡自己缩掉，不吸回岛缘（岛缩没时吸回会变回折叠态）。
                         e.X = e.ExitFromX;
                         e.TargetX = e.ExitFromX;
@@ -1184,7 +1240,13 @@ public static class LiveWindowHost
                         // 岛体有东西（用户定稿）：**先创建在岛缘 → 平滑移到整组最左**（EaseOutBack 带过冲），
                         // 移动期间其他气泡位置不变；站稳压岛后再与整组一起平滑右移居中。
                         // 岛没东西（隐藏 / 居中态）：原地放大淡入（编排 B）。
-                        float from = islandVisible ? e.SpawnFromX : e.TargetX;
+                        // 起点只在这一帧锁定一次：岛正好在放大时（scale 越过 0.08）不会中途换参照跳一段。
+                        if (!e.SpawnAnchorLocked)
+                        {
+                            e.SpawnAnchorLocked = true;
+                            e.SpawnAnchorX = islandVisible ? e.SpawnFromX : e.TargetX;
+                        }
+                        float from = e.SpawnAnchorX;
                         e.X = from + (e.TargetX - from) * EaseOutBack(e.SpawnProgress, 1.1f);
                         e.Alpha = 255f * SmoothStep01(e.SpawnProgress / 0.6f);
                         e.Scale = 1f;
@@ -1234,18 +1296,16 @@ public static class LiveWindowHost
         var panel = _panel;
         if (panel == null) return;
 
-        var entry = FindAttachedLocked(panel.EntryId);
-        if (entry == null)
-        {
-            // 面板的主人被插件级开关挂起：气泡已经不画了，但已经展开的面板要照常收完 ——
-            // 直接 DropPanelLocked 会让它「啪」一下消失，与其它收起路径的动画不一致。
-            entry = panel.Closing ? FindSuppressedLocked(panel.EntryId) : null;
-        }
-        if (entry == null)
-        {
-            DropPanelLocked();
-            return;
-        }
+        // 面板的几何锚点有三种来源：气泡正常在屏 / 被插件级开关挂起 / 正在播退场动画。
+        // 三种都要能当锚点，面板才走得了正常收起动画（直接 Drop 就是「啪一下消失」）。
+        var entry = FindAttachedLocked(panel.EntryId)
+                    ?? FindSuppressedLocked(panel.EntryId)
+                    ?? FindExitingLocked(panel.EntryId);
+
+        if (entry != null)
+            panel.AnchorX = entry.X;
+        else if (!panel.Closing)
+            ClosePanelLocked();   // 气泡已被移除（退场播完）：用缓存锚点把面板收完
 
         // 声明了「尺寸随内容变」的页面每帧重测（媒体面板有没有时间轴会换高度）：
         // 浮层要跟主岛展开态保持同一尺寸，不能只在展开那一刻量一次。
@@ -1260,7 +1320,8 @@ public static class LiveWindowHost
         // 宽详情面板的左缘就被窗口边界切掉。
         float visLeft = MathF.Max(0f, _viewLeft);
         float visRight = MathF.Min(Renderer.WINDOW_WIDTH, _viewRight);
-        float left = Math.Clamp(entry.X - panel.Width / 2f,
+        float anchorX = panel.AnchorX;
+        float left = Math.Clamp(anchorX - panel.Width / 2f,
             visLeft + 8f, MathF.Max(visLeft + 8f, visRight - panel.Width - 8f));
         panel.Target = new SKRect(left, bubbleBottom + 10f, left + panel.Width, bubbleBottom + 10f + panel.Height);
 
@@ -1286,7 +1347,7 @@ public static class LiveWindowHost
             panel.RevealProgress = Math.Clamp(1f - inv * inv * inv, 0f, 1f);
         }
 
-        panel.Source = new SKRect(entry.X - diameter / 2f, bubbleTop, entry.X + diameter / 2f, bubbleBottom);
+        panel.Source = new SKRect(anchorX - diameter / 2f, bubbleTop, anchorX + diameter / 2f, bubbleBottom);
         var bubbleRect = panel.Source;
         float p = panel.RevealProgress;
         panel.Reveal = new SKRect(
@@ -1515,6 +1576,20 @@ public static class LiveWindowHost
             var e = _entries[i];
             if (e.Suppressed && e.Window != null && !e.Exiting
                 && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 正在播退场动画的窗（插件已注销、气泡还在往岛缘吸）—— 同样要给面板当锚点，
+    /// 否则「气泡滑回 + 面板同时消失」这条路上面板还是会被直接丢掉。
+    /// </summary>
+    private static Entry? FindExitingLocked(string id)
+    {
+        for (int i = 0; i < _entries.Count; i++)
+        {
+            var e = _entries[i];
+            if (e.Exiting && string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) return e;
         }
         return null;
     }

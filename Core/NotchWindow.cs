@@ -2938,11 +2938,18 @@ namespace NotchPeninsula
         /// <summary>静默缩放动画时长（全部隐藏 / 显示动画统一 0.5s）。</summary>
         private const double SilentScaleDurationSeconds = 0.50;
 
+        /// <summary>
+        /// 启动首帧还没落地：这一帧直接把缩放写成目标值，不播放大 / 缩小动画。
+        /// 静默模式启动时没有任何重要信息 → 岛<b>一帧都不要出现</b>（否则会先满尺寸闪一下再缩没）。
+        /// </summary>
+        private bool _silentScaleBootPending = true;
+
         private void TickSilentScale(bool hidden, bool instantShow)
         {
             if (!Renderer.SilentActive)
             {
                 // 切出静默：立刻复位，否则岛会带着上一轮的缩小值出场。
+                _silentScaleBootPending = false;   // 启动不是静默的话，以后再进静默要正常播动画
                 if (_silentScale != 1f || Renderer.SilentScale != 1f)
                 {
                     _silentScale = 1f;
@@ -2955,6 +2962,18 @@ namespace NotchPeninsula
             }
 
             float target = hidden ? 0f : 1f;
+
+            if (_silentScaleBootPending)
+            {
+                _silentScaleBootPending = false;
+                float boot = instantShow ? 1f : target;   // 与下面 instantShow 的语义保持一致
+                _silentScale = boot;
+                _silentScaleFrom = boot;
+                _silentScaleTo = target;
+                _silentScaleAnimating = false;
+                Renderer.SilentScale = boot;
+                return;
+            }
 
             if (instantShow && target >= 1f)
             {

@@ -286,6 +286,10 @@ internal static class MediaLiveWindowController
         if (!wantLive)
         {
             _islandShrinking = false;
+            // 没有媒体在播时把「延迟出生」请求一并作废：它是给下一次媒体气泡准备的，
+            // 留着会在下次静默启用媒体时误走编码 B（先压岛 0.6s），把岛上的其他内容一起缩掉。
+            _delayedSpawn = false;
+            _pendingSpawnAtMs = 0;
             Deactivate();
             if (!_bubbleExiting) Renderer.SuppressMediaInIsland = false;
             lock (_gate) _mediaDetectedAt = 0;
@@ -294,6 +298,8 @@ internal static class MediaLiveWindowController
 
         if (IsActive)
         {
+            // 气泡已经在屏上：这个请求没有可编排的东西了，留着同样会误伤下一次启用。
+            _delayedSpawn = false;
             Renderer.SuppressMediaInIsland = true;
             return;
         }
