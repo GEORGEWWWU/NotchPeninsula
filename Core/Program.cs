@@ -109,6 +109,12 @@ namespace NotchPeninsula
                             ? IslandDisplayMode.Standby
                             : IslandDisplayMode.Regular;
                     }
+                    // 静默模式启动：首帧就把缩放落到 0。
+                    // Renderer.SilentScale 初值是 1，渲染线程第一帧会先按满尺寸画一次，
+                    // 再被 TickSilentScale 从 1 缩到 0（0.5s）—— 用户看到的就是「启动闪一下」。
+                    // 启动时没有任何重要信息 = 本来就该什么都不显示，直接置 0；
+                    // 真有内容（媒体在播 / 插件加载即上报）会由第一帧 TickSilentScale 立刻放到 1。
+                    if (Renderer.SilentActive) Renderer.SilentScale = 0f;
                     // 显示器拔插过之后注册表里可能留着越界下标（原来选的是第 2 块，现在只剩 1 块）。
                     // 旧版会就地夹紧并把 0 写回 TargetMonitorIndex —— 但显示器经常只是暂时不在
                     //（KVM/显示器 OSD 切走了输入源、重启后副屏还没唤醒），写回 0 会把用户选的屏

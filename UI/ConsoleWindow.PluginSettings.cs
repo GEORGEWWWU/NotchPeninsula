@@ -6,7 +6,9 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // 插件设置子页：从「我的插件」行内「设置」按钮进入，不占新的侧栏 tab。
+        // 插件设置子页（不占新的侧栏 tab，仍属于「我的插件」那一页）。
+        // ⚠️ 目前**没有入口**：插件页每行的「设置」按钮已按用户要求删除，OpenPluginSettings 不再被调用，
+        //    这套页面只剩代码。要恢复入口，在插件行的操作按钮里接回 OpenPluginSettings(id) 即可。
         private string? _settingsPluginId;
         private int _settingsScroll;
         private int _hoveredPluginSettings = -1;

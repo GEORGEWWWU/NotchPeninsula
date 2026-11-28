@@ -177,7 +177,7 @@ internal static class MediaLiveWindowController
     private const long IslandPreviewMs = 3000;
 
     /// <summary>
-    /// 静默编排：气泡出生动画（0.46s）站稳后、压岛前的守护时长 ——
+    /// 静默编排：气泡出生动画（0.50s）站稳后、压岛前的守护时长 ——
     /// 顺序是「主岛展示 3s 媒体 → 从媒体态岛缘生成实况窗 → 气泡站稳 → 岛缩没 → 气泡组右移居中」。
     /// </summary>
     private const long SpawnSettleGuardMs = 800;
@@ -190,7 +190,7 @@ internal static class MediaLiveWindowController
     private const long IslandShrinkGuardMs = 50;
     // 弹簧状态异常时不至于让气泡永远出不来（正常情况下 0.45s 就收完了）。
     private const long IslandShrinkTimeoutMs = 900;
-    // 气泡退场动画 0.5s；超时兜底，别让岛体永远不展开。
+    // 气泡退场动画 0.44s（LiquidSuck）；给到 900ms 是超时兜底，别让岛体永远不展开。
     private const long BubbleExitTimeoutMs = 900;
 
     private static readonly object _gate = new();
@@ -286,6 +286,10 @@ internal static class MediaLiveWindowController
         if (!wantLive)
         {
             _islandShrinking = false;
+            // 没有媒体在播时把「延迟出生」请求一并作废：它是给下一次媒体气泡准备的，
+            // 留着会在下次静默启用媒体时误走编码 B（先压岛 0.6s），把岛上的其他内容一起缩掉。
+            _delayedSpawn = false;
+            _pendingSpawnAtMs = 0;
             Deactivate();
             if (!_bubbleExiting) Renderer.SuppressMediaInIsland = false;
             lock (_gate) _mediaDetectedAt = 0;
@@ -294,6 +298,8 @@ internal static class MediaLiveWindowController
 
         if (IsActive)
         {
+            // 气泡已经在屏上：这个请求没有可编排的东西了，留着同样会误伤下一次启用。
+            _delayedSpawn = false;
             Renderer.SuppressMediaInIsland = true;
             return;
         }
@@ -318,7 +324,7 @@ internal static class MediaLiveWindowController
         //
         // ⚠️ 静默模式走另一条编排（用户定稿，四步串行）：
         //    ① 主岛展示 3s 媒体（IslandPreviewMs，媒体在岛内）
-        //    ② 岛**不收短**、保持媒体折叠态当参照，气泡从媒体态岛缘分裂出生（Spawn 0.46s）
+        //    ② 岛**不收短**、保持媒体折叠态当参照，气泡从媒体态岛缘分裂出生（Spawn 0.50s）
         //    ③ 气泡站稳（SpawnSettleGuardMs = 0.8s）后压岛（SuppressMediaInIsland=true
         //       → IsIslandMedia=false → 岛缩没 0.3s）
         //    ④ 岛不可见 → LiveWindowHost 的 islandVisible 跳变沿 → 气泡组一步到居中位。

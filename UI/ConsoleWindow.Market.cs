@@ -362,16 +362,18 @@ namespace NotchPeninsula
         };
 
         // ---- 布局真源 ----
-        //             列表行起点 +92
-        // 渲染 / 命中 / 滚轮三处共用，改一处必须同步。
-        //    收到 50 后两张卡各多显示一行。
-        // 48 而不是 50：列表区的可用高度只差一点点，"多放一行"就是靠这 2px 换来的
-        // （市场页 580/50=11 行 → 580/48=12 行；行内元素最大偏移 44，48 仍放得下）。
+        // 列表是「两列磁贴」：行高 / 间距 / 列宽全在 ConsoleWindow.PluginLayout.cs
+        // （PluginTileHeight 58 + PluginTileGap 6 = 行距 64），渲染 / 命中 / 滚轮三处共用，改一处必须同步。
+        // 这里只负责「顶部操作卡有多高」，它决定下面列表卡的起点。
 
-        private const float PluginTopCardH = 96f;   // 「我的插件」顶部操作卡高度
+        // 「我的插件」顶部操作卡：只有三个按钮（标题已删），整卡 48 高，按钮垂直居中。
+        private const float PluginTopCardH = 48f;
+        private const float PluginActionRowDy = 12f;    // 按钮顶距卡顶（24 高 → 卡内正中）
+        private const float PluginActionBtnW = 96f;
+        private const float PluginActionGap = 8f;
 
         private void GetPluginListCardTop(out float listY)
-            => listY = TITLE_BAR_HEIGHT + CARD_TOP_Y + PluginTopCardH + CARD_GAP;   // 118
+            => listY = TITLE_BAR_HEIGHT + CARD_TOP_Y + PluginTopCardH + CARD_GAP;   // 108
 
         // listY 到行区顶：44 → 40，首行离「已安装插件」标题太近，整体上移 4px。
         private const float PluginRowsTopPad = 40f;
@@ -431,6 +433,13 @@ namespace NotchPeninsula
 
         private void RefreshMarketFilter()
         {
+            // 弹窗（详情 / 评分）跟着它绑定的那条插件走：重建视图后按 id 重新定位，
+            // 只有那条插件真的被过滤掉了才收 —— 否则「底下列表变了」就把弹窗顺手关掉，
+            // 与「只能点关闭按钮退出」的规矩冲突。
+            string keepDialogId = _marketDialogIndex >= 0 && _marketDialogIndex < _marketView.Count
+                ? _marketView[_marketDialogIndex].Id
+                : "";
+
             _marketView.Clear();
             string q = _marketSearch.Trim();
             bool filterCat = !string.Equals(_marketCategoryKey, "all", StringComparison.OrdinalIgnoreCase);
@@ -450,9 +459,16 @@ namespace NotchPeninsula
 
             _marketView.Sort(CompareMarketPlugins);
             _marketScroll = 0;
-            // 过滤结果变了，原下标全部失效：只有靠下标的详情 / 评分弹窗要跟着收。
-            // 提示类弹窗（加载失败 / 卸载确认）跟列表无关，不能被顺手关掉。
-            if (!IsConfirmDialogOpen) CloseMarketDialog();
+            if (keepDialogId.Length > 0)
+            {
+                int newIndex = _marketView.FindIndex(m => string.Equals(m.Id, keepDialogId, StringComparison.OrdinalIgnoreCase));
+                if (newIndex >= 0) _marketDialogIndex = newIndex;
+                else CloseMarketDialog();   // 绑定的插件已经不在视图里：只能收（弹窗已无内容可显示）
+            }
+            else if (!IsConfirmDialogOpen)
+            {
+                CloseMarketDialog();
+            }
             ResetPluginHover();
         }
 
@@ -798,7 +814,11 @@ namespace NotchPeninsula
             if (buttons) ph += DialogBtnPad + DialogBtnH + DialogBtnPad;
             else ph += 14f;   // 无按钮弹窗（详情 / 评分）的底部呼吸，与原高度一致
             float px = (WIDTH - DialogW) / 2f;
-            float py = Math.Max(TITLE_BAR_HEIGHT + 24f, (HEIGHT - ph) / 2f);
+            // 默认就在窗口正中（水平 / 垂直都居中）；只有高到放不下时才贴着可用区夹住，
+            // 保证弹窗整体永远在窗口里，不会有一半跑到窗口外。
+            float py = (HEIGHT - ph) / 2f;
+            float minTop = TITLE_BAR_HEIGHT + 8f;
+            py = Math.Clamp(py, minTop, MathF.Max(minTop, HEIGHT - ph - 12f));
             return new SKRect(px, py, px + DialogW, py + ph);
         }
 
@@ -1720,9 +1740,9 @@ namespace NotchPeninsula
         }
 
         /// <summary>
-        /// 确认类弹窗的按钮分派。点 ❌ / 点弹窗外都由这里先收掉（什么都不执行）。
-        /// 点弹窗外<b>不关</b>：这类弹窗是「必须先看一眼」的结论，糊掉就等于把提示吃了 ——
-        /// 要退出只能点弹窗上的按钮（❌ 或底部按钮）。
+        /// 确认类弹窗的按钮分派。点 ❌ 或弹窗自己的按钮才起效；
+        /// 点弹窗<b>外</b>什么都不做（这层拦截在 OnLeftButtonDown 最前面，这里再判一次只是兜底）——
+        /// 这类弹窗是「必须先看一眼」的结论，糊掉就等于把提示吃了。
         /// </summary>
         private void HandleConfirmDialogClick()
         {

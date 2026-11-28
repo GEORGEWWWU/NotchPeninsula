@@ -358,10 +358,41 @@ namespace NotchPeninsula
             // 之前只在 `_selectedTab == 6/7` 分支里判，导致点弹窗时侧栏切页、顶栏最小化 / 关闭
             // 这些更靠前的分支照样能命中 —— 表现就是「弹窗还开着，后面的界面却动了」。
             // 放在最前面：连按钮 hover 的落点重算都不做，那些属于被盖住的那一层。
+            // 顶栏的「最小化 / 关闭」永远可用（用户定稿）：弹窗是模态的，但把这两颗键一起关进去
+            // 就等于「弹窗开着时连窗口都关不掉」。命中区与顶栏绘制 / hover 同一套几何，不读 hover 状态
+            //（模态期间 hover 被刻意压掉了，读它反而点不动）。
+            if (clickY <= TITLE_BAR_HEIGHT)
+            {
+                if (clickX >= WIDTH - 46 && clickX <= WIDTH)
+                {
+                    if (_backdropHwnd != IntPtr.Zero)
+                    {
+                        Win32.DestroyWindow(_backdropHwnd);
+                        _backdropHwnd = IntPtr.Zero;
+                    }
+                    Win32.DestroyWindow(hwnd);
+                    return;
+                }
+                if (clickX >= WIDTH - 92 && clickX < WIDTH - 46)
+                {
+                    MinimizeToTaskbar();
+                    return;
+                }
+            }
+
             if (IsConfirmDialogOpen)
             {
                 HandleConfirmDialogClick();
                 return;
+            }
+
+            // 详情 / 评分弹窗同样是模态：它没关之前，点弹窗外的任何地方都吞掉 ——
+            // 侧栏切页、顶栏最小化 / 关闭、底下列表行都不该被点到。
+            // 退出只有一个途径：弹窗右上角的 ❌（或它自己的按钮）。
+            if (_marketDialog != MarketDialog.None)
+            {
+                var dlgOpen = GetCurrentDialogRect();
+                if (dlgOpen.Width <= 0f || !dlgOpen.Contains(clickX, clickY)) return;
             }
 
             if (clickX >= CONTENT_L && clickY > ContentBottom)
@@ -474,7 +505,8 @@ namespace NotchPeninsula
                 {
                     Renderer.DisplayMode = mode;
                     Program.SaveSetting("DisplayMode", option);
-                    SilentMode.SyncLiveWindowGates();
+                    // U9：切模式的瞬间不动画（气泡直接就位 / 直接消失）
+                    SilentMode.SyncLiveWindowGates(instant: true);
                     Program.SaveSetting("StandbyActive", mode == IslandDisplayMode.Standby ? 1 : 0);
                 }
                 Render();
@@ -1030,8 +1062,12 @@ namespace NotchPeninsula
                     if (_liveWindowHoverRow < owners.Count)
                     {
                         string owner = owners[_liveWindowHoverRow];
-                        LiveWindowHost.SetOwnerEnabled(owner, !LiveWindowHost.IsOwnerEnabled(owner));
-                        Render();
+                        // 显示清单里没勾选的插件：这一行是置灰的，点了不做事（先让它能被看到，再要求启用）。
+                        if (LiveWindowHost.IsOwnerAllowedByDisplay(owner))
+                        {
+                            LiveWindowHost.SetOwnerEnabled(owner, !LiveWindowHost.IsOwnerEnabled(owner));
+                            Render();
+                        }
                     }
                 }
             }
@@ -1058,11 +1094,6 @@ namespace NotchPeninsula
                             SwitchTab(7);
                             break;
                     }
-                }
-                else if (_hoveredPluginSettings != -1)
-                {
-                    var pe = GetPluginAt(_hoveredPluginSettings);
-                    if (pe != null) OpenPluginSettings(pe.Id);
                 }
                 else if (_hoveredPluginToggle != -1)
                 {
