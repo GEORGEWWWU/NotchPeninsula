@@ -255,6 +255,20 @@ public static class LiveWindowHost
 
     private static readonly object _lock = new();
     private static readonly List<Entry> _entries = new(4);
+    // 记录已调用实况窗且仍加载的插件。即使登记因开关被拒绝，也要保留重新启用的入口。
+    private static readonly HashSet<string> _liveWindowPluginOwners = new(StringComparer.OrdinalIgnoreCase);
+    private static volatile bool _usesLiveWindows;
+
+    internal static bool UsesLiveWindows => _usesLiveWindows;
+
+    private static void UpdateLiveWindowUsageLocked()
+    {
+        bool inUse = _entries.Count > 0 || _liveWindowPluginOwners.Count > 0;
+        if (_usesLiveWindows == inUse) return;
+        _usesLiveWindows = inUse;
+        ConsoleWindow.RequestRerender();
+    }
+
     private static readonly LiveWindowFrame _frame = new();
     private static PanelState? _panel;
 
@@ -714,36 +728,41 @@ public static class LiveWindowHost
         if (id.Length == 0) id = "live-" + Environment.TickCount64;
 
         // 插件级开关：默认启用；在「显示设置 → 实况窗」里关掉后，注册直接失败（内容只留在主岛）。
+        bool isPlugin = !ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase);
+        bool addedOwner = false;
+        bool ownerDisabled = false;
         bool displayAllowed = true;
-        if (!ownerId.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase))
+        if (isPlugin)
         {
             EnsureOwnerSettingsLoaded();
-            bool added = false;
             lock (_ownerGate)
             {
-                added = _knownOwners.Add(ownerId);
-                if (added) SaveOwnerSettingsLocked();
-                if (_disabledOwners.Contains(ownerId))
-                {
-                    Logger.Info($"[实况窗] 插件 {ownerId} 已禁用实况窗，本次注册忽略（内容保留在主岛）");
-                    return null;
-                }
+                addedOwner = _knownOwners.Add(ownerId);
+                if (addedOwner) SaveOwnerSettingsLocked();
+                ownerDisabled = _disabledOwners.Contains(ownerId);
             }
-
-            // 名单多了一行 → 侧栏「实况窗管理」那一页该出现了。
-            if (added) ConsoleWindow.RequestRerender();
 
             // 显示设置 / 静默清单里没勾选的插件：气泡注册即挂起（内容本来就不显示，
             // 气泡不能单独冒出来）。启动即静默、或勾选状态是启动前存下来的，
             // 这两种情况插件加载时都还没人同步，只能在这里兜住。
-            displayAllowed = IsOwnerAllowedByDisplay(ownerId);
+            if (!ownerDisabled) displayAllowed = IsOwnerAllowedByDisplay(ownerId);
             if (!displayAllowed)
                 Logger.Info($"[实况窗] 插件 {ownerId} 未在{(Renderer.SilentActive ? "静默模式" : "显示")}设置中启用，气泡不展示");
         }
 
+        if (addedOwner) ConsoleWindow.RequestRerender();
+
         Entry entry;
         lock (_lock)
         {
+            if (isPlugin && _liveWindowPluginOwners.Add(ownerId))
+                UpdateLiveWindowUsageLocked();
+            if (ownerDisabled)
+            {
+                Logger.Info($"[实况窗] 插件 {ownerId} 已禁用实况窗，本次注册忽略（内容保留在主岛）");
+                return null;
+            }
+
             int newSeq = ++_appearanceSeq;   // 新注册：排到整组最左（用户定稿「新的永远在最左」）
             // 同 owner+Id 重复注册 = 原地替换（不重播分裂动画，插件想更新内容不必反复注销重注册）。
             var existing = _entries.Find(e =>
@@ -787,6 +806,7 @@ public static class LiveWindowHost
                 SuppressElapsed = displayAllowed ? 0d : SuppressSeconds
             };
             _entries.Add(entry);
+            UpdateLiveWindowUsageLocked();
             UpdateSizingLocked();
         }
         return new Handle(entry, window);
@@ -799,6 +819,7 @@ public static class LiveWindowHost
         List<ILiveWindow>? removed = null;
         lock (_lock)
         {
+            _liveWindowPluginOwners.Remove(ownerId);
             foreach (var e in _entries)
             {
                 if (e.Owner != ownerId || e.Window == null) continue;
@@ -807,6 +828,7 @@ public static class LiveWindowHost
                 (removed ??= new List<ILiveWindow>(1)).Add(window);
             }
             UpdateSizingLocked();
+            UpdateLiveWindowUsageLocked();
         }
         NotifyRemoved(removed);
     }
@@ -861,6 +883,8 @@ public static class LiveWindowHost
         lock (_lock)
         {
             _entries.Clear();
+            _liveWindowPluginOwners.Clear();
+            UpdateLiveWindowUsageLocked();
             DropPanelLocked();
             _hitCount = 0;
             _panelHitActive = false;
@@ -1444,6 +1468,7 @@ public static class LiveWindowHost
                 if (_entries[i].ExitElapsed >= ExitSeconds) _entries.RemoveAt(i);
             }
 
+            UpdateLiveWindowUsageLocked();
             TickPanelLocked(islandCenterY, diameter, dt);
             PublishFrameLocked(bubbleTop, islandLeft, diameter);
             UpdateSizingLocked();

@@ -247,21 +247,15 @@ namespace NotchPeninsula
         /// </summary>
         private static bool UsesSilentMode => Renderer.SilentActive || SilentHotkey.IsEnabled;
 
-        /// <summary>
-        /// 页签是否出现在侧栏。
-        ///
-        /// <para>「实况窗管理」(8) <b>恒常驻</b>：以前只在「媒体实况窗开着 / 有插件登记过实况窗」
-        /// 时才占位置，没注册实况窗的用户在设置里根本找不到这一页（用户要求：无论有没有注册
-        /// 实况窗，都要能进去看这份设置）。</para>
-        ///
-        /// <para>「静默模式设置」(9) 平时整行收起：只在真用到时才占位置（在静默模式里，
-        /// 或者开过切换静默模式的快捷键 —— 退出静默后仍进得去改键）。</para>
-        /// </summary>
+        /// <summary>页签是否出现在侧栏。实况窗管理和静默模式设置按使用情况显示。</summary>
         private static bool IsSidebarTabVisible(int tab) => tab switch
         {
+            8 => LiveWindowHost.UsesLiveWindows,
             9 => UsesSilentMode,
             _ => tab >= 0 && tab < SidebarLabels.Length
         };
+
+        private bool _sidebarLiveWindowTabShown;
 
         /// <summary>上一帧侧栏是否画了「静默模式设置」那一行：静默状态一变就得重画侧栏。</summary>
         private static bool _sidebarSilentTabShown;
@@ -2070,6 +2064,14 @@ namespace NotchPeninsula
         {
             // 移动中延迟普通重绘，尺寸变化则必须上传与新尺寸匹配的位图。
             if (_dragMoving && !resizing) return;
+
+            bool showsLiveWindowTab = IsSidebarTabVisible(8);
+            if (_sidebarLiveWindowTabShown != showsLiveWindowTab)
+            {
+                _sidebarLiveWindowTabShown = showsLiveWindowTab;
+                _hoveredTab = _hoveredTab >= 0 && TryGetCursorClientPos(out int x, out int y)
+                    ? HitSidebarTab(x, y) : -1;
+            }
 
             // 页签刚被收起来（退出静默模式 / 实况窗全关）：先换到一个还存在的页，
             // 否则画布左边没有对应行、正文却还是那一页的内容。
