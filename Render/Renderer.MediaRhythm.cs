@@ -54,7 +54,6 @@ public static partial class Renderer
         if (!mediaVisible)
         {
             _mediaRhythmFade = default;
-            _rhythmBass = 0f;
             return 0f;
         }
 
@@ -64,7 +63,7 @@ public static partial class Renderer
     }
 
     private static void DrawMediaRhythm(SKCanvas canvas, SKBitmap? artwork, bool playing,
-        float lowestBand, int opacity, float layerOpacity, float blobTransmission = 1f)
+        float[]? bars, int opacity, float layerOpacity, float blobTransmission = 1f)
     {
         if (opacity == 0) return;
         var palette = MediaRhythmColor switch
@@ -87,12 +86,12 @@ public static partial class Renderer
         long now = Stopwatch.GetTimestamp();
         float dt = Math.Min(0.05f, (float)Stopwatch.GetElapsedTime(_rhythmLastFrame, now).TotalSeconds);
         _rhythmLastFrame = now;
-        // 最左柱的原始目标单独缓动。起跳逐帧跟上，回落仍比频谱柱的 12% 快。
-        float bass = playing ? Math.Clamp(lowestBand, 0f, 1f) : 0f;
-        float response = bass > _rhythmBass ? 0.40f : 0.22f;
-        _rhythmBass += (bass - _rhythmBass) * response;
-        if (bass == 0f && _rhythmBass < 0.005f) _rhythmBass = 0f;
-        _rhythmPhase = (_rhythmPhase + dt * _rhythmBass * 3f) % MathF.Tau;
+        // 第一根频谱柱对应约 80 Hz，第二根仅为低频补充。
+        float bass = playing && bars is { Length: > 1 }
+            ? Math.Clamp(bars[0] * 0.85f + bars[1] * 0.15f, 0f, 1f)
+            : 0f;
+        _rhythmBass += (bass - _rhythmBass) * (1f - MathF.Exp(-dt * (bass > _rhythmBass ? 24f : 7f)));
+        _rhythmPhase = (_rhythmPhase + dt * ((playing ? 0.65f : 0f) + _rhythmBass * 3f)) % MathF.Tau;
 
         // 低档保留柔和的叠色，高档给流体留足强度，避免再被上层的亚克力色调压暗。
         float strength = opacity / 100f;
