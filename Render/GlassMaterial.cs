@@ -62,9 +62,10 @@ internal static class GlassMaterial
         return color.WithAlpha(hasBackdrop ? TintAlphas[tint] : (byte)(54 + tint * 24));
     }
 
-    internal static void DrawManualThemeTint(SKCanvas canvas, SKPath shape, bool light)
+    internal static void DrawManualThemeTint(SKCanvas canvas, SKPath shape, bool light, float opacity = 1f)
     {
-        TintPaint.Color = TintColor(light, true).WithAlpha((byte)(32 + TintAlphas[GetLevel(Tint)]));
+        byte alpha = (byte)MathF.Round((32 + TintAlphas[GetLevel(Tint)]) * Math.Clamp(opacity, 0f, 1f));
+        TintPaint.Color = TintColor(light, true).WithAlpha(alpha);
         canvas.DrawPath(shape, TintPaint);
     }
 

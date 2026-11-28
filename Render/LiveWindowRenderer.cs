@@ -42,6 +42,14 @@ public static class LiveWindowRenderer
 
     private static bool _panelToneLogged;
 
+    // 实况窗展开面板的液态玻璃合成缓存（跟随全局背板版本与个性化液态玻璃设置版本失效）。
+    private static SKBitmap? _panelGlass;
+    private static int _panelGlassBackdropVer = -1;
+    private static int _panelGlassSettingsVer = -1;
+    private static SKRect _panelGlassRect;
+    private static SKRect _panelGlassSrc;
+    private static float _panelGlassRadius;
+
     public static void Draw(SKCanvas canvas)
     {
         var frame = LiveWindowHost.Frame;
@@ -551,8 +559,18 @@ public static class LiveWindowRenderer
             try
             {
                 canvas.ClipPath(_clipPath, SKClipOperation.Intersect, true);
-                bool drawn = DrawGlassBackdrop(canvas, rect, rect, alpha);
-                GlassMaterial.DrawCoating(canvas, _clipPath, lightBubble, alpha, drawn);
+                if (TryComposePanelGlass(rect, radius, out var refracted) && refracted != null)
+                {
+                    _panelImagePaint.Color = SKColors.White.WithAlpha(AlphaByte(alpha));
+                    canvas.DrawBitmap(refracted, rect, _panelImagePaint);
+                    if (Renderer.ThemeMode != 2)
+                        GlassMaterial.DrawManualThemeTint(canvas, _clipPath, lightBubble, alpha);
+                }
+                else
+                {
+                    bool drawn = DrawGlassBackdrop(canvas, rect, rect, alpha);
+                    GlassMaterial.DrawCoating(canvas, _clipPath, lightBubble, alpha, drawn);
+                }
             }
             finally { RestoreTo(canvas, depth); }
             return;
@@ -590,6 +608,46 @@ public static class LiveWindowRenderer
 
         _fillPaint.Color = WithOpacity(lightBubble ? LightPanelColor : DarkBubbleColor, alpha * PanelBaseAlpha);
         canvas.DrawRoundRect(rect, radius, radius, _fillPaint);
+    }
+
+    private static bool TryComposePanelGlass(SKRect rect, float radius, out SKBitmap? result)
+    {
+        result = null;
+        if (Renderer.AcrylicBackdrop is not { } backdrop
+            || !Renderer.TryCanvasToBackdrop(rect, out SKRect src))
+        {
+            return false;
+        }
+
+        int backdropVer = GlassMaterial.BackdropVersion;
+        int settingsVer = LiquidGlass.SettingsVersion;
+        if (_panelGlass != null
+            && _panelGlassBackdropVer == backdropVer
+            && _panelGlassSettingsVer == settingsVer
+            && MathF.Abs(_panelGlassRect.Width - rect.Width) < 0.5f
+            && MathF.Abs(_panelGlassRect.Height - rect.Height) < 0.5f
+            && MathF.Abs(_panelGlassSrc.Left - src.Left) < 0.5f
+            && MathF.Abs(_panelGlassSrc.Top - src.Top) < 0.5f
+            && MathF.Abs(_panelGlassRadius - radius) < 0.5f)
+        {
+            result = _panelGlass;
+            return true;
+        }
+
+        float r = Math.Clamp(radius, 1f, MathF.Min(rect.Width, rect.Height) * 0.5f);
+        var composed = LiquidGlass.Compose(backdrop, backdropVer, src,
+            rect.Width, rect.Height, r, r, transient: true);
+        if (composed == null) return false;
+
+        _panelGlass?.Dispose();
+        _panelGlass = composed;
+        _panelGlassBackdropVer = backdropVer;
+        _panelGlassSettingsVer = settingsVer;
+        _panelGlassRect = rect;
+        _panelGlassSrc = src;
+        _panelGlassRadius = radius;
+        result = composed;
+        return true;
     }
 
     /// <summary>

@@ -291,9 +291,13 @@ namespace NotchPeninsula
 
         private static float _keySx, _keySy, _keyLw, _keyLh, _keyRt, _keyRb;
 
+        /// <summary>每次参数调整或失效时递增，供实况窗面板缓存感知全局液态玻璃设置变化。</summary>
+        public static int SettingsVersion { get; private set; }
+
         // 材质切走 / 岛体重建时调用：放掉缓存位图，别白占内存
         public static void Invalidate()
         {
+            SettingsVersion++;
             _blurValid = false;
             _blurVersion = -1;
             _keyVersion = -1;
