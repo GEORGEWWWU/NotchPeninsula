@@ -472,6 +472,9 @@ public sealed class PluginManager
     /// <summary>
     /// 静默模式下这个插件是否被勾选（允许在静默模式出现）。勾选 ≠ 一定显示：
     /// 还要它当前上报了重要信息，见 <see cref="SilentImportantPluginIds"/>。
+    ///
+    /// <para><b>没声明过「重要信息」的插件＝没在静默清单里＝不放行</b>（用户定稿 U10B）：
+    /// 清单里根本列不出它，用户也就无从勾选；它的实况窗气泡同样不能在静默模式下冒出来。</para>
     /// </summary>
     public bool IsSilentShown(string key)
     {
@@ -481,6 +484,8 @@ public sealed class PluginManager
         {
             var e = FindEntryByKeyOrId(key);
             if (e == null) return false;
+            // 没调用过 SetImportantInformation（连 false 都没报过）= 不在静默清单里 → 不放行。
+            if (!SilentMode.IsDeclared(e.Id)) return false;
             return !_silentHidden.Contains(e.Key);
         }
     }

@@ -199,7 +199,7 @@ namespace NotchPeninsula
                 6 => _settingsPluginId != null
                     ? _settingsBackHovered || _hoveredSettingControl >= 0
                     : _hoveredPluginAction >= 0 || _hoveredPluginToggle >= 0
-                        || _hoveredPluginReload >= 0 || _hoveredPluginRemove >= 0 || _hoveredPluginSettings >= 0,
+                        || _hoveredPluginReload >= 0 || _hoveredPluginRemove >= 0,
                 7 => _marketCategoryOpen || _marketSortOpen
                     ? _hoveredMarketCategoryIndex >= 0 || _hoveredMarketSortIndex >= 0
                     : _hoveredMarketSortBox || _hoveredMarketCategoryIndex == -2

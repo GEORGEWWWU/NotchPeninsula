@@ -1382,16 +1382,20 @@ namespace NotchPeninsula
 
                 TickFullscreenProbe();
                 SyncSilentPresentation();
+                // 登记表一变（插件首次声明 / 撤销重要信息）就重算一次气泡门控，见 SyncSilentGatesOnReport。
+                SyncSilentGatesOnReport();
 
                 // 三项都在它内部合成，所以这里不再重复写。
                 // 手动隐藏（交互设置页的全局快捷键）与自动隐藏共用同一条退场动画，
                 // 区别是它不看设置里的三个开关，按下就必须藏。
                 //
                 // 静默模式是个例外：它不用「上下滑出」，而是从岛体中心放大 / 缩回中心（见 TickSilentScale）。
-                // 消息提醒期间不缩放 —— 用户要求「静默模式下消息弹出动画不变」，岛照常就位、toast 照常淡入。
+                // 消息提醒期间岛必须在屏上（silentHiding 置假），但它照样走「中心放大」这段动画。
                 bool silentHide = SilentMode.ShouldHideIsland;
                 bool silentHiding = silentHide && !isToastActive;   // 消息期间岛必须在屏上
-                TickSilentScale(silentHiding, instantShow: isToastActive);
+                // toast 也走「中心放大」这一套（用户定稿）：不再瞬间满尺寸 ——
+                // 放大 / 缩小的时长、缓动、过冲与静默模式下岛的出现 / 消失完全同一组参数。
+                TickSilentScale(silentHiding);
 
                 // 静默模式「缩没了」之后才允许滑出屏幕：那只是收尾（避免空窗口挡住鼠标），不是动画本体。
                 bool silentSlidOut = silentHiding && Renderer.SilentScale < 0.02f;
@@ -2815,6 +2819,24 @@ namespace NotchPeninsula
         // 默认形态是折叠态组件；只有插件上报 useImportantPresentation = true 才走这条路。
         private string? _silentPresentationWidgetId;
 
+        /// <summary>
+        /// 上一次做门控同步时的 <see cref="SilentMode.Revision"/>。
+        ///
+        /// <para>U10B 之后「没声明过重要信息 = 静默清单里没有它 = 不放行气泡」，
+        /// 而插件往往是先注册气泡、后调 <c>SetImportantInformation</c> —— 声明那一刻必须重算门控，
+        /// 否则气泡会一直挂在那里（没人再调 SyncLiveWindowGates）。这里按登记表版本号兜住。</para>
+        /// </summary>
+        private int _silentGateRevision = -1;
+
+        private void SyncSilentGatesOnReport()
+        {
+            int revision = SilentMode.Revision;
+            if (revision == _silentGateRevision) return;
+            _silentGateRevision = revision;
+            try { SilentMode.SyncLiveWindowGates(); }
+            catch (Exception ex) { Logger.Error("[静默模式] 重要信息变化后同步实况窗门控失败", ex); }
+        }
+
         private void SyncSilentPresentation()
         {
             string? wantWidget = null;
@@ -2898,8 +2920,9 @@ namespace NotchPeninsula
             Renderer.DisplayMode = next;
             Program.SaveSetting("DisplayMode", (int)next);
             Program.SaveSetting("StandbyActive", next == IslandDisplayMode.Standby ? 1 : 0);
-            // 进/出静默：同步实况窗挂起状态（未勾选插件的重要信息气泡在静默下撤下）
-            SilentMode.SyncLiveWindowGates();
+            // 进/出静默：同步实况窗挂起状态（未勾选插件的重要信息气泡在静默下撤下）。
+            // 用户定稿 U9：切模式的瞬间不动画 —— 气泡直接就位 / 直接消失，不再「呼吸一次」。
+            SilentMode.SyncLiveWindowGates(instant: true);
 
             // 进静默时岛要立刻退场：收起所有展开态（媒体面板 / 详情页），
             // 否则 HasAnyExpanded 会一直把 shouldHide 顶住，观感就是「按了没反应」。
@@ -2927,15 +2950,8 @@ namespace NotchPeninsula
         // 渲染线程 → UI 线程：应用「静默完全隐藏时的鼠标穿透」。
         private const int WM_APPLY_CLICK_THROUGH = 0x8000 + 0x61;
 
-        /// <summary>
-        /// 每帧更新 <see cref="Renderer.SilentScale"/>。
-        /// </summary>
-        /// <param name="hidden">静默模式当前没有重要信息（且没有消息提醒）→ 缩到中心。</param>
-        /// <param name="instantShow">
-        /// 消息提醒期间：直接置 1，不做缩放 —— 用户要求「静默模式下消息弹出动画不变」，
-        /// toast 照旧在正常尺寸的岛上淡入。
-        /// </param>
-        /// <summary>静默缩放动画时长（全部隐藏 / 显示动画统一 0.5s）。</summary>
+        /// <summary>静默缩放动画时长（岛的出现 / 消失统一 0.5s，toast 也走这一条）。</summary>
+        /// <remarks>参数与语义的完整口径见 Core/LiveWindowHost.cs 顶部的「动画总表」。</remarks>
         private const double SilentScaleDurationSeconds = 0.50;
 
         /// <summary>
@@ -2944,7 +2960,11 @@ namespace NotchPeninsula
         /// </summary>
         private bool _silentScaleBootPending = true;
 
-        private void TickSilentScale(bool hidden, bool instantShow)
+        /// <summary>
+        /// 每帧更新 <see cref="Renderer.SilentScale"/>：静默模式下岛只有「中心放大 / 缩回中心」这一种动画。
+        /// </summary>
+        /// <param name="hidden">静默模式当前没有重要信息（且没有消息提醒）→ 缩到中心。</param>
+        private void TickSilentScale(bool hidden)
         {
             if (!Renderer.SilentActive)
             {
@@ -2966,25 +2986,11 @@ namespace NotchPeninsula
             if (_silentScaleBootPending)
             {
                 _silentScaleBootPending = false;
-                float boot = instantShow ? 1f : target;   // 与下面 instantShow 的语义保持一致
-                _silentScale = boot;
-                _silentScaleFrom = boot;
+                _silentScale = target;
+                _silentScaleFrom = target;
                 _silentScaleTo = target;
                 _silentScaleAnimating = false;
-                Renderer.SilentScale = boot;
-                return;
-            }
-
-            if (instantShow && target >= 1f)
-            {
-                if (_silentScale != 1f || Renderer.SilentScale != 1f)
-                {
-                    _silentScale = 1f;
-                    _silentScaleFrom = 1f;
-                    _silentScaleTo = 1f;
-                    _silentScaleAnimating = false;
-                    Renderer.SilentScale = 1f;
-                }
+                Renderer.SilentScale = target;
                 return;
             }
 
@@ -2998,7 +3004,8 @@ namespace NotchPeninsula
 
             if (_silentScaleAnimating)
             {
-                // 静默缩放独立节奏 0.45s：比岛体弹簧慢半拍，所有静默动画统一「放大 / 缩小」语义。
+                // 静默缩放独立节奏 0.5s：比岛体弹簧慢半拍，所有静默动画统一「放大 / 缩小」语义；
+                // toast 出现也走这一条（用户定稿：放大 / 缩小参数全站一致）。
                 double elapsed = (Stopwatch.GetTimestamp() - _silentScaleStartTs) / (double)Stopwatch.Frequency;
                 if (elapsed >= SilentScaleDurationSeconds)
                 {

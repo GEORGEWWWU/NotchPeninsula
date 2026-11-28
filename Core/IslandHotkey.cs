@@ -126,6 +126,12 @@ namespace NotchPeninsula
         public static void Handle(int id)
         {
             if (id != Id || !_live) return;
+            // 静默模式没有「手动退出」这回事：岛的显隐由重要信息驱动（设置页那一行也是灰的）。
+            if (Renderer.SilentActive)
+            {
+                Logger.Info("[全局快捷键] 静默模式下「退出灵动岛」不生效");
+                return;
+            }
             NotchWindow.ToggleIslandVisibility();
         }
 

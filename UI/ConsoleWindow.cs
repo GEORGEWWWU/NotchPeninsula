@@ -12,6 +12,21 @@ namespace NotchPeninsula
 
         private readonly IntPtr _hwnd;
 
+        /// <summary>
+        /// 设置中心窗口的句柄：没开、已隐藏、或最小化时返回 <see cref="IntPtr.Zero"/>。
+        /// 检查更新弹窗用它做「相对设置窗居中」—— 只按屏幕居中会让弹窗落得比设置窗低一截（用户实测）。
+        /// </summary>
+        internal static IntPtr LiveHwnd
+        {
+            get
+            {
+                var win = _instance;
+                if (win == null || win._hwnd == IntPtr.Zero) return IntPtr.Zero;
+                return Win32.IsWindowVisible(win._hwnd) && !Win32.IsIconic(win._hwnd)
+                    ? win._hwnd : IntPtr.Zero;
+            }
+        }
+
         private static readonly Win32.WndProc _staticWndProc = StaticWndProc;
 
         private static bool _classRegistered = false;
@@ -214,8 +229,11 @@ namespace NotchPeninsula
         private const float SidebarButtonInset = 10f;
         private const float SidebarIconCenterX = 30f;
 
-        private float TabButtonLeft => SidebarCollapsed ? SidebarIconCenterX - TAB_ROW_H / 2f : SidebarButtonInset;
-        private float TabButtonRight => SidebarCollapsed ? TabButtonLeft + TAB_ROW_H : SidebarWidth - 6f;
+        // 折叠途中两端插值（不再按布尔二选一）：左缘 10 ⇄ 12、右缘 SidebarWidth−6 ⇄ 左缘+36。
+        private float TabButtonLeft => SidebarExpandedTabLeft
+            + (SidebarCollapsedTabLeft - SidebarExpandedTabLeft) * SidebarCollapseT;
+        private float TabButtonRight => SidebarCollapsedTabLeft + TAB_ROW_H
+            + ((SidebarWidth - 6f) - (SidebarCollapsedTabLeft + TAB_ROW_H)) * (1f - SidebarCollapseT);
 
         private const float TAB_BAR_DY = 8f;          // 蓝色竖条相对行首的上下内缩（竖条高 = 36 - 2×8）
 
@@ -319,7 +337,7 @@ namespace NotchPeninsula
 
         private const float TOPMOST_CARD_Y = CARD_TOP_Y + TOGGLE_CARD_H + CARD_GAP;          // 84 灵动岛置顶
 
-        private const float TOAST_ROW1_Y = CARD_TOP_Y;     // 156
+        private const float TOAST_ROW1_Y = CARD_TOP_Y;     // 12（首卡之下两张单行开关卡各带一个 CARD_GAP）
 
         private const float TOAST_ROW2_Y = TOAST_ROW1_Y + 54f;
 
@@ -407,9 +425,9 @@ namespace NotchPeninsula
 
         private float SOUND_CTRL_X => RightColumnText;
 
-        // 来源框宽度固定为上一版的结果（250 → 385）：音量框再宽也不去抢它的宽度，
-        // 多出来的宽度由音量框向自己左右两侧的间隙里「撑开」。
-        private float SOUND_CTRL_W => MathF.Min(135f, SOUND_PREVIEW_X - SOUND_VOL_W - SOUND_CTRL_X - 12f);
+        // 来源框（提示音来源 / 应用）吃掉「音量框左侧」剩下的整段宽度：用户定稿 ——
+        // Telegram 这种长名字要整段显示出来，不再固定 135 宽截成「Telegr…」。
+        private float SOUND_CTRL_W => MathF.Max(96f, SOUND_VOL_X - 12f - SOUND_CTRL_X);
 
         // 音量框宽度：按「最宽档位标签」实测算出来，不再手调数字。
         // 58 时「100%」被截成「10…」；上一版「中心不动」补到 72 仍然差一点 ——
@@ -418,10 +436,8 @@ namespace NotchPeninsula
         // 这个框就跟着重新量，不用再回来补数字。
         private static readonly float SOUND_VOL_W = MeasureVolumeBoxWidth();
 
-        // 音量框夹在「来源框右缘」与「试听左缘」之间：左右剩余空间均分 ——
-        // 框向两侧长出来的量一样多，两侧间隙始终相等（当前 5.5px）。
-        private float SOUND_VOL_X =>
-            (SOUND_CTRL_X + SOUND_CTRL_W + SOUND_PREVIEW_X) / 2f - SOUND_VOL_W / 2f;
+        // 音量框靠右贴住「试听」按钮（左留 12），把整行右侧收紧；左侧剩下的宽度全给来源框。
+        private float SOUND_VOL_X => SOUND_PREVIEW_X - 12f - SOUND_VOL_W;
 
         private static float MeasureVolumeBoxWidth()
         {
@@ -484,21 +500,25 @@ namespace NotchPeninsula
 
         private const float AUTOHIDE_CARD_H = 248f;   // 总开关 + 三行模式 + 两条内分隔线
 
-        private const float MEDIA_EXP_CARD_Y = CARD_TOP_Y;   // 270
+        private const float MEDIA_EXP_CARD_Y = CARD_TOP_Y;   // 12
 
-        private const float APP_LAUNCH_CARD_Y = MEDIA_EXP_CARD_Y + TOGGLE_CARD_H + CARD_GAP;   // 342
+        private const float APP_LAUNCH_CARD_Y = MEDIA_EXP_CARD_Y + TOGGLE_CARD_H + CARD_GAP;   // 84
 
-        private const float PASS_CARD_Y = AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H + CARD_GAP;        // 414
+        private const float PASS_CARD_Y = AUTOHIDE_CARD_Y + AUTOHIDE_CARD_H + CARD_GAP;        // 270
+        // 穿透卡只有一行（标题 + 副标题），62 会多出一截空底 —— 收成 56，
+        // 底边正好和右栏最后一张「静默模式」卡（246 + 80 = 326）齐平。
+        private const float PASS_CARD_H = 56f;
+        private const float PASS_ROW_DY = 0f;
 
-        private const float ISLAND_HOTKEY_CARD_Y = APP_LAUNCH_CARD_Y + TOGGLE_CARD_H + CARD_GAP;     // 486
+        private const float ISLAND_HOTKEY_CARD_Y = APP_LAUNCH_CARD_Y + TOGGLE_CARD_H + CARD_GAP;     // 156
 
-        private const float ISLAND_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;               // 76
+        private const float ISLAND_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;                     // 80
 
         // 「切换静默模式」快捷键：紧贴「唤出灵动岛」卡，结构与它同源（标题 + 开关 + 一行键位框）。
-        // 572 + 76 + 32（标题栏）= 680，窗口高 692，底部还剩 12px，正好放得下。
-        private const float SILENT_HOTKEY_CARD_Y = ISLAND_HOTKEY_CARD_Y + ISLAND_HOTKEY_CARD_H + CARD_GAP;  // 572
+        // 246 + 80 + 36（标题栏）= 362，窗口高 692 —— 下面留白很长，但两栏底边是齐的。
+        private const float SILENT_HOTKEY_CARD_Y = ISLAND_HOTKEY_CARD_Y + ISLAND_HOTKEY_CARD_H + CARD_GAP;  // 246
 
-        private const float SILENT_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;               // 76
+        private const float SILENT_HOTKEY_CARD_H = HOTKEY_HEAD_H + HOTKEY_ROW_H;                     // 80
 
         // ---- 卡片高度：由卡内内容决定 ----
         // 卡高 = 最后一行内容的下沿 + CARD_BOTTOM_PAD。左右两栏各排各的，不再拿对面那一列的
@@ -518,7 +538,10 @@ namespace NotchPeninsula
         private float LeftColumnRight => (CONTENT_L + WIDTH - CONTENT_RM - CARD_GAP) / 2f;
         private float RightColumnLeft => LeftColumnRight + CARD_GAP;
         private float RightColumnText => RightColumnLeft + 16f;
-        private const float PLATFORM_ROW2_Y = MediaCardTop + 52f;
+        // 媒体设置页右栏首卡：标题基线 / 副标题基线都按「选项框顶 + 偏移」算，
+        // 与左栏开关行（标题基线 = 开关中心 −6、副标题 +20）严格同一条水平线。
+        private const float MEDIA_BOX_LABEL_DY = 11.5f;    // 框顶 → 标题基线（左栏 row1 77.5 = 框顶 66 + 11.5）
+        private const float MEDIA_BOX_SUB_DY = 31.5f;      // 框顶 → 副标题基线（= 标题 +20）
 
         // 左栏首卡：媒体控制 + 使用实况窗展示媒体（两行开关，第二行带副标题）
         private const float MediaTopLeftRow2Y = MediaRowStart + MEDIA_LIVE_ROW_DY;
@@ -528,9 +551,12 @@ namespace NotchPeninsula
         private float MediaTopRightCardH =>
             (MATCH_ROW_Y - MediaCardTop) + MATCH_BOX_H + CARD_BOTTOM_PAD;
 
-        // 第二排两张卡各自紧跟自己那一列的首卡，中间只留一个 CARD_GAP：
-        // 两列高度本来就不一样，硬把顶边对上只会让其中一列凭空多出一段空隙。
-        private float LYRIC_CARD_Y => MediaCardTop + MediaTopLeftCardH + CARD_GAP;
+        // 第二排两张卡各自紧跟自己那一列的首卡，中间只留一个 CARD_GAP。
+        // ⚠️ 首卡高度统一取两栏较大值（用户要求）：以前左右各按自己的内容算高，
+        //    底边差 7.5px，一眼就能看出没对齐。内容仍然各自靠上排，多出来的只是底部留白。
+        private float MediaTopCardH => MathF.Max(MediaTopLeftCardH, MediaTopRightCardH);
+
+        private float LYRIC_CARD_Y => MediaCardTop + MediaTopCardH + CARD_GAP;
 
 
         private const float MATCH_BOX_W = 110f;        // 两个选项框宽度
@@ -541,7 +567,9 @@ namespace NotchPeninsula
 
         private float MATCH_APP_X => WIDTH - 140f;        // 右框：手动模式下的目标软件
 
-        private const float MATCH_ROW_Y = MediaCardTop + 76f;   // 选项框顶部（= 第 2 行行首 +12）
+        // 选项框顶 = 第 2 行锚点 −16（32 高的框上下各 16 → 框中心 = 左栏第二个开关中心 132）。
+        // 原来是 +76（框中心 140），比左栏开关低 8px，两栏第二行看着不齐。
+        private const float MATCH_ROW_Y = MediaCardTop + 68f;
 
         private const float MATCH_MENU_Y = MATCH_ROW_Y + MATCH_BOX_H + 2f;  // 下拉菜单顶部（= 选项框底 +2）
 
@@ -549,7 +577,7 @@ namespace NotchPeninsula
 
         private const float APP_MENU_W = 280f;         // 软件菜单宽度
 
-        private float HOTKEY_CARD_Y => MediaCardTop + MediaTopRightCardH + CARD_GAP;
+        private float HOTKEY_CARD_Y => MediaCardTop + MediaTopCardH + CARD_GAP;
 
         private const float MediaLyricsTopInset = 12f;
         private const float MediaHotkeyHeadHeight = 40f;
@@ -815,9 +843,11 @@ namespace NotchPeninsula
         // 收起后的方形按钮沿原图标中心布置。
         private const float SidebarToolRowHeight = 28f;
         private const float CollapsedSidebarToolSize = 32f;
-        private float EXPORT_BTN_X => SidebarCollapsed ? SidebarIconCenterX - CollapsedSidebarToolSize / 2f : SidebarButtonInset;
-        private float EXPORT_BTN_W => SidebarCollapsed ? CollapsedSidebarToolSize : 96f;
-        private float EXPORT_BTN_H => SidebarCollapsed ? CollapsedSidebarToolSize : SidebarToolRowHeight;
+        // 折叠途中同样插值：宽度 96 ⇄ 32、x 10 ⇄ 14（图标中心 30）、高 28 ⇄ 32。
+        private float EXPORT_BTN_X => SidebarButtonInset
+            + (SidebarIconCenterX - CollapsedSidebarToolSize / 2f - SidebarButtonInset) * SidebarCollapseT;
+        private float EXPORT_BTN_W => 96f + (CollapsedSidebarToolSize - 96f) * SidebarCollapseT;
+        private float EXPORT_BTN_H => SidebarToolRowHeight + (CollapsedSidebarToolSize - SidebarToolRowHeight) * SidebarCollapseT;
         private float EXPORT_BTN_Y => HEIGHT - SidebarButtonInset - (SidebarToolRowHeight + EXPORT_BTN_H) / 2f;
 
         private bool _aboutExportHovered = false;
@@ -1351,20 +1381,17 @@ namespace NotchPeninsula
 
             if (!_classRegistered)
             {
-                var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-                if (version != null)
-                {
-                    _appTitleWithVersion = $"NotchPeninsula {version.Major}.{version.Minor}.{version.Build}";
-                }
+                // 标题与图标统一走 AppIdentity（与更新弹窗 / 引导窗同一串标题、同一枚 logo）。
+                _appTitleWithVersion = AppIdentity.WindowTitle;
 
                 _titleTextInkMidY = MeasureInkMidY(_titleTextPaint, _appTitleWithVersion);
 
-                IntPtr appIconHandle = IntPtr.Zero;
+                IntPtr appIconHandle = AppIdentity.IconHandle;
                 try
                 {
-                    // 提取系统级小图标 (专供窗口注册和任务栏底层使用)
+                    // 系统级小图标只作「高清 logo 读不出来」时的兜底位图来源；
+                    // 窗口类图标已经由 AppIdentity 提供，这里不再重复设 hIcon。
                     _appSysIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
-                    if (_appSysIcon != null) appIconHandle = _appSysIcon.Handle;
 
                     using (var iconStream = DataResources.OpenRead("NPS_NotchPeninsula-logo.ico"))
                         if (iconStream != null) _appIconBitmap = SKBitmap.Decode(iconStream);
@@ -1421,7 +1448,7 @@ namespace NotchPeninsula
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_LAYERED | Win32.WS_EX_APPWINDOW,
-                "NotchConsoleClass", "NotchPeninsula",
+                "NotchConsoleClass", AppIdentity.WindowTitle,
                 Win32.WS_POPUP | Win32.WS_VISIBLE | Win32.WS_MINIMIZEBOX | WsThickFrame,
                 bounds.Left, bounds.Top,
                 _scaledWidth, _scaledHeight,
@@ -2056,6 +2083,10 @@ namespace NotchPeninsula
 
         private unsafe void RenderCore()
         {
+            // 侧栏宽度动画先推进：这一帧所有依赖 SidebarWidth 的几何（卡片左缘、页签块、工具键）
+            // 都拿到同一个中间值，不会出现「卡片用了新宽度、侧栏还在旧宽度」的错拍。
+            TickSidebarWidthAnim();
+
             var surface = _renderSurface;
             if (surface == null)
             {

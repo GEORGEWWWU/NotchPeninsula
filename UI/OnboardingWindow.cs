@@ -247,7 +247,8 @@ namespace NotchPeninsula
                 lpfnWndProc = _wndProc,
                 hInstance = System.Diagnostics.Process.GetCurrentProcess().MainModule?.BaseAddress ?? IntPtr.Zero,
                 lpszClassName = ClassName,
-                hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW)
+                hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW),
+                hIcon = AppIdentity.IconHandle   // 与设置中心 / 更新弹窗同一枚 NPS logo
             };
             Win32.RegisterClass(ref wc);
             Beat();
@@ -258,7 +259,7 @@ namespace NotchPeninsula
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_LAYERED | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_TOPMOST,
-                ClassName, "NotchPeninsula",
+                ClassName, AppIdentity.WindowTitle,
                 Win32.WS_POPUP, x, y, _pxW, _pxH,
                 IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
 

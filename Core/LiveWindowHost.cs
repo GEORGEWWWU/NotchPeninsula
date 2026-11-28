@@ -121,8 +121,11 @@ public static class LiveWindowHost
     // 再慢就拖沓，再快看不清脖子被掐断那一下。
     private const float SpawnSeconds = 0.5f;
 
-    /// <summary>挂起动画时长：原地缩小淡出 0.5s，与出生 / 岛缩放同一节奏。</summary>
+    /// <summary>挂起动画时长：缩小淡出 0.5s，与出生 / 岛缩放同一节奏。</summary>
     private const float SuppressSeconds = 0.5f;
+
+    /// <summary>超过 MaxItems 时那颗气泡的退场动画时长（右滑回岛缘 / 原地缩小），0.5s 同节奏。</summary>
+    private const float OverflowSeconds = 0.5f;
 
     /// <summary>出现序计数器：每次气泡出生 / 恢复递增，排布按它把最新的排最左。</summary>
     private static int _appearanceSeq;
@@ -186,10 +189,28 @@ public static class LiveWindowHost
         /// 出生起点只锁一次（0.5s 出生动画期间不再重算）。
         ///
         /// <para>以前每帧按「岛当前可见否」在 <c>SpawnFromX</c> / <c>TargetX</c> 之间二选一，
-        /// 岛正好在放大（scale 越过 0.08）的那一帧起点会整体跳一段 —— 与「全程无瞬移」冲突。</para>
+        /// 岛正好在放大（scale 越过 0.5 的那一帧）起点会整体跳一段 —— 与「全程无瞬移」冲突。</para>
         /// </summary>
         public bool SpawnAnchorLocked;
         public float SpawnAnchorX;
+
+        /// <summary>
+        /// 退场时是否「吸回岛缘」：注销那一刻岛在屏上有可见形态才吸；
+        /// 岛已缩没（气泡组居中）时没有可回去的参照边 → 原地缩小淡出（用户定稿 U1A）。
+        /// 在 <see cref="DetachLocked"/> 里一次性锁定，退场途中岛缩放变化也不会中途换动画。
+        /// </summary>
+        public bool ExitSuckBack = true;
+
+        // ---- 排不下（超过 MaxItems）时的退场（用户定稿 U4）----
+        // 以前直接把 TargetX 甩到 -10000 当场消失；现在走一段退场动画：
+        // 岛在屏上 → 右滑回岛缘淡出（B）；岛已缩没 → 原地缩小淡出（A）。
+        public bool Overflowing;
+        public double OverflowElapsed;
+        public bool OverflowSuckBack = true;
+        public float OverflowFromX;
+
+        /// <summary>下一帧直接把 X 落到槽位（切显示模式时用：状态瞬切，位置也不该再滑 0.3s）。</summary>
+        public bool SnapPosition;
     }
 
     private sealed class PanelState
@@ -406,7 +427,11 @@ public static class LiveWindowHost
     /// 挂起 / 恢复某插件的全部实况窗，返回需要通知的窗口对象。
     /// 退出动画中的窗已经没有插件对象，只标记不通知；已在目标状态的不重复处理。
     /// </summary>
-    internal static List<ILiveWindow> SetOwnerSuppressed(string ownerId, bool suppressed, out bool deferredNotify, out bool deferredResume)
+    /// <param name="instant">
+    /// true = 状态瞬切，不播任何动画（切换显示模式时用，用户定稿 U9）：
+    /// 气泡要么直接消失、要么直接就位，避免「切模式时气泡又生又灭地呼吸一次」。
+    /// </param>
+    internal static List<ILiveWindow> SetOwnerSuppressed(string ownerId, bool suppressed, out bool deferredNotify, out bool deferredResume, bool instant = false)
     {
         deferredNotify = false;
         // 岛体此刻是否有可见形态（与 Tick 的锚点半程阈值同口径）：决定通知是否延迟到动画后。
@@ -444,22 +469,52 @@ public static class LiveWindowHost
                     // 岛隐藏（如静默媒体开关关闭，岛已缩没）→ 气泡原地缩小，主岛随后按需弹出（放大）。
                     e.SuckBack = (Renderer.SilentActive ? Renderer.SilentScale : 1f) >= 0.5f
                                  && Renderer.FullHideAlpha >= 0.5f;
-                    // 吸回场景（岛有东西）：OnHostEnabledChanged(false) 延迟到吸完再发 ——
-                    // 插件内容回岛导致的岛体变形要等气泡吸完才开始（先吸，再变形）。
-                    deferredNotify = e.SuckBack;
-                    e.PendingEnableNotify = e.SuckBack;
-                    // 和主动注销一模一样的「往右滑回岛体」吸附动画；播完由 Tick 留在列表里不绘制，
-                    // 重新启用时再播一遍生成动画 —— 开关的手感和插件自己注销 / 注册完全一致。
-                    e.SuppressElapsed = 0d;
                     e.ExitFromX = e.X;      // 吸入曲线从这个位置起算
                     e.Hovered = false;
                     // 正在显示这个气泡的详情面板要跟着收起（走正常收起动画，而不是下一帧被 Drop）。
                     if (_panel != null && !_panel.Closing
                         && string.Equals(_panel.EntryId, e.Id, StringComparison.OrdinalIgnoreCase))
                         ClosePanel();
+
+                    if (instant)
+                    {
+                        // 切显示模式（U9）：直接落到「已收回」，不播动画；通知照发（立即）。
+                        e.PendingEnableNotify = false;
+                        e.SuppressElapsed = SuppressSeconds;
+                        e.Scale = 0f;
+                        e.Alpha = 0f;
+                        if (e.Window != null) windows.Add(e.Window);
+                        continue;
+                    }
+
+                    // 吸回场景（岛有东西）：OnHostEnabledChanged(false) 延迟到吸完再发 ——
+                    // 插件内容回岛导致的岛体变形要等气泡吸完才开始（先吸，再变形）。
+                    if (e.SuckBack) deferredNotify = true;
+                    e.PendingEnableNotify = e.SuckBack;
+                    // 和主动注销一模一样的「往右滑回岛体」吸附动画；播完由 Tick 留在列表里不绘制，
+                    // 重新启用时再播一遍生成动画 —— 开关的手感和插件自己注销 / 注册完全一致。
+                    e.SuppressElapsed = 0d;
                 }
                 else
                 {
+                    if (instant)
+                    {
+                        // 切显示模式（U9）：直接落到「已在屏上」，不播出生动画，位置下一帧直接落位。
+                        e.SuppressElapsed = 0d;
+                        e.SpawnElapsed = SpawnSeconds;
+                        e.SpawnProgress = 1f;
+                        e.SpawnAnchorLocked = false;
+                        e.PendingEnableNotify = false;
+                        e.PendingResumeNotify = false;
+                        e.Scale = 1f;
+                        e.Alpha = 255f;
+                        e.SnapPosition = true;
+                        e.DisplayProgress = e.TargetProgress;
+                        e.AppearanceSeq = ++_appearanceSeq;
+                        if (e.Window != null) windows.Add(e.Window);
+                        continue;
+                    }
+
                     // 重新启用：与「插件重新注册」完全同一套「岛体挤出水滴」的生成动画。
                     e.SuppressElapsed = 0d;
                     e.SpawnElapsed = 0d;
@@ -493,7 +548,11 @@ public static class LiveWindowHost
                         && !SilentMode.HasIslandContentBesides(bubbleOwners))
                         MediaLiveWindowController.RequestDelayedSpawn();
                     e.DisplayProgress = e.TargetProgress;
-                    e.X = e.SpawnFromX = _lastIslandLeft + BubbleDiameter * 0.02f;
+                    // 出生起点与「插件自己注册」完全同口径：岛缘左侧完整位（不压岛体）。
+                    // 以前这里是「岛体左缘内侧」（islandLeft + 2% 直径），恢复出来的气泡会从岛体里挤出来，
+                    // 和普通模式那条「岛缘挤出」的出生动画对不上（用户定稿：生成动画与普通模式一致）。
+                    e.SpawnFromX = _lastIslandLeft - IslandGap - BubbleDiameter * 0.5f;
+                    e.X = e.SpawnFromX;
                 }
                 if (e.Window != null && !e.Exiting) windows.Add(e.Window);
             }
@@ -699,7 +758,7 @@ public static class LiveWindowHost
                 // 重新启用后插件重注册：解除挂起；显示设置里没勾选的话仍是挂起态
                 //（SuppressElapsed 直接置满 = 收起动画已播完，不重播一遍）。
                 existing.Suppressed = !displayAllowed;
-                existing.SuppressElapsed = displayAllowed ? 0d : ExitSeconds;
+                existing.SuppressElapsed = displayAllowed ? 0d : SuppressSeconds;
                 existing.DisplayProgress = 0f;
                 existing.LastPercentKey = "";
                 return new Handle(existing, window);
@@ -708,8 +767,9 @@ public static class LiveWindowHost
             int attached = AttachedCountLocked();
             // 每次出生都是「岛体挤出一颗水滴」：起点固定在岛体左缘，再滑到自己的槽位。
             // 岛不可见（气泡组居中）时改从岛体原区域中心起算，别让出生动画横穿半屏。
-            bool regIslandVisible = (Renderer.SilentActive ? Renderer.SilentScale : 1f) >= 0.02f
-                                    && Renderer.FullHideAlpha >= 0.02f;
+            // 判据与 Tick / SetOwnerSuppressed 统一「半程」（用户定稿 U8A）。
+            bool regIslandVisible = (Renderer.SilentActive ? Renderer.SilentScale : 1f) >= 0.5f
+                                    && Renderer.FullHideAlpha >= 0.5f;
             float spawnFrom = regIslandVisible
                 ? _lastIslandLeft - IslandGap - BubbleDiameter * 0.5f   // 岛缘左侧完整位：出生不压岛体（裁切已移除，避免重叠鼓包）
                 : _lastIslandLeft + Renderer.STANDBY_WIDTH / 2f;
@@ -724,7 +784,7 @@ public static class LiveWindowHost
                 SpawnElapsed = 0d,
                 // 不展示时直接落成「挂起且收起动画已播完」：既不画气泡，也不播一遍假的收起动画。
                 Suppressed = !displayAllowed,
-                SuppressElapsed = displayAllowed ? 0d : ExitSeconds
+                SuppressElapsed = displayAllowed ? 0d : SuppressSeconds
             };
             _entries.Add(entry);
             UpdateSizingLocked();
@@ -774,6 +834,10 @@ public static class LiveWindowHost
         e.ExitElapsed = 0d;
         e.ExitFromX = e.X;          // 吸入曲线从当前位置起算
         e.Completed = false;
+        // 与 Tick 里锚点判定同一口径（半程 0.5，用户定稿 U8A）：
+        // 岛在屏上 → 吸回岛缘；岛已缩没 → 原地缩小淡出。
+        e.ExitSuckBack = (Renderer.SilentActive ? Renderer.SilentScale : 1f) >= 0.5f
+                         && Renderer.FullHideAlpha >= 0.5f;
 
         // 面板跟着气泡一起走正常收起动画。以前这里直接 DropPanelLocked()，
         // 气泡明明还要滑 0.44s，面板却「啪」一下消失（静默模式下最扎眼）。
@@ -1085,8 +1149,25 @@ public static class LiveWindowHost
         BubbleDiameter = diameter;
         float bubbleTop = topY + (islandBodyH - diameter) * 0.5f;   // 正常情况就 = topY：上下都贴岛体边
 
-        /* ─────────── 静默模式动画总方案（用户定稿，全部 0.5s 统一节奏） ───────────
-         * 形态语义：出现 = 放大淡入；消失 = 缩小淡出；位置变化 = 指数平滑（~0.4s），全程无瞬移。
+        /* ─────────── 动画总表（唯一口径 · 2026-11-28 定稿） ───────────
+         * 改任何时长 / 曲线之前先看这张表：全站只有这一套数字，各处的注释都指向这里。
+         *
+         * ★ 时长与曲线
+         *   岛体宽高弹簧（普通模式展开 / 收起 / 变形）0.45s（见 NotchWindow.SpringDurationSeconds）
+         *   岛体出现 / 消失（静默缩放、toast 弹出）  0.50s SpringEase（放大允许 6% 过冲、缩小钳到 0）
+         *   气泡出生（岛缘挤出 / 原地放大）          0.50s EaseOutBack(1.1)
+         *   气泡挂起（原地缩小 + 淡出）              0.50s SmoothStep（同帧起跑，没有错峰）
+         *   气泡退场（吸回岛缘 / 原地缩小）          0.44s LiquidSuck（45% 起淡出，到岛缘已全透明）
+         *   气泡位置（让位 / 贴岛缘 ⇄ 居中）         τ=0.1s 指数跟随 ≈ 0.30s 归位
+         *   详情面板 展开 / 收起                     0.34s / 0.30s
+         *   侧栏折叠 / 页签选中块滑动                200ms / 200ms TabEase（先快后慢）
+         *
+         * ★ 阈值（全部「半程」口径）
+         *   岛「在屏」= SilentScale ≥ 0.5 且 FullHideAlpha ≥ 0.5。锚点归属、退场方式、
+         *   出生参照、OnHostEnabledChanged 的延迟发放，四处共用同一个 0.5，不会跨阈值错拍。
+         *
+         * ★ 形态语义
+         *   出现 = 放大淡入；消失 = 缩小淡出；位置变化 = 指数平滑 —— 全程无瞬移。
          *
          * ① 启用媒体实况窗（岛无其他内容，编排 B）：
          *    主岛展示 3s 媒体 → 岛带媒体缩小消失（0.5s）→ 缩完气泡从岛中心（=居中位）原地放大出生。
@@ -1099,23 +1180,31 @@ public static class LiveWindowHost
          *    吸完才补发 OnHostEnabledChanged(false)（PendingEnableNotify）→ 插件内容回岛 → 岛再变形。
          * ⑤ 禁用（岛体没东西 / 静默撤勾选 / 关媒体开关）：气泡原地缩小淡出（不吸回），
          *    岛按需缩没或变形；其余气泡平滑补位。
-         * ⑥ toast 出入：岛 instantShow 弹出 / 弹簧缩没；气泡锚点在半程（scale≥0.5）切换，
-         *    前半程贴原锚点、后半程平滑移向新锚点，与岛缩放同步，无瞬移无停顿。
+         *    用户定稿 U1A：岛已缩没（气泡组居中）时的「插件注销」也走原地缩小 —— 没有可回去的参照边，
+         *    不能往一片空白的岛缘吸（见 Entry.ExitSuckBack）。
+         * ⑥ toast 出入（用户定稿 U5）：岛走「中心放大 / 缩回中心」，0.5s 弹簧，与静默出现 / 消失同一组参数
+         *    （不再瞬间满尺寸）；气泡锚点仍在半程切换，前半程贴原锚点、后半程 0.3s 平滑移向新锚点。
+         * ⑦ 出生起点三分支（用户定稿 U2）：
+         *    a. 岛可见 + 已有气泡 → 与普通模式一致：**从岛缘挤出**再滑到最左（旧气泡不让位）；
+         *    b. 岛缩没（居中组）+ 已有气泡 → 新气泡直接在**最左目标槽位原地放大**，已有气泡平滑右移半格；
+         *    c. 岛缩没且一颗气泡都没有 → 直接**居中原地放大**。
+         *    （起点在出生首帧锁一次，见 Entry.SpawnAnchorLocked，避免岛正好弹出时换参照跳一段。）
          * 锚点归属：静默下岛「该出现/已出现」（ShouldShowIsland / 压制中且岛在屏）→ 贴岛缘；
          * 岛缩没（无内容）→ 居中。排布：新气泡一律出生在整组最左边，已有气泡不让位。
          * ────────────────────────────────────────────────────────────────*/
 
         // 岛是否在屏上有可见形态：静默缩没 / 整层淡出都算「没了」——
         // 这时气泡不再贴岛体左缘，整组在岛体原区域中心居中（岛没了没有参照边，贴边看着像悬在半空）。
-        // 锚点切换阈值取「彻底缩没」（<0.02 才切，用户定稿）：启用编排里气泡出生移到最左、站稳、
-        // 压岛，**岛彻底缩没后**整组才开始平滑右移居中；岛弹出方向 scale 一过 0.02 气泡即贴向岛缘。
+        // 锚点切换阈值统一取「半程」（SilentScale / FullHideAlpha ≥ 0.5，用户定稿 U8A）：
+        // 与「启用 / 禁用通知延迟到动画后半程」(SetOwnerSuppressed) 同一口径，
+        // 不再出现「气泡已贴岛缘但插件还没收到通知」这类跨阈值错拍。
         // 不锁压制态（SuppressMediaInIsland）：媒体退场时岛先缩没、播完才弹回，
         // 若压制锁岛缘、播完回落居中、岛弹回又切岛缘 —— 气泡会「移到一半又回来又过去」（用户实测）。
-        bool islandVisible = (Renderer.SilentActive ? Renderer.SilentScale : 1f) >= 0.08f
+        bool islandVisible = (Renderer.SilentActive ? Renderer.SilentScale : 1f) >= 0.5f
                              && Renderer.FullHideAlpha >= 0.5f;
 
         // 岛可见性跳变沿（双向）：气泡组**平滑**移动到新锚点（贴岛缘 ⇄ 居中），不瞬移（用户定稿）。
-        // 指数跟随已放慢（~0.4s），长距离也是温和滑过去，配合岛体的放大 / 缩小同步完成。
+        // 指数跟随 τ=0.1s（≈0.3s 归位，全站位移统一这个节奏），长距离也是温和滑过去。
 
         var deferredList = new List<ILiveWindow>(2);
         var resumeList = new List<ILiveWindow>(2);
@@ -1126,9 +1215,14 @@ public static class LiveWindowHost
             float mouseX = _mouseX, mouseY = _mouseY;
 
             int attached = AttachedCountLocked();
-            int hiddenCount = Math.Max(0, attached - MaxItems);
-            int attachedIndex = 0;
-            int visibleSlots = Math.Min(attached, MaxItems);
+            // 槽位口径（用户定稿 U3/U4）：正在播「收回 / 溢出退场」动画的气泡仍然占着槽位，
+            // 动画播完（0.5s）才释放 —— 其余气泡要等这 0.5s 过去才补位，两段动画不再叠在一起。
+            int totalSlots = 0;
+            for (int i = 0; i < _entries.Count; i++)
+                if (OccupiesSlot(_entries[i])) totalSlots++;
+            int hiddenCount = Math.Max(0, totalSlots - MaxItems);
+            int slotIndex = 0;
+            int visibleSlots = Math.Min(totalSlots, MaxItems);
             float centerX = islandLeft + islandWidth / 2f;
             float groupW = visibleSlots * diameter + MathF.Max(0, visibleSlots - 1) * BubbleGap;
             float anchorRight = islandVisible
@@ -1149,23 +1243,29 @@ public static class LiveWindowHost
 
                 if (e.Suppressed && !e.Exiting)
                 {
-                    // 插件级开关关闭 / 静默勾选撤下：**原地**缩小淡出。
-                    // ⚠️ 不吸回岛体 —— 触发挂起时主岛多半已在缩没（如静默媒体开关关闭），
-                    //    吸过去会把岛「变回折叠态」，编排就乱了。气泡自己缩掉，
-                    //    它不占槽位（AttachedCountLocked 排除），其余气泡自动右移补位。
+                    // 插件级开关关闭 / 静默勾选撤下 / 显示清单撤勾选。
+                    // 用户定稿 U3：**有主岛就走和普通模式一样的右移吸回**（LiquidSuck 到岛缘，
+                    // 45% 后开始淡出）；没有主岛（气泡组居中、岛已缩没）就原地向中间缩小隐藏。
+                    // 这段动画期间它仍占着槽位（slotIndex++），其余气泡 0.5s 后才补位。
                     if (e.Window != null)
                     {
-                        // 串行编排（用户定稿）：气泡动画**立即起步**（先吸 / 先出），
-                        // 岛体变形由压制维持或内容回岛的宽度弹簧自然滞后（后变形）。
                         e.SuppressElapsed = Math.Min(SuppressSeconds, e.SuppressElapsed + dt);
                         float t = (float)Math.Clamp(e.SuppressElapsed / SuppressSeconds, 0d, 1f);
-                        // 统一「缩小」语义：原地缩到 0 + 淡出，0.5s 同帧起跑（没有错峰 ——
-                        // 气泡之间不排先后，谁被撤下谁自己缩，其余气泡同一帧开始补位）。
-                        // 岛是否现身承接都一样 —— 气泡自己缩掉，不吸回岛缘（岛缩没时吸回会变回折叠态）。
-                        e.X = e.ExitFromX;
-                        e.TargetX = e.ExitFromX;
-                        e.Alpha = 255f * (1f - SmoothStep01(t));
-                        e.Scale = MathF.Max(0f, 1f - SmoothStep01(t));
+                        if (e.SuckBack)
+                        {
+                            e.X = e.ExitFromX + (edgeX - e.ExitFromX) * LiquidSuck(t);
+                            e.TargetX = edgeX;
+                            e.Scale = 1f;
+                            e.Alpha = 255f * (1f - SmoothStep01((t - 0.45f) / 0.45f));
+                        }
+                        else
+                        {
+                            float k = SmoothStep01(t);
+                            e.X = e.ExitFromX;
+                            e.TargetX = e.ExitFromX;
+                            e.Scale = MathF.Max(0f, 1f - k);
+                            e.Alpha = 255f * (1f - k);
+                        }
                         // 吸回/缩小动画播完：补发延迟的禁用通知，插件内容此刻才回岛 → 岛体开始变形。
                         if (t >= 1f && e.PendingEnableNotify && e.Window != null)
                         {
@@ -1173,8 +1273,12 @@ public static class LiveWindowHost
                             e.PendingEnableNotify = false;
                         }
                     }
-                    e.TargetX = e.ExitFromX;
+                    else
+                    {
+                        e.TargetX = e.ExitFromX;
+                    }
                     e.Hovered = false;
+                    slotIndex++;   // 动画期间继续占位（U3）：别的气泡不提前补位
                     continue;
                 }
 
@@ -1197,31 +1301,97 @@ public static class LiveWindowHost
                 {
                     e.ExitElapsed = Math.Min(ExitSeconds, e.ExitElapsed + dt);
                     float t = (float)Math.Clamp(e.ExitElapsed / ExitSeconds, 0d, 1d);
-                    // 吸附：起步慢、越过一半后越来越快（真水滴是被表面张力「抽」进去的），
-                    // 最后 16% 只剩一丝，透明度和半径同时收掉，不会在岛体边上留残影。
-                    e.X = e.ExitFromX + (edgeX - e.ExitFromX) * LiquidSuck(t);
-                    e.TargetX = edgeX;
-                    e.Scale = 1f;
-                    // 淡出提前到吸回途中（过半就开始）：到岛缘时已完全透明，
-                    // 与岛内内容的出现衔接不留叠影（用户实测「不要闪」）。
-                    e.Alpha = 255f * (1f - SmoothStep01((t - 0.45f) / 0.45f));
-                    e.Hovered = false;
-                }
-                else
-                {
-                    int slot = attachedIndex++;
-                    if (slot < hiddenCount)
+                    if (e.ExitSuckBack)
                     {
-                        e.TargetX = -10000f;
+                        // 吸附：起步慢、越过一半后越来越快（真水滴是被表面张力「抽」进去的），
+                        // 最后 16% 只剩一丝，透明度和半径同时收掉，不会在岛体边上留残影。
+                        e.X = e.ExitFromX + (edgeX - e.ExitFromX) * LiquidSuck(t);
+                        e.TargetX = edgeX;
+                        e.Scale = 1f;
+                        // 淡出提前到吸回途中（过半就开始）：到岛缘时已完全透明，
+                        // 与岛内内容的出现衔接不留叠影（用户实测「不要闪」）。
+                        e.Alpha = 255f * (1f - SmoothStep01((t - 0.45f) / 0.45f));
                     }
                     else
                     {
-                        // 新的在右、旧的在左；退出中的不占槽位。
-                        int drawnSlot = slot - hiddenCount;
-                        // 排布方向（用户定稿）：**新气泡一律出生在整组最左边**，已有气泡位置不变、不让位。
-                        // drawnSlot 0 = 最早注册（贴岛缘），越大越新 → 越靠左。
-                        e.TargetX = anchorRight - diameter / 2f
-                                    - drawnSlot * (diameter + BubbleGap);
+                        // 岛已缩没（气泡组居中）：没有可回去的参照边 —— 原地缩小淡出（用户定稿 U1A），
+                        // 与「挂起」同一套缩小语义，不再往岛缘飘。
+                        float k = SmoothStep01(t);
+                        e.X = e.ExitFromX;
+                        e.TargetX = e.ExitFromX;
+                        e.Scale = MathF.Max(0f, 1f - k);
+                        e.Alpha = 255f * (1f - k);
+                    }
+                    e.Hovered = false;
+                    slotIndex++;   // 退场动画期间继续占位（U3）
+                }
+                else
+                {
+                    int slot = slotIndex++;
+                    if (slot < hiddenCount)
+                    {
+                        // 排不下（超过 MaxItems）：以前直接把位置甩到 -10000 当场消失，
+                        // 现在走 0.5s 退场动画（用户定稿 U4）：
+                        //   主岛在 → 右滑回岛缘淡出（B）；主岛不在 → 原地缩小淡出（A）。
+                        // 普通模式下主岛恒在，所以一律走 B。
+                        if (!e.Overflowing)
+                        {
+                            e.Overflowing = true;
+                            e.OverflowElapsed = 0d;
+                            e.OverflowFromX = e.X;
+                            e.OverflowSuckBack = islandVisible;
+                            e.Hovered = false;
+                        }
+                        e.OverflowElapsed = Math.Min(OverflowSeconds, e.OverflowElapsed + dt);
+                        float ot = (float)Math.Clamp(e.OverflowElapsed / OverflowSeconds, 0d, 1d);
+                        if (e.OverflowSuckBack)
+                        {
+                            e.X = e.OverflowFromX + (edgeX - e.OverflowFromX) * LiquidSuck(ot);
+                            e.TargetX = edgeX;
+                            e.Scale = 1f;
+                            e.Alpha = 255f * (1f - SmoothStep01((ot - 0.45f) / 0.45f));
+                        }
+                        else
+                        {
+                            float k = SmoothStep01(ot);
+                            e.X = e.OverflowFromX;
+                            e.TargetX = e.OverflowFromX;
+                            e.Scale = MathF.Max(0f, 1f - k);
+                            e.Alpha = 255f * (1f - k);
+                        }
+                        // 播完就不再绘制：不参与命中，也不占鼠标。
+                        e.Hidden = e.OverflowElapsed >= OverflowSeconds;
+                        continue;
+                    }
+
+                    // 又回到可见范围（前面有空位了）：撤销溢出态，重新走一遍出生动画。
+                    if (e.Overflowing)
+                    {
+                        e.Overflowing = false;
+                        e.OverflowElapsed = 0d;
+                        e.Hidden = false;
+                        e.Scale = 1f;
+                        e.Alpha = 255f;
+                        e.SpawnElapsed = 0d;
+                        e.SpawnAnchorLocked = false;
+                    }
+
+                    int drawnSlot = slot - hiddenCount;
+                    // 排布方向（用户定稿）：**新气泡一律出生在整组最左边**，已有气泡位置不变、不让位。
+                    // drawnSlot 0 = 最早注册（贴岛缘），越大越新 → 越靠左。
+                    e.TargetX = anchorRight - diameter / 2f
+                                - drawnSlot * (diameter + BubbleGap);
+
+                    // 切显示模式（U9）：状态瞬切，位置也直接落位，不再滑 0.3s。
+                    if (e.SnapPosition)
+                    {
+                        e.SnapPosition = false;
+                        e.SpawnElapsed = SpawnSeconds;
+                        e.SpawnProgress = 1f;
+                        e.SpawnAnchorLocked = false;
+                        e.X = e.TargetX;
+                        e.Alpha = 255f;
+                        e.Scale = 1f;
                     }
 
                     bool budding = e.SpawnElapsed < SpawnSeconds;
@@ -1240,7 +1410,7 @@ public static class LiveWindowHost
                         // 岛体有东西（用户定稿）：**先创建在岛缘 → 平滑移到整组最左**（EaseOutBack 带过冲），
                         // 移动期间其他气泡位置不变；站稳压岛后再与整组一起平滑右移居中。
                         // 岛没东西（隐藏 / 居中态）：原地放大淡入（编排 B）。
-                        // 起点只在这一帧锁定一次：岛正好在放大时（scale 越过 0.08）不会中途换参照跳一段。
+                        // 起点只在这一帧锁定一次：岛正好在放大时（scale 越过 0.5）不会中途换参照跳一段。
                         if (!e.SpawnAnchorLocked)
                         {
                             e.SpawnAnchorLocked = true;
@@ -1254,7 +1424,8 @@ public static class LiveWindowHost
                     else
                     {
                         // 稳态：指数平滑跟随槽位与锚点（邻居让位 / 居中 ⇄ 贴岛缘），不瞬移。
-                        float k = 1f - MathF.Exp(-6f * dt);   // 放慢：~0.4s 温和归位
+                        // 时间常数 τ=0.1s → 约 0.3s 归位（用户定稿：所有位移统一 0.3s）。
+                        float k = 1f - MathF.Exp(-10f * dt);
                         e.X += (e.TargetX - e.X) * k;
                         e.Alpha = 255f;
                     }
@@ -1408,7 +1579,7 @@ public static class LiveWindowHost
             var e = _entries[i];
             if (e.Hidden) continue;
             // 挂起收起的动画要照常画完；播完之后才彻底不绘制。
-            if (e.Suppressed && !e.Exiting && e.SuppressElapsed >= ExitSeconds) continue;
+            if (e.Suppressed && !e.Exiting && e.SuppressElapsed >= SuppressSeconds) continue;
             if (frame.Count >= MaxItems) break;
 
             ref var item = ref frame.Items[frame.Count];
@@ -1431,12 +1602,23 @@ public static class LiveWindowHost
             item.MergeTargetX = islandLeft + diameter * 0.02f;   // 「移回宿主」的终点：岛体左缘
             // 挂起收起也走同一套「被宿主吞进去」的动画：渲染器只认 Exiting / ExitProgress，
             // 所以这里把挂起前段也当成退出态发布。
-            bool swallowing = e.Exiting || (e.Suppressed && e.SuppressElapsed < ExitSeconds);
-            item.ExitProgress = swallowing
-                ? (float)Math.Clamp((e.Exiting ? e.ExitElapsed : e.SuppressElapsed) / ExitSeconds, 0.0, 1.0)
-                : 0f;
+            // 岛已缩没时的退场不发布「吞入」态：渲染器一旦看到 Exiting，就会画一条指向岛缘的
+            // 液体颈、并按岛缘位置把气泡右半裁掉 —— 岛都不在屏上，那条颈指向一片空白，
+            // 裁切还会把气泡整颗吃掉。原地缩小只靠 Scale / Alpha 就够了（用户定稿 U1A）。
+            bool inPlace = (e.Exiting && !e.ExitSuckBack)
+                        || (e.Suppressed && !e.SuckBack)
+                        || (e.Overflowing && !e.OverflowSuckBack);
+            bool swallowing = !inPlace && (e.Exiting
+                || (e.Suppressed && e.SuppressElapsed < SuppressSeconds)
+                || (e.Overflowing && e.OverflowElapsed < OverflowSeconds));
+            item.ExitProgress = !swallowing ? 0f
+                : e.Exiting ? (float)Math.Clamp(e.ExitElapsed / ExitSeconds, 0.0, 1.0)
+                : e.Overflowing ? (float)Math.Clamp(e.OverflowElapsed / OverflowSeconds, 0.0, 1.0)
+                : (float)Math.Clamp(e.SuppressElapsed / SuppressSeconds, 0.0, 1.0);
             item.Scale = e.Scale;
             item.Exiting = swallowing;
+            // 原地缩小期间不做出生形变（否则会出现「先涨回原尺寸再缩」的抖动）。
+            if (inPlace) item.SpawnProgress = 1f;
             frame.Count++;
         }
 
@@ -1555,6 +1737,18 @@ public static class LiveWindowHost
         for (int i = 0; i < _entries.Count; i++)
             if (_entries[i].Window != null && !_entries[i].Exiting && !_entries[i].Suppressed) n++;
         return n;
+    }
+
+    /// <summary>
+    /// 这一帧是否仍占着排布槽位（用户定稿 U3）：正在播「收回 / 溢出退场」的气泡先站住 0.5s，
+    /// 其余气泡等它播完再补位，两段位移动画不叠在一起。
+    /// </summary>
+    private static bool OccupiesSlot(Entry e)
+    {
+        if (e.Exiting) return e.ExitElapsed < ExitSeconds;
+        if (e.Suppressed) return e.SuppressElapsed < SuppressSeconds;
+        // 溢出淡出完成也不放槽位：放回去会立刻又被判定溢出，气泡来回闪。
+        return true;
     }
 
     private static Entry? FindAttachedLocked(string id)

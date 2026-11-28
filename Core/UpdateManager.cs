@@ -42,10 +42,17 @@ namespace NotchPeninsula
         // 手动检测同一时刻只允许一次：连点两下不该发两次请求、弹两个窗。
         private static int _manualCheckRunning;
 
-        // GitHub 发布列表；第二条是用户提供的 EdgeOne 反代，主地址不通时兜底。
+        // GitHub 发布列表：三个地址**同时竞速**（用户定稿），谁先拿到有效 JSON 用谁 ——
+        // 官方地址和两个反代谁快走谁，不再「主地址超时了才挨个重试」（最坏要等两个超时）。
         private const string ReleasesApiUrl =
             "https://api.github.com/repos/GEORGEWWWU/NotchPeninsula/releases";
-        private const string ReleasesApiUrlMirror = "https://edgeone.gh-proxy.org/" + ReleasesApiUrl;
+
+        private static readonly string[] ReleasesApiUrls =
+        {
+            ReleasesApiUrl,
+            "https://edgeone.gh-proxy.org/" + ReleasesApiUrl,
+            "https://gh-proxy.org/" + ReleasesApiUrl
+        };
 
         // 有新版本时统一跳这里下载（官方下载页，不走 GitHub release 页面）。
         internal const string DownloadPageUrl = "https://dlnps.georgewu.top";
@@ -91,27 +98,50 @@ namespace NotchPeninsula
             return ready.Task;
         }
 
-        // 主地址超时/被墙时自动换反代重试一次。
+        // 三个地址同时发，先成功（且内容像 JSON）的先返回；赢家定了就取消其余请求。
         private static async Task<string> FetchReleasesJsonAsync()
         {
-            Exception? firstError = null;
+            using var cts = new CancellationTokenSource();
+            var pending = new List<Task<string>>(ReleasesApiUrls.Length);
+            foreach (var url in ReleasesApiUrls)
+                pending.Add(FetchOneAsync(url, cts.Token));
 
-            foreach (var url in new[] { ReleasesApiUrl, ReleasesApiUrlMirror })
+            Exception? lastError = null;
+            while (pending.Count > 0)
             {
+                var done = await Task.WhenAny(pending).ConfigureAwait(false);
+                pending.Remove(done);
                 try
                 {
-                    var json = await _http.GetStringAsync(url);
-                    Logger.Info($"[更新检测] 已从 {new Uri(url).Host} 获取发布列表");
+                    var json = await done.ConfigureAwait(false);
+                    cts.Cancel();   // 赢家已定：其余请求立刻取消，别白耗流量
+                    // 取消会让剩下那些任务抛 OperationCanceledException —— 这里吞掉，别变成未观察异常。
+                    foreach (var rest in pending)
+                        _ = rest.ContinueWith(t => { _ = t.Exception; }, TaskScheduler.Default);
                     return json;
                 }
                 catch (Exception ex)
                 {
-                    firstError ??= ex;
-                    Logger.Info($"[更新检测] 请求 {new Uri(url).Host} 失败：{ex.Message}");
+                    lastError = ex;
+                    Logger.Info($"[更新检测] 一个更新地址失败：{ex.Message}");
                 }
             }
 
-            throw firstError ?? new InvalidOperationException("没有可用的更新地址");
+            throw lastError ?? new InvalidOperationException("没有可用的更新地址");
+        }
+
+        private static async Task<string> FetchOneAsync(string url, CancellationToken token)
+        {
+            var json = await _http.GetStringAsync(url, token).ConfigureAwait(false);
+
+            // 反代有时候会回一页 HTML（限流提示 / 拦截页）并且是 200：
+            // 这种内容解析必然失败，不能让它在竞速里「赢」，直接当这次请求失败。
+            var head = json.AsSpan().TrimStart();
+            if (head.Length == 0 || (head[0] != '[' && head[0] != '{'))
+                throw new InvalidDataException("返回内容不是 JSON（可能被代理拦截）");
+
+            Logger.Info($"[更新检测] 已从 {new Uri(url).Host} 获取发布列表");
+            return json;
         }
 
         // 版本号只认发布资源里的安装包文件名（NotchPeninsula.v.2.2.5.exe 这种），
@@ -438,12 +468,27 @@ namespace NotchPeninsula
 
             int screenW = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Width ?? 1920;
             int screenH = System.Windows.Forms.Screen.PrimaryScreen?.Bounds.Height ?? 1080;
+            int px = (screenW - _scaledW) / 2;
+            int py = (screenH - _scaledH) / 2;
+
+            // 设置中心开着就相对它居中（用户看到的是那个窗，按整块屏幕居中会明显偏下）；
+            // 没开（托盘 / 启动时的静默检查）才回落到屏幕居中。夹一下别越过工作区边界。
+            IntPtr host = ConsoleWindow.LiveHwnd;
+            if (host != IntPtr.Zero && Win32.GetWindowRect(host, out var hostRect))
+            {
+                px = hostRect.Left + ((hostRect.Right - hostRect.Left) - _scaledW) / 2;
+                py = hostRect.Top + ((hostRect.Bottom - hostRect.Top) - _scaledH) / 2;
+
+                var work = System.Windows.Forms.Screen.FromHandle(host).WorkingArea;
+                px = Math.Clamp(px, work.Left + 8, Math.Max(work.Left + 8, work.Right - _scaledW - 8));
+                py = Math.Clamp(py, work.Top + 8, Math.Max(work.Top + 8, work.Bottom - _scaledH - 8));
+            }
 
             _hwnd = Win32.CreateWindowEx(
                 Win32.WS_EX_LAYERED | Win32.WS_EX_TOPMOST,
-                ClassName, "Notify",
+                ClassName, AppIdentity.WindowTitle,
                 Win32.WS_POPUP | Win32.WS_VISIBLE,
-                (screenW - _scaledW) / 2, (screenH - _scaledH) / 2,
+                px, py,
                 _scaledW, _scaledH,
                 IntPtr.Zero, IntPtr.Zero, _classInstance, IntPtr.Zero
             );
@@ -474,7 +519,9 @@ namespace NotchPeninsula
                     lpfnWndProc = _staticWndProc,
                     hInstance = hInstance,
                     lpszClassName = ClassName,
-                    hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW)
+                    hCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW),
+                    // 窗口类图标 = exe 内嵌的 NPS logo：Alt+Tab / 任务栏预览里不再顶着系统默认图标。
+                    hIcon = AppIdentity.IconHandle
                 };
                 Win32.RegisterClass(ref wc);
                 _classInstance = hInstance;

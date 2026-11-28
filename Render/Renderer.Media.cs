@@ -448,6 +448,9 @@ namespace NotchPeninsula
         {
             long now = Environment.TickCount64;
             double rawMs = media.CurrentLyricLineElapsedMs;
+            // 暂停时不补间（用户要求）：媒体位置不再刷新，再拿挂钟外推的话
+            // 逐字扫光和横向滚动会照样一直往下走 —— 停下来的画面才是「暂停」。
+            bool playing = media.IsPlaying;
 
             if (Math.Abs(rawMs - _lineElapsedRaw) > 0.5)
             {
@@ -456,8 +459,9 @@ namespace NotchPeninsula
                 _lineElapsedTs = now;
             }
             if (_lineElapsedTs == 0) { _lineElapsedTs = now; return fallback; }
+            if (!playing) _lineElapsedTs = now;   // 基准钉住：暂停期间 elapsed 不再增长，恢复播放从原处继续
 
-            double elapsed = _lineElapsedRaw + (now - _lineElapsedTs);
+            double elapsed = _lineElapsedRaw + (playing ? (now - _lineElapsedTs) : 0);
 
             double totalMs = 0;
             var ends = media.CurrentLyricWordEndMs;

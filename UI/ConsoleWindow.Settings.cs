@@ -80,7 +80,7 @@ namespace NotchPeninsula
         {
             get
             {
-                float centerY = TITLE_BAR_HEIGHT + PASS_CARD_Y + ROW_ANCHOR_Y;
+                float centerY = TITLE_BAR_HEIGHT + PASS_CARD_Y - PASS_ROW_DY + ROW_ANCHOR_Y;
                 return SKRect.Create(LeftColumnRight - 16f - 110f, centerY - 14f, 110f, 28f);
             }
         }
@@ -105,7 +105,10 @@ namespace NotchPeninsula
         private const float THEME_CARD_Y = CARD_TOP_Y;
         private const float THEME_CARD_H = 112f;
         private const float IMMERSIVE_CARD_Y = THEME_CARD_Y + THEME_CARD_H + CARD_GAP;
-        private const float RHYTHM_ROW_Y = IMMERSIVE_CARD_Y + TOGGLE_CARD_H;
+        // 两行开关卡：第一行 62 的卡位，第二行上提 16（用户定稿「不要那么多空隙」）。
+        // 卡底仍按第二行自己的行高收（RHYTHM_ROW_Y + TOGGLE_CARD_H），后面卡片整体上移。
+        private const float RHYTHM_ROW_DY = 46f;
+        private const float RHYTHM_ROW_Y = IMMERSIVE_CARD_Y + RHYTHM_ROW_DY;
         private const float OPACITY_CARD_Y = RHYTHM_ROW_Y + TOGGLE_CARD_H + CARD_GAP;
 
         private bool _immersiveToggleHovered;

@@ -5,21 +5,23 @@ namespace NotchPeninsula
 {
     public partial class ConsoleWindow
     {
-        // ----  ----
-        // ----  ----
-
         // 侧栏「插件市场」可更新提示：
         // 展开态在按钮内部最右侧与文本同行显示灰底白字角标（>9 显示 9+）；折叠态仅显示最小红点指示器。
         // 纯展示，不单独吃点击（整行本来就是页签热区）。
         private void DrawMarketTabBadge(SKCanvas canvas, float rowTop)
         {
-            if (SidebarCollapsed)
+            // 折叠途中两端交叉淡化：角标（贴右缘）→ 红点（贴图标），不硬切。
+            float p = SidebarCollapseT;
+            float badgeAlpha = 1f - Math.Clamp(p * 1.6f, 0f, 1f);
+            float dotAlpha = Math.Clamp((p - 0.35f) * 1.6f, 0f, 1f);
+
+            if (dotAlpha > 0.01f)
             {
                 const float dotRadius = 2.5f;
-                _dynamicFillPaint.Color = new SKColor(232, 64, 56);
+                _dynamicFillPaint.Color = new SKColor(232, 64, 56, (byte)(255 * dotAlpha));
                 canvas.DrawCircle(SidebarIconCenterX + 10f, rowTop + 9f, dotRadius, _dynamicFillPaint);
-                return;
             }
+            if (badgeAlpha <= 0.01f) return;
 
             string text = MarketUpdateCount > 9 ? "9+" : MarketUpdateCount.ToString();
             const float badgeH = 13f;
@@ -31,11 +33,11 @@ namespace NotchPeninsula
             var r = new SKRect(right - w, centerY - badgeH / 2f, right, centerY + badgeH / 2f);
 
             _dynamicFillPaint.Color = _isLightAppearance
-                ? new SKColor(0, 0, 0, 112)
-                : new SKColor(255, 255, 255, 55);
+                ? new SKColor(0, 0, 0, (byte)(112 * badgeAlpha))
+                : new SKColor(255, 255, 255, (byte)(55 * badgeAlpha));
             canvas.DrawRoundRect(r, badgeH / 2f, badgeH / 2f, _dynamicFillPaint);
 
-            _dynamicTextPaint.Color = SKColors.White;
+            _dynamicTextPaint.Color = new SKColor(255, 255, 255, (byte)(255 * badgeAlpha));
             _dynamicTextPaint.TextAlign = SKTextAlign.Center;
             canvas.DrawText(text, r.MidX, r.MidY - MeasureInkMidY(_dynamicTextPaint, text), _dynamicTextPaint);
 
@@ -54,7 +56,7 @@ namespace NotchPeninsula
             float top = _tabSlideFromY + d * p;
 
             canvas.DrawRoundRect(new SKRect(TabButtonLeft, TITLE_BAR_HEIGHT + top, TabButtonRight, TITLE_BAR_HEIGHT + top + TAB_ROW_H), 4, 4, _tabBgSelected);
-            if (SidebarCollapsed)
+            if (SidebarLabelAlpha <= 0.01f)
                 return;
 
             // 蓝条以自身中线为中心对称外扩：中点最强、两端归零，所以起止两端没有跳变。
@@ -460,6 +462,8 @@ namespace NotchPeninsula
             // 侧边栏：选中块的滑动 —— 进度由 SyncTabSlide 在每帧 Render 里按时钟推进，
             // 这里只提供「还在滑」这个事实（别在这儿算 T，否则和渲染那侧的口径就分家了）。
             if (_tabSlideT < 1f) animating = true;
+            // 侧栏宽度动画同理：还在滑就继续供帧。
+            if (SidebarAnimating) animating = true;
 
             // 否则会停在 0.99 那种「差一点点」的状态上。
             Render();
@@ -597,8 +601,22 @@ namespace NotchPeninsula
                     canvas.DrawRoundRect(new SKRect(TabButtonLeft, top, TabButtonRight, top + TAB_ROW_H), 4, 4, _dynamicFillPaint);
                 }
                 DrawSidebarIcon(canvas, SidebarIcons[tab], SidebarIconCenterX, top + TAB_ROW_H / 2);
-                if (!SidebarCollapsed)
+
+                // 标签：跟着侧栏宽度「被扫出来 / 被扫回去」，同时淡淡地淡出，不是到点啪一下消失。
+                // 裁剪到当前栏宽 —— 宽度收窄时文字是被边缘推走的，不会溢出到卡片上。
+                float labelAlpha = SidebarLabelAlpha;
+                if (labelAlpha > 0.01f)
+                {
+                    var baseColor = _fgColor;
+                    _uiTextPaint.Color = new SKColor(baseColor.Red, baseColor.Green, baseColor.Blue,
+                        (byte)Math.Clamp(baseColor.Alpha * labelAlpha, 0f, 255f));
+                    canvas.Save();
+                    canvas.ClipRect(new SKRect(0f, top - 1f, MathF.Max(0f, SidebarWidth - 2f), top + TAB_ROW_H + 1f));
                     canvas.DrawText(SidebarLabels[tab], 54, top + 24, _uiTextPaint);
+                    canvas.Restore();
+                    _uiTextPaint.Color = baseColor;
+                }
+
                 if (tab == 7 && MarketUpdateCount > 0)
                     DrawMarketTabBadge(canvas, top);
             }
@@ -619,7 +637,7 @@ namespace NotchPeninsula
             // 结果行画在按钮组上方：两个按钮共用一行提示（一次只会有一个人说话）。
             // 提示行比按钮宽（可占满侧栏），左对齐 —— 居中放不下时两边会顶到侧栏外。
             string hint = _cacheCleanHint.Length > 0 ? _cacheCleanHint : _aboutExportHint;
-            if (!SidebarCollapsed && hint.Length > 0)
+            if (SidebarLabelAlpha > 0.5f && hint.Length > 0)
             {
                 _dynamicTextPaint.TextSize = 11f;
                 _dynamicTextPaint.TextAlign = SKTextAlign.Left;
@@ -644,16 +662,26 @@ namespace NotchPeninsula
             canvas.DrawRoundRect(rect, SettingsButtonRadius, SettingsButtonRadius, _dynamicFillPaint);
 
             _dynamicTextPaint.TextAlign = SKTextAlign.Center;
-            if (SidebarCollapsed)
+            // 图标 / 文字按折叠进度交叉淡化：中途不会出现「一个跳成另一个」的硬切。
+            float p = SidebarCollapseT;
+            if (p > 0.01f)
             {
-                DrawSidebarIcon(canvas, y == CACHE_BTN_Y ? "\uE74D" : "\uE898", rect.MidX, rect.MidY);
-                return;
+                SidebarIconPaint.Color = new SKColor(_fgColor.Red, _fgColor.Green, _fgColor.Blue, (byte)(255 * p));
+                var iconMetrics = SidebarIconPaint.FontMetrics;
+                canvas.DrawText(y == CACHE_BTN_Y ? "\uE74D" : "\uE898", rect.MidX,
+                    rect.MidY - (iconMetrics.Ascent + iconMetrics.Descent) / 2f, SidebarIconPaint);
             }
 
-            _dynamicTextPaint.TextSize = textSize;
-            _dynamicTextPaint.Color = hovered ? new SKColor(0, 140, 240) : Neutral(200);
-            canvas.DrawText(label, x + w / 2f, y + 18.5f, _dynamicTextPaint);
-            _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+            float labelAlpha = SidebarLabelAlpha;
+            if (labelAlpha > 0.01f)
+            {
+                _dynamicTextPaint.TextSize = textSize;
+                var labelColor = hovered ? new SKColor(0, 140, 240) : Neutral(200);
+                _dynamicTextPaint.Color = new SKColor(labelColor.Red, labelColor.Green, labelColor.Blue,
+                    (byte)Math.Clamp(255f * labelAlpha, 0f, 255f));
+                canvas.DrawText(label, x + w / 2f, y + h / 2f + 4.5f, _dynamicTextPaint);
+                _dynamicTextPaint.TextAlign = SKTextAlign.Left;
+            }
         }
 
         // 页签：通用设置
@@ -1120,7 +1148,7 @@ namespace NotchPeninsula
         // 页签：媒体设置
         private void RenderTabMedia(SKCanvas canvas)
         {
-            var mediaCard = new SKRect(CONTENT_L, MediaCardTop, LeftColumnRight, MediaCardTop + MediaTopLeftCardH);
+            var mediaCard = new SKRect(CONTENT_L, MediaCardTop, LeftColumnRight, MediaCardTop + MediaTopCardH);
             DrawSettingsCard(canvas, mediaCard);
             DrawToggleRow(canvas, MediaRowStart, "媒体控制", "允许在刘海中显示和控制系统媒体播放",
                 MediaController.IsMediaControlEnabled, _mediaToggleHovered, cardRight: LeftColumnRight);
@@ -1128,23 +1156,23 @@ namespace NotchPeninsula
                 "检测到媒体先显示 3 秒，再收进左侧实况窗（封面旋转）",
                 MediaLiveWindowController.IsEnabled, _mediaLiveToggleHovered, cardRight: LeftColumnRight);
 
-            var platformCard = new SKRect(RightColumnLeft, MediaCardTop, WIDTH - CONTENT_RM, MediaCardTop + MediaTopRightCardH);
+            var platformCard = new SKRect(RightColumnLeft, MediaCardTop, WIDTH - CONTENT_RM, MediaCardTop + MediaTopCardH);
             DrawSettingsCard(canvas, platformCard);
-            canvas.DrawText("目标媒体平台", RightColumnText, PlatformBoxY + 10, _uiTextPaint);
+            canvas.DrawText("目标媒体平台", RightColumnText, PlatformBoxY + MEDIA_BOX_LABEL_DY, _uiTextPaint);
             string platformHint = MediaController.TargetPlatform == "browser" ? "仅接管浏览器内的播放会话" : "多平台共存时，优先截获并接管的平台";
             canvas.DrawText(TruncateText(platformHint, _subTextPaint, PlatformBoxX - RightColumnText - 8),
-                RightColumnText, PlatformBoxY + 29, _subTextPaint);
+                RightColumnText, PlatformBoxY + MEDIA_BOX_SUB_DY, _subTextPaint);
             DrawDropdownBox(canvas, PlatformBoxX, PlatformBoxY, 110, 32, _platforms[_selectedPlatformIndex].Name,
                 _dropdownHovered, enabled: true, open: _dropdownOpen);
 
             bool matchEnabled = MediaController.TargetPlatform == "other";
             bool appBoxEnabled = matchEnabled && MediaController.IsManualSessionMatch;
             _uiTextPaint.Color = matchEnabled ? _fgColor : Neutral(100);
-            canvas.DrawText("匹配方式", RightColumnText, PLATFORM_ROW2_Y + 24, _uiTextPaint);
+            canvas.DrawText("匹配方式", RightColumnText, MATCH_ROW_Y + MEDIA_BOX_LABEL_DY, _uiTextPaint);
             _uiTextPaint.Color = _fgColor;
             _subTextPaint.Color = matchEnabled ? SecondaryText : Neutral(80);
             canvas.DrawText(TruncateText("自动匹配或手动指定", _subTextPaint, MATCH_MODE_X - RightColumnText - 8),
-                RightColumnText, PLATFORM_ROW2_Y + 43, _subTextPaint);
+                RightColumnText, MATCH_ROW_Y + MEDIA_BOX_SUB_DY, _subTextPaint);
             _subTextPaint.Color = SecondaryText;
 
             float moX = MATCH_MODE_X, appX = MATCH_APP_X, mBoxY = MATCH_ROW_Y, mBoxW = MATCH_BOX_W, mBoxH = MATCH_BOX_H;
@@ -1306,8 +1334,8 @@ namespace NotchPeninsula
                 MediaController.IsAppLaunchEnabled, _appLaunchToggleHovered, rightColumn: true);
 
             float passY = TITLE_BAR_HEIGHT + PASS_CARD_Y;
-            DrawSettingsCard(canvas, new SKRect(CONTENT_L, passY, LeftColumnRight, passY + TOGGLE_CARD_H));
-            DrawToggleRow(canvas, PASS_CARD_Y, "穿透模式", "悬停淡出，鼠标可穿透",
+            DrawSettingsCard(canvas, new SKRect(CONTENT_L, passY, LeftColumnRight, passY + PASS_CARD_H));
+            DrawToggleRow(canvas, PASS_CARD_Y - PASS_ROW_DY, "穿透模式", "悬停淡出，鼠标可穿透",
                 Renderer.PassthroughModeEnabled, _passToggleHovered, cardRight: PassthroughToggleBox.Right + 16f);
             var passBox = PassthroughDropdownBox;
             DrawDropdownBox(canvas, passBox.Left, passBox.Top, passBox.Width, passBox.Height,
@@ -1667,7 +1695,7 @@ namespace NotchPeninsula
         {
             RefreshPluginView();
 
-            // 插件设置子页：由行内「设置」按钮进入，仍然属于 tab 6
+            // 插件设置子页（入口已删，见 ConsoleWindow.PluginSettings.cs 顶部说明），仍属于 tab 6
             if (_settingsPluginId != null)
             {
                 RenderPluginSettingsPage(canvas);
@@ -1675,11 +1703,10 @@ namespace NotchPeninsula
             }
 
             // ── 顶部操作卡片 ──
+            // 只有三个按钮（用户定稿：去掉「我的插件」标题），卡高随之收到一行按钮。
             float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
             var topRect = new SKRect(CONTENT_L, topY, WIDTH - CONTENT_RM, topY + PluginTopCardH);
             DrawSettingsCard(canvas, topRect);
-            canvas.DrawText("我的插件", CONTENT_TEXT_X, topY + 26, _uiTextPaint);
-            canvas.DrawText("管理已安装插件；点插件行的「设置」可配置插件参数", CONTENT_TEXT_X, topY + 46, _subTextPaint);
 
             void DrawPluginButton(int index, string label, float bx, float by, float bw)
             {
@@ -1689,9 +1716,11 @@ namespace NotchPeninsula
                     kind: index == 0 ? SettingsButtonKind.Primary : SettingsButtonKind.Standard);
             }
 
-            DrawPluginButton(0, "导入插件", CONTENT_TEXT_X, topY + 60, 96);
-            DrawPluginButton(1, "打开目录", CONTENT_TEXT_X + 104, topY + 60, 96);
-            DrawPluginButton(2, "插件市场", CONTENT_TEXT_X + 208, topY + 60, 96);
+            // 三个操作按钮仍贴卡片左内边距排（用户截图里的位置不变），只是标题那一行没了。
+            float actBtnY = topY + PluginActionRowDy;
+            DrawPluginButton(0, "导入插件", CONTENT_TEXT_X, actBtnY, PluginActionBtnW);
+            DrawPluginButton(1, "打开目录", CONTENT_TEXT_X + PluginActionBtnW + PluginActionGap, actBtnY, PluginActionBtnW);
+            DrawPluginButton(2, "插件市场", CONTENT_TEXT_X + (PluginActionBtnW + PluginActionGap) * 2f, actBtnY, PluginActionBtnW);
 
             // ── 已安装插件列表卡片（可滚动，整卡高度）──
             GetPluginListCardTop(out float listY);
@@ -1726,7 +1755,9 @@ namespace NotchPeninsula
                 float rowY = tile.Top;
                 float textX = tile.Left + PluginTextInset;
                 float settingsX = tile.Right - 224f;
-                float nameTextMax = settingsX - textX - 8f;
+                // 「设置」按钮已删除（用户定稿）：它原来占 56px，现在这段空位让给标题 / 作者行，
+                // 「运行中 · v1.x · 作者」能完整显示（以前长作者名会被截成 …）。三个控件位置不动。
+                float nameTextMax = (settingsX + 56f) - textX - 8f;
                 float infoTextMax = nameTextMax;
                 // ═══ 上行：插件名称（独占整行，无按钮遮挡） ═══
                 _pluginTitlePaint.Color = _fgColor;
@@ -1770,7 +1801,6 @@ namespace NotchPeninsula
                     DrawSettingsButton(canvas, r, label, hovered, kind: danger
                         ? SettingsButtonKind.Danger : SettingsButtonKind.Standard);
                 }
-                DrawRowButton(settingsX, _hoveredPluginSettings == i, "设置");
                 DrawRowButton((settingsX + 56f), _hoveredPluginReload == i, "重载", false);
                 DrawRowButton((settingsX + 112f), _hoveredPluginRemove == i, "卸载", true);
 

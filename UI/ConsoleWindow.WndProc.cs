@@ -53,7 +53,8 @@ namespace NotchPeninsula
             int newHoveredTab = HitSidebarTab(x, y);
 
             // 弹窗是模态的：它盖住的顶栏与侧栏不该再亮，否则鼠标划过弹窗还能看见下面在闪
-            if (IsConfirmDialogOpen)
+            // （详情 / 评分弹窗也算模态：点外面关不掉，底下就更不该有反馈）。
+            if (IsConfirmDialogOpen || _marketDialog != MarketDialog.None)
             {
                 newMinHovered = false;
                 newCloseHovered = false;
@@ -705,12 +706,13 @@ namespace NotchPeninsula
                 else
                 {
                     float topY = TITLE_BAR_HEIGHT + CARD_TOP_Y;
-                    // 顶部操作按钮：导入插件 | 打开目录 | 插件市场
-                    if (y >= topY + 60 && y <= topY + 84)
+                    // 顶部操作按钮：导入插件 | 打开目录 | 插件市场（几何与 RenderTabPlugins 共用同一组常量）
+                    if (y >= topY + PluginActionRowDy && y <= topY + PluginActionRowDy + 24)
                     {
-                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + 96) newHoveredPluginAction = 0;       // 导入插件
-                        else if (x >= CONTENT_TEXT_X + 104 && x <= CONTENT_TEXT_X + 200) newHoveredPluginAction = 1;  // 打开目录
-                        else if (x >= CONTENT_TEXT_X + 208 && x <= CONTENT_TEXT_X + 304) newHoveredPluginAction = 2;  // 插件市场
+                        float step = PluginActionBtnW + PluginActionGap;
+                        if (x >= CONTENT_TEXT_X && x <= CONTENT_TEXT_X + PluginActionBtnW) newHoveredPluginAction = 0;
+                        else if (x >= CONTENT_TEXT_X + step && x <= CONTENT_TEXT_X + step + PluginActionBtnW) newHoveredPluginAction = 1;
+                        else if (x >= CONTENT_TEXT_X + step * 2f && x <= CONTENT_TEXT_X + step * 2f + PluginActionBtnW) newHoveredPluginAction = 2;
                     }
 
                     GetPluginListCardTop(out float listY);
@@ -726,8 +728,8 @@ namespace NotchPeninsula
                         {
                             int idx = slot + _pluginScroll;
                             float settingsX = rect.Right - 224f;
-                            if (x >= settingsX && x <= settingsX + 50) newHoveredPluginSettings = idx;
-                            else if (x >= settingsX + 56 && x <= settingsX + 106) newHoveredPluginReload = idx;
+                            // 「设置」按钮已删除，[settingsX, +50] 这段不再命中任何控件。
+                            if (x >= settingsX + 56 && x <= settingsX + 106) newHoveredPluginReload = idx;
                             else if (x >= settingsX + 112 && x <= settingsX + 162) newHoveredPluginRemove = idx;
                             else if (x >= settingsX + 168 && x <= settingsX + 210) newHoveredPluginToggle = idx;
                         }

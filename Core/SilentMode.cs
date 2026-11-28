@@ -181,17 +181,35 @@ public static class SilentMode
     ///
     /// <para>调用时机：两页的勾选变化、进出静默模式。</para>
     /// </summary>
-    public static void SyncLiveWindowGates()
+    public static void SyncLiveWindowGates(bool instant = false)
     {
         // 媒体气泡：静默下开关关 → 挂起（立即从屏上撤下，不等退场动画）；开 → 恢复。
-        LiveWindowHost.SetOwnerSuppressed(MediaLiveWindowController.Owner,
-            Renderer.SilentActive && !MediaImportantEnabled, out _, out _);
+        ApplyOwnerGate(MediaLiveWindowController.Owner,
+            !(Renderer.SilentActive && !MediaImportantEnabled), instant);
 
         foreach (var ownerId in LiveWindowHost.KnownPluginOwners)
         {
             // 模式判断在 IsOwnerAllowedByDisplay 里：普通模式查显示设置，静默模式查静默清单。
-            bool allowed = LiveWindowHost.IsOwnerAllowedByDisplay(ownerId);
-            LiveWindowHost.SetOwnerSuppressed(ownerId, !allowed, out _, out _);
+            ApplyOwnerGate(ownerId, LiveWindowHost.IsOwnerAllowedByDisplay(ownerId), instant);
+        }
+    }
+
+    /// <summary>
+    /// 单个 owner 的门控落地 + 通知。
+    ///
+    /// <para>用户定稿 U7：岛已缩没（没有吸回动画可等）时，<c>OnHostEnabledChanged</c> <b>立即发</b>，
+    /// 不能再被吞掉 —— 否则插件一直以为内容还在气泡里，撤勾选之后既不回岛也不显示。
+    /// 岛在屏上时仍照旧等吸回动画播完（Tick 的 PendingEnableNotify）。</para>
+    /// </summary>
+    private static void ApplyOwnerGate(string ownerId, bool allowed, bool instant)
+    {
+        var windows = LiveWindowHost.SetOwnerSuppressed(ownerId, !allowed, out bool deferredNotify, out bool deferredResume, instant);
+        if (deferredNotify || deferredResume || windows.Count == 0) return;
+
+        foreach (var w in windows)
+        {
+            try { w.OnHostEnabledChanged(allowed); }
+            catch (Exception ex) { Logger.Error($"[实况窗] 插件 {ownerId} 处理实况窗开关通知异常", ex); }
         }
     }
 
